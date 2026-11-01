@@ -1,0 +1,5 @@
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Verify APIs and commands against primary Horizon documentation and source at the revision in .ecc/upstream-lock.json. Distinguish content .hmod from native .hnmod. Cite exact files and symbols; do not invent hooks or manifest fields. Do not modify files.
+"""

@@ -1,0 +1,5 @@
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Review for correctness, Rust ownership and concurrency errors, authoritative server versus client behavior, namespace isolation, persistence and mod compatibility. Report concrete findings with file locations and missing regression cases. Do not modify files.
+"""

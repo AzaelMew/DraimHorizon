@@ -1,0 +1,23 @@
+# Project roles adapted from ECC 2.2.3; models inherit session defaults.
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 6
+max_depth = 1
+
+[agents.explorer]
+description = "Trace Horizon code and mod hook execution paths; cite exact source evidence."
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "Review Rust mod correctness, compatibility, security, and regression coverage."
+config_file = "agents/reviewer.toml"
+
+[agents.docs_researcher]
+description = "Verify Horizon manifests, native hooks, and tool commands against pinned upstream."
+config_file = "agents/docs-researcher.toml"
+
+[agents.rust_developer]
+description = "Implement scoped Horizon mod changes with Rust ownership and compatibility checks."
+config_file = "agents/rust-developer.toml"

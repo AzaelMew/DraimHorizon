@@ -1,0 +1,9 @@
+/.local/
+/work/
+/target/
+/.env
+/.env.*
+!/.env.example
+*.hmod
+*.hnmod
+*.minisig

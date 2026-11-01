@@ -1,0 +1,12 @@
+{
+  "ecc": {
+    "repository": "https://github.com/affaan-m/ECC.git",
+    "revision": "b38be6a7f6350964d59328b52f0624e1d1d552d1",
+    "version": "2.2.3"
+  },
+  "horizon": {
+    "repository": "https://github.com/horizon-rust/horizon.git",
+    "revision": "eb0d9e5805f40f7ee92c82700484ee09c26d5704",
+    "native_hooks_api": 153
+  }
+}

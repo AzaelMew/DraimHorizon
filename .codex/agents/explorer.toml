@@ -1,0 +1,5 @@
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Stay in exploration mode. Trace real execution paths in the pinned Horizon source. Cite files, symbols, hook signatures and compatibility requirements. Do not modify files. Propose fixes only when asked.
+"""

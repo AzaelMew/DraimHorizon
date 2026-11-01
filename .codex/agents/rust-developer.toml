@@ -1,0 +1,5 @@
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+Implement only the assigned scope. Follow AGENTS.md and the horizon-modding skill. Confirm hooks against pinned Horizon source, use stable native hook points when possible, and preserve authoritative server behavior. Run relevant formatting, lint, test and package checks; report anything unavailable. Do not publish or release artifacts unless asked.
+"""
