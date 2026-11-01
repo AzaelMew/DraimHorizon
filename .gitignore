@@ -7,3 +7,5 @@
 *.hmod
 *.hnmod
 *.minisig
+
+**/__pycache__/

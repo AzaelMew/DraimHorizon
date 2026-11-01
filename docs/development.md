@@ -1,37 +1,66 @@
-# Разработка мода Horizon
+# Разработка Claim Borders
 
-## Что настроено
+## Устройство
 
-- Нативный плагин `ecc@ecc` версии 2.2.3: общая библиотека навыков, конфигурация MCP и SessionStart-хук. Скрипт установки также устанавливает runtime-зависимости хуков через `npm ci --omit=dev --ignore-scripts --no-bin-links`; доверие к хукам остаётся отдельным действием в Codex.
-- Роли `explorer`, `reviewer`, `docs_researcher`, `rust_developer` адаптированы из проектной конфигурации ECC; модель наследуется из сессии.
-- Локальный навык `horizon-modding` и корневой `AGENTS.md` задают контекст проекта.
-- Источники и точные ревизии записаны в `.ecc/upstream-lock.json`.
+- `mixins/claim_borders/runtime.rs` — парсер ответа SMP `/claims`, кеш сеанса и построение внешнего контура. Один исходник используется standalone Cargo-библиотекой и внедряемым модулем.
+- Остальные `.rs` в bundle — тонкие адаптеры чата, команд, отрисовки и переподключения.
+- `horizon-mixin.toml` — семь HEAD-инъекций и один модуль; точная ревизия Horizon закреплена в `compatibility.json`.
+- Для рисования используются штатные depth-tested `Gizmos`; новый GPU-пайплайн не добавляется.
+- `/claims` содержит блоковые начала чанков, не номера чанков. Формат проверен по `horizon-rust/horizon-mods/native/smp/mixins/smp/smp_claims.rs`.
 
-MCP Chrome DevTools поставляется ECC; его запуск требует `npx` и подходящего браузера. Готовность браузера этой установкой не проверялась. Claude-агенты и Claude-хуки не равнозначны ролям и хукам Codex.
+## Проверки
 
-## Исходники и API
-
-При первоначальной настройке исходники лежат в `/workspace/work/ecc` и `/workspace/work/horizon`, рабочий проект — `/workspace/HorizonMod`. Это пути текущей среды. Для другой среды используйте gitignored `.local/` и ревизии lock-файла.
-
-У Horizon два формата:
-
-| Формат | Содержимое | Инструменты |
-| --- | --- | --- |
-| `.hmod` | Данные и ресурсы, API 0.2 | `cargo horizon-mod new/build/check` |
-| `.hnmod` | Нативный Rust, horizon-mixins | Официальный native-шаблон и сборка нативного bundle; `cargo horizon-mod check` проверяет пакет |
-
-На исследованной ревизии `NATIVE_HOOKS_API = 153` в `crates/horizon-client/src/game/native_hooks.rs`. Выбирайте минимальный API используемых хуков, а не автоматически 153. Для произвольных source-mixins нужна точная ревизия Horizon. Java-код Fabric/NeoForge в Horizon не исполняется.
-
-Источники: upstream `docs/mods.md`, `docs/native-mods.md`, `crates/cargo-horizon-mod/`, `crates/horizon-mods/`; для native — https://github.com/horizon-rust/horizon-native-mod-template и https://github.com/horizon-rust/horizon-mixins.
-
-## Перед реализацией
-
-Определите функции мода, сторону исполнения и целевую версию Horizon. После выбора формата создайте соответствующий шаблон. Rust/Cargo и сама игра не входят в установку ECC: в исходной среде Rust/Cargo отсутствуют. Для текущего `cargo-horizon-mod` зависимость `horizon-mods` требует Rust 1.95, хотя общий README Horizon указывает более низкую версию; сверяйтесь с Cargo-манифестами целевой ревизии.
-
-После установки подходящего Rust toolchain CLI можно поставить из зафиксированных исходников:
+Нужны Git, Python 3.12+, Rust 1.99.1 (rustfmt, clippy). Стадирование использует Linux file locks. `tools/stage.py` скачивает закреплённые исходники в gitignored `.local/`, экспортирует их без изменения исходного checkout и вызывает официальный horizon-mixins:
 
 ```bash
-cargo install --path /path/to/pinned/horizon/crates/cargo-horizon-mod --locked
+cargo fmt --all --check
+rustfmt --edition 2024 --check mixins/claim_borders/*.rs
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+python3 tools/stage.py
 ```
 
-Для сборки полной игры могут потребоваться дополнительные системные библиотеки, JDK и собственная копия Minecraft. В рамках настройки ECC игра и мод не собирались. Не коммитьте подготовленные ресурсы или декомпилированный код.
+Можно использовать существующие checkouts:
+
+```bash
+python3 tools/stage.py --horizon /path/to/horizon --mixins /path/to/horizon-mixins
+```
+
+Horizon checkout должен содержать точный commit; текущая ветка не меняется. Mixins checkout должен быть чистым и находиться на точном закреплённом SHA.
+
+Проверка компиляции настоящего клиента без ресурсов Minecraft:
+
+```bash
+export RUSTUP_TOOLCHAIN=1.99.1
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_INCREMENTAL=0
+cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
+  --locked -p horizon-client --bin horizon-client --no-default-features
+python3 tools/package.py
+cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.1.0.hnmod --json
+```
+
+Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
+
+Тесты охватывают ответ со скриншота, отрицательные координаты, Unicode-пробелы и цветовые коды, разные измерения, неполные/дублированные/слишком большие ответы, ограниченное ожидание, понижение серверной квоты, размер чанка 16×16, объединённые границы, дальность и сброс состояния.
+
+## Релиз
+
+Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование, `cargo check` настоящего клиента и проверку пакета; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
+
+Артефакты: `claim_borders-<version>.hnmod` и его `.sha256`. Пакет содержит только исходники и `horizon-native.json`; одинаковые исходники дают одинаковые байты. Подпись minisign пока не используется. Публикация GitHub Release не добавляет мод автоматически в каталог Horizon: для каталога требуется отдельная заявка и ревью.
+
+## Среда Codex
+
+ECC 2.2.3 подключён нативным плагином `ecc@ecc`; роли находятся в `.codex/agents/`, проектный навык — `.agents/skills/horizon-modding/`. Повторная установка: `bash scripts/bootstrap-ecc.sh`. Хуки ECC требуют отдельного доверия в `/hooks`.
+
+В исходной облачной среде Rust установлен в `/workspace/work/tools/`:
+
+```bash
+export CARGO_HOME=/workspace/work/tools/cargo
+export RUSTUP_HOME=/workspace/work/tools/rustup
+export PATH=/workspace/work/tools/cargo/bin:$PATH
+```
+
+Для другой машины эти пути не нужны. Подготовленные ресурсы Minecraft, сохранения, ключи и `target/` никогда не коммитятся.

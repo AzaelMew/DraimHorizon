@@ -1,15 +1,15 @@
 # HorizonMod
 
-This repository is the workspace for a future mod for https://github.com/horizon-rust/horizon.
+This repository builds Claim Borders, a client-side native mod for https://github.com/horizon-rust/horizon.
 Communicate with the user in Russian unless they request another language.
-The mod feature set and content/native format have not been chosen. Do not invent a product scaffold.
+The native `.hnmod` displays the current player's claims from Horizon SMP `/claims` server replies. Exact source/tool pins live in `compatibility.json`. Runtime is shared by Cargo tests and the injected module.
 
 ## Sources and workflows
 
 - Read `.agents/skills/horizon-modding/SKILL.md` for Horizon work.
 - ECC is installed as the native Codex plugin `ecc@ecc`; do not also run the legacy sync or duplicate its skills here.
 - Use ECC `rust-patterns`, `rust-testing`, `tdd-workflow`, `security-review`, and `verification-loop` when relevant. Load only the skills needed for the task.
-- `.ecc/upstream-lock.json` records the ECC installation and the Horizon revision inspected during setup. Treat that Horizon revision as the initial reference, not a guarantee of compatibility with future releases.
+- `.ecc/upstream-lock.json` records the ECC installation and the Horizon revision inspected during setup. `compatibility.json` is authoritative for the released mod. Do not silently advance its source pin.
 - Project roles live in `.codex/agents/`: explorer, reviewer, docs_researcher, rust_developer. Delegate independent tasks when useful and supported by the current session; avoid overlapping writes. Higher-priority session restrictions take precedence.
 
 ## Implementation

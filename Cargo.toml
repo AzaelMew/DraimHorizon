@@ -1,0 +1,17 @@
+[package]
+name = "claim-borders"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Client-side claim boundaries from Horizon SMP /claims responses"
+repository = "https://github.com/DraimCiDo/DraimHorizon"
+
+[lib]
+path = "mixins/claim_borders/runtime.rs"
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

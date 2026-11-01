@@ -6,7 +6,7 @@
   },
   "horizon": {
     "repository": "https://github.com/horizon-rust/horizon.git",
-    "revision": "eb0d9e5805f40f7ee92c82700484ee09c26d5704",
-    "native_hooks_api": 153
+    "revision": "c9d474dd9116e84c243f8992d75c11314df56f06",
+    "native_hooks_api": 80
   }
 }

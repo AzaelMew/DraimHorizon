@@ -1,0 +1,80 @@
+name: Verify and release Claim Borders
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mixins/**'
+      - 'tools/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'compatibility.json'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/release.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: claim-borders-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+      - name: Format, lint and test runtime
+        run: |
+          cargo fmt --all --check
+          rustfmt --edition 2024 --check mixins/claim_borders/*.rs
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+      - name: Apply official mixins to exact Horizon source
+        run: python3 tools/stage.py
+      - name: Check real Horizon client
+        run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
+      - name: Package and validate native mod
+        run: |
+          python3 tools/package.py
+          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check target/claim_borders-0.1.0.hnmod --json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claim-borders-native
+          path: |
+            target/claim_borders-*.hnmod
+            target/claim_borders-*.hnmod.sha256
+          if-no-files-found: error
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: claim-borders-native
+          path: release-assets
+      - name: Publish version once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; keeping published artifacts unchanged."
+            exit 0
+          fi
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "Claim Borders ${version} — Horizon c9d474d" --notes-file docs/release-notes.md

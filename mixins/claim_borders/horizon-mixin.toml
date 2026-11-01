@@ -1,0 +1,76 @@
+[mod]
+id = "claim_borders"
+version = "0.1.0"
+priority = 100
+
+# Client chat and world gizmo adapters target exact source, not just stable hooks.
+[compatibility]
+horizon_revision = "c9d474dd9116e84c243f8992d75c11314df56f06"
+
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders"
+source = "runtime.rs"
+
+[[injection]]
+id = "chat"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::chat_line"
+helper = "chat.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "content", ty = "&horizon_client::text::Text", value = "&content" },
+  { name = "source", ty = "horizon_client::chat::ChatSource", value = "source" },
+]
+
+[[injection]]
+id = "render"
+kind = "HEAD"
+target = "horizon_client::game::debug_renderers::Game<'_>::debug_renderer_gizmos"
+helper = "render.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "gizmos", ty = "&mut horizon_client::gizmos::Gizmos", value = "&mut *g" },
+]
+
+[[injection]]
+id = "command"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_command"
+helper = "command.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "&mut *ran" },
+]
+
+[[injection]]
+id = "commands"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_commands"
+helper = "commands.rs"
+bindings = [
+  { name = "commands", ty = "&mut Vec<&'static str>", value = "&mut *commands" },
+]
+
+[[injection]]
+id = "list"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_mods"
+helper = "list.rs"
+bindings = [
+  { name = "mods", ty = "&mut Vec<crate::game::native_hooks::NativeMod>", value = "&mut *mods" },
+]
+
+[[injection]]
+id = "disconnect"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::leave_server"
+helper = "reset.rs"
+
+[[injection]]
+id = "connect"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::connect_server_with_options"
+helper = "reset.rs"
