@@ -8,11 +8,20 @@ fn claim_borders_render(game: &crate::game::Game<'_>, gizmos: &mut horizon_clien
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    if !m::with_state(|state| state.enabled) {
+        return;
+    }
     let Some(player) = game.native_player() else {
         return;
     };
     let segments =
         m::with_state(|state| state.boundaries(player.dimension, [player.x, player.y, player.z]));
+    let friends = crate::game::claim_borders_client::territories();
+    let friend_segments =
+        m::State::from_shared(friends).boundaries(player.dimension, [player.x, player.y, player.z]);
+    for (start, end) in friend_segments {
+        gizmos.line(start, end, 0xCC55_BBFF, 2.0);
+    }
     for (start, end) in segments {
         gizmos.line(start, end, 0xFF55_FF88, 2.5);
     }

@@ -1,0 +1,10 @@
+#[path = "../mixins/claim_borders/runtime.rs"]
+pub mod claims;
+#[path = "../mixins/claim_borders/overlay.rs"]
+pub mod overlay;
+#[path = "../mixins/claim_borders/party.rs"]
+pub mod party;
+#[path = "../mixins/claim_borders/transport.rs"]
+pub mod transport;
+#[path = "../mixins/claim_borders/waypoints.rs"]
+pub mod waypoints;

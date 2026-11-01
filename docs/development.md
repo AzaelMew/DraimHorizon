@@ -4,7 +4,7 @@
 
 - `mixins/claim_borders/runtime.rs` — парсер ответа SMP `/claims`, кеш сеанса и построение внешнего контура. Один исходник используется standalone Cargo-библиотекой и внедряемым модулем.
 - Остальные `.rs` в bundle — тонкие адаптеры чата, команд, отрисовки и переподключения.
-- `horizon-mixin.toml` — семь HEAD-инъекций и один модуль; точная ревизия Horizon закреплена в `compatibility.json`.
+- `horizon-mixin.toml` — одиннадцать HEAD-инъекций (два cancellable) и семь модулей; точная ревизия Horizon закреплена в `compatibility.json`.
 - Для рисования используются штатные depth-tested `Gizmos`; новый GPU-пайплайн не добавляется.
 - `/claims` содержит блоковые начала чанков, не номера чанков. Формат проверен по `horizon-rust/horizon-mods/native/smp/mixins/smp/smp_claims.rs`.
 
@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.1.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.2.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -64,3 +64,20 @@ export PATH=/workspace/work/tools/cargo/bin:$PATH
 ```
 
 Для другой машины эти пути не нужны. Подготовленные ресурсы Minecraft, сохранения, ключи и `target/` никогда не коммитятся.
+
+## Пати, метки и модель Codex
+
+Pure-модули `runtime.rs`, `party.rs`, `transport.rs`, `waypoints.rs` и `overlay.rs` подключены к `src/lib.rs` через `#[path]`. Тонкие адаптеры `client.rs`/`hud.rs` компилируются в реальном клиенте Horizon; `cargo test` отдельно проверяет модели. Для связи не устанавливаются серверные моды и не используются скрытые API приватов: клиент делится только собственным подтверждённым ответом `/claims`.
+
+В `.codex/config.toml` и каждой роли закреплены `model = "gpt-6.1-sol"`, `model_reasoning_effort = "medium"`. Это настройки будущих сессий, не переключатель уже работающего облачного чата.
+
+Token Optimizer 5.13.63 установлен нативным Codex-плагином. Установка для другой среды:
+
+```bash
+codex plugin marketplace add alexgreensh/token-optimizer
+codex plugin add token-optimizer@alexgreensh-token-optimizer
+```
+
+Затем из установленного плагина запусти `measure.py --runtime codex codex-install --project "$PWD" --profile balanced`, перезапусти Codex и проверь доверие к хукам. `.codex/hooks.json` содержит машинные пути и игнорируется Git. Диагностика `codex-doctor` подтверждает регистрацию, но реальное выполнение Stop-хука нужно проверить в следующей сессии. В текущей облачной среде локальные Codex transcript/state DB отсутствуют, поэтому текущая экономия токенов не измерена.
+
+Workflow проверяет feature-ветки и отдаёт `.hnmod` как Actions artifact; публикация Release выполняется только из `main` после успешной проверки.

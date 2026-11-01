@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.1.0"
+version = "0.2.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -74,3 +74,81 @@ id = "connect"
 kind = "HEAD"
 target = "horizon_client::game::remote::Game<'_>::connect_server_with_options"
 helper = "reset.rs"
+
+[[module]]
+id = "waypoints"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_waypoints"
+source = "waypoints.rs"
+
+[[module]]
+id = "party"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_party"
+source = "party.rs"
+
+[[module]]
+id = "transport"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_transport"
+source = "transport.rs"
+
+[[module]]
+id = "overlay"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_overlay"
+source = "overlay.rs"
+
+[[module]]
+id = "overlay-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_overlay_view"
+source = "hud.rs"
+
+[[module]]
+id = "client"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_client"
+source = "client.rs"
+
+[[injection]]
+id = "social-tick"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_tick"
+helper = "tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "social-hud"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_hud"
+helper = "hud_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "corners", ty = "&mut horizon_client::extras_hud::Corners", value = "&mut *corners" },
+]
+
+[[injection]]
+id = "private-chat"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::remote::Game<'_>::signed_chat_line"
+helper = "private_chat.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "content", ty = "&horizon_client::text::Text", value = "&content" },
+]
+
+[[injection]]
+id = "typed-relay-consent"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::chat::Game<'_>::handle_chat_input"
+helper = "typed_chat.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "message", ty = "&str", value = "message" },
+]

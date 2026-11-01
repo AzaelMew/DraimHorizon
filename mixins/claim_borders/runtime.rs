@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "Claim Borders";
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";
 pub const DESCRIPTION: &str =
-    "Your server claims as green borders. Run /claims to refresh; /claimborders toggles.";
+    "Claims, mutual friends and waypoints. /claims /party /wp /claimborders.";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
 const WORLD_LIMIT: i32 = 30_000_000;
@@ -125,6 +125,7 @@ pub struct State {
     pub enabled: bool,
     claims: Vec<Claim>,
     pending: Option<Instant>,
+    claims_known: bool,
 }
 
 impl Default for State {
@@ -133,6 +134,7 @@ impl Default for State {
             enabled: true,
             claims: Vec::new(),
             pending: None,
+            claims_known: false,
         }
     }
 }
@@ -141,6 +143,7 @@ impl State {
     pub fn clear(&mut self) {
         self.claims.clear();
         self.pending = None;
+        self.claims_known = false;
     }
 
     pub fn begin_refresh(&mut self) {
@@ -160,12 +163,25 @@ impl State {
         match parse_claims(text) {
             Ok(Some(claims)) => {
                 self.claims = claims;
+                self.claims_known = true;
                 self.pending = None;
                 true
             }
             // Unrelated chat, malformed/truncated lists, and trusted-player
             // names must never create a partial or invented claimed region.
             Ok(None) | Err(_) => false,
+        }
+    }
+
+    pub fn shared_claims(&self) -> Option<Vec<Claim>> {
+        self.claims_known.then(|| self.claims.clone())
+    }
+
+    pub fn from_shared(claims: Vec<Claim>) -> Self {
+        Self {
+            claims,
+            claims_known: true,
+            ..Self::default()
         }
     }
 
@@ -245,6 +261,19 @@ mod tests {
         state.begin_refresh();
         assert!(state.receive_chat(text));
         state
+    }
+
+    #[test]
+    fn only_verified_server_claims_can_be_shared() {
+        let mut state = State::default();
+        assert!(state.shared_claims().is_none());
+        state.begin_refresh();
+        assert!(!state.receive_chat("Your chunks (4 of 4): overworld at x -1904 z 48"));
+        assert!(state.shared_claims().is_none());
+        assert!(state.receive_chat(SCREENSHOT));
+        assert_eq!(state.shared_claims().unwrap().len(), 4);
+        state.clear();
+        assert!(state.shared_claims().is_none());
     }
 
     #[test]

@@ -1,9 +1,10 @@
 name: Verify and release Claim Borders
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
     paths:
       - 'mixins/**'
+      - 'src/**'
       - 'tools/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -46,7 +47,8 @@ jobs:
       - name: Package and validate native mod
         run: |
           python3 tools/package.py
-          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check target/claim_borders-0.1.0.hnmod --json
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/claim_borders-${version}.hnmod" --json
       - uses: actions/upload-artifact@v4
         with:
           name: claim-borders-native

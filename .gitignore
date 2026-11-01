@@ -9,3 +9,6 @@
 *.minisig
 
 **/__pycache__/
+
+# Machine-local Token Optimizer hook commands
+/.codex/hooks.json

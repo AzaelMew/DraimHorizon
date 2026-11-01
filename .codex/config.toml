@@ -1,4 +1,6 @@
-# Project roles adapted from ECC 2.2.3; models inherit session defaults.
+# Project roles adapted from ECC 2.2.3. User preference: GPT-6.1 Sol, medium.
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
 [features]
 multi_agent = true
 
