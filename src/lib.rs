@@ -8,3 +8,9 @@ pub mod party;
 pub mod transport;
 #[path = "../mixins/claim_borders/waypoints.rs"]
 pub mod waypoints;
+
+#[path = "../mixins/claim_borders/visualization.rs"]
+pub mod visualization;
+
+#[path = "../mixins/claim_borders/menu.rs"]
+pub mod menu;

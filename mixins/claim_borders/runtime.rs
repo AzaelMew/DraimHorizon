@@ -5,16 +5,18 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "Claim Borders";
-pub const VERSION: &str = "0.2.0";
-pub const DESCRIPTION: &str =
-    "Claims, mutual friends and waypoints. /claims /party /wp /claimborders.";
+pub const VERSION: &str = "0.3.0";
+pub const DESCRIPTION: &str = "M: управление Waypoints, Party и границами. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
 const WORLD_LIMIT: i32 = 30_000_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(test)]
 const DRAW_DISTANCE: f64 = 160.0;
 
+#[cfg(test)]
 type Point = [f64; 3];
+#[cfg(test)]
 pub type Segment = (Point, Point);
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -177,18 +179,11 @@ impl State {
         self.claims_known.then(|| self.claims.clone())
     }
 
-    pub fn from_shared(claims: Vec<Claim>) -> Self {
-        Self {
-            claims,
-            claims_known: true,
-            ..Self::default()
-        }
-    }
-
     pub fn count(&self) -> usize {
         self.claims.len()
     }
 
+    #[cfg(test)]
     pub fn boundaries(&self, dimension: &str, player: Point) -> Vec<Segment> {
         if !self.enabled || !player.iter().all(|n| n.is_finite()) {
             return Vec::new();

@@ -1,7 +1,9 @@
 // Horizon-only adapters. Pure models are compiled independently by Cargo tests.
 use crate::game::{
-    Game, claim_borders as claims, claim_borders_overlay as overlay, claim_borders_party as party,
-    claim_borders_transport as transport, claim_borders_waypoints as waypoints,
+    Game, claim_borders as claims, claim_borders_menu as menu,
+    claim_borders_menu_view as menu_view, claim_borders_overlay as overlay,
+    claim_borders_party as party, claim_borders_transport as transport,
+    claim_borders_visualization as visualization, claim_borders_waypoints as waypoints,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
@@ -37,6 +39,9 @@ struct Client {
     tab_cache: Vec<(u128, String)>,
     tab_at: u64,
     share_warning: bool,
+    visual: visualization::Settings,
+    visual_writable: bool,
+    menu_feedback: String,
 }
 
 impl Default for Client {
@@ -63,6 +68,9 @@ impl Default for Client {
             tab_cache: Vec::new(),
             tab_at: 0,
             share_warning: false,
+            visual: visualization::Settings::default(),
+            visual_writable: true,
+            menu_feedback: String::new(),
         }
     }
 }
@@ -129,6 +137,15 @@ fn ensure(game: &mut Game<'_>) -> bool {
         Ok(store) => client.waypoints = Some(store),
         Err(error) => errors.push(format!("Waypoint storage disabled: {error}")),
     }
+    match visualization::Settings::load(&client.root.join("visualization.json")) {
+        Ok(settings) => client.visual = settings,
+        Err(error) => {
+            client.visual_writable = false;
+            errors.push(format!(
+                "Visualization uses defaults; saved file needs repair: {error}"
+            ));
+        }
+    }
     if game.remote.is_some() {
         match party::Party::load(&party_path(&client), &client.scope, seed) {
             Ok(p) => client.party = Some(p),
@@ -168,6 +185,7 @@ fn cached_online(game: &mut Game<'_>) -> Vec<(u128, String)> {
 }
 
 pub(super) fn reset() {
+    menu_view::reset();
     state(|c| *c = Client::default());
 }
 
@@ -188,7 +206,11 @@ pub(super) fn tick(game: &mut Game<'_>) {
         });
         return;
     }
-    if game.remote.is_none() || !ensure(game) {
+    if !ensure(game) {
+        return;
+    }
+    service_menu(game);
+    if game.remote.is_none() {
         return;
     }
     // Do not consume queued frames while chat settings prevent sending commands.
@@ -511,6 +533,10 @@ pub(super) fn visuals(
 
 pub(super) fn command(game: &mut Game<'_>, command: &str) -> bool {
     let words: Vec<_> = command.split_whitespace().collect();
+    if matches!(words.as_slice(), ["horizonmenu"] | ["claimborders", "menu"]) {
+        open_menu(game);
+        return true;
+    }
     if !matches!(
         words.first().copied(),
         Some("wp" | "waypoint" | "party" | "friend")
@@ -774,4 +800,225 @@ pub(super) fn typed_relay(game: &mut Game<'_>, message: &str) -> bool {
         Err(error) => game.native_chat(&format!("[Party] {error}")),
     }
     true
+}
+
+pub(super) fn visual_settings() -> visualization::Settings {
+    state(|c| c.visual.clone())
+}
+
+fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
+    let tab = if game.remote.is_some() {
+        cached_online(game)
+    } else {
+        Vec::new()
+    };
+    let ids: Vec<_> = tab.iter().map(|(id, _)| *id).collect();
+    let borders_enabled = claims::with_state(|s| s.enabled);
+    state(|c| {
+        let time = now(c);
+        let waypoints = c
+            .waypoints
+            .as_ref()
+            .map(|store| {
+                store
+                    .all(&c.scope)
+                    .iter()
+                    .map(|w| menu::WaypointRow {
+                        id: w.id,
+                        name: w.name.clone(),
+                        color: w.color,
+                        detail: format!(
+                            "{}: {:.0} {:.0} {:.0}",
+                            w.dimension, w.position[0], w.position[1], w.position[2]
+                        ),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut rows = Vec::new();
+        if let Some(p) = &mut c.party {
+            let live = p.online(&ids, time);
+            for friend in p.friends() {
+                let detail = if let Some(s) = live.iter().find(|s| s.uuid == friend.uuid) {
+                    format!("В сети · {:.0}% HP", s.health_percent)
+                } else if ids.contains(&friend.uuid) {
+                    "В сети · нет свежих данных".into()
+                } else {
+                    "Не в сети".into()
+                };
+                rows.push(menu::PartyRow {
+                    name: friend.name,
+                    detail,
+                    pending: false,
+                });
+            }
+            rows.extend(p.pending(time).into_iter().map(|f| menu::PartyRow {
+                name: f.name,
+                detail: "Входящее приглашение".into(),
+                pending: true,
+            }));
+        }
+        let settings = &c.visual;
+        menu::ViewModel {
+            waypoints,
+            party: rows,
+            relay: if game.remote.is_none() {
+                "Одиночный мир".into()
+            } else {
+                match c.relay {
+                    Relay::Off => "Обмен выключен".into(),
+                    Relay::Signed => "Подписанный обмен".into(),
+                    Relay::Unsigned => "Неподписанный обмен".into(),
+                }
+            },
+            claims: menu::ClaimsSettings {
+                enabled: borders_enabled,
+                own_visible: settings.own_visible,
+                friends_visible: settings.friends_visible,
+                through_walls: settings.through_walls,
+                height: match settings.span {
+                    visualization::Span::Near16 => 16.0,
+                    visualization::Span::Near32 => 32.0,
+                    visualization::Span::Near64 => 64.0,
+                    visualization::Span::FullHeight => 384.0,
+                },
+                distance: f32::from(settings.distance),
+                own_color: settings.own_color,
+                friend_color: settings.friend_color,
+                opacity: settings.opacity,
+            },
+            status: c.menu_feedback.clone(),
+        }
+    })
+}
+
+pub(super) fn open_menu(game: &mut Game<'_>) {
+    if !game.native_on(claims::ID) || !ensure(game) {
+        return;
+    }
+    if game.native_mod_screen_open(claims::ID) {
+        menu_view::open();
+        menu_view::sync(menu_snapshot(game));
+    }
+}
+
+pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
+    if !game.native_on(claims::ID) || game.title.is_some() || game.native_player().is_none() {
+        return;
+    }
+    // Leave Options via an explicit local settings button; preserve all option edits.
+    game.settings.save(&Game::options_path());
+    let previous = game.screen;
+    game.screen = crate::game::Screen::Playing;
+    open_menu(game);
+    if game.native_mod_screen() != Some(claims::ID) {
+        game.screen = previous;
+    }
+}
+
+fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
+    use menu::Action;
+    match action {
+        Action::AddWaypoint { name, color } => {
+            waypoint_command(game, &["add", &format!("#{color:06X}"), &name])
+        }
+        Action::RenameWaypoint { id, name } => {
+            waypoint_command(game, &["rename", &id.to_string(), &name])
+        }
+        Action::RecolorWaypoint { id, color } => {
+            waypoint_command(game, &["color", &id.to_string(), &format!("#{color:06X}")])
+        }
+        Action::DeleteWaypoint { id } => waypoint_command(game, &["remove", &id.to_string()]),
+        Action::Invite { name } => party_command(game, &["invite", &name], false),
+        Action::Accept { name } => party_command(game, &["accept", &name], false),
+        Action::RemoveFriend { name } => party_command(game, &["remove", &name], false),
+        Action::RelayOff => party_command(game, &["relay", "off"], false),
+        Action::RelayUnsigned => party_command(game, &["relay", "unsigned"], false),
+        // Produced only by the explicit confirmation in our locally rendered modal.
+        Action::AuthorizeSignedRelay => party_command(game, &["relay", "signed"], true),
+        Action::RefreshClaims => {
+            if game.remote.is_none() {
+                return Err("Обновление приватных территорий доступно на сервере.".into());
+            }
+            claims::with_state(|s| s.begin_refresh());
+            game.send_unattended_command("claims");
+            state(|c| {
+                c.last_claims.clear();
+                c.pages.clear();
+            });
+            Ok(vec![
+                "Запрошены ваши приваты с сервера; после ответа они передаются друзьям.".into(),
+            ])
+        }
+        Action::SetClaims(settings) => {
+            state(|c| {
+                if !c.visual_writable {
+                    return Err(
+                        "Файл настроек повреждён. Исправьте visualization.json перед сохранением."
+                            .to_owned(),
+                    );
+                }
+                let mut next = c.visual.clone();
+                next.own_visible = settings.own_visible;
+                next.friends_visible = settings.friends_visible;
+                next.through_walls = settings.through_walls;
+                next.own_color = settings.own_color;
+                next.friend_color = settings.friend_color;
+                next.set("opacity", &settings.opacity.to_string())?;
+                next.distance = match settings.distance {
+                    64.0 => 64,
+                    160.0 => 160,
+                    256.0 => 256,
+                    512.0 => 512,
+                    _ => return Err("Некорректная дальность.".into()),
+                };
+                next.span = match settings.height {
+                    16.0 => visualization::Span::Near16,
+                    32.0 => visualization::Span::Near32,
+                    64.0 => visualization::Span::Near64,
+                    384.0 => visualization::Span::FullHeight,
+                    _ => return Err("Некорректная высота.".into()),
+                };
+                next.save(&c.root.join("visualization.json"))?;
+                c.visual = next;
+                Ok(())
+            })?;
+            claims::with_state(|s| s.enabled = settings.enabled);
+            Ok(vec!["Настройки границ сохранены.".into()])
+        }
+        Action::Close => {
+            game.native_mod_screen_close(claims::ID);
+            menu_view::reset();
+            Ok(Vec::new())
+        }
+    }
+}
+
+pub(super) fn service_menu(game: &mut Game<'_>) {
+    if game.native_mod_screen() != Some(claims::ID) || !game.native_on(claims::ID) {
+        // Closing with Escape discards queued actions, including signature authorization.
+        menu_view::drain_actions();
+        if game.native_mod_screen() == Some(claims::ID) {
+            game.native_mod_screen_close(claims::ID);
+        }
+        return;
+    }
+    if !ensure(game) {
+        return;
+    }
+    for action in menu_view::drain_actions() {
+        if game.native_mod_screen() != Some(claims::ID) {
+            break;
+        }
+        let feedback = match execute_menu(game, action) {
+            Ok(lines) => lines.join(" "),
+            Err(error) => error,
+        };
+        if !feedback.is_empty() {
+            state(|c| c.menu_feedback = feedback);
+        }
+    }
+    if game.native_mod_screen() == Some(claims::ID) {
+        menu_view::sync(menu_snapshot(game));
+    }
 }
