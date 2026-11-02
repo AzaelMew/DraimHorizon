@@ -757,7 +757,9 @@ pub(super) fn render(
                         &cell.owner,
                         xy,
                         80.0,
-                        if cell.own {
+                        if cell.foreign {
+                            0xe45b65
+                        } else if cell.own {
                             source.own_color
                         } else {
                             source.friend_color
@@ -839,7 +841,7 @@ pub(super) fn render(
         let info = warning.as_ref().map_or_else(
             || {
                 format!(
-                    "{} · свои приваты {} · друзей {}",
+                    "{} · свои приваты {} · чужие {}",
                     if !source.own_known {
                         "Свои приваты: обнови /claims"
                     } else if p.remember {

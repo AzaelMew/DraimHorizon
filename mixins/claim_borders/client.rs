@@ -235,6 +235,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     crate::game::claim_borders_outgoing_view::frame(game);
     crate::game::claim_borders_teleport_view::frame(game);
     crate::game::claim_borders_claim_memory::frame(game);
+    crate::game::claim_borders_claim_observations_view::frame(game);
     service_menu(game);
     crate::game::claim_borders_inventory_sort_view::frame(game);
     if !game.native_on(claims::ID) {
@@ -346,6 +347,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 z: claim.z,
                 owner: "Вы".into(),
                 own: true,
+                foreign: false,
             })
             .collect();
         let mut marks = Vec::new();
@@ -389,6 +391,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                                 z: c.z,
                                 owner: friend.name.clone(),
                                 own: false,
+                                foreign: false,
                             }),
                     );
                 }
@@ -413,6 +416,16 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 });
             }
         }
+        let friend_names: std::collections::BTreeSet<_> = c
+            .party
+            .as_ref()
+            .map(|p| {
+                p.friends()
+                    .into_iter()
+                    .map(|f| f.name.to_ascii_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
         for (owner, land) in crate::game::claim_borders_claim_memory::others() {
             cells.extend(land.into_iter().map(|claim| map::Cell {
                 dimension: claim.dimension,
@@ -420,7 +433,28 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 z: claim.z,
                 owner: owner.clone(),
                 own: false,
+                foreign: !friend_names.contains(&owner.to_ascii_lowercase()),
             }));
+        }
+        let known_cells: std::collections::BTreeSet<_> = cells
+            .iter()
+            .map(|c| (c.dimension.clone(), c.x, c.z))
+            .collect();
+        for r in crate::game::claim_borders_claim_observations_view::records() {
+            if !known_cells.contains(&(r.claim.dimension.clone(), r.claim.x, r.claim.z)) {
+                cells.push(map::Cell {
+                    dimension: r.claim.dimension,
+                    x: r.claim.x,
+                    z: r.claim.z,
+                    owner: format!(
+                        "{} (наблюдение · {})",
+                        r.owner.unwrap_or_default(),
+                        r.reporter
+                    ),
+                    own: false,
+                    foreign: true,
+                });
+            }
         }
         for (uuid, name) in &c.tab_cache {
             if *uuid == c.own || marks.iter().any(|m| m.player == Some(*uuid)) {
@@ -1049,9 +1083,34 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
     })
 }
 
-pub(super) fn territories() -> Vec<claims::Claim> {
+pub(super) fn stranger_territories() -> Vec<claims::Claim> {
+    let names: std::collections::BTreeSet<_> = friend_ids()
+        .into_iter()
+        .map(|(_, n)| n.to_ascii_lowercase())
+        .collect();
     let mut land: Vec<_> = crate::game::claim_borders_claim_memory::others()
         .into_iter()
+        .filter(|(name, _)| !names.contains(&name.to_ascii_lowercase()))
+        .flat_map(|(_, land)| land)
+        .collect();
+    land.extend(
+        crate::game::claim_borders_claim_observations_view::records()
+            .into_iter()
+            .map(|r| r.claim),
+    );
+    land.sort();
+    land.dedup();
+    land
+}
+
+pub(super) fn territories() -> Vec<claims::Claim> {
+    let names: std::collections::BTreeSet<_> = friend_ids()
+        .into_iter()
+        .map(|(_, n)| n.to_ascii_lowercase())
+        .collect();
+    let mut land: Vec<_> = crate::game::claim_borders_claim_memory::others()
+        .into_iter()
+        .filter(|(name, _)| names.contains(&name.to_ascii_lowercase()))
         .flat_map(|(_, land)| land)
         .collect();
     land.extend(state(|c| {
@@ -1293,6 +1352,16 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     })
 }
 
+pub(super) fn open_trades(game: &mut Game<'_>) {
+    if !game.native_on(claims::ID) || !ensure(game) {
+        return;
+    }
+    if game.native_mod_screen_open(claims::ID) {
+        menu_view::reset();
+        crate::game::claim_borders_economy_view::open();
+    }
+}
+
 pub(super) fn open_menu(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) || !ensure(game) {
         return;
@@ -1410,6 +1479,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::ClearClaimCache => {
             crate::game::claim_borders_claim_memory::clear_others();
+            crate::game::claim_borders_claim_observations_view::clear();
             Ok(vec!["Кеш приватов игроков сброшен; онлайн-игроки передадут свои данные при переподключении.".into()])
         }
         Action::ToggleOutgoing => {
@@ -1654,6 +1724,12 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
     {
         return None;
     }
+    if body.starts_with("[DHO1] ") {
+        if state(|c| c.peers.iter().filter(|p| p.uuid == peer.uuid).count() == 1) {
+            crate::game::claim_borders_claim_observations_view::receive(&peer, &body);
+        }
+        return None;
+    }
     if body.starts_with("[DHC1] ") {
         if state(|c| c.peers.iter().filter(|p| p.uuid == peer.uuid).count() == 1) {
             crate::game::claim_borders_claim_memory::receive(&peer, &body, tab);
@@ -1753,6 +1829,7 @@ fn poll_network(game: &mut Game<'_>) {
         match event {
             websocket::Event::Connected { code } => {
                 crate::game::claim_borders_claim_memory::network_reset();
+                crate::game::claim_borders_claim_observations_view::network_reset();
                 state(|c| {
                     c.connected = true;
                     c.own_code = code;

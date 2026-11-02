@@ -2,6 +2,7 @@
 use crate::game::{
     Game, claim_borders as claims, claim_borders_economy as model,
     claim_borders_economy_client as data, claim_borders_economy_scan as scan,
+    claim_borders_economy_ui::{Panel, Sort},
     claim_borders_menu as edit,
 };
 use horizon_client::hud::HudBatch;
@@ -24,12 +25,15 @@ pub enum Action {
     PrepareSell,
     ConfirmSell,
     CancelSell,
+    Close,
     Copy(String),
     Paste(u64),
 }
 #[derive(Clone)]
 enum Hit {
     Tab(u8),
+    SortMenu,
+    SortPick(Sort),
     Close,
     Search,
     Target,
@@ -42,6 +46,8 @@ enum Hit {
 struct State {
     open: bool,
     tab: u8,
+    sort: [Sort; 6],
+    sort_menu: bool,
     page: usize,
     group: u8,
     settings_page: usize,
@@ -69,6 +75,15 @@ impl Default for State {
         Self {
             open: false,
             tab: 0,
+            sort: [
+                Sort::Name,
+                Sort::Name,
+                Sort::Unit,
+                Sort::Profit,
+                Sort::Unit,
+                Sort::Name,
+            ],
+            sort_menu: false,
             page: 0,
             group: 0,
             settings_page: 0,
@@ -254,12 +269,26 @@ pub(super) fn render(
     if !visible() || game.native_mod_screen() != Some(claims::ID) {
         return false;
     }
-    let [w, h] = [screen.rect[2], screen.rect[3]];
+    let panel = Panel::new([batch.width, batch.height]);
+    let [ox, oy, w, h] = panel.rect;
+    let local = crate::game::native_hooks::NativeScreenView {
+        id: screen.id,
+        menu: screen.menu,
+        title: screen.title,
+        rect: [0.0, 0.0, w, h],
+        slots: screen.slots,
+        mouse: panel.local(screen.mouse),
+        partial_tick: screen.partial_tick,
+    };
+    let screen = &local;
+    let start = batch.vertices.len();
     let now = data::now();
     state(|s| {
         s.hits.clear();
-        s.viewport = [w, h];
-        game.native_fill(batch, screen.rect, 0xfb101821);
+        s.viewport = [batch.width, batch.height];
+        game.native_fill(batch, [-2.0, -2.0, w + 4.0, h + 4.0], 0xaa071017);
+        game.native_fill(batch, screen.rect, 0xf0182430);
+        game.native_fill(batch, [0.0, 0.0, w, 2.0], 0xff6bbdb1);
         label(
             game,
             batch,
@@ -393,17 +422,25 @@ pub(super) fn render(
                     screen.mouse,
                 );
             } else if s.tab == 0 {
-                let x = 8.0;
-                let width = (w - 28.0) * 0.5;
-                let mut y = 62.0;
+                let width = w - 24.0;
+                let x = 12.0;
+                let mut y = 66.0;
+                line(game, batch, x, &mut y, width, "Рынок и аукцион", 0xe1eaf1);
                 line(
                     game,
                     batch,
                     x,
                     &mut y,
                     width,
-                    &format!("Баланс: {} монет", value(book.balance.map(|(v, _)| v))),
-                    0xebd28e,
+                    &format!(
+                        "Цены: {} товаров · Аукцион: {} лотов",
+                        book.quotes
+                            .values()
+                            .filter(|q| q.sell.is_some() || q.buy.is_some())
+                            .count(),
+                        book.listings.len()
+                    ),
+                    0x94b5ca,
                 );
                 line(
                     game,
@@ -412,11 +449,20 @@ pub(super) fn render(
                     &mut y,
                     width,
                     &format!(
-                        "Продать сегодня: {} / {}",
+                        "Лимит продаж: осталось {} из {} монет",
                         value(book.coin_left.map(|(v, _)| v)),
                         value(book.coin_cap)
                     ),
-                    0xd9e2eb,
+                    0xe7ce95,
+                );
+                line(
+                    game,
+                    batch,
+                    x,
+                    &mut y,
+                    width,
+                    "Это максимум выручки от продаж серверу до полуночи UTC.",
+                    0x8fa9bb,
                 );
                 line(
                     game,
@@ -425,116 +471,62 @@ pub(super) fn render(
                     &mut y,
                     width,
                     &format!(
-                        "Лимит на предмет: {} шт.",
+                        "Лимит каждого товара: до {} шт. в сутки",
                         book.item_cap.map_or("?".into(), |v| v.to_string())
                     ),
-                    0xa5b7c8,
+                    0x94b5ca,
                 );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "Товаров: {} · лотов: {}",
-                        book.quotes.len(),
-                        book.listings.len()
-                    ),
-                    0xa5b7c8,
-                );
-                let net: i64 = book
-                    .trades
+                y += 8.0;
+                let deals = book.opportunities(p, now, own);
+                let best = deals
                     .iter()
-                    .filter(|t| t.at / 86400000 == now / 86400000 && !t.buying)
-                    .map(|t| t.net)
-                    .sum();
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!("Наблюдаемая выручка сегодня: {}", model::fmt(net)),
-                    0x89cfb1,
-                );
-                for (label_, v) in status
-                    .sidebar
-                    .iter()
-                    .filter(|(k, _)| k != "Balance")
-                    .take(((h - 170.0) / 12.0).max(0.0) as usize)
-                {
+                    .filter(|o| o.full_profit > 0)
+                    .max_by_key(|o| o.full_profit);
+                if let Some(o) = best {
                     line(
                         game,
                         batch,
                         x,
                         &mut y,
                         width,
-                        &format!("{label_} {v}"),
-                        0x9dabb9,
+                        &format!(
+                            "Лучшая оценка AH → Market: {} · {} монет за лот",
+                            o.listing.label,
+                            model::delta(o.full_profit)
+                        ),
+                        0x8edbb8,
                     );
-                }
-                let mut y = 62.0;
-                let x = w * 0.5 + 6.0;
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "Market: {}%",
-                        if p.flag("taxes_enabled") {
-                            book.rules.market_bp
-                        } else {
-                            Some(0)
-                        }
-                        .map_or("?".into(), |v| format!("{:.2}", v as f64 / 100.0))
-                    ),
-                    0xd9e2eb,
-                );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "VAT продавца AH: {}%",
-                        if p.flag("taxes_enabled") {
-                            book.rules.vat_bp
-                        } else {
-                            Some(0)
-                        }
-                        .map_or("?".into(), |v| format!("{:.2}", v as f64 / 100.0))
-                    ),
-                    0xd9e2eb,
-                );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "Ближайший счёт: {}",
-                        value(if p.flag("taxes_enabled") {
-                            book.rules.bill.map(|(n, _)| n)
-                        } else {
-                            Some(0)
-                        })
-                    ),
-                    0xd9e2eb,
-                );
-                for text in book
-                    .rules
-                    .lines
-                    .iter()
-                    .filter(|_| p.flag("taxes_enabled"))
-                    .rev()
-                    .take(((h - y - 68.0) / 12.0).max(0.0) as usize)
-                {
-                    line(game, batch, x, &mut y, width, text, 0x9dabb9);
+                    line(
+                        game,
+                        batch,
+                        x,
+                        &mut y,
+                        width,
+                        &format!(
+                            "По лимитам сейчас можно продать {} из {} шт. · подробнее в Профит",
+                            o.quantity, o.listing.count
+                        ),
+                        0x94b5ca,
+                    );
+                } else {
+                    line(
+                        game,
+                        batch,
+                        x,
+                        &mut y,
+                        width,
+                        "Откройте AH и Market или нажмите «Обновить цены».",
+                        0x94b5ca,
+                    );
+                    line(
+                        game,
+                        batch,
+                        x,
+                        &mut y,
+                        width,
+                        "В Профит видны расчёты и причины, мешающие продаже.",
+                        0x94b5ca,
+                    );
                 }
                 if status.sale.is_none() {
                     let bw = (w - 22.0) / 4.0;
@@ -609,16 +601,32 @@ pub(super) fn render(
                     game,
                     batch,
                     s,
-                    [8.0, 56.0, lw, 18.0],
+                    [8.0, 56.0, (lw - 86.0).max(30.0), 18.0],
                     &search,
                     Hit::Search,
                     s.focus == 1,
                     screen.mouse,
                 );
+                button(
+                    game,
+                    batch,
+                    s,
+                    [8.0 + lw - 82.0, 56.0, 82.0, 18.0],
+                    s.sort[s.tab as usize].label(),
+                    Hit::SortMenu,
+                    s.sort_menu,
+                    screen.mouse,
+                );
                 let filter = s.search.name.to_ascii_lowercase();
                 let per = (((h - 154.0) / 20.0).floor() as usize).clamp(2, 16);
-                let opportunities = book.opportunities(p, now, own);
-                let rows: Vec<(String, Option<u64>, String, String, bool)> = if s.tab == 1 {
+                let opportunities = if s.tab == 3 {
+                    book.opportunities(p, now, own)
+                } else {
+                    Vec::new()
+                };
+                let opportunity_by_id: std::collections::BTreeMap<_, _> =
+                    opportunities.iter().map(|o| (o.listing.id, o)).collect();
+                let mut rows: Vec<(String, Option<u64>, String, String, bool)> = if s.tab == 1 {
                     book.quotes
                         .iter()
                         .filter(|(key, _)| {
@@ -629,39 +637,59 @@ pub(super) fn render(
                                 key.clone(),
                                 None,
                                 item_label(key),
-                                format!("S {} · B {}", value(q.sell), value(q.buy)),
+                                format!("Сдать {} · Купить {}", value(q.sell), value(q.buy)),
                                 false,
                             )
                         })
                         .collect()
                 } else if s.tab == 3 {
-                    opportunities
-                        .iter()
-                        .filter(|o| {
-                            item_label(&o.listing.item).contains(&filter)
-                                || o.listing.seller.to_ascii_lowercase().contains(&filter)
+                    s.sort[s.tab as usize]
+                        .listings(book, p, now, own, true)
+                        .into_iter()
+                        .filter(|l| {
+                            item_label(&l.item).contains(&filter)
+                                || l.seller.to_ascii_lowercase().contains(&filter)
                         })
-                        .map(|o| {
+                        .map(|l| {
+                            let o = opportunity_by_id.get(&l.id).copied();
                             (
-                                o.listing.item.clone(),
-                                Some(o.listing.id),
-                                format!(
-                                    "#{} {} ×{}",
-                                    o.listing.id, o.listing.label, o.listing.count
+                                l.item.clone(),
+                                Some(l.id),
+                                format!("{} ×{}", l.label, l.count),
+                                o.map_or_else(
+                                    || {
+                                        if book.unsupported.contains(&l.item)
+                                            || book.quotes.get(&l.item).is_some_and(|q| {
+                                                q.buy.is_some() && q.sell.is_none()
+                                            })
+                                        {
+                                            "Market не покупает".into()
+                                        } else {
+                                            "Нет цены Market · ожидаем ответ".into()
+                                        }
+                                    },
+                                    |o| {
+                                        format!(
+                                            "{} · {:.1}% · сегодня {} шт.{}",
+                                            model::fmt(o.full_profit),
+                                            if l.cost > 0 {
+                                                o.full_profit as f64 / l.cost as f64 * 100.0
+                                            } else {
+                                                0.0
+                                            },
+                                            o.quantity,
+                                            if o.ready { "" } else { " · ?" }
+                                        )
+                                    },
                                 ),
-                                format!(
-                                    "{} · {:.1}%{}",
-                                    model::fmt(o.profit),
-                                    o.roi,
-                                    if o.ready { "" } else { " · ?" }
-                                ),
-                                o.ready,
+                                o.is_some_and(|o| o.full_profit > 0),
                             )
                         })
                         .collect()
                 } else {
-                    book.listings
-                        .values()
+                    s.sort[s.tab as usize]
+                        .listings(book, p, now, own, false)
+                        .into_iter()
                         .filter(|l| {
                             item_label(&l.item).contains(&filter)
                                 || l.seller.to_ascii_lowercase().contains(&filter)
@@ -670,17 +698,34 @@ pub(super) fn render(
                             (
                                 l.item.clone(),
                                 Some(l.id),
-                                format!("#{} {} ×{}", l.id, l.label, l.count),
+                                format!("{} ×{}", l.label, l.count),
                                 format!(
-                                    "{} монет{}",
+                                    "{:.2}/шт. · {} за лот · {}{}",
+                                    l.cost as f64 / 100.0 / l.count.max(1) as f64,
                                     model::fmt(l.cost),
-                                    if l.bid { " · ставка" } else { "" }
+                                    l.seller,
+                                    if l.bid { " · торги" } else { "" }
                                 ),
                                 false,
                             )
                         })
                         .collect()
                 };
+                if s.tab == 1 {
+                    rows.sort_by(|a, b| {
+                        let qa = book.quotes.get(&a.0);
+                        let qb = book.quotes.get(&b.0);
+                        let order = match s.sort[1] {
+                            Sort::Unit | Sort::Total => qa
+                                .and_then(|q| q.sell)
+                                .unwrap_or(i64::MAX)
+                                .cmp(&qb.and_then(|q| q.sell).unwrap_or(i64::MAX)),
+                            Sort::Recent => qb.map(|q| q.at).cmp(&qa.map(|q| q.at)),
+                            _ => a.2.cmp(&b.2),
+                        };
+                        order.then(a.0.cmp(&b.0))
+                    });
+                }
                 let pages = rows.len().div_ceil(per).max(1);
                 s.page = s.page.min(pages - 1);
                 for (i, (item, id, title, subtitle, ready)) in
@@ -713,7 +758,7 @@ pub(super) fn render(
                     label(
                         game,
                         batch,
-                        "Данных ещё нет: откройте меню сервера",
+                        "Откройте AH / Market для сбора данных",
                         [10.0, 84.0],
                         lw - 4.0,
                         0x8196aa,
@@ -751,6 +796,8 @@ pub(super) fn render(
                     .item
                     .clone()
                     .or_else(|| status.hand.as_ref().map(|h| h.item.clone()));
+                let detail_start = batch.vertices.len();
+                let detail_hits = s.hits.len();
                 let mut y = 60.0;
                 if let Some(item) = selected.as_ref() {
                     line(game, batch, rx, &mut y, rw, &item_label(item), 0xe4d29e);
@@ -764,36 +811,38 @@ pub(super) fn render(
                             &format!("Market покупает: {} / шт.", value(q.sell)),
                             0x91d1b3,
                         );
-                        line(
-                            game,
-                            batch,
-                            rx,
-                            &mut y,
-                            rw,
-                            &format!("Market продаёт: {} / шт.", value(q.buy)),
-                            0xcbd7e2,
-                        );
-                        line(
-                            game,
-                            batch,
-                            rx,
-                            &mut y,
-                            rw,
-                            &format!("{} · {}", q.source, age(q.at, now)),
-                            0x8ea3b7,
-                        );
-                        line(
-                            game,
-                            batch,
-                            rx,
-                            &mut y,
-                            rw,
-                            &format!(
-                                "Осталось предметов: {}",
-                                q.left.map_or("?".into(), |(n, _)| n.to_string())
-                            ),
-                            0xcbd7e2,
-                        );
+                        if s.tab == 1 {
+                            line(
+                                game,
+                                batch,
+                                rx,
+                                &mut y,
+                                rw,
+                                &format!("Market продаёт: {} / шт.", value(q.buy)),
+                                0xcbd7e2,
+                            );
+                            line(
+                                game,
+                                batch,
+                                rx,
+                                &mut y,
+                                rw,
+                                &format!("{} · {}", q.source, age(q.at, now)),
+                                0x8ea3b7,
+                            );
+                            line(
+                                game,
+                                batch,
+                                rx,
+                                &mut y,
+                                rw,
+                                &format!(
+                                    "Осталось предметов: {}",
+                                    q.left.map_or("?".into(), |(n, _)| n.to_string())
+                                ),
+                                0xcbd7e2,
+                            );
+                        }
                         if s.tab == 1 {
                             line(
                                 game,
@@ -823,7 +872,7 @@ pub(super) fn render(
                             0xd0dbe5,
                         );
                         if s.tab == 3 {
-                            if let Some(o) = opportunities.iter().find(|o| o.listing.id == l.id) {
+                            if let Some(o) = opportunity_by_id.get(&l.id).copied() {
                                 line(
                                     game,
                                     batch,
@@ -831,7 +880,19 @@ pub(super) fn render(
                                     &mut y,
                                     rw,
                                     &format!(
-                                        "Продать {} · валовая {}",
+                                        "За весь лот: {} монет (оценка)",
+                                        model::delta(o.full_profit)
+                                    ),
+                                    0x8edbb8,
+                                );
+                                line(
+                                    game,
+                                    batch,
+                                    rx,
+                                    &mut y,
+                                    rw,
+                                    &format!(
+                                        "Сейчас продать {} шт. · выручка {}",
                                         o.quantity,
                                         model::fmt(o.gross)
                                     ),
@@ -843,11 +904,7 @@ pub(super) fn render(
                                     rx,
                                     &mut y,
                                     rw,
-                                    &format!(
-                                        "Налог {} · чистая {}",
-                                        model::fmt(o.tax),
-                                        model::fmt(o.net)
-                                    ),
+                                    &format!("Выручка по лимитам: {} монет", model::fmt(o.gross)),
                                     0xcbd7e2,
                                 );
                                 line(
@@ -856,7 +913,11 @@ pub(super) fn render(
                                     rx,
                                     &mut y,
                                     rw,
-                                    &format!("Оценка прибыли: {}", model::fmt(o.profit)),
+                                    &if o.quantity == 0 {
+                                        "Сейчас продажа недоступна: лимиты / ограничения".into()
+                                    } else {
+                                        format!("Прибыль сейчас: {} монет", model::delta(o.profit))
+                                    },
                                     if o.ready { 0x91d1b3 } else { 0xe2ba84 },
                                 );
                                 for note in o
@@ -885,18 +946,14 @@ pub(super) fn render(
                             );
                             y += 26.0;
                             if let Some(target) = model::money(&s.target.name) {
-                                if let Some((vat, fee, profit)) = book.resale(l.cost, target, p) {
+                                if let Some((fee, profit)) = book.resale(l.cost, target, p) {
                                     line(
                                         game,
                                         batch,
                                         rx,
                                         &mut y,
                                         rw,
-                                        &format!(
-                                            "VAT {} · размещение {}",
-                                            model::fmt(vat),
-                                            model::fmt(fee)
-                                        ),
+                                        &format!("Комиссия размещения {}", model::fmt(fee)),
                                         0xcbd7e2,
                                     );
                                     line(
@@ -947,6 +1004,13 @@ pub(super) fn render(
                                 ),
                                 0x8ea3b7,
                             );
+                        }
+                    }
+                    batch.clip_since(detail_start, rx, 55.0, w - 8.0, h - 79.0);
+                    for i in (detail_hits..s.hits.len()).rev() {
+                        let r = s.hits[i].0;
+                        if r[1] < 55.0 || r[1] + r[3] > h - 79.0 {
+                            s.hits.remove(i);
                         }
                     }
                     let item = item.clone();
@@ -1034,8 +1098,40 @@ pub(super) fn render(
                     screen.mouse,
                 );
             }
+            if s.sort_menu && (1..=4).contains(&s.tab) {
+                let lw = ((w - 24.0) * 0.44).max(110.0);
+                let x = (8.0 + lw - 124.0).max(8.0);
+                for (i, sort) in [
+                    Sort::Unit,
+                    Sort::Total,
+                    Sort::Profit,
+                    Sort::Roi,
+                    Sort::Count,
+                    Sort::Name,
+                    Sort::Recent,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    button(
+                        game,
+                        batch,
+                        s,
+                        [x, 77.0 + i as f32 * 19.0, 124.0, 18.0],
+                        sort.label(),
+                        Hit::SortPick(sort),
+                        s.sort[s.tab as usize] == sort,
+                        screen.mouse,
+                    );
+                }
+            }
         });
     });
+    batch.clip_since(start, 0.0, 0.0, w, h);
+    for vertex in &mut batch.vertices[start..] {
+        vertex.pos[0] += ox;
+        vertex.pos[1] += oy;
+    }
     true
 }
 pub(super) fn mouse(
@@ -1052,6 +1148,8 @@ pub(super) fn mouse(
     if !pressed || button_ != 0 {
         return true;
     }
+    let panel = Panel::new([screen.rect[2], screen.rect[3]]);
+    let mouse = panel.local(screen.mouse);
     state(|s| {
         if s.viewport != [screen.rect[2], screen.rect[3]] {
             return;
@@ -1060,17 +1158,28 @@ pub(super) fn mouse(
             .hits
             .iter()
             .rev()
-            .find(|(r, _)| contains(*r, screen.mouse))
+            .find(|(r, _)| contains(*r, mouse))
             .map(|(_, h)| h.clone());
         s.notice.clear();
+        if !matches!(hit, Some(Hit::SortMenu)) {
+            s.sort_menu = false;
+        }
         match hit {
+            Some(Hit::SortMenu) => s.sort_menu = !s.sort_menu,
+            Some(Hit::SortPick(sort)) => {
+                s.sort[s.tab as usize] = sort;
+                s.page = 0;
+            }
             Some(Hit::Tab(t)) => {
                 s.tab = t;
                 s.page = 0;
                 s.focus = 0;
                 s.token = s.token.wrapping_add(1);
             }
-            Some(Hit::Close) => s.open = false,
+            Some(Hit::Close) => {
+                s.open = false;
+                add(s, Action::Close);
+            }
             Some(Hit::Search) => {
                 s.focus = 1;
                 s.token = s.token.wrapping_add(1);
@@ -1110,6 +1219,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, mods: u32, canceled: &mut bool) ->
     *canceled = true;
     if key == "key.keyboard.escape" {
         close();
+        state(|s| add(s, Action::Close));
         return true;
     }
     state(|s| {
@@ -1200,11 +1310,21 @@ pub(super) fn hud(
     batch: &mut HudBatch,
     corners: &mut horizon_client::extras_hud::Corners,
 ) {
-    if !game.native_on(claims::ID) || game.ui.hide_gui || game.native_player().is_none() {
+    if !game.native_on(claims::ID)
+        || game.ui.hide_gui
+        || game.native_player().is_none()
+        || !matches!(
+            game.screen,
+            crate::game::Screen::Playing | crate::game::Screen::Chat
+        )
+    {
         return;
     }
     data::read(|book, p, status, _| {
-        if !p.flag("enabled") || !p.flag("hud") {
+        if !p.flag("enabled")
+            || !p.flag("hud")
+            || (p.flag("custom_sidebar") && !status.sidebar.is_empty())
+        {
             return;
         }
         let mut lines = Vec::new();
@@ -1213,7 +1333,7 @@ pub(super) fn hud(
         }
         if p.flag("hud_limits") {
             lines.push(format!(
-                "Продать сегодня: {}",
+                "Лимит продаж: осталось {} монет",
                 value(book.coin_left.map(|(n, _)| n))
             ));
         }
@@ -1226,16 +1346,6 @@ pub(super) fn hud(
                 item_label(&h.item),
                 h.count,
                 value(q.and_then(|q| q.sell))
-            ));
-        }
-        if p.flag("taxes_enabled") && p.flag("hud_taxes") {
-            lines.push(format!(
-                "Налоговый счёт: {}",
-                value(if p.flag("taxes_enabled") {
-                    book.rules.bill.map(|(n, _)| n)
-                } else {
-                    Some(0)
-                })
             ));
         }
         if lines.is_empty() {
@@ -1295,52 +1405,90 @@ pub(super) fn container_overlay(
         if !p.flag("enabled") || !p.flag("overlay") || status.menu_token != token {
             return;
         }
-        let mut text = format!(
-            "DraimHorizons · Лимит продаж {} · налоги {}",
-            value(book.coin_left.map(|(v, _)| v)),
-            if p.flag("taxes_enabled") {
-                "включены"
-            } else {
-                "0%"
-            }
-        );
+        let now = data::now();
+        let mut lines = vec![
+            (
+                if title == "market" {
+                    "MARKET".into()
+                } else {
+                    "АУКЦИОН".into()
+                },
+                0x9edccb,
+            ),
+            (
+                format!(
+                    "Лимит: {} / {} монет",
+                    value(book.coin_left.map(|(v, _)| v)),
+                    value(book.coin_cap)
+                ),
+                0xd9c68f,
+            ),
+        ];
         if let Some((_, item, lot)) =
             slot.and_then(|slot| status.menu_slots.iter().find(|(s, _, _)| *s == slot))
         {
             if let Some(l) = lot.and_then(|id| book.listings.get(&id)) {
-                text = book.opportunity(l, p, data::now(), own).map_or_else(
-                    || "Торги / свой / истёкший лот: нет прогноза перепродажи".into(),
-                    |o| {
-                        format!(
-                            "{} · Market ×{} · профит {}{}",
-                            item_label(item),
-                            o.quantity,
-                            model::fmt(o.profit),
-                            if o.ready {
-                                " (оценка)"
-                            } else {
-                                " · нужны свежие данные / условия"
-                            }
-                        )
-                    },
-                );
+                lines.push((format!("{} ×{}", l.label, l.count), 0xd7e3ec));
+                lines.push((format!("Цена лота: {} монет", model::fmt(l.cost)), 0xa8bdcf));
+                if let Some(o) = book.opportunity(l, p, now, own) {
+                    lines.push((
+                        format!("Оценка AH → Market: {}", model::delta(o.full_profit)),
+                        if o.full_profit > 0 {
+                            0x94d5ae
+                        } else {
+                            0xdfa68d
+                        },
+                    ));
+                    lines.push((format!("По лимитам сейчас: {} шт.", o.quantity), 0xa8bdcf));
+                    if !o.ready {
+                        lines.push(("Проверьте цену и ограничения".into(), 0xd7bd87));
+                    }
+                } else {
+                    lines.push((
+                        if l.bid {
+                            "Аукционные торги: цена не фиксирована".into()
+                        } else {
+                            "Нет цены Market для расчёта".into()
+                        },
+                        0xd7bd87,
+                    ));
+                }
             } else if let Some(q) = book.quotes.get(item) {
-                text = format!(
-                    "{} · купить {} · продать {} · {}с назад",
-                    item_label(item),
-                    value(q.buy),
-                    value(q.sell),
-                    data::now().saturating_sub(q.at) / 1000
-                );
+                lines.push((item_label(item), 0xd7e3ec));
+                lines.push((format!("Купить: {} / шт.", value(q.buy)), 0xa8bdcf));
+                lines.push((
+                    if q.sell.is_none() && q.buy.is_some() {
+                        "Market не принимает на продажу".into()
+                    } else {
+                        format!("Продать: {} / шт.", value(q.sell))
+                    },
+                    0xa8bdcf,
+                ));
             }
-        }
-        let width = (batch.width - 8.0).max(20.0);
-        let y = if screen.rect[1] >= 19.0 {
-            screen.rect[1] - 18.0
         } else {
-            2.0
+            lines.push(("Наведите на товар или лот".into(), 0x8fa9bb));
+        }
+        let height = lines.len() as f32 * 12.0 + 14.0;
+        let Some([x, y, w, h]) = crate::game::claim_borders_economy_ui::beside(
+            screen.rect,
+            [batch.width, batch.height],
+            height,
+        ) else {
+            return;
         };
-        game.native_fill(batch, [4.0, y, width, 14.0], 0xee101b27);
-        label(game, batch, &text, [8.0, y + 3.0], width - 8.0, 0xdfc993);
+        let start = batch.vertices.len();
+        game.native_fill(batch, [x, y, w, h], 0xc00c1721);
+        game.native_fill(batch, [x, y, 2.0, h], 0xbb72cbb5);
+        for (i, (text, color)) in lines.iter().enumerate() {
+            label(
+                game,
+                batch,
+                text,
+                [x + 8.0, y + 7.0 + i as f32 * 12.0],
+                w - 16.0,
+                *color,
+            );
+        }
+        batch.clip_since(start, x, y, x + w, y + h);
     });
 }

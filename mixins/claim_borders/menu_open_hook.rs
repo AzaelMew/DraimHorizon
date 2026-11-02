@@ -1,5 +1,13 @@
 fn claim_borders_menu_open(game: &mut crate::game::Game<'_>, key: &str, pressed: bool) {
     use crate::game::claim_borders;
+    if pressed
+        && game.native_playing()
+        && game.native_on(claim_borders::ID)
+        && key == game.native_mod_key(claim_borders::ID, "trades", "key.keyboard.b")
+    {
+        crate::game::claim_borders_client::open_trades(game);
+        return;
+    }
     if pressed && crate::game::claim_borders_server_ui::page(game, key) {
         return;
     }

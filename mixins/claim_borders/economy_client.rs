@@ -47,7 +47,7 @@ struct State {
     queue: VecDeque<String>,
     issuing: bool,
     query_at: u64,
-    quiet_query: bool,
+    replies: crate::game::claim_borders_economy_requests::Replies,
     quiet: VecDeque<(String, u64)>,
     scanner: scan::Scanner,
     menu_token: String,
@@ -75,7 +75,7 @@ impl Default for State {
             queue: VecDeque::new(),
             issuing: false,
             query_at: 0,
-            quiet_query: false,
+            replies: Default::default(),
             quiet: VecDeque::new(),
             scanner: scan::Scanner::default(),
             menu_token: String::new(),
@@ -120,6 +120,20 @@ pub(super) fn flush() {
         }
     });
 }
+pub(super) fn silence(text: &str) {
+    let text = claims::strip_formatting(text);
+    let time = now();
+    state(|s| {
+        if !s.pref.flag("quiet") {
+            return;
+        }
+        s.quiet.retain(|(_, t)| time.saturating_sub(*t) < 3000);
+        if s.quiet.len() >= 48 {
+            s.quiet.pop_front();
+        }
+        s.quiet.push_back((text, time));
+    });
+}
 pub(super) fn quiet(text: &str) -> bool {
     let text = claims::strip_formatting(text);
     let now = now();
@@ -141,7 +155,7 @@ pub(super) fn server(text: &str) {
         }
         if recognized
             && s.pref.flag("quiet")
-            && s.quiet_query
+            && s.replies.quiet(&text, now)
             && now.saturating_sub(s.query_at) < 10000
             && !text.starts_with("Sold ")
             && !text.starts_with("Bought ")
@@ -163,8 +177,12 @@ pub(super) fn command(command: &str) {
             s.return_scan = false;
             s.status.message = "Сканирование остановлено командой игрока".into();
         }
-        if command.starts_with("worth") || command == "taxes" || command == "bal" {
-            s.quiet_query = false;
+        s.replies.manual(command);
+        if matches!(
+            command.split_whitespace().next(),
+            Some("worth" | "bal" | "balance")
+        ) {
+            s.quiet.clear();
         }
         if command.starts_with("sell ") || command.starts_with("buy ") {
             s.status.sale = None;
@@ -190,7 +208,7 @@ fn hand(stack: &ItemStack) -> Hand {
     }
 }
 fn queue(s: &mut State, command: String) {
-    if s.queue.len() < 32 && !s.queue.contains(&command) {
+    if s.queue.len() < 64 && !s.queue.contains(&command) {
         s.queue.push_back(command);
     }
 }
@@ -200,7 +218,10 @@ fn request(game: &mut Game<'_>, command: String, quiet: bool) {
         s.issuing = true;
         s.last_command = now;
         s.query_at = now;
-        s.quiet_query = quiet;
+        s.replies.begin(&command, now, quiet);
+        if let Some(item) = command.strip_prefix("worth ").and_then(model::id) {
+            s.last_poll.insert(item, now);
+        }
     });
     game.send_unattended_command(&command);
     state(|s| s.issuing = false);
@@ -226,10 +247,17 @@ fn actions(game: &mut Game<'_>) {
                 );
             }
             Action::Refresh(item) => state(|s| {
-                if s.pref.flag("taxes_enabled") {
-                    queue(s, "taxes".into());
-                }
                 queue(s, "bal".into());
+                let missing: Vec<_> = s
+                    .book
+                    .listings
+                    .values()
+                    .filter(|l| !l.bid && !s.book.unsupported.contains(&l.item))
+                    .map(|l| l.item.clone())
+                    .collect();
+                for id in missing {
+                    queue(s, format!("worth {id}"));
+                }
                 if let Some(item) = item.and_then(|i| model::id(&i)) {
                     queue(s, format!("worth {item}"));
                 }
@@ -237,6 +265,7 @@ fn actions(game: &mut Game<'_>) {
             Action::Worth(item) => {
                 if let Some(item) = model::id(&item) {
                     state(|s| {
+                        s.book.unsupported.remove(&item);
                         s.queue.push_front(format!("worth {item}"));
                         s.queue.truncate(32);
                     });
@@ -298,6 +327,12 @@ fn actions(game: &mut Game<'_>) {
                 );
             }
             Action::Stop => cancel_scan(),
+            Action::Close => {
+                view::close();
+                state(|s| s.queue.clear());
+                game.native_mod_screen_close(claims::ID);
+                crate::game::claim_borders_menu_view::reset();
+            }
             Action::CancelSell => state(|s| s.status.sale = None),
             Action::PrepareSell => {
                 let held = game
@@ -493,6 +528,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if !due {
         return;
     }
+    let ui_visible = view::visible();
     let sidebar = crate::game::scoreboard::claim_borders_economy_sidebar::read(game);
     let held = game
         .inventory
@@ -515,10 +551,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
         s.book.inventory = inventory;
         s.book.roll_day(now);
         if s.pref.flag("held")
+            && ui_visible
             && s.status.hand.as_ref().map(|h| &h.item) != held.as_ref().map(|h| &h.item)
             && let Some(h) = &held
         {
-            queue(s, format!("worth {}", h.item));
+            if !s.book.unsupported.contains(&h.item) {
+                queue(s, format!("worth {}", h.item));
+            }
         }
         s.status.hand = held;
     });
@@ -562,7 +601,15 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
                 for b in &page.buttons {
                     if page.family == scan::Kind::Market {
-                        s.book.market_slot(&b.item, &b.lore, now);
+                        let mut lines = b.lore.clone();
+                        lines.push(b.name.clone());
+                        s.book.market_slot(&b.item, &lines, now);
+                        if s.book.watch.len() < 64
+                            && s.book.quotes.contains_key(&b.item)
+                            && !s.book.unsupported.contains(&b.item)
+                        {
+                            s.book.watch.insert(b.item.clone());
+                        }
                         if b.slot == 48 {
                             s.book.server(&b.name, now);
                         }
@@ -570,7 +617,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         && let Some(l) = model::listing(&b.name, &b.item, now, s.book.generation)
                     {
                         if s.book.listings.len() < 5000 || s.book.listings.contains_key(&l.id) {
-                            if s.book.watch.len() < 32 {
+                            if s.book.watch.len() < 64 {
                                 s.book.watch.insert(l.item.clone());
                             }
                             s.book.listings.insert(l.id, l);
@@ -638,27 +685,33 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let _ = game.menu_ops(&[(Some(300 + slot), 0, Input::Pickup)]);
     }
     if finish {
-        client::open_menu(game);
-        view::open();
+        client::open_trades(game);
     }
     let read_command = state(|s| {
         if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
             return None;
         }
-        if let Some(c) = s.queue.pop_front() {
+        if !ui_visible && page.is_none() {
+            s.queue.clear();
+            return None;
+        }
+        while let Some(c) = s.queue.pop_front() {
+            if c.strip_prefix("worth ")
+                .is_some_and(|id| s.book.unsupported.contains(id))
+            {
+                continue;
+            }
             return Some(c);
         }
-        if s.pref.flag("auto_poll") {
-            if let Some(item) = s
-                .book
-                .watch
-                .iter()
-                .find(|item| {
-                    s.last_poll.get(*item).is_none_or(|t| {
-                        now.saturating_sub(*t) >= s.pref.get("interval") as u64 * 1000
-                    })
-                })
-                .cloned()
+        if s.pref.flag("auto_poll") && (ui_visible || page.is_some()) {
+            if let Some(item) = crate::game::claim_borders_economy_requests::next_watch(
+                &s.book.watch,
+                &s.book.unsupported,
+                &s.last_poll,
+                now,
+                s.pref.get("interval") as u64 * 1000,
+            )
+            .map(str::to_owned)
             {
                 s.last_poll.insert(item.clone(), now);
                 return Some(format!("worth {item}"));

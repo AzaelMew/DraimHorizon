@@ -56,3 +56,15 @@ pub mod economy_scan;
 #[path = "../mixins/claim_borders/chat_priority.rs"]
 pub mod chat_priority;
 pub use chat_priority as claim_borders_chat_priority;
+
+pub use economy as claim_borders_economy;
+#[path = "../mixins/claim_borders/economy_requests.rs"]
+pub mod economy_requests;
+#[path = "../mixins/claim_borders/economy_ui.rs"]
+pub mod economy_ui;
+
+#[path = "../mixins/claim_borders/claim_observations.rs"]
+pub mod claim_observations;
+
+#[path = "../mixins/claim_borders/server_tps.rs"]
+pub mod server_tps;

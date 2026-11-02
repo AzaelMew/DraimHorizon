@@ -60,11 +60,16 @@ pub(super) fn manual(game: &Game<'_>, command: &str) {
 }
 pub(super) fn server(text: &str) {
     let text = claims::strip_formatting(text);
-    state(|s| {
-        if s.trust.reply(text.trim()) && s.writable {
+    let accepted = state(|s| {
+        let accepted = s.trust.reply(text.trim());
+        if accepted && s.writable {
             let _ = s.trust.save(&s.path, &s.scope);
         }
+        accepted
     });
+    if accepted {
+        crate::game::claim_borders_economy_client::silence(&text);
+    }
 }
 pub(super) fn frame(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) || game.remote.is_none() || !enabled(game) {

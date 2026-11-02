@@ -12,8 +12,13 @@ fn claim_borders_chat(
         m::with_state(|state| {
             state.receive_chat(&content.plain());
         });
+        crate::game::claim_borders_claim_observations_view::server(&content.plain());
         crate::game::claim_borders_claim_memory::server(&content.plain());
         crate::game::claim_borders_auto_trust_view::server(&content.plain());
         crate::game::claim_borders_economy_client::server(&content.plain());
+        let text = m::strip_formatting(&content.plain());
+        if m::parse_claims(text.trim()).ok().flatten().is_some() {
+            crate::game::claim_borders_economy_client::silence(&text);
+        }
     }
 }

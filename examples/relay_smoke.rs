@@ -113,6 +113,49 @@ fn main() {
             .unwrap();
     }
     assert!(receiver.records[&1].claims.is_empty());
+    // A third-party owner without a mod is discovered by Alice, before friendship.
+    let observed = claim_borders::claims::Claim {
+        dimension: "minecraft:overworld".into(),
+        x: -160,
+        z: 64,
+    };
+    let mut observations = claim_borders::claim_observations::Observations::default();
+    observations
+        .merge(
+            claim_borders::claim_observations::Record {
+                claim: observed.clone(),
+                owner: Some("NoModOwner".into()),
+                at: 100,
+                reporter: "Alice".into(),
+            },
+            100,
+        )
+        .unwrap();
+    let mut seen = claim_borders::claim_observations::Observations::default();
+    for frame in observations.frames() {
+        a.send(&bc, &frame).unwrap();
+        let (peer, body) = message(&b);
+        assert_eq!(peer.uuid, 1);
+        seen.receive(&body, &peer.name, 100).unwrap();
+    }
+    assert_eq!(seen.records[&observed].owner.as_deref(), Some("NoModOwner"));
+    seen.merge(
+        claim_borders::claim_observations::Record {
+            claim: observed.clone(),
+            owner: None,
+            at: 101,
+            reporter: "Bob".into(),
+        },
+        101,
+    )
+    .unwrap();
+    for frame in seen.frames() {
+        b.send(&ac, &frame).unwrap();
+        let (peer, body) = message(&a);
+        assert_eq!(peer.uuid, 2);
+        observations.receive(&body, &peer.name, 101).unwrap();
+    }
+    assert!(observations.records[&observed].owner.is_none());
     let mut ap = Party::new("server#Alice", 1);
     let mut bp = Party::new("server#Bob", 2);
     let request = ap.invite(2, "Bob", 0).unwrap().remove(0);
@@ -243,6 +286,6 @@ fn main() {
     drop(b);
     let _ = std::fs::remove_dir_all(root);
     println!(
-        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, public cached land and removals, pin/replay rejection, high-rate telemetry, reconnect and disconnect cleanup"
+        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, public cached land, non-mod owner observations and removals, pin/replay rejection, high-rate telemetry, reconnect and disconnect cleanup"
     );
 }

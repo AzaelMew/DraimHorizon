@@ -171,6 +171,7 @@ impl Preferences {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cell {
+    pub foreign: bool,
     pub dimension: String,
     pub x: i32,
     pub z: i32,
@@ -377,7 +378,7 @@ pub fn paint_aspect(
     {
         let key = (c.x, c.z);
         if c.own || !cells.contains_key(&key) {
-            cells.insert(key, c.own);
+            cells.insert(key, (c.own, c.foreign));
         }
     }
     for y in 0..size {
@@ -395,8 +396,10 @@ pub fn paint_aspect(
             {
                 blend(pixel, 0xc0c9d5, 0.18);
             }
-            if let Some(own) = cells.get(&(bx, bz)) {
-                let color = if *own {
+            if let Some((own, observed)) = cells.get(&(bx, bz)) {
+                let color = if *observed {
+                    0xe45b65
+                } else if *own {
                     snapshot.own_color
                 } else {
                     snapshot.friend_color
@@ -431,7 +434,9 @@ pub fn paint_aspect(
         {
             dot(
                 [c.x as f64 + 8.0, c.z as f64 + 8.0],
-                if c.own {
+                if c.foreign {
+                    0xe45b65
+                } else if c.own {
                     snapshot.own_color
                 } else {
                     snapshot.friend_color
@@ -493,6 +498,7 @@ mod tests {
                     z: 0,
                     owner: "Вы".into(),
                     own: true,
+                    foreign: false,
                 },
                 Cell {
                     dimension: "minecraft:overworld".into(),
@@ -500,6 +506,7 @@ mod tests {
                     z: 0,
                     owner: "Друг".into(),
                     own: false,
+                    foreign: false,
                 },
                 Cell {
                     dimension: "minecraft:the_nether".into(),
@@ -507,6 +514,7 @@ mod tests {
                     z: 0,
                     owner: "Вы".into(),
                     own: true,
+                    foreign: false,
                 },
             ],
             ..Snapshot::default()
@@ -546,6 +554,7 @@ mod tests {
                 z: 0,
                 owner: "Вы".into(),
                 own: true,
+                foreign: false,
             }],
             ..Snapshot::default()
         };
@@ -578,5 +587,61 @@ mod tests {
             true,
         );
         assert!(other.iter().all(|v| *v == 0));
+    }
+}
+
+#[cfg(test)]
+mod observed_tests {
+    use super::*;
+    #[test]
+    fn observed_foreign_claims_are_red_and_follow_foreign_visibility() {
+        let snapshot = Snapshot {
+            cells: vec![Cell {
+                foreign: true,
+                dimension: "minecraft:overworld".into(),
+                x: 0,
+                z: 0,
+                owner: "Alex (наблюдение)".into(),
+                own: false,
+            }],
+            own_color: 0x00ff00,
+            friend_color: 0x00ff00,
+            ..Snapshot::default()
+        };
+        let mut image = vec![0u8; 16 * 16 * 4];
+        let view = View {
+            center: [8., 8.],
+            blocks_per_pixel: 1.,
+        };
+        let p = Preferences {
+            grid: false,
+            fill: 1.0,
+            ..Preferences::default()
+        };
+        paint(
+            &mut image,
+            16,
+            view,
+            "minecraft:overworld",
+            &snapshot,
+            p,
+            true,
+        );
+        let center = (8 * 16 + 8) * 4;
+        assert!(image[center] > image[center + 1]);
+        image.fill(0);
+        paint(
+            &mut image,
+            16,
+            view,
+            "minecraft:overworld",
+            &snapshot,
+            Preferences {
+                friends: false,
+                ..p
+            },
+            true,
+        );
+        assert_eq!(image[center], 0);
     }
 }

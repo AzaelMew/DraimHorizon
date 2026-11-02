@@ -741,7 +741,7 @@ impl Menu {
                 pair(
                     format!("Свои 3D: {}", on(v.own_visible)),
                     Control::OwnVisible,
-                    format!("Друзья 3D: {}", on(v.friends_visible)),
+                    format!("Чужие приваты 3D: {}", on(v.friends_visible)),
                     Control::FriendsVisible,
                 ),
                 adjust(

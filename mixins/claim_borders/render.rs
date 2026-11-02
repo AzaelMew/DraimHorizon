@@ -30,7 +30,23 @@ fn claim_borders_render(game: &crate::game::Game<'_>, gizmos: &mut horizon_clien
     } else {
         Vec::new()
     };
-    for (claims, friend) in [(&friends, true), (&own, false)] {
+    let known: std::collections::BTreeSet<_> = own.iter().chain(friends.iter()).cloned().collect();
+    let observed = if settings.friends_visible {
+        client::stranger_territories()
+            .into_iter()
+            .filter(|c| !known.contains(c))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    for (claims, color) in [
+        (&friends, settings.styled_color(true)),
+        (&own, settings.styled_color(false)),
+        (
+            &observed,
+            (settings.styled_color(true) & 0xff000000) | 0xe45b65,
+        ),
+    ] {
         let segments = visual::geometry_with_spacing(
             claims
                 .iter()
@@ -40,7 +56,6 @@ fn claim_borders_render(game: &crate::game::Game<'_>, gizmos: &mut horizon_clien
             &settings,
             crate::game::claim_borders_map_view::settings(game).grid_step,
         );
-        let color = settings.styled_color(friend);
         for (start, end) in segments {
             if settings.through_walls {
                 gizmos.on_top.push(horizon_client::gizmos::Line {

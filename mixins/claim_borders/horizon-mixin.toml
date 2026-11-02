@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.10.0"
+version = "0.11.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -280,6 +280,7 @@ source = "chat_view.rs"
 [[injection]]
 id = "chat-capture"
 kind = "HEAD"
+cancellable = true
 target = "horizon_client::game::remote::Game<'_>::signed_chat_line"
 helper = "chat_capture_hook.rs"
 bindings = [
@@ -537,4 +538,50 @@ helper = "tab_hook.rs"
 bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "batch" },
+]
+
+[[module]]
+id = "economy-ui"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_ui"
+source = "economy_ui.rs"
+
+[[module]]
+id = "economy-requests"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_requests"
+source = "economy_requests.rs"
+
+[[module]]
+id = "claim-observations"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_observations"
+source = "claim_observations.rs"
+
+[[module]]
+id = "claim-observations-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_observations_view"
+source = "claim_observations_view.rs"
+
+[[module]]
+id = "server-tps"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_server_tps"
+source = "server_tps.rs"
+
+[[module]]
+id = "server-tps-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_server_tps_view"
+source = "server_tps_view.rs"
+
+[[injection]]
+id = "server-tps-packets"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::handle_packet"
+helper = "server_tps_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "packet", ty = "&horizon_protocol::packets::play::Clientbound", value = "&packet" },
 ]

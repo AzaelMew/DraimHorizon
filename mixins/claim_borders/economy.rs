@@ -53,14 +53,10 @@ pub fn id(text: &str) -> Option<String> {
 fn number(s: &str) -> Option<u32> {
     s.trim().replace(',', "").parse::<u32>().ok()
 }
-fn percent(s: &str) -> Option<u32> {
-    let value = money(s.trim().trim_end_matches('%'))?;
-    u32::try_from(value).ok().filter(|n| *n <= 10000)
-}
 fn product(price: Coins, n: u32) -> Option<Coins> {
     price.checked_mul(i64::from(n)).filter(|v| *v <= MAX)
 }
-fn tax(amount: Coins, bp: u32, whole: bool) -> Option<Coins> {
+fn charge(amount: Coins, bp: u32, whole: bool) -> Option<Coins> {
     let unit = if whole { 100 } else { 1 };
     let v = i128::from(amount) * i128::from(bp);
     i64::try_from((v + i128::from(unit) * 5000) / (i128::from(unit) * 10000) * i128::from(unit))
@@ -77,6 +73,33 @@ pub struct Setting {
     pub default: i64,
 }
 pub const SETTINGS: &[Setting] = &[
+    Setting {
+        key: "sidebar_tps",
+        label: "TPS в sidebar",
+        group: 5,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+    },
+    Setting {
+        key: "tab_tps",
+        label: "TPS в Tab",
+        group: 6,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+    },
+    Setting {
+        key: "tab_opacity",
+        label: "Фон Tab, %",
+        group: 6,
+        min: 10,
+        max: 90,
+        step: 5,
+        default: 42,
+    },
     Setting {
         key: "custom_sidebar",
         label: "Свой sidebar",
@@ -111,7 +134,7 @@ pub const SETTINGS: &[Setting] = &[
         min: 0,
         max: 100,
         step: 10,
-        default: 75,
+        default: 42,
     },
     Setting {
         key: "sidebar_corner",
@@ -147,7 +170,7 @@ pub const SETTINGS: &[Setting] = &[
         min: 1,
         max: 3,
         step: 1,
-        default: 2,
+        default: 3,
     },
     Setting {
         key: "tab_ping",
@@ -177,15 +200,6 @@ pub const SETTINGS: &[Setting] = &[
         default: 1,
     },
     Setting {
-        key: "taxes_enabled",
-        label: "Налоги сервера (отменены)",
-        group: 4,
-        min: 0,
-        max: 1,
-        step: 1,
-        default: 0,
-    },
-    Setting {
         key: "enabled",
         label: "Модуль экономики",
         group: 0,
@@ -201,7 +215,7 @@ pub const SETTINGS: &[Setting] = &[
         min: 0,
         max: 1,
         step: 1,
-        default: 1,
+        default: 0,
     },
     Setting {
         key: "overlay",
@@ -247,15 +261,6 @@ pub const SETTINGS: &[Setting] = &[
         max: 1,
         step: 1,
         default: 1,
-    },
-    Setting {
-        key: "hud_taxes",
-        label: "HUD: недельный счёт",
-        group: 0,
-        min: 0,
-        max: 1,
-        step: 1,
-        default: 0,
     },
     Setting {
         key: "corner",
@@ -313,7 +318,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "quiet",
-        label: "Тихие авто-запросы",
+        label: "Тихие служебные ответы",
         group: 2,
         min: 0,
         max: 1,
@@ -420,15 +425,6 @@ pub const SETTINGS: &[Setting] = &[
         default: 0,
     },
     Setting {
-        key: "reserve_bill",
-        label: "Резервировать известные налоги",
-        group: 3,
-        min: 0,
-        max: 1,
-        step: 1,
-        default: 1,
-    },
-    Setting {
         key: "strict_history",
         label: "Помечать неполную историю покупок",
         group: 3,
@@ -438,8 +434,8 @@ pub const SETTINGS: &[Setting] = &[
         default: 1,
     },
     Setting {
-        key: "whole_tax",
-        label: "Округлять налог до целой монеты",
+        key: "whole_fee",
+        label: "Округлять комиссию до монеты",
         group: 4,
         min: 0,
         max: 1,
@@ -448,30 +444,12 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "override",
-        label: "Использовать ручные ставки",
+        label: "Ручная комиссия размещения AH",
         group: 4,
         min: 0,
         max: 1,
         step: 1,
         default: 0,
-    },
-    Setting {
-        key: "market_tax",
-        label: "Ручной налог market, %",
-        group: 4,
-        min: 0,
-        max: 50,
-        step: 1,
-        default: 2,
-    },
-    Setting {
-        key: "vat",
-        label: "Ручной VAT продавца AH, %",
-        group: 4,
-        min: 0,
-        max: 50,
-        step: 1,
-        default: 5,
     },
     Setting {
         key: "listing_fee",
@@ -569,12 +547,8 @@ pub struct Listing {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Rules {
-    pub market_bp: Option<u32>,
-    pub vat_bp: Option<u32>,
     pub fee_bp: Option<u32>,
     pub fee_min: Option<Coins>,
-    pub bill: Option<(Coins, u64)>,
-    pub lines: Vec<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Trade {
@@ -588,6 +562,7 @@ pub struct Trade {
 #[derive(Default)]
 pub struct Book {
     pub quotes: BTreeMap<String, Quote>,
+    pub unsupported: BTreeSet<String>,
     pub listings: BTreeMap<u64, Listing>,
     pub rules: Rules,
     pub balance: Option<(Coins, u64)>,
@@ -607,10 +582,8 @@ pub struct Opportunity {
     pub listing: Listing,
     pub quantity: u32,
     pub gross: Coins,
-    pub tax: Coins,
-    pub net: Coins,
+    pub full_profit: Coins,
     pub profit: Coins,
-    pub roi: f64,
     pub notes: Vec<String>,
     pub ready: bool,
 }
@@ -618,9 +591,19 @@ fn fresh(at: u64, now: u64, ttl: i64) -> bool {
     now >= at && now - at <= ttl as u64 * 1000
 }
 fn quote_line(text: &str) -> Option<(Option<Coins>, Option<Coins>)> {
-    if let Some(s) = text.strip_suffix(" each to buy or sell.") {
+    let text = text.trim().trim_end_matches('.');
+    if let Some(s) = text
+        .strip_suffix(" each, to buy or sell")
+        .or_else(|| text.strip_suffix(" each to buy or sell"))
+    {
         let p = amount(s)?;
         return Some((Some(p), Some(p)));
+    }
+    if let Some(s) = text.strip_suffix(" each, to buy (the market doesn't buy it)") {
+        return Some((amount(s), None));
+    }
+    if let Some(s) = text.strip_suffix(" each, to sell (the market doesn't sell it)") {
+        return Some((None, amount(s)));
     }
     let mut buy = None;
     let mut sell = None;
@@ -726,6 +709,7 @@ impl Book {
         if self.quotes.len() >= 1024 && !self.quotes.contains_key(item) {
             return;
         }
+        self.unsupported.remove(item);
         let q = self.quotes.entry(item.into()).or_default();
         q.buy = buy;
         q.sell = sell;
@@ -743,9 +727,12 @@ impl Book {
         }
     }
     pub fn market_slot(&mut self, item: &str, lines: &[String], now: u64) {
+        let (mut buy, mut sell, mut quoted) = (None, None, false);
         for line in lines {
-            if let Some((buy, sell)) = quote_line(line) {
-                self.observe(item, buy, sell, now, "GUI market");
+            if let Some((b, s)) = quote_line(line) {
+                buy = b.or(buy);
+                sell = s.or(sell);
+                quoted = true;
             }
             if let Some(s) = line.strip_prefix("You may still sell ")
                 && let Some(n) = s.strip_suffix(" today").and_then(number)
@@ -761,6 +748,9 @@ impl Book {
 
             self.server(line, now);
         }
+        if quoted {
+            self.observe(item, buy, sell, now, "GUI market");
+        }
     }
     pub fn server(&mut self, text: &str, now: u64) -> bool {
         if text.len() > 4096 {
@@ -768,6 +758,16 @@ impl Book {
         }
         self.roll_day(now);
         let text = text.trim();
+        if let Some(item) = unsupported_item(text) {
+            if self.unsupported.len() < 1024 {
+                self.unsupported.insert(item.clone());
+            }
+            self.watch.remove(&item);
+            let q = self.quotes.entry(item).or_default();
+            q.buy = None;
+            q.sell = None;
+            return true;
+        }
         if let Some((name, body)) = text.split_once(": ")
             && let Some((buy, sell)) = quote_line(body)
             && let Some(item) = id(name)
@@ -795,45 +795,6 @@ impl Book {
             && let Some(n) = number(n)
         {
             self.quotes.entry(item).or_default().left = Some((n, now));
-            return true;
-        }
-        if let Some(s) = text.strip_prefix("Tax: ")
-            && let Some((p, _)) = s.split_once('%')
-        {
-            self.rules.market_bp = percent(p);
-            return true;
-        }
-        if let Some(s) = text.strip_prefix("VAT: ")
-            && let Some((p, _)) = s.split_once('%')
-        {
-            self.rules.vat_bp = percent(p);
-            self.rule_line(text);
-            return true;
-        }
-        if text.starts_with("Land tax, weekly:")
-            || text.starts_with("Wealth tax, weekly")
-            || text.starts_with("The weekly taxes are off")
-            || text.starts_with("Taxes: ")
-        {
-            self.rule_line(text);
-            return true;
-        }
-        if let Some((_, rest)) = text.split_once("): land ")
-            && text.starts_with("Your bill on Monday")
-        {
-            let land = amount(rest);
-            let wealth = rest.split_once(", wealth ").and_then(|(_, s)| amount(s));
-            let owed = rest
-                .split_once(", owed ")
-                .and_then(|(_, s)| amount(s))
-                .unwrap_or(0);
-            if let (Some(a), Some(b)) = (land, wealth) {
-                self.rules.bill = a
-                    .checked_add(b)
-                    .and_then(|v| v.checked_add(owed))
-                    .map(|n| (n, now));
-            }
-            self.rule_line(text);
             return true;
         }
         if let Some(s) = text
@@ -923,13 +884,14 @@ impl Book {
         }
         false
     }
-    fn rule_line(&mut self, text: &str) {
-        let prefix = text.split_once(':').map_or(text, |(s, _)| s);
-        self.rules.lines.retain(|old| !old.starts_with(prefix));
-        self.rules.lines.push(text.into());
-        if self.rules.lines.len() > 12 {
-            self.rules.lines.remove(0);
+    pub fn full_lot_profit(&self, l: &Listing, p: &Preferences) -> Option<Coins> {
+        if l.bid {
+            return None;
         }
+        let price = self.quotes.get(&l.item)?.sell.filter(|p| *p > 0)?;
+        let price =
+            i64::try_from(i128::from(price) * i128::from(100 - p.get("slippage")) / 100).ok()?;
+        product(price, l.count)?.checked_sub(l.cost)
     }
     pub fn opportunity(
         &self,
@@ -954,19 +916,11 @@ impl Book {
         if !fresh(l.seen, now, p.get("ah_ttl")) {
             notes.push("Лот нужно перепроверить".into());
         }
-        let rate = if !p.flag("taxes_enabled") {
-            Some(0)
-        } else if p.flag("override") {
-            Some((p.get("market_tax") * 100) as u32)
-        } else {
-            self.rules.market_bp
-        };
-        let bp = rate.unwrap_or(0);
-        if rate.is_none() {
-            notes.push("Неизвестен налог market".into());
-        }
         let mut n = l.count;
         if let Some((left, at)) = self.coin_left {
+            if left == 0 {
+                notes.push("Дневной лимит монет исчерпан".into());
+            }
             n = n.min(u32::try_from(left / price).unwrap_or(u32::MAX));
             if !fresh(at, now, p.get("quote_ttl")) {
                 notes.push("Обнови денежный лимит".into());
@@ -975,6 +929,9 @@ impl Book {
             notes.push("Неизвестен денежный лимит".into());
         }
         if let Some((left, at)) = q.left {
+            if left == 0 {
+                notes.push("Дневной лимит предмета исчерпан".into());
+            }
             n = n.min(left);
             if !fresh(at, now, p.get("quote_ttl")) {
                 notes.push("Обнови лимит предмета".into());
@@ -997,18 +954,13 @@ impl Book {
         let conservative =
             i64::try_from(i128::from(price) * i128::from(100 - p.get("slippage")) / 100).ok()?;
         let gross = product(conservative, n)?;
-        let fee = tax(gross, bp, p.flag("whole_tax"))?;
-        let net = gross.checked_sub(fee)?;
+        let net = gross;
+        let full_profit = self.full_lot_profit(l, p)?;
         let profit = net.checked_sub(l.cost)?;
         let roi = if l.cost > 0 {
             profit as f64 / l.cost as f64 * 100.0
         } else {
             0.0
-        };
-        let bill = if p.flag("taxes_enabled") && p.flag("reserve_bill") {
-            self.rules.bill.map_or(0, |(v, _)| v)
-        } else {
-            0
         };
         if self
             .balance
@@ -1016,10 +968,9 @@ impl Book {
         {
             notes.push("Баланс нужно обновить".into());
         }
-        let budget = self.balance.map(|(v, _)| {
-            v.saturating_sub(p.get("cash_reserve") * 100)
-                .saturating_sub(bill)
-        });
+        let budget = self
+            .balance
+            .map(|(v, _)| v.saturating_sub(p.get("cash_reserve") * 100));
         match budget {
             None => notes.push("Баланс неизвестен".into()),
             Some(n) if n < l.cost => notes.push("Недостаточно свободных монет".into()),
@@ -1034,10 +985,8 @@ impl Book {
             listing: l.clone(),
             quantity: n,
             gross,
-            tax: fee,
-            net,
+            full_profit,
             profit,
-            roi,
             notes,
             ready,
         })
@@ -1082,23 +1031,9 @@ impl Book {
         if quantity == 0 {
             return None;
         }
-        let rate = if !p.flag("taxes_enabled") {
-            0
-        } else if p.flag("override") {
-            (p.get("market_tax") * 100) as u32
-        } else {
-            self.rules.market_bp?
-        };
-        let gross = product(price, quantity)?;
-        let net = gross.checked_sub(tax(gross, rate, p.flag("whole_tax"))?)?;
-        Some((quantity, net))
+        Some((quantity, product(price, quantity)?))
     }
-    pub fn resale(
-        &self,
-        cost: Coins,
-        target: Coins,
-        p: &Preferences,
-    ) -> Option<(Coins, Coins, Coins)> {
+    pub fn resale(&self, cost: Coins, target: Coins, p: &Preferences) -> Option<(Coins, Coins)> {
         let (fee, min) = if p.flag("override") {
             (
                 (p.get("listing_fee") * 100) as u32,
@@ -1107,20 +1042,8 @@ impl Book {
         } else {
             (self.rules.fee_bp?, self.rules.fee_min?)
         };
-        let vat = if !p.flag("taxes_enabled") {
-            0
-        } else if p.flag("override") {
-            (p.get("vat") * 100) as u32
-        } else {
-            self.rules.vat_bp?
-        };
-        let v = tax(target, vat, p.flag("whole_tax"))?;
-        let f = tax(target, fee, p.flag("whole_tax"))?.max(min);
-        Some((
-            v,
-            f,
-            target.checked_sub(v)?.checked_sub(f)?.checked_sub(cost)?,
-        ))
+        let fee = charge(target, fee, p.flag("whole_fee"))?.max(min);
+        Some((fee, target.checked_sub(fee)?.checked_sub(cost)?))
     }
     pub fn sidebar(&mut self, rows: &[(String, String)], now: u64) {
         for (label, value) in rows {
@@ -1133,7 +1056,7 @@ impl Book {
         }
     }
     pub fn encode(&self, scope: &str) -> String {
-        json!({"schema":1,"scope":scope,"day":self.day,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"rules":[self.rules.market_bp,self.rules.vat_bp,self.rules.fee_bp,self.rules.fee_min],"tax_lines":self.rules.lines,"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
+        json!({"schema":1,"scope":scope,"day":self.day,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
     }
     pub fn decode(raw: &str, scope: &str) -> Result<Self, String> {
         if raw.len() > 4 * 1024 * 1024 {
@@ -1176,20 +1099,11 @@ impl Book {
             book.watch
                 .extend(w.iter().take(64).filter_map(|v| v.as_str().and_then(id)));
         }
-        let bp = |v: &Value| v.as_u64().filter(|n| *n <= 10000).map(|n| n as u32);
-        book.rules.market_bp = bp(&v["rules"][0]);
-        book.rules.vat_bp = bp(&v["rules"][1]);
-        book.rules.fee_bp = bp(&v["rules"][2]);
+        book.rules.fee_bp = v["rules"][2]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n <= 10000);
         book.rules.fee_min = v["rules"][3].as_i64().filter(|n| *n >= 0 && *n <= MAX);
-        if let Some(lines) = v["tax_lines"].as_array() {
-            book.rules.lines.extend(
-                lines
-                    .iter()
-                    .take(12)
-                    .filter_map(|v| v.as_str())
-                    .map(|s| s.chars().take(1024).collect()),
-            );
-        }
         let m = |v: &Value| v.as_i64().filter(|n| *n >= 0 && *n <= MAX);
         if let Some(trades) = v["trades"].as_array() {
             for t in trades.iter().take(256) {
@@ -1249,22 +1163,20 @@ mod tests {
         assert_eq!(l.cost, 7000);
         assert_eq!(book.quotes[&l.item].sell, Some(400));
         let o = book.opportunity(&l, &p, NOW, "me").unwrap();
-        assert_eq!((o.gross, o.tax, o.profit), (8800, 0, 1800));
+        assert_eq!((o.gross, o.profit), (8800, 1800));
         assert!(o.ready);
     }
     #[test]
     fn abolished_taxes_ignore_old_rates_and_bill() {
         let (mut book, p, l) = sample();
-        book.rules.market_bp = Some(200);
-        book.rules.vat_bp = Some(500);
-        book.rules.bill = Some((999999, NOW));
+
         let o = book.opportunity(&l, &p, NOW, "me").unwrap();
-        assert_eq!((o.tax, o.profit), (0, 1800));
+        assert_eq!(o.profit, 1800);
         assert!(o.ready);
         assert!(book.resale(7000, 10000, &p).is_none()); // A listing fee is unknown, not inferred from old VAT.
         book.rules.fee_bp = Some(100);
         book.rules.fee_min = Some(100);
-        assert_eq!(book.resale(7000, 10000, &p), Some((0, 100, 2900)));
+        assert_eq!(book.resale(7000, 10000, &p), Some((100, 2900)));
     }
     #[test]
     fn partial_sale_still_pays_for_entire_lot_and_caps_use_gross() {
@@ -1327,5 +1239,95 @@ mod tests {
     fn transaction_buttons_are_never_interpreted_as_unit_prices() {
         assert!(quote_line("Buy 64 for 128 coins").is_none());
         assert!(quote_line("Sell 64 for 128 coins").is_none());
+    }
+}
+
+pub fn unsupported_item(text: &str) -> Option<String> {
+    text.strip_prefix("The market doesn't trade ")
+        .and_then(|s| s.strip_suffix('.'))
+        .and_then(id)
+}
+pub fn quote_item(text: &str) -> Option<String> {
+    let (name, body) = text.split_once(": ")?;
+    quote_line(body)?;
+    id(name)
+}
+
+#[cfg(test)]
+mod live_server_tests {
+    use super::*;
+    #[test]
+    fn live_server_comma_decimal_and_one_way_prices_are_parsed() {
+        let mut b = Book::default();
+        let now = 100000;
+        assert!(b.server("leather: 3.01 coins each, to buy or sell.", now));
+        assert_eq!(
+            (
+                b.quotes["minecraft:leather"].buy,
+                b.quotes["minecraft:leather"].sell
+            ),
+            (Some(301), Some(301))
+        );
+        assert!(b.server(
+            "gravel: 2 coins each, to buy (the market doesn't buy it).",
+            now
+        ));
+        assert_eq!(
+            (
+                b.quotes["minecraft:gravel"].buy,
+                b.quotes["minecraft:gravel"].sell
+            ),
+            (Some(200), None)
+        );
+        b.watch.insert("minecraft:brown_wool".into());
+        assert!(b.server("The market doesn't trade brown wool.", now));
+        assert!(b.unsupported.contains("minecraft:brown_wool"));
+        assert!(!b.watch.contains("minecraft:brown_wool"));
+        b.market_slot(
+            "minecraft:carrot",
+            &["1.99 coins each, to buy or sell.".into()],
+            now,
+        );
+        assert_eq!(b.quotes["minecraft:carrot"].sell, Some(199));
+    }
+    #[test]
+    fn full_lot_profit_remains_visible_when_daily_allowance_is_exhausted() {
+        let now = 100000;
+        let mut b = Book::default();
+        b.server("leather: 3.01 coins each, to buy or sell.", now);
+        b.server("Selling today: 0 coins left of your 2,000 coins a day, at most 640 of each item a day.",now);
+        let l = listing(
+            "#7 64 Leather · 100 coins (1.56 each) · Alex · 1d left",
+            "leather",
+            now,
+            0,
+        )
+        .unwrap();
+        let o = b
+            .opportunity(&l, &Preferences::default(), now, "me")
+            .unwrap();
+        assert!(o.full_profit > 0);
+        assert_eq!(o.quantity, 0);
+        assert_eq!(o.profit, -10000);
+        assert!(!o.ready);
+    }
+    #[test]
+    fn obsolete_tax_preferences_and_cache_have_no_effect() {
+        let p = Preferences::decode(
+            r#"{"schema":1,"values":{"taxes_enabled":1,"market_tax":50,"vat":50}}"#,
+        )
+        .unwrap();
+        assert!(!p.encode().contains("tax"));
+        let b=Book::decode(r#"{"schema":1,"scope":"s","quotes":[],"rules":[200,500,100,100],"tax_lines":["old bill"]}"#,"s").unwrap();
+        assert_eq!(b.resale(7000, 10000, &p), Some((100, 2900)));
+        assert!(!b.encode("s").contains("tax"));
+    }
+}
+
+pub fn delta(n: Coins) -> String {
+    if n > 0 {
+        format!("+{}", fmt(n))
+    } else {
+        fmt(n)
     }
 }

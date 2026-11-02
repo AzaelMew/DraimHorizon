@@ -4,6 +4,7 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         m::with_state(|state| state.clear());
         return;
     }
+    crate::game::claim_borders_claim_observations_view::command(game, command);
     crate::game::claim_borders_teleport_view::command(command);
     crate::game::claim_borders_teleport_view::trade_command(command);
     crate::game::claim_borders_auto_trust_view::manual(game, command);
