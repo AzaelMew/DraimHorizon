@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.6.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.8.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -47,7 +47,7 @@ cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/ho
 
 ## Релиз
 
-Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование, `cargo check` настоящего клиента и проверку пакета; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
+Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование и проверку пакета; полная компиляция клиента проверяется локально; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
 
 Артефакты: `claim_borders-<version>.hnmod` и его `.sha256`. Пакет содержит только исходники и `horizon-native.json`; одинаковые исходники дают одинаковые байты. Подпись minisign пока не используется. Публикация GitHub Release не добавляет мод автоматически в каталог Horizon: для каталога требуется отдельная заявка и ревью.
 
@@ -92,8 +92,14 @@ Chat cards and translation use `chat_feed.rs`, `chat_view.rs` and the bundled re
 
 Chat geometry and persistent preferences are shared in `chat_preferences.rs`; click hit boxes are stored in final GUI coordinates after scaling. Antispam operates on original text before translation and keeps author identity separate.
 
-Claim cartography: `claim_map.rs` owns settings, projection, claim overlays and sorting; `map_view.rs` owns map UI; `map_backend.rs` is injected as a child of `game::extras` to reuse Horizon terrain scanning and its dynamic atlas slot. Extra source hash for `game/extras.rs` is recorded in compatibility.json. Terrain is limited to loaded chunks and is not persisted.
+Claim cartography: `claim_map.rs` owns settings, projection, claim overlays and sorting; `map_view.rs` owns map UI; `map_backend.rs` is injected as a child of `game::extras` to reuse Horizon terrain scanning and its dynamic atlas slot. Source hashes for `game/extras.rs`, render `minimap.rs` and `hud.rs` are recorded in compatibility.json. The read-only `terrain_bridge.rs` exposes only newly scanned native tiles; `map_atlas_hook.rs` reserves a separate 512² world map slot.
 
 Player faces use float-positioned atlas vertices to avoid GUI pixel snapping. Near-player markers resolve Horizon entities; far-player snapshots use a bounded interpolation deque. The roster is scoped to the game tab and relay realm, with selected contact keys pinned on mutual acceptance (TOFU, not Mojang identity verification).
 
 `inventory_sort.rs` plans bounded chest transactions; `inventory_sort_view.rs` first simulates each plan in a disposable `menu_session`, checks cursor, drops, metadata and untouched player slots, then emits normal `menu_ops`. Server corrections or changed menus stop the operation.
+
+Exploration: `map_history.rs` stores 16×16-chunk regions, including canonical map colour, height, water depth and a separately checksummed overview. Context metadata binds the hash directory to the exact scope, atlas, dimension and cave band. Version/size/checksum/coordinate/duplicate checks isolate bad files; atomic pending-file replacement preserves the previous completed region. Only the 24 most recently used regions remain in RAM; disk regions are not evicted.
+
+`map_worker.rs` owns all disk I/O and terrain composition. At most 2048 coalesced tiles and one latest render request/result wait in each direction; unchanged renders reuse an image. The game thread scans already loaded terrain around the player under the native budget, then applies current claims and icons to the returned image. Panning never changes the scan centre. Normal frames do not wait for disk; `save_for_exit` waits up to three seconds for pending writes. A hard crash may lose the last second of unsaved exploration. No old 0.7.0 terrain can be migrated because it was never stored.
+
+View coordinates remain geographic across rectangular viewports; the full map has a separate atlas texture, while the minimap keeps Horizon’s existing 128² slot. Stored terrain is local, and no relay protocol or source pin changes are needed.

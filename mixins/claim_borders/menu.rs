@@ -63,6 +63,7 @@ pub enum ClaimsSection {
     Map,
     Borders,
     Colours,
+    Storage,
     List,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -260,6 +261,9 @@ pub enum Control {
     MapCorner,
     MapLayer,
     MapMarks,
+    MapRemember,
+    MapShading,
+    MapProfile,
     MapGrid,
     MapCoordinates,
     MapOwn,
@@ -601,12 +605,13 @@ impl Menu {
             (ClaimsSection::Borders, "Границы"),
             (ClaimsSection::Colours, "Цвета"),
             (ClaimsSection::List, "Приваты"),
+            (ClaimsSection::Storage, "Память"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
+                [x + i as f32 * w / 5.0, 56.0, w / 5.0 - 3.0, 18.0],
                 label,
                 Some(Control::ClaimsSection(section)),
                 self.claims_section == section,
@@ -664,7 +669,21 @@ impl Menu {
                     format!("Координаты: {}", on(p.coordinates)),
                     Control::MapCoordinates,
                 ),
+                vec![(
+                    format!("Тени рельефа: {}", on(p.shading)),
+                    Control::MapShading,
+                )],
                 vec![("Сбросить настройки карты".into(), Control::MapReset)],
+            ],
+            ClaimsSection::Storage => vec![
+                vec![(
+                    format!("Запись карты: {}", on(p.remember)),
+                    Control::MapRemember,
+                )],
+                vec![(
+                    format!("Атлас мира: {} / 8", p.profile + 1),
+                    Control::MapProfile,
+                )],
             ],
             ClaimsSection::Borders => vec![
                 pair(
@@ -813,15 +832,35 @@ impl Menu {
                 return out;
             }
         };
+        if self.claims_section == ClaimsSection::Storage {
+            for (i, text) in [
+                "Сохраняется местность рядом с игроком.",
+                "Серверы, аккаунты и измерения разделены.",
+                "Другой мир на том же сервере? Выбери атлас.",
+                "Смена атласа сохраняет предыдущую карту.",
+                "Выключение записи не удаляет файлы.",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    [x, 130.0 + i as f32 * 12.0, w, 10.0],
+                    text,
+                    None,
+                    false,
+                ));
+            }
+        }
+        let step = ((height - 88.0) / rows.len() as f32).clamp(12.0, 20.0);
         for (i, row) in rows.into_iter().enumerate() {
             let n = row.len();
             for (j, (label, control)) in row.into_iter().enumerate() {
                 out.push(widget(
                     [
                         x + j as f32 * w / n as f32,
-                        80.0 + i as f32 * 20.0,
+                        80.0 + i as f32 * step,
                         w / n as f32 - 3.0,
-                        18.0,
+                        step - 2.0,
                     ],
                     label,
                     Some(control),
@@ -1284,6 +1323,9 @@ impl Menu {
             Control::MapToggle
             | Control::MapCorner
             | Control::MapLayer
+            | Control::MapRemember
+            | Control::MapProfile
+            | Control::MapShading
             | Control::MapMarks
             | Control::MapGrid
             | Control::MapCoordinates
@@ -1298,6 +1340,9 @@ impl Menu {
                     Control::MapToggle => p.minimap = !p.minimap,
                     Control::MapCorner => p.corner = (p.corner + 1) % 4,
                     Control::MapLayer => p.layer = p.layer.next(),
+                    Control::MapRemember => p.remember = !p.remember,
+                    Control::MapProfile => p.profile = (p.profile + 1) % 8,
+                    Control::MapShading => p.shading = !p.shading,
                     Control::MapMarks => p.marks = !p.marks,
                     Control::MapGrid => p.grid = !p.grid,
                     Control::MapCoordinates => p.coordinates = !p.coordinates,
@@ -2130,6 +2175,7 @@ mod tests {
             ClaimsSection::Map,
             ClaimsSection::Borders,
             ClaimsSection::Colours,
+            ClaimsSection::Storage,
             ClaimsSection::List,
         ] {
             let menu = Menu {

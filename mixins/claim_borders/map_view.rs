@@ -1,6 +1,6 @@
 // Native map presentation and controls. Terrain is supplied by Horizon's minimap.
 use crate::game::{Game, claim_borders as claims, claim_borders_map as model};
-use horizon_client::hud::{HudBatch, MINIMAP_SPRITE};
+use horizon_client::hud::HudBatch;
 use std::{
     collections::BTreeSet,
     sync::{Mutex, OnceLock},
@@ -21,7 +21,9 @@ struct State {
     follow: bool,
     drag: Option<Drag>,
     rect: Option<[f32; 4]>,
-    published: Option<(String, model::View)>,
+    published: Option<(String, model::View, f32)>,
+    dimensions: Vec<String>,
+    history_warning: Option<String>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -41,6 +43,8 @@ impl Default for State {
             drag: None,
             rect: None,
             published: None,
+            dimensions: Vec::new(),
+            history_warning: None,
         }
     }
 }
@@ -66,11 +70,23 @@ pub(super) fn settings(game: &Game<'_>) -> model::Preferences {
 pub(super) fn configure(game: &Game<'_>, preferences: model::Preferences) {
     let preferences = preferences.normalized();
     game.native_set_setting(claims::ID, "claim_map", &preferences.encode());
-    state(|s| s.preferences = preferences);
+    state(|s| {
+        if s.preferences.profile != preferences.profile
+            || s.preferences.remember != preferences.remember
+        {
+            s.published = None;
+            s.dimensions.clear();
+            s.history_warning = None;
+        }
+        s.preferences = preferences;
+    });
 }
 pub(super) fn reset() {
+    crate::game::extras::claim_borders_map_backend::flush();
     state(|s| {
         s.source = None;
+        s.dimensions.clear();
+        s.history_warning = None;
         s.open = false;
         s.drag = None;
         s.rect = None;
@@ -86,6 +102,8 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
             .is_some_and(|old| old.scope != source.scope)
         {
             s.published = None;
+            s.dimensions.clear();
+            s.history_warning = None;
             s.open = false;
         }
         if s.open && game.native_mod_screen() != Some(claims::ID) {
@@ -113,6 +131,7 @@ pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, r
             s.view.blocks_per_pixel = 0.5;
         }
         s.source = Some(source);
+        s.published = None;
         s.open = true;
         s.return_menu = return_menu;
         s.drag = None;
@@ -154,19 +173,15 @@ pub(in crate::game) struct Request {
     pub view: model::View,
     pub dimension: String,
     pub full: bool,
+    pub aspect: f32,
+    pub draw: bool,
 }
 pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
     if !game.native_on(claims::ID) || game.title.is_some() || game.native_player().is_none() {
         return None;
     }
     let p = settings(game);
-    if game.ui.hide_gui && !visible() {
-        return None;
-    }
     state(|s| {
-        if !s.open && !p.minimap {
-            return None;
-        }
         let source = s.source.clone()?;
         Some(Request {
             view: if s.open {
@@ -185,11 +200,23 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
             source,
             preferences: p,
             full: s.open,
+            aspect: if s.open {
+                s.rect.map_or(1.0, |r| r[2] / r[3])
+            } else {
+                1.0
+            },
+            draw: s.open || (p.minimap && !game.ui.hide_gui),
         })
     })
 }
-pub(in crate::game) fn published(dimension: String, view: model::View) {
-    state(|s| s.published = Some((dimension, view)));
+pub(in crate::game) fn published(dimension: String, view: model::View, aspect: f32) {
+    state(|s| s.published = Some((dimension, view, aspect)));
+}
+pub(in crate::game) fn history_status(dimensions: Vec<String>, warning: Option<String>) {
+    state(|s| {
+        s.dimensions = dimensions;
+        s.history_warning = warning;
+    });
 }
 fn map_marks(
     game: &Game<'_>,
@@ -200,9 +227,10 @@ fn map_marks(
     rect: [f32; 4],
     p: model::Preferences,
     full: bool,
+    aspect: f32,
 ) {
     let xy = |world| {
-        let point = view.pixel(world, 128.0);
+        let point = view.pixel_aspect(world, 128.0, aspect);
         [
             rect[0] + point[0] / 128.0 * rect[2],
             rect[1] + point[1] / 128.0 * rect[3],
@@ -281,6 +309,19 @@ fn map_marks(
     if source.dimension == dimension {
         let at = xy([source.player[0], source.player[2]]);
         if contains(rect, at) {
+            let yaw = source.yaw.to_radians();
+            let dir = [-yaw.sin(), yaw.cos()];
+            let right = [dir[1], -dir[0]];
+            batch.fill_quad(
+                &game.gui.atlas,
+                [
+                    [at[0] + dir[0] * 14.0, at[1] + dir[1] * 14.0],
+                    [at[0] + right[0] * 4.0, at[1] + right[1] * 4.0],
+                    [at[0] - right[0] * 4.0, at[1] - right[1] * 4.0],
+                    [at[0] + dir[0] * 14.0, at[1] + dir[1] * 14.0],
+                ],
+                0xfff0cc73,
+            );
             let size = 10.0;
             game.native_fill(batch, [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0], 0xffe7f8ff);
             let skin = if source.player_skin.is_empty() {
@@ -309,7 +350,7 @@ pub(super) fn hud(
         return;
     }
     let (source, image) = state(|s| (s.source.clone(), s.published.clone()));
-    let (Some(source), Some((dimension, view))) = (source, image) else {
+    let (Some(source), Some((dimension, view, _))) = (source, image) else {
         return;
     };
     let (x, next_y) = corners.place(corner(p.corner), p.size as f32, 0.0);
@@ -327,6 +368,15 @@ pub(super) fn hud(
         [x, y, p.size as f32, p.size as f32],
         p,
         false,
+        1.0,
+    );
+    map_frame(
+        game,
+        batch,
+        [x, y, p.size as f32, p.size as f32],
+        view,
+        1.0,
+        true,
     );
     if p.coordinates {
         let (x, y) = corners.place(corner(p.corner), p.size as f32, 11.0);
@@ -365,36 +415,105 @@ enum Button {
     Dimension,
     Grid,
     Settings,
+    Layer,
     Back,
 }
-fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
-    let side = (size[1] - 60.0).min(size[0] - 160.0).max(100.0);
-    let x = side + 18.0;
-    let w = (size[0] - x - 8.0).max(80.0);
-    vec![
-        (Button::ZoomOut, [x, 38.0, w / 2.0 - 2.0, 18.0], "−".into()),
-        (
-            Button::ZoomIn,
-            [x + w / 2.0, 38.0, w / 2.0, 18.0],
-            "+".into(),
-        ),
-        (
-            Button::Center,
-            [x, 60.0, w / 2.0 - 2.0, 18.0],
-            "К себе".into(),
-        ),
-        (
-            Button::Fit,
-            [x + w / 2.0, 60.0, w / 2.0, 18.0],
-            "К приватам".into(),
-        ),
-        (Button::Dimension, [x, 82.0, w, 18.0], "Измерение".into()),
-        (Button::Grid, [x, 104.0, w, 18.0], "Сетка чанков".into()),
-        (Button::Settings, [x, 126.0, w, 18.0], "Настройки".into()),
-        (Button::Back, [x, 148.0, w, 18.0], "Назад · Esc".into()),
+fn map_rect(size: [f32; 2]) -> [f32; 4] {
+    [
+        6.0,
+        30.0,
+        (size[0] - 12.0).max(100.0),
+        (size[1] - 88.0).max(80.0),
     ]
 }
+fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
+    let width = (size[0] - 12.0) / 9.0;
+    [
+        (Button::ZoomOut, "−"),
+        (Button::ZoomIn, "+"),
+        (Button::Center, "К себе"),
+        (Button::Fit, "Зоны"),
+        (Button::Dimension, "Мир"),
+        (Button::Layer, "Рельеф"),
+        (Button::Grid, "Сетка"),
+        (Button::Settings, "Опции"),
+        (Button::Back, "Закрыть"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (b, text))| {
+        (
+            b,
+            [6.0 + i as f32 * width, size[1] - 24.0, width - 2.0, 18.0],
+            text.into(),
+        )
+    })
+    .collect()
+}
+fn map_frame(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    view: model::View,
+    aspect: f32,
+    mini: bool,
+) {
+    let [x, y, w, h] = rect;
+    for r in [
+        [x - 1.0, y - 1.0, w + 2.0, 1.0],
+        [x - 1.0, y + h, w + 2.0, 1.0],
+        [x - 1.0, y, 1.0, h],
+        [x + w, y, 1.0, h],
+    ] {
+        game.native_fill(batch, r, 0xff6c7e91);
+    }
+    for (text, at) in [
+        ("N", [x + w / 2.0 - 3.0, y + 3.0]),
+        ("S", [x + w / 2.0 - 3.0, y + h - 10.0]),
+        ("W", [x + 3.0, y + h / 2.0 - 4.0]),
+        ("E", [x + w - 9.0, y + h / 2.0 - 4.0]),
+    ] {
+        game.native_fill(batch, [at[0] - 1.0, at[1] - 1.0, 8.0, 10.0], 0xc0101720);
+        game.native_text(
+            batch,
+            text,
+            at,
+            if text == "N" { 0xf0cc73 } else { 0xc8d2dd },
+            false,
+        );
+    }
+    if let Some((blocks, pixels)) = model::scale_bar(
+        f64::from(view.blocks_per_pixel) * 128.0 * f64::from(aspect),
+        w,
+        if mini { w * 0.28 } else { w * 0.16 },
+    ) {
+        let bx = x + 6.0;
+        let by = y + h - 6.0;
+        let text = if blocks >= 1000.0 {
+            format!("{} км", blocks / 1000.0)
+        } else {
+            format!("{blocks:.0} м")
+        };
+        let label_width = (pixels + 5.0).max(game.native_text_width(&text) + 6.0);
+        game.native_fill(
+            batch,
+            [bx - 2.0, by - 13.0, label_width + 2.0, 17.0],
+            0xc0101720,
+        );
+        game.native_fill(batch, [bx, by, pixels, 1.0], 0xffe3e9ed);
+        for xx in [bx, bx + pixels] {
+            game.native_fill(batch, [xx, by - 2.0, 1.0, 3.0], 0xffe3e9ed);
+        }
+        label(game, batch, &text, [bx, by - 11.0], label_width, 0xd9e1e8);
+    }
+}
 fn operate(game: &Game<'_>, button: Button) {
+    if matches!(button, Button::Layer) {
+        let mut p = settings(game);
+        p.layer = p.layer.next();
+        configure(game, p);
+        return;
+    }
     if matches!(button, Button::Grid) {
         let mut p = settings(game);
         p.grid = !p.grid;
@@ -443,6 +562,7 @@ fn operate(game: &Game<'_>, button: Button) {
                 let mut dimensions: BTreeSet<_> =
                     source.cells.iter().map(|c| c.dimension.clone()).collect();
                 dimensions.extend(source.marks.iter().map(|m| m.dimension.clone()));
+                dimensions.extend(s.dimensions.iter().cloned());
                 dimensions.insert(source.dimension.clone());
                 let dimensions: Vec<_> = dimensions.into_iter().collect();
                 let current = dimensions
@@ -454,6 +574,7 @@ fn operate(game: &Game<'_>, button: Button) {
             }
         }
         Button::Back => {
+            s.published = None;
             s.open = false;
             s.drag = None;
             s.close_request = !s.return_menu;
@@ -470,20 +591,23 @@ pub(super) fn render(
         return false;
     }
     let size = [screen.rect[2], screen.rect[3]];
-    let side = (size[1] - 60.0).min(size[0] - 160.0).max(100.0);
-    let rect = [8.0, 38.0, side, side];
+    let rect = map_rect(size);
     let p = settings(game);
-    let (source, dimension, view, image) = state(|s| {
+    let (source, dimension, view, image, warning) = state(|s| {
         s.rect = Some(rect);
         if let Some(drag) = &s.drag {
             s.view.center = [
                 drag.center[0]
                     - f64::from(
-                        (screen.mouse[0] - drag.mouse[0]) / side * 128.0 * s.view.blocks_per_pixel,
+                        (screen.mouse[0] - drag.mouse[0]) / rect[3]
+                            * 128.0
+                            * s.view.blocks_per_pixel,
                     ),
                 drag.center[1]
                     - f64::from(
-                        (screen.mouse[1] - drag.mouse[1]) / side * 128.0 * s.view.blocks_per_pixel,
+                        (screen.mouse[1] - drag.mouse[1]) / rect[3]
+                            * 128.0
+                            * s.view.blocks_per_pixel,
                     ),
             ];
             s.view.constrain();
@@ -492,168 +616,79 @@ pub(super) fn render(
         let image = s
             .published
             .as_ref()
-            .filter(|(dim, _)| dim == &s.dimension)
+            .filter(|(dim, _, _)| dim == &s.dimension)
             .cloned();
-        (s.source.clone(), s.dimension.clone(), s.view, image)
+        (
+            s.source.clone(),
+            s.dimension.clone(),
+            s.view,
+            image,
+            s.history_warning.clone(),
+        )
     });
-    game.native_fill(batch, screen.rect, 0xfa0f1420);
+    game.native_fill(batch, screen.rect, 0xff101821);
     label(
         game,
         batch,
-        &format!("КАРТА · {}", model::dimension_label(&dimension)),
-        [8.0, 12.0],
-        size[0] - 16.0,
-        0xdfe5f2,
+        &format!("КАРТА МИРА · {}", model::dimension_label(&dimension)),
+        [8.0, 10.0],
+        size[0] * 0.7,
+        0xe3e9ed,
     );
-    game.native_fill(batch, [7.0, 37.0, side + 2.0, side + 2.0], 0xff48546a);
-    game.native_fill(batch, rect, 0xff1a2130);
+    label(
+        game,
+        batch,
+        &format!(
+            "{} · {}",
+            p.layer.label(),
+            if p.remember {
+                "Сохранение вкл."
+            } else {
+                "Без записи"
+            }
+        ),
+        [size[0] * 0.7, 10.0],
+        size[0] * 0.3 - 8.0,
+        0x9fadb9,
+    );
+    game.native_fill(batch, rect, 0xff18212c);
     if image.is_some() {
-        if let Some(texture) = game.gui.atlas.sprites.get(MINIMAP_SPRITE).copied() {
+        if let Some(texture) = game
+            .gui
+            .atlas
+            .sprites
+            .get("claim_borders/world_map")
+            .copied()
+        {
             batch.rect_uv(rect[0], rect[1], rect[2], rect[3], texture, u32::MAX);
         }
     } else {
         label(
             game,
             batch,
-            "Загрузка карты…",
-            [14.0, 46.0],
-            side - 12.0,
-            0xaab7cc,
+            "Загрузка исследованной местности…",
+            [rect[0] + 12.0, rect[1] + 12.0],
+            rect[2] - 24.0,
+            0x9fadb9,
         );
     }
-    let actual = image.map_or(view, |(_, v)| v);
-    for (button, r, caption) in buttons(size) {
-        let hover = contains(r, screen.mouse);
-        game.native_fill(batch, r, if hover { 0xff49516b } else { 0xff293348 });
-        label(
-            game,
-            batch,
-            &caption,
-            [r[0] + 4.0, r[1] + 5.0],
-            r[2] - 8.0,
-            0xe4eaf6,
-        );
-        let _ = button;
-    }
-    label(
-        game,
-        batch,
-        "N ↑",
-        [rect[0] + side / 2.0 - 8.0, rect[1] + 3.0],
-        25.0,
-        0xffffff,
-    );
+    let (actual, aspect) = image.map_or((view, rect[2] / rect[3]), |(_, v, a)| (v, a));
     if let Some(source) = source {
-        let x = side + 18.0;
-        let width = size[0] - x - 8.0;
-        let own = source
-            .cells
-            .iter()
-            .filter(|c| c.own && c.dimension == dimension)
-            .count();
-        let friends = source
-            .cells
-            .iter()
-            .filter(|c| !c.own && c.dimension == dimension)
-            .count();
-        label(
-            game,
-            batch,
-            &format!("Свои: {own}"),
-            [x, 176.0],
-            width,
-            source.own_color,
+        map_marks(
+            game, batch, &source, &dimension, actual, rect, p, true, aspect,
         );
-        label(
-            game,
-            batch,
-            &format!("Приваты друзей: {friends}"),
-            [x, 188.0],
-            width,
-            source.friend_color,
-        );
-        if contains(rect, screen.mouse) {
-            let world = actual.world(
-                [
-                    (screen.mouse[0] - rect[0]) / side * 128.0,
-                    (screen.mouse[1] - rect[1]) / side * 128.0,
-                ],
-                128.0,
-            );
-            let (cx, cz) = (model::origin(world[0]), model::origin(world[1]));
-            let owner = source
-                .cells
-                .iter()
-                .find(|c| c.dimension == dimension && c.x == cx && c.z == cz);
-            label(
-                game,
-                batch,
-                &format!("Чанк [{},{}]", cx.div_euclid(16), cz.div_euclid(16)),
-                [rect[0], rect[1] + side + 5.0],
-                side,
-                0xd6dfef,
-            );
-            label(
-                game,
-                batch,
-                &format!(
-                    "X {cx}  Z {cz} · {}",
-                    owner.map_or("нет данных", |c| c.owner.as_str())
-                ),
-                [rect[0], rect[1] + side + 16.0],
-                side,
-                owner.map_or(0xaab4c8, |c| {
-                    if c.own {
-                        source.own_color
-                    } else {
-                        source.friend_color
-                    }
-                }),
-            );
-        } else {
-            label(
-                game,
-                batch,
-                &format!("Масштаб {:.2} б/п · колесо / ±", view.blocks_per_pixel),
-                [rect[0], rect[1] + side + 5.0],
-                side,
-                0xaab7cc,
-            );
-            label(
-                game,
-                batch,
-                "Перетаскивание ЛКМ · Home — к себе",
-                [rect[0], rect[1] + side + 16.0],
-                side,
-                0xaab7cc,
-            );
-        }
-        label(
-            game,
-            batch,
-            if dimension != source.dimension {
-                "Другой мир: только приваты"
-            } else if source.own_known {
-                "Рельеф: загруженные чанки"
-            } else {
-                "Свои приваты: обнови /claims"
-            },
-            [x, 208.0],
-            width,
-            0x8999af,
-        );
-        map_marks(game, batch, &source, &dimension, actual, rect, p, true);
-        if p.labels && actual.blocks_per_pixel <= 2.0 {
+        if p.labels && actual.blocks_per_pixel <= 4.0 {
             let mut owners = BTreeSet::new();
             for cell in source
                 .cells
                 .iter()
                 .filter(|c| c.dimension == dimension && ((c.own && p.own) || (!c.own && p.friends)))
             {
-                let at = actual.pixel([cell.x as f64 + 8.0, cell.z as f64 + 8.0], 128.0);
+                let at =
+                    actual.pixel_aspect([cell.x as f64 + 8.0, cell.z as f64 + 8.0], 128.0, aspect);
                 let xy = [
-                    rect[0] + at[0] / 128.0 * side,
-                    rect[1] + at[1] / 128.0 * side,
+                    rect[0] + at[0] / 128.0 * rect[2],
+                    rect[1] + at[1] / 128.0 * rect[3],
                 ];
                 if contains(rect, xy) && owners.len() < 16 && owners.insert(cell.owner.clone()) {
                     let start = batch.vertices.len();
@@ -669,13 +704,110 @@ pub(super) fn render(
                             source.friend_color
                         },
                     );
-                    batch.clip_since(start, rect[0], rect[1], rect[0] + side, rect[1] + side);
+                    batch.clip_since(
+                        start,
+                        rect[0],
+                        rect[1],
+                        rect[0] + rect[2],
+                        rect[1] + rect[3],
+                    );
                 }
             }
         }
+        let text = if contains(rect, screen.mouse) {
+            let world = actual.world_aspect(
+                [
+                    (screen.mouse[0] - rect[0]) / rect[2] * 128.0,
+                    (screen.mouse[1] - rect[1]) / rect[3] * 128.0,
+                ],
+                128.0,
+                aspect,
+            );
+            let (cx, cz) = (model::origin(world[0]), model::origin(world[1]));
+            let owner = source
+                .cells
+                .iter()
+                .find(|c| c.dimension == dimension && c.x == cx && c.z == cz)
+                .map_or("—", |c| c.owner.as_str());
+            format!(
+                "X {:.0}  Z {:.0}  ·  чанк [{}, {}]  ·  Владелец: {owner}",
+                world[0].floor(),
+                world[1].floor(),
+                cx.div_euclid(16),
+                cz.div_euclid(16)
+            )
+        } else {
+            "Колесо — масштаб · ЛКМ — перемещение · Home — к себе · G — сетка".into()
+        };
+        label(
+            game,
+            batch,
+            &text,
+            [8.0, size[1] - 52.0],
+            size[0] - 16.0,
+            0xc7d3df,
+        );
+        let info = warning.as_ref().map_or_else(
+            || {
+                format!(
+                    "{} · свои приваты {} · друзей {}",
+                    if !source.own_known {
+                        "Свои приваты: обнови /claims"
+                    } else if p.remember {
+                        "Исследованная местность сохраняется на диск"
+                    } else {
+                        "Запись карты выключена"
+                    },
+                    source
+                        .cells
+                        .iter()
+                        .filter(|c| c.own && c.dimension == dimension)
+                        .count(),
+                    source
+                        .cells
+                        .iter()
+                        .filter(|c| !c.own && c.dimension == dimension)
+                        .count()
+                )
+            },
+            |error| format!("Не удалось сохранить/прочитать карту: {error}"),
+        );
+        label(
+            game,
+            batch,
+            &info,
+            [8.0, size[1] - 40.0],
+            size[0] - 16.0,
+            if warning.is_some() {
+                0xe7ad75
+            } else {
+                0x8194a6
+            },
+        );
+    }
+    map_frame(game, batch, rect, actual, aspect, false);
+    for (_, r, caption) in buttons(size) {
+        game.native_fill(
+            batch,
+            r,
+            if contains(r, screen.mouse) {
+                0xff40546a
+            } else {
+                0xff253547
+            },
+        );
+        label(
+            game,
+            batch,
+            &caption,
+            [r[0] + 4.0, r[1] + 5.0],
+            r[2] - 8.0,
+            0xe3e9ed,
+        );
     }
     true
 }
+
 fn contains(rect: [f32; 4], point: [f32; 2]) -> bool {
     point[0] >= rect[0]
         && point[1] >= rect[1]
@@ -735,8 +867,15 @@ pub(super) fn scroll(
                 (screen.mouse[0] - rect[0]) / rect[2] * 128.0,
                 (screen.mouse[1] - rect[1]) / rect[3] * 128.0,
             ];
-            s.view
-                .zoom_at(pixel, 128.0, if amount > 0.0 { 0.5 } else { 2.0 });
+            let aspect = rect[2] / rect[3];
+            let before = s.view.world_aspect(pixel, 128.0, aspect);
+            s.view.blocks_per_pixel = (s.view.blocks_per_pixel
+                * if amount > 0.0 { 0.5 } else { 2.0 })
+            .clamp(0.25, 524288.0);
+            let after = s.view.world_aspect(pixel, 128.0, aspect);
+            s.view.center[0] += before[0] - after[0];
+            s.view.center[1] += before[1] - after[1];
+            s.view.constrain();
             s.follow = false;
         }
     });
@@ -749,6 +888,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
     *canceled = true;
     match key {
         "key.keyboard.escape" | "key.keyboard.j" => operate(game, Button::Back),
+        "key.keyboard.g" => operate(game, Button::Grid),
         "key.keyboard.home" => operate(game, Button::Center),
         "key.keyboard.equal" => operate(game, Button::ZoomIn),
         "key.keyboard.minus" => operate(game, Button::ZoomOut),

@@ -10,6 +10,8 @@
     "crates/horizon-client/src/game/remote.rs": "b90630bc5b4acd99360c18f74814a5f30f18ba98365896eebbdc3d9a72ca4496",
     "crates/horizon-client/src/game/debug_renderers.rs": "2092f8993b2c52c1a9aaf9bad43304231a87ead5cf749f259c363e097ac0fa4d",
     "crates/horizon-client/src/game/chat.rs": "83bf113241e093d77a6bdb5a5493ca7e1000fbd3b4e24ba41dd717b1c80c766c",
-    "crates/horizon-client/src/game/extras.rs": "6c8ee9ed190222cc8755fce7e52a2bb5a8e63fa180b23d846eb8c81cd38785a8"
+    "crates/horizon-client/src/game/extras.rs": "6c8ee9ed190222cc8755fce7e52a2bb5a8e63fa180b23d846eb8c81cd38785a8",
+    "crates/horizon-client-render/src/minimap.rs": "538e3ccd8d0c2d50eb60b8cf5cb2555c94c74f77f7cc04590d79eb65c3b3017f",
+    "crates/horizon-client-render/src/hud.rs": "17ccc7bcb2e5e30152abf4ab9ac1f8603f469422edefdd71f1cb2170ecddc54b"
   }
 }

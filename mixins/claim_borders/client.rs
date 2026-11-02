@@ -420,6 +420,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
             dimension,
             player: [player.x, player.y, player.z],
             player_uuid: c.own,
+            yaw: game.yaw,
             player_skin: c
                 .avatars
                 .get(&c.own)

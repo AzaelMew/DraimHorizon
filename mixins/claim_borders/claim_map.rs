@@ -68,6 +68,9 @@ pub struct Preferences {
     pub sort: Sort,
     pub all_dimensions: bool,
     pub grid_step: u8,
+    pub remember: bool,
+    pub shading: bool,
+    pub profile: u8,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -76,7 +79,7 @@ impl Default for Preferences {
             corner: 1,
             size: 112,
             zoom: 2.0,
-            grid: true,
+            grid: false,
             coordinates: true,
             layer: Layer::Auto,
             marks: true,
@@ -88,12 +91,16 @@ impl Default for Preferences {
             sort: Sort::Distance,
             all_dimensions: false,
             grid_step: 8,
+            remember: true,
+            shading: true,
+            profile: 0,
         }
     }
 }
 impl Preferences {
     pub fn normalized(mut self) -> Self {
         self.corner %= 4;
+        self.profile %= 8;
         self.size = self.size.clamp(64, 192);
         self.zoom = if self.zoom.is_finite() {
             self.zoom.clamp(0.5, 4.0)
@@ -113,7 +120,7 @@ impl Preferences {
     }
     pub fn encode(self) -> String {
         let p = self.normalized();
-        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step}).to_string()
+        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step,"remember":p.remember,"shading":p.shading,"profile":p.profile}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, String> {
         if raw.len() > 4096 {
@@ -130,7 +137,7 @@ impl Preferences {
             corner: v["corner"].as_u64().unwrap_or(1).min(3) as u8,
             size: v["size"].as_u64().unwrap_or(112).min(192) as u16,
             zoom: v["zoom"].as_f64().unwrap_or(2.0) as f32,
-            grid: flag("grid", true),
+            grid: flag("grid", d.grid),
             coordinates: flag("coordinates", true),
             layer: match v["layer"].as_u64() {
                 Some(1) => Layer::Surface,
@@ -151,6 +158,9 @@ impl Preferences {
             },
             all_dimensions: flag("all_dimensions", false),
             grid_step: v["grid_step"].as_u64().unwrap_or(8).min(32) as u8,
+            remember: flag("remember", true),
+            shading: flag("shading", true),
+            profile: v["profile"].as_u64().unwrap_or(0).min(7) as u8,
         }
         .normalized())
     }
@@ -180,6 +190,7 @@ pub struct Snapshot {
     pub player: [f64; 3],
     pub player_uuid: u128,
     pub player_skin: String,
+    pub yaw: f32,
     pub cells: Vec<Cell>,
     pub marks: Vec<Mark>,
     pub own_known: bool,
@@ -197,6 +208,16 @@ impl View {
             self.center[0] + f64::from((pixel[0] - size * 0.5) * self.blocks_per_pixel),
             self.center[1] + f64::from((pixel[1] - size * 0.5) * self.blocks_per_pixel),
         ]
+    }
+    pub fn world_aspect(self, pixel: [f32; 2], size: f32, aspect: f32) -> [f64; 2] {
+        self.world(
+            [(pixel[0] - size * 0.5) * aspect + size * 0.5, pixel[1]],
+            size,
+        )
+    }
+    pub fn pixel_aspect(self, world: [f64; 2], size: f32, aspect: f32) -> [f32; 2] {
+        let xy = self.pixel(world, size);
+        [(xy[0] - size * 0.5) / aspect + size * 0.5, xy[1]]
     }
     pub fn pixel(self, world: [f64; 2], size: f32) -> [f32; 2] {
         [
@@ -222,6 +243,19 @@ impl View {
             };
         }
     }
+}
+pub fn scale_bar(span: f64, pixels: f32, max_pixels: f32) -> Option<(f64, f32)> {
+    if !span.is_finite() || span <= 0.0 || !pixels.is_finite() || pixels <= 0.0 || max_pixels < 1.0
+    {
+        return None;
+    }
+    let max = span * f64::from(max_pixels / pixels);
+    let unit = 10f64.powf(max.log10().floor());
+    let blocks = [5.0, 2.0, 1.0]
+        .into_iter()
+        .map(|m| m * unit)
+        .find(|n| *n <= max)?;
+    Some((blocks, (blocks / span * pixels as f64) as f32))
 }
 pub fn origin(value: f64) -> i32 {
     ((value.floor() as i32).div_euclid(16)) * 16
@@ -282,6 +316,7 @@ fn blend(pixel: &mut [u8], color: u32, alpha: f32) {
     }
     pixel[3] = 255;
 }
+#[cfg(test)]
 pub fn paint(
     image: &mut [u8],
     size: usize,
@@ -290,6 +325,17 @@ pub fn paint(
     snapshot: &Snapshot,
     p: Preferences,
     _full: bool,
+) {
+    paint_aspect(image, size, view, dimension, snapshot, p, 1.0);
+}
+pub fn paint_aspect(
+    image: &mut [u8],
+    size: usize,
+    view: View,
+    dimension: &str,
+    snapshot: &Snapshot,
+    p: Preferences,
+    aspect: f32,
 ) {
     if image.len() != size * size * 4
         || !view.blocks_per_pixel.is_finite()
@@ -310,7 +356,7 @@ pub fn paint(
     }
     for y in 0..size {
         for x in 0..size {
-            let world = view.world([x as f32 + 0.5, y as f32 + 0.5], size as f32);
+            let world = view.world_aspect([x as f32 + 0.5, y as f32 + 0.5], size as f32, aspect);
             let bx = origin(world[0]);
             let bz = origin(world[1]);
             let lx = world[0] - bx as f64;
@@ -337,7 +383,7 @@ pub fn paint(
         }
     }
     let mut dot = |position: [f64; 2], color: u32, radius: i32| {
-        let xy = view.pixel(position, size as f32);
+        let xy = view.pixel_aspect(position, size as f32, aspect);
         if !xy.iter().all(|v| v.is_finite()) {
             return;
         }
@@ -372,6 +418,23 @@ pub fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rectangular_view_projection_and_scale_remain_geographic() {
+        let view = View {
+            center: [-150.0, 88.0],
+            blocks_per_pixel: 2.0,
+        };
+        for aspect in [0.5, 1.0, 2.5] {
+            let point = [30.0, 190.0];
+            let px = view.pixel_aspect(point, 128.0, aspect);
+            let back = view.world_aspect(px, 128.0, aspect);
+            assert!((point[0] - back[0]).abs() < 0.001);
+            assert!((point[1] - back[1]).abs() < 0.001);
+        }
+        let (blocks, pixels) = scale_bar(512.0, 256.0, 64.0).unwrap();
+        assert_eq!(blocks, 100.0);
+        assert_eq!(pixels, 50.0);
+    }
     #[test]
     fn negative_chunks_and_mouse_anchored_zoom() {
         assert_eq!(origin(-0.1), -16);
@@ -431,6 +494,16 @@ mod tests {
     fn claim_overlay_respects_layers_and_round_trips_preferences() {
         let p = Preferences::default();
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
+        let custom = Preferences {
+            remember: false,
+            shading: false,
+            profile: 7,
+            ..p
+        };
+        assert_eq!(Preferences::decode(&custom.encode()).unwrap(), custom);
+        let legacy = Preferences::decode(r#"{"schema":1,"grid":true}"#).unwrap();
+        assert!(legacy.remember && legacy.shading && legacy.grid);
+        assert_eq!(legacy.profile, 0);
         let s = Snapshot {
             own_color: 0x00ff00,
             cells: vec![Cell {

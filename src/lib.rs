@@ -29,3 +29,9 @@ pub use claim_map as claim_borders_map;
 
 #[path = "../mixins/claim_borders/inventory_sort.rs"]
 pub mod inventory_sort;
+
+#[path = "../mixins/claim_borders/map_history.rs"]
+pub mod map_history;
+pub use map_history as claim_borders_map_history;
+#[path = "../mixins/claim_borders/map_worker.rs"]
+pub mod map_worker;

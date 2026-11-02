@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.7.0"
+version = "0.8.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -371,3 +371,36 @@ id = "avatar-draw"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_avatar_draw"
 source = "avatar_draw.rs"
+
+[[module]]
+id = "map-history"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_history"
+source = "map_history.rs"
+
+[[module]]
+id = "map-worker"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_worker"
+source = "map_worker.rs"
+
+[[module]]
+id = "terrain-bridge"
+file = "crates/horizon-client-render/src/minimap.rs"
+name = "claim_borders_terrain_bridge"
+source = "terrain_bridge.rs"
+
+[[injection]]
+id = "world-map-atlas"
+kind = "HEAD"
+target = "horizon_client_render::hud::HudAtlas::slots"
+helper = "map_atlas_hook.rs"
+bindings = [
+ { name = "images", ty = "&mut Vec<(String,u32,u32,Vec<u8>)>", value = "&mut *images" },
+]
+
+[[injection]]
+id = "map-flush-on-exit"
+kind = "HEAD"
+target = "horizon_client::game::Game<'_>::save_for_exit"
+helper = "map_exit_hook.rs"
