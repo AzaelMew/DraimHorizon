@@ -4,8 +4,6 @@ pub mod claims;
 pub mod overlay;
 #[path = "../mixins/claim_borders/party.rs"]
 pub mod party;
-#[path = "../mixins/claim_borders/transport.rs"]
-pub mod transport;
 #[path = "../mixins/claim_borders/waypoints.rs"]
 pub mod waypoints;
 
@@ -14,3 +12,6 @@ pub mod visualization;
 
 #[path = "../mixins/claim_borders/menu.rs"]
 pub mod menu;
+
+#[path = "../mixins/claim_borders/relay_settings.rs"]
+pub mod relay_settings;

@@ -1,0 +1,5 @@
+{$DOMAIN} {
+    reverse_proxy relay:8765 {
+        header_up X-Real-IP {remote_host}
+    }
+}

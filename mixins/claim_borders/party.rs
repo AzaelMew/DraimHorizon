@@ -121,6 +121,18 @@ impl Party {
         }
     }
 
+    pub fn awaiting(&mut self, uuid: u128, now: u64) -> bool {
+        self.prune(now);
+        self.incoming.contains_key(&uuid) || self.outgoing.contains_key(&uuid)
+    }
+
+    pub fn forget_session(&mut self, uuid: u128) {
+        self.handshakes.remove(&uuid);
+        if let Some(record) = self.friends.get_mut(&uuid) {
+            record.session = Session::default();
+        }
+    }
+
     pub fn friends(&self) -> Vec<Friend> {
         self.friends.values().map(|r| r.friend.clone()).collect()
     }

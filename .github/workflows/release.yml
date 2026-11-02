@@ -5,6 +5,8 @@ on:
     paths:
       - 'mixins/**'
       - 'src/**'
+      - 'relay/**'
+      - 'examples/**'
       - 'tools/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -38,8 +40,15 @@ jobs:
         run: |
           cargo fmt --all --check
           rustfmt --edition 2024 --check mixins/claim_borders/*.rs
-          cargo clippy --all-targets --locked -- -D warnings
-          cargo test --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+      - name: Verify relay and encrypted client exchange
+        run: |
+          python3 -m pip install -r relay/requirements.txt
+          PYTHONPATH=relay python3 -m unittest discover -s relay/tests -v
+          python3 tools/test_relay_e2e.py
+          python3 tools/test_relay_container.py
+          python3 tools/package_relay.py
       - name: Apply official mixins to exact Horizon source
         run: python3 tools/stage.py
       - name: Check real Horizon client
@@ -55,6 +64,8 @@ jobs:
           path: |
             target/claim_borders-*.hnmod
             target/claim_borders-*.hnmod.sha256
+            target/claim_borders-relay-*.tar.gz
+            target/claim_borders-relay-*.tar.gz.sha256
           if-no-files-found: error
   release:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

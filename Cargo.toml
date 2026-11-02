@@ -1,6 +1,6 @@
 [package]
 name = "claim-borders"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -18,3 +18,9 @@ debug = 0
 
 [dependencies]
 serde_json = "1"
+
+claim-borders-relay-client = { path = "mixins/claim_borders/relay_client" }
+
+[workspace]
+members = ["mixins/claim_borders/relay_client"]
+resolver = "2"

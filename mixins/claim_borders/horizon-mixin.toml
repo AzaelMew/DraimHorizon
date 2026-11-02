@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.3.0"
+version = "0.4.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -88,12 +88,6 @@ name = "claim_borders_party"
 source = "party.rs"
 
 [[module]]
-id = "transport"
-file = "crates/horizon-client/src/game.rs"
-name = "claim_borders_transport"
-source = "transport.rs"
-
-[[module]]
 id = "overlay"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_overlay"
@@ -129,28 +123,6 @@ bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
   { name = "corners", ty = "&mut horizon_client::extras_hud::Corners", value = "&mut *corners" },
-]
-
-[[injection]]
-id = "private-chat"
-kind = "HEAD"
-cancellable = true
-target = "horizon_client::game::remote::Game<'_>::signed_chat_line"
-helper = "private_chat.rs"
-bindings = [
-  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "content", ty = "&horizon_client::text::Text", value = "&content" },
-]
-
-[[injection]]
-id = "typed-relay-consent"
-kind = "HEAD"
-cancellable = true
-target = "horizon_client::game::chat::Game<'_>::handle_chat_input"
-helper = "typed_chat.rs"
-bindings = [
-  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "message", ty = "&str", value = "message" },
 ]
 
 [[module]]
@@ -281,3 +253,14 @@ bindings = [
   { name = "c", ty = "char", value = "c" },
   { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
 ]
+
+[[crate]]
+id = "relay-client"
+path = "relay_client"
+dependent = "horizon-client"
+
+[[module]]
+id = "relay-settings"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_relay_settings"
+source = "relay_settings.rs"

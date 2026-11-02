@@ -76,30 +76,38 @@ pub(super) fn draw(
         }
         let [_, r, g, b] = marker.color.to_be_bytes();
         let color = rgba(r, g, b, alpha);
-        let name_width = game.native_text_width(&marker.label);
-        let distance_width = game.native_text_width(&distance);
-        let width = name_width.max(distance_width);
-        if width + 4.0 >= batch.width || batch.height < 30.0 {
+        let Some(layout) = model::marker_layout(viewport, [x, y]) else {
             continue;
+        };
+        let [icon_x, icon_y, icon_w, icon_h] = layout.icon;
+        batch.fill(&game.gui.atlas, icon_x, icon_y, icon_w, icon_h, color);
+        let [left, top, width, height] = layout.bounds;
+        let center_x = left + width / 2.0;
+        for (label, line_y, line_color) in [
+            (marker.label.as_str(), top, color),
+            (distance.as_str(), top + 8.0, rgba(225, 225, 225, alpha)),
+        ] {
+            let label = model::marker_label(label, |s| game.native_text_width(s));
+            let text_width = game.native_text_width(&label);
+            let start = batch.vertices.len();
+            batch.text_styled(
+                &game.gui.atlas,
+                &Text::literal(&label),
+                center_x - text_width / 2.0,
+                line_y,
+                line_color,
+                true,
+            );
+            batch.scale_since(
+                start,
+                center_x,
+                line_y,
+                model::MARKER_TEXT_SCALE,
+                model::MARKER_TEXT_SCALE,
+            );
+            // Keep shadows and unusually large resource-pack glyphs inside
+            // the same fixed screen-space box as the normal font.
+            batch.clip_since(start, left, top, left + width, top + height);
         }
-        let center_x = x.clamp(width / 2.0 + 2.0, batch.width - width / 2.0 - 2.0);
-        let top_y = (y + 5.0).clamp(2.0, batch.height - 23.0);
-        batch.fill(&game.gui.atlas, x - 1.5, y - 1.5, 3.0, 3.0, color);
-        batch.text_styled(
-            &game.gui.atlas,
-            &Text::literal(&marker.label),
-            center_x - name_width / 2.0,
-            top_y,
-            color,
-            true,
-        );
-        batch.text_styled(
-            &game.gui.atlas,
-            &Text::literal(&distance),
-            center_x - distance_width / 2.0,
-            top_y + 10.0,
-            rgba(225, 225, 225, alpha),
-            true,
-        );
     }
 }

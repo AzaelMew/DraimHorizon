@@ -13,6 +13,7 @@ struct State {
     // Release is consumed only if this screen consumed the matching press.
     pressed: Vec<i32>,
     height: f32,
+    paste_fields: VecDeque<model::Field>,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -30,12 +31,23 @@ pub(super) fn open() {
         s.menu = model::Menu::default();
         s.actions.clear();
         s.pressed.clear();
+        s.paste_fields.clear();
     });
 }
 pub(super) fn sync(model: model::ViewModel) {
     state(|s| {
         s.menu.reconcile(&s.model, &model, s.height.max(240.0));
         s.model = model;
+    });
+}
+pub(super) fn paste(text: &str) {
+    state(|s| {
+        // Do not paste a secret into a different field if focus changed before the frame drained.
+        if let Some(field) = s.paste_fields.pop_front()
+            && s.menu.focus == Some(field)
+        {
+            s.menu.paste(text);
+        }
     });
 }
 pub(super) fn drain_actions() -> Vec<model::Action> {
@@ -180,6 +192,16 @@ pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut boo
         return;
     }
     state(|s| {
+        if key == "key.keyboard.v" && modifiers & (2 | 8) != 0 {
+            *canceled = true;
+            if let Some(field) = s.menu.focus
+                && s.actions.len() < 32
+            {
+                s.paste_fields.push_back(field);
+                enqueue(s, model::Action::PasteFromClipboard);
+            }
+            return;
+        }
         if s.menu.key(key, modifiers) {
             *canceled = true;
         }
