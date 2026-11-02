@@ -43,3 +43,16 @@ pub mod claim_directory;
 pub mod outgoing;
 #[path = "../mixins/claim_borders/teleport.rs"]
 pub mod teleport;
+
+#[path = "../mixins/claim_borders/auto_trust.rs"]
+pub mod auto_trust;
+#[path = "../mixins/claim_borders/economy.rs"]
+pub mod economy;
+#[path = "../mixins/claim_borders/economy_persistence.rs"]
+pub mod economy_persistence;
+#[path = "../mixins/claim_borders/economy_scan.rs"]
+pub mod economy_scan;
+
+#[path = "../mixins/claim_borders/chat_priority.rs"]
+pub mod chat_priority;
+pub use chat_priority as claim_borders_chat_priority;

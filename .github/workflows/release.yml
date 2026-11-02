@@ -1,4 +1,4 @@
-name: Verify and release Claim Borders
+name: Verify and release DraimHorizons
 on:
   push:
     branches: [main, 'feature/**']
@@ -53,7 +53,7 @@ jobs:
       - name: Apply official mixins to exact Horizon source
         timeout-minutes: 8
         run: python3 tools/stage.py
-      # Native client compilation is disabled here; verified locally for 0.9.0.
+      # Native client compilation is disabled here; verified locally for 0.10.0.
       #- name: Check real Horizon client
       #  timeout-minutes: 10
       #  run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
@@ -62,15 +62,15 @@ jobs:
         run: |
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/claim_borders-${version}.hnmod" --json
+          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
       - uses: actions/upload-artifact@v4
         with:
           name: claim-borders-native
           path: |
-            target/claim_borders-*.hnmod
-            target/claim_borders-*.hnmod.sha256
-            target/claim_borders-relay-*.tar.gz
-            target/claim_borders-relay-*.tar.gz.sha256
+            target/draimhorizons-*.hnmod
+            target/draimhorizons-*.hnmod.sha256
+            target/draimhorizons-relay-*.tar.gz
+            target/draimhorizons-relay-*.tar.gz.sha256
           if-no-files-found: error
   release:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -95,4 +95,4 @@ jobs:
             echo "Release $tag already exists; keeping published artifacts unchanged."
             exit 0
           fi
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "Claim Borders ${version} — Horizon c9d474d" --notes-file docs/release-notes.md
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizons ${version} — Horizon c9d474d" --notes-file docs/release-notes.md

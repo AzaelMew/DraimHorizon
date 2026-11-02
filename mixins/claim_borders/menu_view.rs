@@ -191,6 +191,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Some(model::Field::OwnClaimColor) => "Свои: ",
                         Some(model::Field::FriendClaimColor) => "Друзья: ",
                         Some(model::Field::PeerCode) => "Код друга: ",
+                        Some(model::Field::PriorityName) => "Ник: ",
+                        Some(model::Field::PriorityColor) => "Цвет: ",
                         _ => "",
                     };
                     let rest = if s.menu.focus == Some(model::Field::RelayToken) {

@@ -4,6 +4,9 @@ fn claim_borders_menu_mouse(
     button: i32,
     canceled: &mut bool,
 ) {
+    if crate::game::claim_borders_economy_view::mouse(game, screen, button, false, canceled) {
+        return;
+    }
     if crate::game::claim_borders_map_view::mouse(game, screen, button, false, canceled) {
         return;
     }

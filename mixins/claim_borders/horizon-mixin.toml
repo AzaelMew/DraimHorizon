@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.9.0"
+version = "0.10.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -450,4 +450,91 @@ helper = "outgoing_hook.rs"
 bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
  { name = "message", ty = "&str", value = "message" },
+]
+
+[[module]]
+id = "auto-trust"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_auto_trust"
+source = "auto_trust.rs"
+
+[[module]]
+id = "auto-trust-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_auto_trust_view"
+source = "auto_trust_view.rs"
+
+[[module]]
+id = "economy"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy"
+source = "economy.rs"
+
+[[module]]
+id = "economy-scan"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_scan"
+source = "economy_scan.rs"
+
+[[module]]
+id = "economy-io"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_persistence"
+source = "economy_persistence.rs"
+
+[[module]]
+id = "economy-client"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_client"
+source = "economy_client.rs"
+
+[[module]]
+id = "economy-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_economy_view"
+source = "economy_view.rs"
+
+[[module]]
+id = "economy-sidebar"
+file = "crates/horizon-client/src/game/scoreboard.rs"
+name = "claim_borders_economy_sidebar"
+source = "economy_sidebar.rs"
+
+[[module]]
+id = "economy-menu-stamp"
+file = "crates/horizon-client/src/game/remote.rs"
+name = "claim_borders_economy_menu_stamp"
+source = "economy_menu_stamp.rs"
+
+[[injection]]
+id = "economy-hide-sidebar"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::scoreboard::Game<'_>::draw_scoreboard"
+helper = "economy_sidebar_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+]
+
+[[module]]
+id = "chat-priority"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_chat_priority"
+source = "chat_priority.rs"
+
+[[module]]
+id = "server-ui"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_server_ui"
+source = "server_ui.rs"
+
+[[injection]]
+id = "custom-tab"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::scoreboard::Game<'_>::draw_tab_list"
+helper = "tab_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+ { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "batch" },
 ]

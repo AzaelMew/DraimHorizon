@@ -21,6 +21,8 @@ pub struct Image {
 }
 #[derive(Default)]
 struct Pending {
+    probes: std::collections::VecDeque<(u64, Context, [f64; 2])>,
+    heights: std::collections::VecDeque<(u64, Context, [f64; 3])>,
     tiles: BTreeMap<(Context, (i32, i32)), Tile>,
     query: Option<Query>,
     output: Option<Image>,
@@ -66,6 +68,23 @@ impl Handle {
             .output
             .take()
     }
+    pub fn probe(&self, token: u64, context: Context, position: [f64; 2]) -> bool {
+        let mut p = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
+        if p.probes.len() >= 8 {
+            return false;
+        }
+        p.probes.push_back((token, context, position));
+        self.shared.1.notify_all();
+        true
+    }
+    pub fn height(&self) -> Option<(u64, Context, [f64; 3])> {
+        self.shared
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .heights
+            .pop_front()
+    }
     pub fn flush(&self) {
         let mut p = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
         p.flush = true;
@@ -107,7 +126,12 @@ fn run(shared: Arc<(Mutex<Pending>, Condvar)>, root: PathBuf, palette: Vec<u32>)
     loop {
         let (mut tiles, query, flush, flush_id, stopping) = {
             let mut p = shared.0.lock().unwrap_or_else(|e| e.into_inner());
-            if p.tiles.is_empty() && p.query.is_none() && !p.flush && !p.stopping {
+            if p.tiles.is_empty()
+                && p.query.is_none()
+                && p.probes.is_empty()
+                && !p.flush
+                && !p.stopping
+            {
                 p = shared
                     .1
                     .wait_timeout(p, Duration::from_millis(500))
@@ -147,6 +171,28 @@ fn run(shared: Arc<(Mutex<Pending>, Condvar)>, root: PathBuf, palette: Vec<u32>)
             let mut p = shared.0.lock().unwrap_or_else(|e| e.into_inner());
             p.flushed = p.flushed.max(flush_id);
             shared.1.notify_all();
+        }
+        let probes = {
+            let mut p = shared.0.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut p.probes)
+        };
+        for (token, context, position) in probes {
+            let saved = store.saved_context(&context);
+            let height = store
+                .height_at(
+                    &saved,
+                    position[0].floor() as i32,
+                    position[1].floor() as i32,
+                )
+                .ok()
+                .flatten()
+                .map_or(64.0, |h| f64::from(h) + 1.0);
+            let mut p = shared.0.lock().unwrap_or_else(|e| e.into_inner());
+            if p.heights.len() >= 8 {
+                p.heights.pop_front();
+            }
+            p.heights
+                .push_back((token, context, [position[0], height, position[1]]));
         }
         if let Some(query) = query {
             if dimension_scope != query.context.scope

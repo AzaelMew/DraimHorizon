@@ -9,6 +9,11 @@ fn horizon_chat_capture(
     if allowed && game.ui.chat.shows(source) {
         let text = content.plain();
         if source == horizon_client::chat::ChatSource::Server
+            && crate::game::claim_borders_economy_client::quiet(&text)
+        {
+            return;
+        }
+        if source == horizon_client::chat::ChatSource::Server
             && crate::game::claim_borders_teleport::parse(&text).is_some()
         {
             crate::game::claim_borders_teleport_view::capture(&text);

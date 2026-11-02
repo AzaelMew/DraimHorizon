@@ -17,6 +17,7 @@ struct Cache {
     full: bool,
     worker: Option<worker::Handle>,
     seen: BTreeMap<(i32, i32), u64>,
+    context: Option<history::Context>,
 }
 fn state() -> &'static Mutex<Cache> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
@@ -29,7 +30,24 @@ fn state() -> &'static Mutex<Cache> {
             full: false,
             worker: None,
             seen: BTreeMap::new(),
+            context: None,
         })
+    })
+}
+pub(in crate::game) fn waypoint(token: u64, dimension: String, position: [f64; 2]) -> bool {
+    let cache = state().lock().unwrap_or_else(|p| p.into_inner());
+    let Some(context) = cache.context.clone() else {
+        return false;
+    };
+    cache.worker.as_ref().is_some_and(|w| {
+        w.probe(
+            token,
+            history::Context {
+                dimension,
+                ..context
+            },
+            position,
+        )
     })
 }
 pub(in crate::game) fn finish() {
@@ -173,6 +191,12 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
         },
         ..live_context
     };
+    cache.context = Some(context.clone());
+    while let Some((token, c, pos)) = cache.worker.as_ref().unwrap().height() {
+        if c.scope == context.scope {
+            view::waypoint_ready(token, c.dimension, pos);
+        }
+    }
     if let Some(image) = cache.worker.as_ref().unwrap().take() {
         if image.query.context.scope == context.scope
             && image.query.context.dimension == context.dimension

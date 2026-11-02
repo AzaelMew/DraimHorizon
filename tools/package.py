@@ -42,7 +42,7 @@ def package():
             if path.suffix not in (".rs", ".toml"):
                 raise ValueError(f"source bundle contains unsupported file: {path.relative_to(ROOT)}")
             files[path.relative_to(ROOT).as_posix()] = path.read_bytes()
-    out = ROOT / "target" / f"{mod['id']}-{mod['version']}.hnmod"
+    out = ROOT / "target" / f"draimhorizons-{mod['version']}.hnmod"
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, content in sorted(files.items()):

@@ -4,6 +4,9 @@ fn claim_borders_menu_scroll(
     scroll: [f64; 2],
     canceled: &mut bool,
 ) {
+    if crate::game::claim_borders_economy_view::scroll(scroll[1], canceled) {
+        return;
+    }
     crate::game::claim_borders_chat_view::scroll(game, screen, scroll[1], canceled);
     if crate::game::claim_borders_map_view::scroll(game, screen, scroll[1], canceled) {
         return;

@@ -1,4 +1,4 @@
-# Разработка Claim Borders
+# Разработка DraimHorizons
 
 ## Устройство
 
@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.9.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.10.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -49,7 +49,7 @@ cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/ho
 
 Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование и проверку пакета; полная компиляция клиента проверяется локально; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
 
-Артефакты: `claim_borders-<version>.hnmod` и его `.sha256`. Пакет содержит только исходники и `horizon-native.json`; одинаковые исходники дают одинаковые байты. Подпись minisign пока не используется. Публикация GitHub Release не добавляет мод автоматически в каталог Horizon: для каталога требуется отдельная заявка и ревью.
+Артефакты: `draimhorizons-<version>.hnmod` и его `.sha256`. Пакет содержит только исходники и `horizon-native.json`; одинаковые исходники дают одинаковые байты. Подпись minisign пока не используется. Публикация GitHub Release не добавляет мод автоматически в каталог Horizon: для каталога требуется отдельная заявка и ревью.
 
 ## Среда Codex
 
@@ -111,3 +111,14 @@ Outgoing chat: `outgoing.rs` orders up to eight pending entries, splits English 
 `teleport.rs` accepts only the known server request grammar and whitelisted command variants with a Minecraft nickname; `teleport_view.rs` creates at most eight local requests, renders three cards, and drains click-selected commands on the game thread. Only server-sourced messages can create cards; the native chat cursor and exact current viewport are required for a click. Expiry, duplicate-click consumption and reset on disconnect prevent stale requests crossing sessions.
 
 Mob radar reads interpolated loaded living entities only, excluding player/misc types; positions are bounded to 512 nearest marks and never persisted. Colours describe entity categories, not current aggression. Existing source pins and relay service protocol remain compatible.
+
+
+## Экономика и интерфейс сервера (0.10.0)
+
+`economy.rs` хранит котировки в сотых долях монеты и строит условные оценки без сетевых действий. Лоты используют полную цену объявления; остаток лота не получает выдуманную стоимость. Дневной денежный лимит применяется к выручке до удержаний. TAXES отключены по умолчанию: ставки Market/VAT и старый налоговый счёт не участвуют в расчёте. Комиссия выставления AH имеет отдельное состояние «неизвестна».
+
+`economy_client.rs` принимает только серверные сообщения, известные меню Market/Auction house и форматированный sidebar; `economy_scan.rs` допускает только проверенную навигацию, ждёт подтверждения новой страницы и прекращает работу при ручном вводе. Покупки и ставки не автоматизированы. Подтверждение продажи проверяет подпись текущего предмета, свежесть цены и лимитов. Автоматические `/worth` ограничены интервалом и очередью. Дисковая запись котировок выполняется ограниченным worker; live-баланс, дневные остатки и лоты между сеансами не восстанавливаются. Кеш привязан к серверу и аккаунту, неизвестные схемы не перезаписываются.
+
+`server_ui.rs` заменяет sidebar/Tab только при соответствующих настройках; выключение возвращает штатный UI. Bridge внутри scoreboard использует реальные display names и number formats, сортирует строки по серверному порядку. Tab запрашивает скины только показанной страницы. `chat_priority.rs` задаёт точные имена авторов и не доверяет совпадениям в тексте сообщений. Карточки trade используют ту же проверку серверного источника, срока и однократного клика, что TPA.
+
+Двойной ПКМ проецируется через опубликованный кадр карты с его фактическим соотношением сторон; высота читается фоновым worker из исследованной колонки. X использует текущую позицию игрока и подавляет повтор клавиши. Прежний ID `claim_borders` сохранён; файлы релиза имеют префикс `draimhorizons`.

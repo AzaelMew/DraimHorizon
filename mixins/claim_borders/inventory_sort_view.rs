@@ -49,6 +49,12 @@ pub(super) fn mouse(
     if !game.native_on(claims::ID) {
         return;
     }
+    if screen.title.is_some_and(|t| {
+        let s = t.plain().to_ascii_lowercase();
+        s == "market" || s == "auction house" || s == "shop" || s.contains("trade") || s == "bank"
+    }) {
+        return;
+    }
     if button != 2 {
         reset();
         return;

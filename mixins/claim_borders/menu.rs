@@ -1,4 +1,5 @@
 use super::claim_borders_chat_preferences::Preferences;
+use super::claim_borders_chat_priority as priority;
 use super::claim_borders_map as map;
 // Pure management screen state. Only explicit local button presses produce actions.
 #[derive(Clone, Debug)]
@@ -89,11 +90,13 @@ pub struct ViewModel {
     pub relay_token_present: bool,
     pub relay_connected: bool,
     pub relay_auto: bool,
+    pub auto_trust: bool,
     pub claims: ClaimsSettings,
     pub status: String,
     pub chat_modern: bool,
     pub chat_translate: bool,
     pub chat_outgoing: bool,
+    pub priority: priority::Preferences,
     pub chat_preferences: Preferences,
     pub map_preferences: map::Preferences,
     pub claim_rows: Vec<ClaimRow>,
@@ -128,6 +131,8 @@ pub enum Action {
         name: String,
     },
     RefreshClaims,
+    OpenEconomy,
+    ToggleAutoTrust,
     RelayOff,
     RelayConnect,
     ToggleAutoRelay,
@@ -149,6 +154,7 @@ pub enum Action {
     ClearClaimCache,
     ToggleTranslation,
     SetChat(Preferences),
+    SetPriority(priority::Preferences),
     PasteFromClipboard,
     SetClaims(ClaimsSettings),
     Close,
@@ -166,6 +172,7 @@ impl std::fmt::Debug for Action {
                 .field(z)
                 .finish(),
             Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
+            Self::SetPriority(p) => f.debug_tuple("SetPriority").field(p).finish(),
             Self::SetChat(p) => f.debug_tuple("SetChat").field(p).finish(),
             Self::ClearClaimCache => f.write_str("ClearClaimCache"),
             Self::ToggleOutgoing => f.write_str("ToggleOutgoing"),
@@ -201,6 +208,8 @@ impl std::fmt::Debug for Action {
                 f.debug_struct("RemoveFriend").field("name", name).finish()
             }
             Self::SetClaims(settings) => f.debug_tuple("SetClaims").field(settings).finish(),
+            Self::OpenEconomy => f.write_str("OpenEconomy"),
+            Self::ToggleAutoTrust => f.write_str("ToggleAutoTrust"),
             Self::RefreshClaims => f.write_str("RefreshClaims"),
             Self::RelayOff => f.write_str("RelayOff"),
             Self::RelayConnect => f.write_str("RelayConnect"),
@@ -226,6 +235,8 @@ pub enum Field {
     RelayToken,
     OwnClaimColor,
     FriendClaimColor,
+    PriorityName,
+    PriorityColor,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum PartyFilter {
@@ -240,6 +251,7 @@ pub enum ChatSection {
     Appearance,
     Notifications,
     Spam,
+    Priority,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -255,6 +267,16 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    PriorityNext,
+    PrioritySave,
+    PriorityRemove,
+    PriorityPin,
+    PriorityFriends,
+    PriorityTray,
+    PriorityTime(i8),
+    PriorityRows(i8),
+    Economy,
+    ToggleAutoTrust,
     PartyFilter(PartyFilter),
     ToggleAutoRelay,
     ClaimsSection(ClaimsSection),
@@ -344,6 +366,9 @@ pub struct Menu {
     pub focus: Option<Field>,
     pub name: String,
     pub color: String,
+    pub priority_name: String,
+    pub priority_color: String,
+    pub priority_pinned: bool,
     pub peer_code: String,
     pub relay_setup: bool,
     pub relay_url: String,
@@ -367,6 +392,9 @@ impl Default for Menu {
             focus: None,
             name: String::new(),
             color: "#FFCC55".into(),
+            priority_name: String::new(),
+            priority_color: "#FFCC66".into(),
+            priority_pinned: true,
             peer_code: String::new(),
             relay_setup: false,
             relay_url: String::new(),
@@ -449,6 +477,9 @@ impl Menu {
         for widget in &mut widgets {
             widget.rect[0] += x + sidebar;
             widget.rect[1] += y;
+            if sidebar > 0.0 && widget.control == Some(Control::Economy) {
+                widget.rect = [x + 6.0, y + 44.0 + 4.0 * 26.0, sidebar - 10.0, 22.0];
+            }
             if sidebar > 0.0
                 && let Some(Control::Tab(tab)) = widget.control
             {
@@ -468,7 +499,7 @@ impl Menu {
         let x = (width - w) * 0.5;
         let y = 8.0;
         let mut out = vec![
-            widget([x, y, w - 30.0, 18.0], "HORIZON  /  SOCIAL", None, false),
+            widget([x, y, w - 30.0, 18.0], "DRAIMHORIZONS", None, false),
             widget(
                 [x + w - 26.0, y, 26.0, 18.0],
                 "X",
@@ -476,20 +507,21 @@ impl Menu {
                 false,
             ),
         ];
-        for (i, (tab, label)) in [
-            (Tab::Waypoints, "Метки"),
-            (Tab::Party, "Пати"),
-            (Tab::Claims, "Клеймы"),
-            (Tab::Chat, "Чат"),
+        for (i, (control, label)) in [
+            (Control::Tab(Tab::Waypoints), "Метки"),
+            (Control::Tab(Tab::Party), "Пати"),
+            (Control::Tab(Tab::Claims), "Клеймы"),
+            (Control::Tab(Tab::Chat), "Чат"),
+            (Control::Economy, "Торги"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 4.0, y + 22.0, w / 4.0 - 3.0, 20.0],
+                [x + i as f32 * w / 5.0, y + 22.0, w / 5.0 - 3.0, 20.0],
                 label,
-                Some(Control::Tab(tab)),
-                self.tab == tab,
+                Some(control),
+                matches!(control,Control::Tab(tab)if self.tab==tab),
             ));
         }
         if self.tab == Tab::Chat {
@@ -897,12 +929,13 @@ impl Menu {
             (ChatSection::Appearance, "Вид / позиция"),
             (ChatSection::Notifications, "Уведомления"),
             (ChatSection::Spam, "Антиспам"),
+            (ChatSection::Priority, "Важные"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 3.0, 56.0, w / 3.0 - 3.0, 18.0],
+                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
                 label,
                 Some(Control::ChatSection(section)),
                 self.chat_section == section,
@@ -984,6 +1017,60 @@ impl Menu {
                     "Ширина событий",
                     p.event_width.to_string(),
                 ),
+            ],
+            ChatSection::Priority => vec![
+                vec![(
+                    format!("Ник: {}", self.priority_name),
+                    Control::Field(Field::PriorityName),
+                    self.focus == Some(Field::PriorityName),
+                )],
+                vec![(
+                    format!("Цвет: {}", self.priority_color),
+                    Control::Field(Field::PriorityColor),
+                    self.focus == Some(Field::PriorityColor),
+                )],
+                vec![(
+                    format!("Закреплять сверху: {}", on(self.priority_pinned)),
+                    Control::PriorityPin,
+                    self.priority_pinned,
+                )],
+                vec![
+                    ("Сохранить игрока".into(), Control::PrioritySave, false),
+                    ("Удалить правило".into(), Control::PriorityRemove, false),
+                    ("Следующий".into(), Control::PriorityNext, false),
+                ],
+                vec![
+                    (
+                        format!("Все друзья: {}", on(model.priority.friends)),
+                        Control::PriorityFriends,
+                        model.priority.friends,
+                    ),
+                    (
+                        format!("Верхняя лента: {}", on(model.priority.tray)),
+                        Control::PriorityTray,
+                        model.priority.tray,
+                    ),
+                ],
+                vec![
+                    (
+                        format!("Время − {}с", model.priority.seconds),
+                        Control::PriorityTime(-1),
+                        false,
+                    ),
+                    ("Время +".into(), Control::PriorityTime(1), false),
+                ],
+                vec![
+                    (
+                        format!("Строк − {}", model.priority.rows),
+                        Control::PriorityRows(-1),
+                        false,
+                    ),
+                    (
+                        format!("Строк + · правил {}", model.priority.rules.len()),
+                        Control::PriorityRows(1),
+                        false,
+                    ),
+                ],
             ],
             ChatSection::Spam => vec![
                 vec![(
@@ -1236,12 +1323,16 @@ impl Menu {
                 if selected.is_some_and(|p| p.pending) {
                     "Отклонить"
                 } else {
-                    "Обновить приваты"
+                    if model.auto_trust {
+                        "Авто trust: вкл"
+                    } else {
+                        "Авто trust: выкл"
+                    }
                 },
                 Some(if selected.is_some_and(|p| p.pending) {
                     Control::Decline
                 } else {
-                    Control::Refresh
+                    Control::ToggleAutoTrust
                 }),
                 false,
             ));
@@ -1283,6 +1374,8 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::Economy => Some(Action::OpenEconomy),
+            Control::ToggleAutoTrust => Some(Action::ToggleAutoTrust),
             Control::Decline => self
                 .selected
                 .and_then(|i| model.party.get(i))
@@ -1492,6 +1585,68 @@ impl Menu {
                 Some(Action::SetChat(p.normalized()))
             }
 
+            Control::PriorityNext => {
+                let rules = &model.priority.rules;
+                let next = rules
+                    .range((
+                        std::ops::Bound::Excluded(self.priority_name.to_ascii_lowercase()),
+                        std::ops::Bound::Unbounded,
+                    ))
+                    .next()
+                    .or_else(|| rules.iter().next());
+                if let Some((name, r)) = next {
+                    self.priority_name = name.clone();
+                    self.priority_color = format!("#{:06X}", r.color);
+                    self.priority_pinned = r.pinned;
+                }
+                None
+            }
+            Control::PriorityPin => {
+                self.priority_pinned = !self.priority_pinned;
+                None
+            }
+            Control::PrioritySave
+            | Control::PriorityRemove
+            | Control::PriorityFriends
+            | Control::PriorityTray
+            | Control::PriorityTime(_)
+            | Control::PriorityRows(_) => {
+                let mut p = model.priority.clone();
+                match control {
+                    Control::PrioritySave => {
+                        let color = u32::from_str_radix(
+                            self.priority_color.trim().trim_start_matches('#'),
+                            16,
+                        )
+                        .ok()
+                        .filter(|c| *c <= 0xffffff);
+                        let Some(color) = color else {
+                            self.notice = "Цвет нужен в формате #RRGGBB".into();
+                            return None;
+                        };
+                        if let Err(e) =
+                            p.set(self.priority_name.trim(), color, self.priority_pinned)
+                        {
+                            self.notice = e;
+                            return None;
+                        }
+                    }
+                    Control::PriorityRemove => {
+                        p.rules
+                            .remove(&self.priority_name.trim().to_ascii_lowercase());
+                    }
+                    Control::PriorityFriends => p.friends = !p.friends,
+                    Control::PriorityTray => p.tray = !p.tray,
+                    Control::PriorityTime(dir) => {
+                        p.seconds = (p.seconds as i32 + dir as i32 * 10).clamp(10, 180) as u16
+                    }
+                    Control::PriorityRows(dir) => {
+                        p.rows = (p.rows as i32 + dir as i32).clamp(1, 6) as u8
+                    }
+                    _ => {}
+                }
+                Some(Action::SetPriority(p))
+            }
             Control::ChatOutgoing => Some(Action::ToggleOutgoing),
             Control::ChatModern => Some(Action::ToggleChat),
             Control::ChatTranslate => Some(Action::ToggleTranslation),
@@ -1664,6 +1819,8 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::PriorityName => &mut self.priority_name,
+            Field::PriorityColor => &mut self.priority_color,
             Field::Name => &mut self.name,
             Field::Color => &mut self.color,
             Field::PeerCode => &mut self.peer_code,
@@ -1675,6 +1832,8 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::PriorityName) => &self.priority_name,
+            Some(Field::PriorityColor) => &self.priority_color,
             Some(Field::Name) => &self.name,
             Some(Field::Color) => &self.color,
             Some(Field::PeerCode) => &self.peer_code,
@@ -1719,6 +1878,8 @@ impl Menu {
         let limit = match field {
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
+            Field::PriorityName => 16,
+            Field::PriorityColor => 7,
             Field::PeerCode => 24,
             Field::RelayUrl => 2048,
             Field::RelayToken => 1024,
@@ -1727,6 +1888,8 @@ impl Menu {
             field,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor
         ) && !(c.is_ascii_hexdigit() || c == '#'))
+            || (field == Field::PriorityName && !(c.is_ascii_alphanumeric() || c == '_'))
+            || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
         {
             return;

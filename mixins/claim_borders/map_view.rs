@@ -24,6 +24,9 @@ struct State {
     published: Option<(String, model::View, f32)>,
     dimensions: Vec<String>,
     history_warning: Option<String>,
+    right_click: Option<(std::time::Instant, [f32; 2], String)>,
+    probes: std::collections::BTreeSet<u64>,
+    points: Vec<(String, [f64; 3])>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -45,6 +48,9 @@ impl Default for State {
             published: None,
             dimensions: Vec::new(),
             history_warning: None,
+            right_click: None,
+            probes: std::collections::BTreeSet::new(),
+            points: Vec::new(),
         }
     }
 }
@@ -84,6 +90,9 @@ pub(super) fn configure(game: &Game<'_>, preferences: model::Preferences) {
 pub(super) fn reset() {
     crate::game::extras::claim_borders_map_backend::flush();
     state(|s| {
+        s.right_click = None;
+        s.probes.clear();
+        s.points.clear();
         s.source = None;
         s.dimensions.clear();
         s.history_warning = None;
@@ -137,6 +146,16 @@ pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, r
         s.drag = None;
         s.close_request = false;
     });
+}
+pub(in crate::game) fn waypoint_ready(token: u64, dimension: String, position: [f64; 3]) {
+    state(|s| {
+        if s.probes.remove(&token) {
+            s.points.push((dimension, position));
+        }
+    });
+}
+pub(super) fn take_points() -> Vec<(String, [f64; 3])> {
+    state(|s| std::mem::take(&mut s.points))
 }
 pub(super) fn take_close() -> bool {
     state(|s| std::mem::take(&mut s.close_request))
@@ -288,6 +307,30 @@ fn map_marks(
                     &mark.skin
                 };
                 crate::game::claim_borders_avatar_draw::face(game, batch, skin, at, size, u32::MAX);
+                let mouse = game.native_cursor();
+                if mark.friend
+                    && (mouse[0] - at[0]).abs() <= size * 0.6
+                    && (mouse[1] - at[1]).abs() <= size * 0.6
+                {
+                    let distance = (mark.position[0] - source.player[0])
+                        .hypot(mark.position[1] - source.player[2]);
+                    let text = format!("{} · {:.0} м", mark.label, distance);
+                    let width = (game.native_text_width(&text) + 8.0).min(rect[2] - 4.0);
+                    let x = (at[0] - width / 2.0).clamp(
+                        rect[0] + 2.0,
+                        (rect[0] + rect[2] - width - 2.0).max(rect[0] + 2.0),
+                    );
+                    let y = (at[1] + size / 2.0 + 3.0).min(rect[1] + rect[3] - 12.0);
+                    game.native_fill(batch, [x, y, width, 11.0], 0xee101b28);
+                    label(
+                        game,
+                        batch,
+                        &text,
+                        [x + 4.0, y + 2.0],
+                        width - 4.0,
+                        0xbce8d7,
+                    );
+                }
             } else {
                 batch.fill_quad(
                     &game.gui.atlas,
@@ -783,7 +826,7 @@ pub(super) fn render(
                 cz.div_euclid(16)
             )
         } else {
-            "Колесо — масштаб · ЛКМ — перемещение · Home — к себе · G — сетка".into()
+            "Колесо — масштаб · ЛКМ — перемещение · 2×ПКМ — метка · X — у себя".into()
         };
         label(
             game,
@@ -874,6 +917,48 @@ pub(super) fn mouse(
     if !pressed {
         state(|s| s.drag = None);
         return true;
+    }
+    if button == 1 {
+        let point = state(|s| {
+            let rect = s.rect?;
+            if !contains(rect, screen.mouse) {
+                return None;
+            }
+            let (dimension, view, aspect) = s.published.clone()?;
+            if dimension != s.dimension {
+                return None;
+            }
+            let double = s.right_click.as_ref().is_some_and(|(at, old, dim)| {
+                at.elapsed().as_millis() <= 400
+                    && dim == &dimension
+                    && (old[0] - screen.mouse[0]).abs() < 5.0
+                    && (old[1] - screen.mouse[1]).abs() < 5.0
+            });
+            s.right_click = Some((std::time::Instant::now(), screen.mouse, dimension.clone()));
+            if !double {
+                return None;
+            }
+            s.right_click = None;
+            let world = view.world_aspect(
+                [
+                    (screen.mouse[0] - rect[0]) / rect[2] * 128.0,
+                    (screen.mouse[1] - rect[1]) / rect[3] * 128.0,
+                ],
+                128.0,
+                aspect,
+            );
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            s.probes.insert(token);
+            Some((token, dimension, world))
+        });
+        if let Some((token, dim, point)) = point
+            && !crate::game::extras::claim_borders_map_backend::waypoint(token, dim, point)
+        {
+            state(|s| {
+                s.probes.remove(&token);
+            });
+        }
     }
     if button == 0 {
         if let Some((button, _, _)) = buttons([screen.rect[2], screen.rect[3]])

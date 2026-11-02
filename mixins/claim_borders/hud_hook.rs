@@ -7,6 +7,8 @@ fn claim_borders_hud(
         return;
     }
     crate::game::claim_borders_map_view::hud(game, batch, corners);
+    crate::game::claim_borders_server_ui::sidebar(game, batch, corners);
+    crate::game::claim_borders_economy_view::hud(game, batch, corners);
     let (friends, markers, _) = crate::game::claim_borders_client::visuals(game);
     crate::game::claim_borders_overlay_view::draw(game, batch, corners, &friends, &markers);
 }

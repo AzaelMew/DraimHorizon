@@ -5,6 +5,9 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         return;
     }
     crate::game::claim_borders_teleport_view::command(command);
+    crate::game::claim_borders_teleport_view::trade_command(command);
+    crate::game::claim_borders_auto_trust_view::manual(game, command);
+    crate::game::claim_borders_economy_client::command(command);
     if *ran {
         return;
     }
@@ -30,18 +33,18 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
     *ran = true;
     let action = words.next().unwrap_or("toggle");
     if words.next().is_some() {
-        game.native_chat("[Claim Borders] /claimborders [toggle|on|off|refresh|status]");
+        game.native_chat("[DraimHorizons] /claimborders [toggle|on|off|refresh|status]");
         return;
     }
     match action {
         "refresh" => {
             if game.remote.is_none() || game.native_player().is_none() {
-                game.native_chat("[Claim Borders] Join a server before refreshing.");
+                game.native_chat("[DraimHorizons] Join a server before refreshing.");
                 return;
             }
             m::with_state(|state| state.begin_refresh());
             game.send_unattended_command("claims");
-            game.native_chat("[Claim Borders] Requested /claims from the server.");
+            game.native_chat("[DraimHorizons] Requested /claims from the server.");
         }
         "toggle" | "on" | "off" => {
             let enabled = m::with_state(|state| {
@@ -53,18 +56,18 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
                 state.enabled
             });
             game.native_chat(if enabled {
-                "[Claim Borders] Borders ON. Run /claims or /claimborders refresh to load claims."
+                "[DraimHorizons] Borders ON. Run /claims or /claimborders refresh to load claims."
             } else {
-                "[Claim Borders] Borders OFF."
+                "[DraimHorizons] Borders OFF."
             });
         }
         "status" => {
             let (enabled, count) = m::with_state(|state| (state.enabled, state.count()));
             game.native_chat(&format!(
-                "[Claim Borders] Borders {}. {} claimed chunks loaded. /claims refreshes server data.",
+                "[DraimHorizons] Borders {}. {} claimed chunks loaded. /claims refreshes server data.",
                 if enabled { "ON" } else { "OFF" }, count
             ));
         }
-        _ => game.native_chat("[Claim Borders] /claimborders [toggle|on|off|refresh|status]"),
+        _ => game.native_chat("[DraimHorizons] /claimborders [toggle|on|off|refresh|status]"),
     }
 }

@@ -28,6 +28,8 @@ struct State {
     hits: Vec<options::Hit>,
     hit_viewport: [f32; 2],
     bounds: Option<[f32; 4]>,
+    priority: crate::game::claim_borders_chat_priority::Preferences,
+    friends: HashSet<String>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -46,6 +48,8 @@ impl Default for State {
             hits: Vec::new(),
             hit_viewport: [0.0, 0.0],
             bounds: None,
+            priority: crate::game::claim_borders_chat_priority::Preferences::default(),
+            friends: HashSet::new(),
         }
     }
 }
@@ -67,9 +71,34 @@ pub(super) fn settings(game: &Game<'_>) -> Settings {
                 .native_setting(claims::ID, "chat_preferences")
                 .and_then(|raw| options::Preferences::decode(&raw).ok())
                 .unwrap_or_default();
+            s.priority = game
+                .native_setting(claims::ID, "chat_priority")
+                .and_then(|r| {
+                    crate::game::claim_borders_chat_priority::Preferences::decode(&r).ok()
+                })
+                .unwrap_or_default();
             s.loaded = true;
         }
         s.settings
+    })
+}
+pub(super) fn priority_settings(
+    game: &Game<'_>,
+) -> crate::game::claim_borders_chat_priority::Preferences {
+    let _ = settings(game);
+    state(|s| s.priority.clone())
+}
+pub(super) fn priority_configure(
+    game: &Game<'_>,
+    prefs: crate::game::claim_borders_chat_priority::Preferences,
+) {
+    game.native_set_setting(claims::ID, "chat_priority", &prefs.encode());
+    state(|s| s.priority = prefs);
+}
+fn priority_rule(name: &str) -> Option<crate::game::claim_borders_chat_priority::Rule> {
+    state(|s| {
+        s.priority
+            .rule(name, s.friends.contains(&name.to_ascii_lowercase()))
     })
 }
 pub(super) fn configure(game: &Game<'_>, preferences: options::Preferences) {
@@ -278,12 +307,14 @@ fn draw_card(
     opacity: f32,
 ) {
     let [x, y, w, h] = rect;
-    let color = match entry.kind {
-        model::Kind::Presence if entry.joined == Some(false) => 0xf3b777,
-        model::Kind::Presence => 0x74d9a4,
-        model::Kind::Death => 0xf17e98,
-        _ => 0xaaa2ff,
-    };
+    let color = priority_rule(&entry.name)
+        .map(|r| r.color)
+        .unwrap_or(match entry.kind {
+            model::Kind::Presence if entry.joined == Some(false) => 0xf3b777,
+            model::Kind::Presence => 0x74d9a4,
+            model::Kind::Death => 0xf17e98,
+            _ => 0xaaa2ff,
+        });
     let background = ((alpha * 255.0 * opacity) as u32) << 24 | 0x151a26;
     game.native_fill(batch, rect, background);
     game.native_fill(
@@ -375,6 +406,7 @@ struct PaintContext {
     now: u64,
     focused: bool,
     translate: bool,
+    line_limit: usize,
 }
 fn paint_region<'a>(
     game: &mut Game<'_>,
@@ -428,7 +460,7 @@ fn paint_region<'a>(
             y - region[1]
         };
         let padding = if inline { 10.0 } else { 20.0 };
-        let max_rows = (((available - padding) / 10.0).floor() as usize).min(24);
+        let max_rows = (((available - padding) / 10.0).floor() as usize).min(context.line_limit);
         if max_rows == 0 {
             break;
         }
@@ -498,6 +530,12 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         return true;
     }
     let config = settings(game);
+    let friends = crate::game::claim_borders_client::friend_ids()
+        .into_iter()
+        .map(|(_, n)| n.to_ascii_lowercase())
+        .collect();
+    state(|s| s.friends = friends);
+    let priority = priority_settings(game);
     let p = config.preferences;
     let show_players = game.ui.chat.shows(horizon_client::chat::ChatSource::Player);
     let (entries, now, scroll) = state(|s| {
@@ -544,6 +582,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         layout,
         now,
         focused,
+        line_limit: 24,
         translate: config.translate && !game.modifiers.alt_key(),
     };
     let mut hits = Vec::new();
@@ -553,7 +592,40 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         .rev()
         .filter(|e| main_entry(e, p) && (show_players || e.kind != model::Kind::Message))
         .skip(if focused { scroll } else { 0 });
-    paint_region(game, batch, main, layout.main, context, &mut hits);
+    let mut region = layout.main;
+    if priority.tray && show_players {
+        let mut names = HashSet::new();
+        let pinned: Vec<_> = entries
+            .iter()
+            .rev()
+            .filter(|e| {
+                e.kind == model::Kind::Message
+                    && now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
+                    && priority_rule(&e.name).is_some_and(|r| r.pinned)
+                    && names.insert(e.name.to_ascii_lowercase())
+            })
+            .take(priority.rows as usize)
+            .collect();
+        if !pinned.is_empty() {
+            let height = (pinned.len() as f32 * 34.0).min(region[3] * 0.45);
+            let pin = [region[0], region[1], region[2], height];
+            let mut pinned_context = context;
+            pinned_context.layout.top = true;
+            pinned_context.line_limit = 2;
+            pinned_context.preferences.duration = priority.seconds;
+            paint_region(
+                game,
+                batch,
+                pinned.into_iter(),
+                pin,
+                pinned_context,
+                &mut hits,
+            );
+            region[1] += height + 3.0;
+            region[3] = (region[3] - height - 3.0).max(20.0);
+        }
+    }
+    paint_region(game, batch, main, region, context, &mut hits);
     if let Some(region) = layout.events {
         paint_region(
             game,

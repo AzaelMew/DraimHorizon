@@ -4,9 +4,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
-pub const NAME: &str = "Claim Borders";
-pub const VERSION: &str = "0.9.0";
-pub const DESCRIPTION: &str = "M: управление Waypoints, Party и границами. /horizonmenu";
+pub const NAME: &str = "DraimHorizons";
+pub const VERSION: &str = "0.10.0";
+pub const DESCRIPTION: &str = "M: друзья, карта, чат и торговля. J: карта, X: метка. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
 const WORLD_LIMIT: i32 = 30_000_000;

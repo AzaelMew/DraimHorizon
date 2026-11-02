@@ -230,6 +230,8 @@ pub(super) fn reset() {
 }
 
 pub(super) fn frame(game: &mut Game<'_>) {
+    crate::game::claim_borders_auto_trust_view::frame(game);
+    crate::game::claim_borders_economy_client::frame(game);
     crate::game::claim_borders_outgoing_view::frame(game);
     crate::game::claim_borders_teleport_view::frame(game);
     crate::game::claim_borders_claim_memory::frame(game);
@@ -261,6 +263,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
         prepare_avatars(game);
         let source = map_snapshot(game);
         crate::game::claim_borders_map_view::sync(game, source);
+    }
+    for (dimension, position) in crate::game::claim_borders_map_view::take_points() {
+        if let Err(e) = add_map_waypoint(game, &dimension, position) {
+            game.native_chat(&e);
+        }
     }
     if crate::game::claim_borders_map_view::take_close() {
         game.native_mod_screen_close(claims::ID);
@@ -1065,6 +1072,7 @@ pub(super) fn visual_settings() -> visualization::Settings {
 
 fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     let chat = crate::game::claim_borders_chat_view::settings(game);
+    let priority = crate::game::claim_borders_chat_view::priority_settings(game);
     let map_preferences = crate::game::claim_borders_map_view::settings(game);
     let map_source = map_snapshot(game);
     let claim_rows = crate::game::claim_borders_map::sorted_cells(
@@ -1251,6 +1259,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 .unwrap_or_default(),
             relay_connected: c.connected,
             relay_auto: c.auto_relay,
+            auto_trust: crate::game::claim_borders_auto_trust_view::enabled(game),
             relay_token_present: c
                 .network_settings
                 .as_ref()
@@ -1277,6 +1286,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             chat_translate: chat.translate,
             chat_outgoing: crate::game::claim_borders_outgoing_view::enabled(game),
             chat_preferences: chat.preferences,
+            priority,
             map_preferences,
             claim_rows,
         }
@@ -1378,9 +1388,25 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_map_view::configure(game, preferences);
             Ok(Vec::new())
         }
+        Action::SetPriority(prefs) => {
+            crate::game::claim_borders_chat_view::priority_configure(game, prefs);
+            Ok(Vec::new())
+        }
         Action::SetChat(preferences) => {
             crate::game::claim_borders_chat_view::configure(game, preferences);
             Ok(Vec::new())
+        }
+        Action::OpenEconomy => {
+            crate::game::claim_borders_economy_view::open();
+            Ok(Vec::new())
+        }
+        Action::ToggleAutoTrust => {
+            let on = !crate::game::claim_borders_auto_trust_view::enabled(game);
+            game.native_set_setting(claims::ID, "auto_trust", if on { "true" } else { "false" });
+            Ok(vec![format!(
+                "Авто /trust для подтверждённых друзей: {}",
+                if on { "вкл." } else { "выкл." }
+            )])
         }
         Action::ClearClaimCache => {
             crate::game::claim_borders_claim_memory::clear_others();
@@ -1821,4 +1847,52 @@ pub(super) fn claim_send(code: &str, body: &str) -> bool {
             .as_ref()
             .is_some_and(|h| h.send(code, body).is_ok())
     })
+}
+
+pub(super) fn friend_ids() -> Vec<(u128, String)> {
+    state(|c| {
+        c.party
+            .as_ref()
+            .map(|p| p.friends().into_iter().map(|f| (f.uuid, f.name)).collect())
+            .unwrap_or_default()
+    })
+}
+
+pub(super) fn add_map_waypoint(
+    game: &mut Game<'_>,
+    dimension: &str,
+    position: [f64; 3],
+) -> Result<(), String> {
+    if !ensure(game) {
+        return Err("Мир ещё не готов".into());
+    }
+    let name = format!("Метка {:.0} {:.0}", position[0], position[2]);
+    state(|c| {
+        let mut store = c
+            .waypoints
+            .as_ref()
+            .ok_or("Хранилище меток недоступно")?
+            .clone();
+        store
+            .add(&c.scope, dimension, &name, position, 0xffcc66)
+            .map_err(|e| e.to_string())?;
+        store
+            .save(&c.root.join("waypoints.json"))
+            .map_err(|e| e.to_string())?;
+        c.waypoints = Some(store);
+        Ok(())
+    })
+}
+pub(super) fn quick_waypoint(game: &mut Game<'_>) {
+    let Some(p) = game.native_player() else {
+        return;
+    };
+    let dimension = p.dimension.to_owned();
+    let pos = [p.x, p.y, p.z];
+    match add_map_waypoint(game, &dimension, pos) {
+        Ok(()) => {
+            game.native_chat("[Метки] Сохранена метка текущего места. Название и цвет: M → Метки.")
+        }
+        Err(e) => game.native_chat(&e),
+    }
 }

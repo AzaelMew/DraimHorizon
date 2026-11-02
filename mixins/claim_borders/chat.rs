@@ -13,5 +13,7 @@ fn claim_borders_chat(
             state.receive_chat(&content.plain());
         });
         crate::game::claim_borders_claim_memory::server(&content.plain());
+        crate::game::claim_borders_auto_trust_view::server(&content.plain());
+        crate::game::claim_borders_economy_client::server(&content.plain());
     }
 }

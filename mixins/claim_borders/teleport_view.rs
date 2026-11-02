@@ -73,7 +73,16 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
             game.native_fill(batch, [x, y, 2.0, 49.0], 0xff87b6ea);
             game.native_text(
                 batch,
-                &format!("{} → к тебе · {}с", r.name, remain.div_ceil(1000)),
+                &format!(
+                    "{} · {} · {}с",
+                    if r.trade {
+                        "Обмен"
+                    } else {
+                        "Телепорт"
+                    },
+                    r.name,
+                    remain.div_ceil(1000)
+                ),
                 [x + 8.0, y + 6.0],
                 0xe1e9f5,
                 false,
@@ -146,7 +155,18 @@ pub(super) fn command(text: &str) {
         state(|s| {
             s.requests
                 .entries
-                .retain(|r| !r.name.eq_ignore_ascii_case(words[1]))
+                .retain(|r| r.trade || !r.name.eq_ignore_ascii_case(words[1]))
+        });
+    }
+}
+
+pub(super) fn trade_command(text: &str) {
+    let words: Vec<_> = text.split_whitespace().collect();
+    if words.len() == 3 && words[0] == "trade" && ["accept", "deny"].contains(&words[1]) {
+        state(|s| {
+            s.requests
+                .entries
+                .retain(|r| !r.trade || !r.name.eq_ignore_ascii_case(words[2]))
         });
     }
 }

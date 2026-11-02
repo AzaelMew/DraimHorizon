@@ -9,7 +9,7 @@ import tomllib
 
 root = Path(__file__).resolve().parents[1]
 version = tomllib.loads((root / 'Cargo.toml').read_text())['package']['version']
-output = root / 'target' / f'claim_borders-relay-{version}.tar.gz'
+output = root / 'target' / f'draimhorizons-relay-{version}.tar.gz'
 output.parent.mkdir(exist_ok=True)
 files = [p for p in (root / 'relay').rglob('*') if p.is_file()
          and not any(part in ('__pycache__', '.venv', '.git') for part in p.parts)

@@ -1,5 +1,21 @@
 fn claim_borders_menu_open(game: &mut crate::game::Game<'_>, key: &str, pressed: bool) {
     use crate::game::claim_borders;
+    if pressed && crate::game::claim_borders_server_ui::page(game, key) {
+        return;
+    }
+    static WAYPOINT_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let waypoint_key = key == game.native_mod_key(claim_borders::ID, "waypoint", "key.keyboard.x");
+    let first = waypoint_key && !WAYPOINT_HELD.swap(pressed, std::sync::atomic::Ordering::Relaxed);
+    if pressed
+        && first
+        && game.native_playing()
+        && game.native_on(claim_borders::ID)
+        && key == game.native_mod_key(claim_borders::ID, "waypoint", "key.keyboard.x")
+    {
+        crate::game::claim_borders_client::quick_waypoint(game);
+        return;
+    }
+
     if pressed
         && game.native_playing()
         && game.native_on(claim_borders::ID)

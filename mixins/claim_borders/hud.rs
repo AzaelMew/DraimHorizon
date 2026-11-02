@@ -55,6 +55,29 @@ pub(super) fn draw(
                 12.0,
                 rgba(255, 255, 255, alpha),
             );
+            let mouse = if game.screen == crate::game::Screen::Playing {
+                [batch.width / 2.0, batch.height / 2.0]
+            } else {
+                game.native_cursor()
+            };
+            if (mouse[0] - (x + 6.0)).abs() < 8.0 && (mouse[1] - (y + 6.0)).abs() < 8.0 {
+                let distance = crate::game::claim_borders_client::entity_position(game, uuid)
+                    .and_then(|pos| {
+                        game.native_player().map(|p| {
+                            ((pos[0] - p.x).powi(2)
+                                + (pos[1] - p.y).powi(2)
+                                + (pos[2] - p.z).powi(2))
+                            .sqrt()
+                        })
+                    })
+                    .unwrap_or(marker.distance);
+                let text = format!("{distance:.0} м");
+                let width = game.native_text_width(&text) + 8.0;
+                let left = (x + 6.0 - width / 2.0).clamp(1.0, (batch.width - width - 1.0).max(1.0));
+                let top = (y + 15.0).min(batch.height - 13.0);
+                game.native_fill(batch, [left, top, width, 12.0], 0xdd10202c);
+                game.native_text(batch, &text, [left + 4.0, top + 2.0], 0xbce8d7, false);
+            }
             continue;
         }
         let Some(distance) = model::distance_label(marker.distance) else {

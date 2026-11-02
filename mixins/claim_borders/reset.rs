@@ -3,6 +3,8 @@ fn claim_borders_reset() {
     crate::game::claim_borders_outgoing_view::reset();
     crate::game::claim_borders_teleport_view::reset();
     crate::game::claim_borders_claim_memory::reset();
+    crate::game::claim_borders_auto_trust_view::reset();
+    crate::game::claim_borders_economy_client::reset();
     crate::game::claim_borders_client::reset();
     crate::game::claim_borders_inventory_sort_view::reset();
     crate::game::claim_borders_map_view::reset();

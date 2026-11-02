@@ -359,6 +359,18 @@ impl Store {
         }
         c.clone()
     }
+    pub fn height_at(&mut self, c: &Context, x: i32, z: i32) -> Result<Option<i16>, String> {
+        let id = self.catalog(c)?;
+        let at = (x.div_euclid(REGION), z.div_euclid(REGION));
+        if !self.catalogs[&id].regions.contains(&at) {
+            return Ok(None);
+        }
+        self.load(&id, at)?;
+        Ok(self.cache[&(id, at)]
+            .column(x, z)
+            .filter(|c| c.0 & 0x7f != 0)
+            .map(|c| c.1))
+    }
     pub fn compose(&mut self, c: &Context, spec: &Render) -> Result<Vec<u8>, String> {
         let id = self.catalog(c)?;
         let size = spec.size.clamp(64, 512);

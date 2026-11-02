@@ -2,6 +2,7 @@
 use std::collections::VecDeque;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
+    pub trade: bool,
     pub name: String,
     pub accept: String,
     pub deny: String,
@@ -23,6 +24,21 @@ pub fn parse(text: &str) -> Option<(String, String, String)> {
         return None;
     }
     let text = super::claim_borders::strip_formatting(text);
+    if let Some((who, tail)) = text.trim().split_once(" wants to trade with you: ") {
+        if !name(who) {
+            return None;
+        }
+        let tail = tail.strip_suffix(" (60 s).")?;
+        let (accept, deny) = tail.split_once(" or ")?;
+        if accept != format!("/trade accept {who}") || deny != format!("/trade deny {who}") {
+            return None;
+        }
+        return Some((
+            who.into(),
+            format!("trade accept {who}"),
+            format!("trade deny {who}"),
+        ));
+    }
     let (who, tail) = text.trim().split_once(" asks to teleport to you: ")?;
     if !name(who) {
         return None;
@@ -49,18 +65,23 @@ impl Requests {
         let Some((name, accept, deny)) = parse(text) else {
             return false;
         };
+        let trade = accept.starts_with("trade ");
         self.prune(now);
-        if let Some(old) = self.entries.iter().find(|r| r.name == name)
+        if let Some(old) = self
+            .entries
+            .iter()
+            .find(|r| r.name == name && r.trade == trade)
             && now.saturating_sub(old.at) < 1000
         {
             return true;
         }
-        self.entries.retain(|r| r.name != name);
+        self.entries.retain(|r| r.name != name || r.trade != trade);
         if self.entries.len() >= 8 {
             self.entries.pop_front();
         }
         self.next = self.next.wrapping_add(1).max(1);
         self.entries.push_back(Request {
+            trade,
             name,
             accept,
             deny,
@@ -122,5 +143,35 @@ mod tests {
         r.capture(text, 82000);
         assert_eq!(r.entries[0].at, 82000);
         assert!(r.choose(old, true, 82001).is_none());
+    }
+}
+
+#[cfg(test)]
+mod trade_tests {
+    use super::*;
+    #[test]
+    fn trade_and_teleport_coexist_and_commands_are_consumed_once() {
+        let mut requests = Requests::default();
+        assert!(requests.capture(
+            "Alex wants to trade with you: /trade accept Alex or /trade deny Alex (60 s).",
+            100
+        ));
+        assert!(requests.capture(
+            "Alex asks to teleport to you: /tpaccept Alex or /tpdeny Alex.",
+            100
+        ));
+        assert_eq!(requests.entries.len(), 2);
+        let id = requests.entries[0].id;
+        assert_eq!(
+            requests.choose(id, true, 101).as_deref(),
+            Some("trade accept Alex")
+        );
+        assert!(requests.choose(id, true, 102).is_none());
+        assert!(
+            parse("Alex wants to trade with you: /trade accept Other or /trade deny Alex (60 s).")
+                .is_none()
+        );
+        requests.prune(60100);
+        assert!(requests.entries.is_empty());
     }
 }
