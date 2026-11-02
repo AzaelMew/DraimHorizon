@@ -1,4 +1,5 @@
 // Native chat cards. The original signed message/history path remains untouched.
+use crate::game::claim_borders_chat_preferences as options;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
 use claim_borders_relay_client::translation::Translator;
 use horizon_client::{
@@ -14,6 +15,7 @@ use std::{
 pub(super) struct Settings {
     pub modern: bool,
     pub translate: bool,
+    pub preferences: options::Preferences,
 }
 struct State {
     feed: model::Feed,
@@ -23,6 +25,9 @@ struct State {
     translator: Option<Translator>,
     requested: HashSet<u64>,
     heads: HashMap<String, (u128, String)>,
+    hits: Vec<options::Hit>,
+    hit_viewport: [f32; 2],
+    bounds: Option<[f32; 4]>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -32,11 +37,15 @@ impl Default for State {
             settings: Settings {
                 modern: true,
                 translate: true,
+                preferences: options::Preferences::default(),
             },
             loaded: false,
             translator: None,
             requested: HashSet::new(),
             heads: HashMap::new(),
+            hits: Vec::new(),
+            hit_viewport: [0.0, 0.0],
+            bounds: None,
         }
     }
 }
@@ -54,10 +63,25 @@ pub(super) fn settings(game: &Game<'_>) -> Settings {
                 game.native_setting(claims::ID, "chat_modern").as_deref() != Some("false");
             s.settings.translate =
                 game.native_setting(claims::ID, "chat_translate").as_deref() != Some("false");
+            s.settings.preferences = game
+                .native_setting(claims::ID, "chat_preferences")
+                .and_then(|raw| options::Preferences::decode(&raw).ok())
+                .unwrap_or_default();
             s.loaded = true;
         }
         s.settings
     })
+}
+pub(super) fn configure(game: &Game<'_>, preferences: options::Preferences) {
+    let preferences = preferences.normalized();
+    game.native_set_setting(claims::ID, "chat_preferences", &preferences.encode());
+    state(|s| {
+        s.settings.preferences = preferences;
+        s.feed.reconfigure(preferences);
+        s.feed.scroll = 0;
+        s.hits.clear();
+        s.bounds = None;
+    });
 }
 pub(super) fn toggle(game: &Game<'_>, translation: bool) {
     let current = settings(game);
@@ -82,6 +106,8 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
 pub(super) fn reset() {
     state(|s| {
         s.feed.clear();
+        s.hits.clear();
+        s.bounds = None;
         s.requested.clear();
         s.heads.clear();
         s.translator = None;
@@ -94,22 +120,56 @@ pub(super) fn capture(game: &Game<'_>, text: &str) {
     let _ = settings(game);
     state(|s| {
         let now = s.started.elapsed().as_millis() as u64;
-        if s.feed.scroll > 0 {
-            s.feed.scroll = s.feed.scroll.saturating_add(1);
+        let preferences = s.settings.preferences;
+        let anchor = if s.feed.scroll > 0 {
+            s.feed
+                .entries
+                .iter()
+                .rev()
+                .filter(|e| main_entry(e, preferences))
+                .nth(s.feed.scroll)
+                .map(|e| e.id)
+        } else {
+            None
+        };
+        s.feed.push_with(text, now, preferences);
+        if let Some(anchor) = anchor {
+            if let Some(position) = s
+                .feed
+                .entries
+                .iter()
+                .rev()
+                .filter(|e| main_entry(e, preferences))
+                .position(|e| e.id == anchor)
+            {
+                if position > 0 {
+                    s.feed.scroll = position;
+                }
+            }
         }
-        s.feed.push(text, now);
         let retained: HashSet<_> = s.feed.entries.iter().map(|e| e.id).collect();
         s.requested.retain(|id| retained.contains(id));
     });
 }
-fn in_chat_area(game: &Game<'_>, point: [f32; 2], size: [f32; 2]) -> bool {
-    game.screen == Screen::Chat
-        && game.native_on(claims::ID)
-        && settings(game).modern
-        && point[0] >= 4.0
-        && point[0] < size[0] - 4.0
-        && point[1] >= (size[1] - 210.0).max(0.0)
-        && point[1] < size[1] - 32.0
+fn event_entry(entry: &model::Entry, p: options::Preferences) -> bool {
+    p.notifications != options::NotificationStyle::Off
+        && match entry.kind {
+            model::Kind::Presence => p.presence,
+            model::Kind::Death => p.deaths,
+            _ => false,
+        }
+}
+fn main_entry(entry: &model::Entry, p: options::Preferences) -> bool {
+    matches!(entry.kind, model::Kind::Message | model::Kind::System)
+        || (p.notifications == options::NotificationStyle::Inline && event_entry(entry, p))
+}
+fn in_chat_area(game: &Game<'_>, point: [f32; 2], viewport: [f32; 2]) -> bool {
+    if game.screen != Screen::Chat || !game.native_on(claims::ID) || !settings(game).modern {
+        return false;
+    }
+    state(|s| {
+        s.hit_viewport == viewport && s.bounds.is_some_and(|rect| options::contains(rect, point))
+    })
 }
 pub(super) fn scroll(
     game: &Game<'_>,
@@ -125,7 +185,7 @@ pub(super) fn scroll(
             .feed
             .entries
             .iter()
-            .filter(|e| matches!(e.kind, model::Kind::Message | model::Kind::System))
+            .filter(|e| main_entry(e, s.settings.preferences))
             .count();
         if amount > 0.0 {
             s.feed.scroll = (s.feed.scroll + 3).min(count.saturating_sub(1));
@@ -138,13 +198,28 @@ pub(super) fn scroll(
 pub(super) fn mouse(
     game: &Game<'_>,
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
+    button: i32,
     canceled: &mut bool,
 ) {
-    // Vanilla hit boxes describe the old layout. Never run an invisible link/command.
-    if in_chat_area(game, screen.mouse, [screen.rect[2], screen.rect[3]]) {
+    if game.screen != Screen::Chat || !game.native_on(claims::ID) || !settings(game).modern {
+        return;
+    }
+    let area = in_chat_area(game, screen.mouse, [screen.rect[2], screen.rect[3]]);
+    let legacy = screen.mouse[1] >= (screen.rect[3] - 210.0).max(0.0)
+        && screen.mouse[1] < screen.rect[3] - 32.0;
+    // Suppress invisible vanilla links even when cards have moved to another corner.
+    if area || legacy {
         *canceled = true;
     }
+    if button == 0 && area {
+        state(|s| {
+            if let Some(id) = options::hit_at(&s.hits, screen.mouse) {
+                s.feed.toggle_original(id);
+            }
+        });
+    }
 }
+
 fn text(
     game: &Game<'_>,
     batch: &mut HudBatch,
@@ -163,16 +238,12 @@ fn text(
         false,
     );
 }
-fn fade(entry: &model::Entry, now: u64, focused: bool) -> f32 {
+fn fade(entry: &model::Entry, now: u64, focused: bool, duration: u16) -> f32 {
     if focused {
         return 1.0;
     }
     let age = now.saturating_sub(entry.at) as f32;
-    let life = if entry.kind == model::Kind::Presence {
-        7000.0
-    } else {
-        12000.0
-    };
+    let life = f32::from(duration) * 1000.0;
     ((life - age) / 1500.0).clamp(0.0, 1.0)
 }
 fn draw_card(
@@ -184,6 +255,8 @@ fn draw_card(
     alpha: f32,
     head: Option<(u128, String)>,
     focused: bool,
+    compact: bool,
+    opacity: f32,
 ) {
     let [x, y, w, h] = rect;
     let color = match entry.kind {
@@ -192,7 +265,7 @@ fn draw_card(
         model::Kind::Death => 0xf17e98,
         _ => 0xaaa2ff,
     };
-    let background = ((alpha * 220.0) as u32) << 24 | 0x151a26;
+    let background = ((alpha * 255.0 * opacity) as u32) << 24 | 0x151a26;
     game.native_fill(batch, rect, background);
     game.native_fill(
         batch,
@@ -223,8 +296,15 @@ fn draw_card(
     } else {
         &entry.name
     };
-    if entry.kind == model::Kind::Message {
-        let prefix = format!("{name}: ");
+    if entry.kind == model::Kind::Message || compact {
+        let prefix = format!(
+            "{name}{}: ",
+            if entry.show_original {
+                " [ориг.]"
+            } else {
+                ""
+            }
+        );
         for (i, row) in rows.iter().enumerate() {
             let line_y = y + 6.0 + i as f32 * 10.0;
             if i == 0
@@ -245,7 +325,16 @@ fn draw_card(
         }
     } else {
         text(game, batch, name, [tx, y + 4.0], color, alpha);
-        if entry.translated.is_some() && !focused {
+        if entry.show_original {
+            text(
+                game,
+                batch,
+                "ОРИГ",
+                [x + w - 29.0, y + 4.0],
+                0x7e899f,
+                alpha,
+            );
+        } else if entry.translated.is_some() && !focused {
             text(game, batch, "RU", [x + w - 17.0, y + 4.0], 0x7e899f, alpha);
         }
         for (i, row) in rows.iter().enumerate() {
@@ -260,21 +349,137 @@ fn draw_card(
         }
     }
 }
+#[derive(Clone, Copy)]
+struct PaintContext {
+    preferences: options::Preferences,
+    layout: options::Layout,
+    now: u64,
+    focused: bool,
+    translate: bool,
+}
+fn paint_region<'a>(
+    game: &mut Game<'_>,
+    batch: &mut HudBatch,
+    entries: impl Iterator<Item = &'a model::Entry>,
+    region: [f32; 4],
+    context: PaintContext,
+    hits: &mut Vec<options::Hit>,
+) {
+    let p = context.preferences;
+    let mut y = if context.layout.top {
+        region[1]
+    } else {
+        region[1] + region[3]
+    };
+    for e in entries {
+        let alpha = fade(e, context.now, context.focused, p.duration);
+        if alpha <= 0.0 {
+            continue;
+        }
+        let compact = e.kind != model::Kind::Message
+            && matches!(
+                p.notifications,
+                options::NotificationStyle::Compact | options::NotificationStyle::Inline
+            );
+        let inline = e.kind == model::Kind::Message || compact;
+        let count = if e.repetitions > 1 {
+            format!(" ×{}", e.repetitions)
+        } else {
+            String::new()
+        };
+        let label = if e.name.is_empty() {
+            "Система"
+        } else {
+            &e.name
+        };
+        let body = if inline {
+            format!(
+                "{label}{}: {}{count}",
+                if e.show_original { " [ориг.]" } else { "" },
+                e.body(context.translate)
+            )
+        } else {
+            format!("{}{count}", e.body(context.translate))
+        };
+        let inset = if e.name.is_empty() { 12.0 } else { 29.0 };
+        let mut rows = model::wrap(&body, region[2] - inset, |s| game.native_text_width(s));
+        let available = if context.layout.top {
+            region[1] + region[3] - y
+        } else {
+            y - region[1]
+        };
+        let padding = if inline { 10.0 } else { 20.0 };
+        let max_rows = (((available - padding) / 10.0).floor() as usize).min(24);
+        if max_rows == 0 {
+            break;
+        }
+        if rows.len() > max_rows {
+            rows.truncate(max_rows);
+            if let Some(last) = rows.last_mut() {
+                last.push('…');
+            }
+        }
+        let h = (padding + rows.len() as f32 * 10.0).max(if inline { 22.0 } else { 30.0 });
+        if h > available {
+            break;
+        }
+        let card_y = if context.layout.top {
+            let at = y;
+            y += h + 4.0;
+            at
+        } else {
+            y -= h;
+            let at = y;
+            y -= 4.0;
+            at
+        };
+        let slide =
+            (1.0 - (context.now.saturating_sub(e.created_at) as f32 / 160.0).clamp(0.0, 1.0)) * 8.0;
+        let rect = [region[0] - slide, card_y, region[2], h];
+        let head = state(|s| s.heads.get(&e.name).cloned());
+        let start = batch.vertices.len();
+        draw_card(
+            game,
+            batch,
+            e,
+            rect,
+            &rows,
+            alpha,
+            head,
+            context.focused || !context.translate,
+            compact,
+            p.opacity,
+        );
+        batch.clip_since(
+            start,
+            region[0],
+            region[1],
+            region[0] + region[2],
+            region[1] + region[3],
+        );
+        if let Some(rect) =
+            options::intersection(context.layout.screen(rect), context.layout.screen(region))
+        {
+            hits.push(options::Hit { id: e.id, rect });
+        }
+    }
+}
 pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     if !game.native_on(claims::ID) || !settings(game).modern {
         return false;
     }
     let focused = game.screen == Screen::Chat;
-    if game.ui.hide_gui && !focused {
+    if (game.ui.hide_gui && !focused)
+        || !game.ui.chat.shows(horizon_client::chat::ChatSource::Server)
+    {
+        state(|s| {
+            s.hits.clear();
+            s.bounds = None;
+        });
         return true;
     }
-    if !game.ui.chat.shows(horizon_client::chat::ChatSource::Server) {
-        return true;
-    }
-    let mut config = settings(game);
-    if game.modifiers.alt_key() {
-        config.translate = false;
-    }
+    let config = settings(game);
+    let p = config.preferences;
     let show_players = game.ui.chat.shows(horizon_client::chat::ChatSource::Player);
     let (entries, now, scroll) = state(|s| {
         if config.translate {
@@ -285,7 +490,8 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 }
             }
             for e in s.feed.entries.iter().rev().take(64) {
-                if matches!(e.kind, model::Kind::Message | model::Kind::Death)
+                if (e.kind == model::Kind::Message
+                    || (e.kind == model::Kind::Death && event_entry(e, p)))
                     && e.translated.is_none()
                     && !s.requested.contains(&e.id)
                     && worker.submit(e.id, &e.original)
@@ -300,133 +506,62 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             s.feed.scroll,
         )
     });
-    if entries.is_empty() {
-        return true;
-    }
-    // Use the same cached skin slots as the tab list, including downloaded skins.
-    if let Some((players, _, _)) = game.remote_tab_players() {
+    let viewport = [batch.width, batch.height];
+    let layout = options::Layout::new(p, viewport);
+    if !entries.is_empty()
+        && let Some((players, _, _)) = game.remote_tab_players()
+    {
         state(|s| {
             if s.heads.len() > 256 {
                 s.heads.clear();
             }
-            for p in players {
-                s.heads.insert(p.name, (p.uuid, p.skin));
+            for player in players {
+                s.heads.insert(player.name, (player.uuid, player.skin));
             }
         });
     }
-    let wide = batch.width >= 420.0;
-    let main_w = if wide {
-        (batch.width * 0.60).min(320.0)
-    } else {
-        batch.width - 16.0
+    let context = PaintContext {
+        preferences: p,
+        layout,
+        now,
+        focused,
+        translate: config.translate && !game.modifiers.alt_key(),
     };
-    let bottom = batch.height - 42.0;
-    let top = (bottom - if focused { 180.0 } else { 150.0 }).max(4.0);
-    let mut y = bottom;
-    let mut shown = 0;
-    for e in entries
+    let mut hits = Vec::new();
+    let start = batch.vertices.len();
+    let main = entries
         .iter()
         .rev()
-        .filter(|e| matches!(e.kind, model::Kind::Message | model::Kind::System))
-        .skip(if focused { scroll } else { 0 })
-    {
-        let alpha = fade(e, now, focused);
-        if alpha <= 0.0 {
-            continue;
-        }
-        let text_body = if e.kind == model::Kind::Message {
-            format!("{}: {}", e.name, e.body(config.translate))
-        } else {
-            e.body(config.translate).to_owned()
-        };
-        let inset = if e.name.is_empty() { 12.0 } else { 29.0 };
-        if e.kind == model::Kind::Message && !show_players {
-            continue;
-        }
-        let mut rows = model::wrap(&text_body, main_w - inset, |s| game.native_text_width(s));
-        let max_rows =
-            (((y - top - 24.0) / 10.0).floor() as usize).min(if focused { 12 } else { 6 });
-        if max_rows == 0 {
-            break;
-        }
-        if rows.len() > max_rows {
-            rows.truncate(max_rows);
-            if let Some(last) = rows.last_mut() {
-                last.push('…');
-            }
-        }
-        let h = if e.kind == model::Kind::Message {
-            (10.0 + rows.len() as f32 * 10.0).max(22.0)
-        } else {
-            20.0 + rows.len() as f32 * 10.0
-        };
-        if y - h < top {
-            break;
-        }
-        y -= h;
-        let slide = (1.0 - (now.saturating_sub(e.at) as f32 / 160.0).clamp(0.0, 1.0)) * 8.0;
-        let head = state(|s| s.heads.get(&e.name).cloned());
-        draw_card(
+        .filter(|e| main_entry(e, p) && (show_players || e.kind != model::Kind::Message))
+        .skip(if focused { scroll } else { 0 });
+    paint_region(game, batch, main, layout.main, context, &mut hits);
+    if let Some(region) = layout.events {
+        paint_region(
             game,
             batch,
-            e,
-            [8.0 - slide, y, main_w, h],
-            &rows,
-            alpha,
-            head,
-            focused || !config.translate,
-        );
-        y -= 4.0;
-        shown += 1;
-        if shown >= if focused { 12 } else { 5 } {
-            break;
-        }
-    }
-    if focused && scroll > 0 {
-        text(
-            game,
-            batch,
-            &format!("История ↑ {scroll}"),
-            [10.0, bottom + 4.0],
-            0xa99eff,
-            1.0,
+            entries.iter().rev().filter(|e| event_entry(e, p)),
+            region,
+            context,
+            &mut hits,
         );
     }
-    let side_x = if wide { main_w + 14.0 } else { 8.0 };
-    let side_w = if wide {
-        (batch.width - side_x - 8.0).min(170.0)
-    } else {
-        main_w
-    };
-    let mut sy = if wide { bottom } else { (y - 4.0).max(top) };
-    for kind in [model::Kind::Presence, model::Kind::Death] {
-        for e in entries.iter().rev().filter(|e| e.kind == kind).take(3) {
-            let alpha = fade(e, now, focused);
-            if alpha <= 0.0 {
-                continue;
-            }
-            let rows = model::wrap(e.body(config.translate), side_w - 29.0, |s| {
-                game.native_text_width(s)
-            });
-            let h = 20.0 + rows.len() as f32 * 10.0;
-            if sy - h < top {
-                break;
-            }
-            sy -= h;
-            let head = state(|s| s.heads.get(&e.name).cloned());
-            draw_card(
-                game,
-                batch,
-                e,
-                [side_x, sy, side_w, h],
-                &rows,
-                alpha,
-                head,
-                focused || !config.translate,
-            );
-            sy -= 4.0;
-        }
-        sy -= 4.0;
+    batch.scale_since(start, 0.0, 0.0, layout.scale, layout.scale);
+    let [x, y, w, h] = layout.bounds;
+    batch.clip_since(start, x, y, x + w, y + h);
+    if focused {
+        let hint = if scroll > 0 {
+            format!("История ↑ {scroll} · ЛКМ: оригинал / перевод")
+        } else {
+            "ЛКМ: оригинал / перевод · колесо: история".into()
+        };
+        let start = batch.vertices.len();
+        text(game, batch, &hint, [x + 2.0, y + h + 4.0], 0xa99eff, 1.0);
+        batch.clip_since(start, x, y + h, x + w, y + h + 14.0);
     }
+    state(|s| {
+        s.hits = hits;
+        s.hit_viewport = viewport;
+        s.bounds = Some(layout.bounds);
+    });
     true
 }

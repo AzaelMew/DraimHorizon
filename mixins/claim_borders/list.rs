@@ -4,10 +4,17 @@ fn claim_borders_list(mods: &mut Vec<crate::game::native_hooks::NativeMod>) {
         id: m::ID.into(),
         title: format!("{} {}", m::NAME, m::VERSION),
         description: m::DESCRIPTION.into(),
-        keys: vec![[
-            "menu".into(),
-            "Claim Borders: открыть меню".into(),
-            "key.keyboard.m".into(),
-        ]],
+        keys: vec![
+            [
+                "map".into(),
+                "Карта приватов".into(),
+                "key.keyboard.j".into(),
+            ],
+            [
+                "menu".into(),
+                "Claim Borders: открыть меню".into(),
+                "key.keyboard.m".into(),
+            ],
+        ],
     });
 }

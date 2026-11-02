@@ -1,3 +1,5 @@
+use super::claim_borders_chat_preferences::Preferences;
+use super::claim_borders_map as map;
 // Pure management screen state. Only explicit local button presses produce actions.
 #[derive(Clone, Debug)]
 pub struct WaypointRow {
@@ -24,6 +26,7 @@ pub struct ClaimsSettings {
     pub own_color: u32,
     pub friend_color: u32,
     pub opacity: f32,
+    pub line_width: f32,
 }
 impl Default for ClaimsSettings {
     fn default() -> Self {
@@ -37,8 +40,38 @@ impl Default for ClaimsSettings {
             own_color: 0x55ff88,
             friend_color: 0x55bbff,
             opacity: 0.45,
+            line_width: 2.0,
         }
     }
+}
+#[derive(Clone, Debug)]
+pub struct ClaimRow {
+    pub dimension: String,
+    pub x: i32,
+    pub z: i32,
+    pub label: String,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ClaimsSection {
+    #[default]
+    Map,
+    Borders,
+    Colours,
+    List,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MapOption {
+    Size,
+    Zoom,
+    Fill,
+    Outline,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderOption {
+    Distance,
+    Height,
+    Opacity,
+    Width,
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
@@ -52,6 +85,9 @@ pub struct ViewModel {
     pub status: String,
     pub chat_modern: bool,
     pub chat_translate: bool,
+    pub chat_preferences: Preferences,
+    pub map_preferences: map::Preferences,
+    pub claim_rows: Vec<ClaimRow>,
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
@@ -89,8 +125,16 @@ pub enum Action {
     ClearRelayToken,
     CopyOwnCode,
     CopyText(String),
+    OpenMap,
+    FocusClaim {
+        dimension: String,
+        x: i32,
+        z: i32,
+    },
+    SetMap(map::Preferences),
     ToggleChat,
     ToggleTranslation,
+    SetChat(Preferences),
     PasteFromClipboard,
     SetClaims(ClaimsSettings),
     Close,
@@ -98,6 +142,15 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::OpenMap => f.write_str("OpenMap"),
+            Self::FocusClaim { dimension, x, z } => f
+                .debug_tuple("FocusClaim")
+                .field(dimension)
+                .field(x)
+                .field(z)
+                .finish(),
+            Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
+            Self::SetChat(p) => f.debug_tuple("SetChat").field(p).finish(),
             Self::ToggleChat => f.write_str("ToggleChat"),
             Self::ToggleTranslation => f.write_str("ToggleTranslation"),
             Self::CopyText(_) => f.write_str("CopyText"),
@@ -154,9 +207,61 @@ pub enum Field {
     PeerCode,
     RelayUrl,
     RelayToken,
+    OwnClaimColor,
+    FriendClaimColor,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ChatSection {
+    #[default]
+    Appearance,
+    Notifications,
+    Spam,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ChatOption {
+    Width,
+    Height,
+    Scale,
+    OffsetX,
+    OffsetY,
+    Duration,
+    Opacity,
+    EventWidth,
+    RepeatWindow,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    ClaimsSection(ClaimsSection),
+    OpenMap,
+    ClaimRow(usize),
+    ClaimsPrevious,
+    ClaimsNext,
+    MapToggle,
+    MapCorner,
+    MapLayer,
+    MapMarks,
+    MapGrid,
+    MapCoordinates,
+    MapOwn,
+    MapFriends,
+    MapLabels,
+    MapSort,
+    MapDimensions,
+    MapReset,
+    BorderGrid,
+    MapAdjust(MapOption, i8),
+    BorderAdjust(BorderOption, i8),
+    ApplyClaimColours,
+    BorderReset,
+    ChatSection(ChatSection),
+    ChatAdjust(ChatOption, i8),
+    ChatPlacement,
+    ChatStyle,
+    ChatPresence,
+    ChatDeaths,
+    ChatRepeats,
+    ChatPrefix,
+    ChatReset,
     ChatModern,
     ChatTranslate,
     Tab(Tab),
@@ -184,11 +289,6 @@ pub enum Control {
     OwnVisible,
     FriendsVisible,
     ThroughWalls,
-    Height,
-    Distance,
-    OwnColor,
-    FriendColor,
-    Opacity,
 }
 #[derive(Clone, Debug)]
 pub struct Widget {
@@ -201,6 +301,11 @@ pub struct Widget {
 #[derive(Clone)]
 pub struct Menu {
     pub tab: Tab,
+    pub chat_section: ChatSection,
+    pub claims_section: ClaimsSection,
+    pub claims_page: usize,
+    pub own_claim_color: String,
+    pub friend_claim_color: String,
     pub page: usize,
     pub selected: Option<usize>,
     pub focus: Option<Field>,
@@ -218,6 +323,11 @@ impl Default for Menu {
     fn default() -> Self {
         Self {
             tab: Tab::Waypoints,
+            chat_section: ChatSection::Appearance,
+            claims_section: ClaimsSection::Map,
+            claims_page: 0,
+            own_claim_color: "#55FF88".into(),
+            friend_claim_color: "#55BBFF".into(),
             page: 0,
             selected: None,
             focus: None,
@@ -342,96 +452,13 @@ impl Menu {
             ));
         }
         if self.tab == Tab::Chat {
-            out.push(widget(
-                [x, 64.0, w, 22.0],
-                format!("Карточки чата: {}", on(model.chat_modern)),
-                Some(Control::ChatModern),
-                model.chat_modern,
-            ));
-            out.push(widget(
-                [x, 92.0, w, 22.0],
-                format!("Автоперевод на русский: {}", on(model.chat_translate)),
-                Some(Control::ChatTranslate),
-                model.chat_translate,
-            ));
-            out.push(widget(
-                [x, 124.0, w, 18.0],
-                "Перевод: Google · только отображение у тебя",
-                None,
-                false,
-            ));
-            out.push(widget(
-                [x, 144.0, w, 18.0],
-                "При включении текст сообщений передаётся Google.",
-                None,
-                false,
-            ));
-            out.push(widget(
-                [x, 170.0, w, 18.0],
-                "Колесо в чате — история · оригинал сохраняется",
-                None,
-                false,
-            ));
-            return out;
+            return self.chat_layout(model, x, w, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
         }
         if self.tab == Tab::Claims {
-            let s = &model.claims;
-            let controls = [
-                (
-                    Control::BordersEnabled,
-                    format!("Все границы: {}", on(s.enabled)),
-                ),
-                (Control::OwnVisible, format!("Свои: {}", on(s.own_visible))),
-                (
-                    Control::FriendsVisible,
-                    format!("Друзья: {}", on(s.friends_visible)),
-                ),
-                (
-                    Control::ThroughWalls,
-                    format!("Сквозь стены: {}", on(s.through_walls)),
-                ),
-                (
-                    Control::Height,
-                    if s.height >= 384.0 {
-                        "Высота: весь мир".into()
-                    } else {
-                        format!("Высота: ±{:.0}", s.height)
-                    },
-                ),
-                (Control::Distance, format!("Дальность: {:.0}", s.distance)),
-                (
-                    Control::Opacity,
-                    format!("Непрозрачность: {:.0}%", s.opacity * 100.0),
-                ),
-                (Control::OwnColor, format!("Свои: #{:06X}", s.own_color)),
-                (
-                    Control::FriendColor,
-                    format!("Друзья: #{:06X}", s.friend_color),
-                ),
-                (Control::Refresh, "Обновить /claims".into()),
-            ];
-            for (i, (control, label)) in controls.into_iter().enumerate() {
-                out.push(widget(
-                    [
-                        x + (i % 2) as f32 * w / 2.0,
-                        y + 50.0 + (i / 2) as f32 * 26.0,
-                        w / 2.0 - 3.0,
-                        22.0,
-                    ],
-                    label,
-                    Some(control),
-                    false,
-                ));
-            }
-            out.push(widget(
-                [x, y + 184.0, w, 14.0],
-                "Нажмите параметр для следующего значения.",
-                None,
-                false,
-            ));
+            return self.claims_layout(model, x, w, height, out);
         } else {
             let per = Self::rows_per_page(height);
             let start = self.page * per;
@@ -530,6 +557,397 @@ impl Menu {
             model.status.clone()
         };
         out.push(widget([x, height - 19.0, w, 14.0], status, None, false));
+        out
+    }
+    fn claims_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        for (i, (section, label)) in [
+            (ClaimsSection::Map, "Карта"),
+            (ClaimsSection::Borders, "Границы"),
+            (ClaimsSection::Colours, "Цвета"),
+            (ClaimsSection::List, "Приваты"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            out.push(widget(
+                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
+                label,
+                Some(Control::ClaimsSection(section)),
+                self.claims_section == section,
+            ));
+        }
+        let p = model.map_preferences;
+        let v = &model.claims;
+        let pair = |a: String, ca: Control, b: String, cb: Control| vec![(a, ca), (b, cb)];
+        let adjust = |name: &str, value: String, a: Control, b: Control| {
+            pair(
+                format!("{name} − {value}"),
+                a,
+                format!("{name} + {value}"),
+                b,
+            )
+        };
+        let rows = match self.claims_section {
+            ClaimsSection::Map => vec![
+                pair(
+                    "Открыть карту · J".into(),
+                    Control::OpenMap,
+                    "Обновить /claims".into(),
+                    Control::Refresh,
+                ),
+                pair(
+                    format!("Миникарта: {}", on(p.minimap)),
+                    Control::MapToggle,
+                    format!(
+                        "Угол: {}",
+                        ["Слева ↑", "Справа ↑", "Слева ↓", "Справа ↓"][p.corner as usize]
+                    ),
+                    Control::MapCorner,
+                ),
+                adjust(
+                    "Размер",
+                    p.size.to_string(),
+                    Control::MapAdjust(MapOption::Size, -1),
+                    Control::MapAdjust(MapOption::Size, 1),
+                ),
+                adjust(
+                    "Блоков/пикс.",
+                    format!("{:.1}", p.zoom),
+                    Control::MapAdjust(MapOption::Zoom, -1),
+                    Control::MapAdjust(MapOption::Zoom, 1),
+                ),
+                pair(
+                    format!("Рельеф: {}", p.layer.label()),
+                    Control::MapLayer,
+                    format!("Метки: {}", on(p.marks)),
+                    Control::MapMarks,
+                ),
+                pair(
+                    format!("Сетка чанков: {}", on(p.grid)),
+                    Control::MapGrid,
+                    format!("Координаты: {}", on(p.coordinates)),
+                    Control::MapCoordinates,
+                ),
+                vec![("Сбросить настройки карты".into(), Control::MapReset)],
+            ],
+            ClaimsSection::Borders => vec![
+                pair(
+                    format!("Границы 3D: {}", on(v.enabled)),
+                    Control::BordersEnabled,
+                    format!("Сквозь блоки: {}", on(v.through_walls)),
+                    Control::ThroughWalls,
+                ),
+                pair(
+                    format!("Свои 3D: {}", on(v.own_visible)),
+                    Control::OwnVisible,
+                    format!("Друзья 3D: {}", on(v.friends_visible)),
+                    Control::FriendsVisible,
+                ),
+                adjust(
+                    "Дальность",
+                    format!("{:.0}", v.distance),
+                    Control::BorderAdjust(BorderOption::Distance, -1),
+                    Control::BorderAdjust(BorderOption::Distance, 1),
+                ),
+                adjust(
+                    "Высота",
+                    if v.height >= 384.0 {
+                        "весь мир".into()
+                    } else {
+                        format!("±{:.0}", v.height / 2.0)
+                    },
+                    Control::BorderAdjust(BorderOption::Height, -1),
+                    Control::BorderAdjust(BorderOption::Height, 1),
+                ),
+                adjust(
+                    "Толщина",
+                    format!("{:.0}", v.line_width),
+                    Control::BorderAdjust(BorderOption::Width, -1),
+                    Control::BorderAdjust(BorderOption::Width, 1),
+                ),
+                adjust(
+                    "Непрозрачность",
+                    format!("{}%", (v.opacity * 100.0).round() as u8),
+                    Control::BorderAdjust(BorderOption::Opacity, -1),
+                    Control::BorderAdjust(BorderOption::Opacity, 1),
+                ),
+                pair(
+                    format!(
+                        "Шаг сетки: {}",
+                        if p.grid_step == 0 {
+                            "только контур".into()
+                        } else {
+                            p.grid_step.to_string()
+                        }
+                    ),
+                    Control::BorderGrid,
+                    "Сбросить 3D".into(),
+                    Control::BorderReset,
+                ),
+            ],
+            ClaimsSection::Colours => vec![
+                pair(
+                    format!("Свои на карте: {}", on(p.own)),
+                    Control::MapOwn,
+                    format!("Друзья на карте: {}", on(p.friends)),
+                    Control::MapFriends,
+                ),
+                vec![(
+                    format!("Свои: {}", self.own_claim_color),
+                    Control::Field(Field::OwnClaimColor),
+                )],
+                vec![(
+                    format!("Друзья: {}", self.friend_claim_color),
+                    Control::Field(Field::FriendClaimColor),
+                )],
+                vec![("Применить цвета #RRGGBB".into(), Control::ApplyClaimColours)],
+                adjust(
+                    "Заливка карты",
+                    format!("{}%", (p.fill * 100.0).round() as u8),
+                    Control::MapAdjust(MapOption::Fill, -1),
+                    Control::MapAdjust(MapOption::Fill, 1),
+                ),
+                adjust(
+                    "Контур карты",
+                    p.outline.to_string(),
+                    Control::MapAdjust(MapOption::Outline, -1),
+                    Control::MapAdjust(MapOption::Outline, 1),
+                ),
+                vec![(
+                    format!("Подписи владельцев: {}", on(p.labels)),
+                    Control::MapLabels,
+                )],
+            ],
+            ClaimsSection::List => {
+                out.push(widget(
+                    [x, 80.0, w * 0.62 - 3.0, 18.0],
+                    format!("Сортировка: {}", p.sort.label()),
+                    Some(Control::MapSort),
+                    false,
+                ));
+                out.push(widget(
+                    [x + w * 0.62, 80.0, w * 0.38 - 3.0, 18.0],
+                    if p.all_dimensions {
+                        "Все миры"
+                    } else {
+                        "Этот мир"
+                    },
+                    Some(Control::MapDimensions),
+                    false,
+                ));
+                let per = (((height - 140.0) / 20.0).floor() as usize).clamp(2, 10);
+                let pages = model.claim_rows.len().div_ceil(per).max(1);
+                let page = self.claims_page.min(pages - 1);
+                for (slot, index) in
+                    (page * per..((page + 1) * per).min(model.claim_rows.len())).enumerate()
+                {
+                    out.push(widget(
+                        [x, 102.0 + slot as f32 * 20.0, w, 18.0],
+                        &model.claim_rows[index].label,
+                        Some(Control::ClaimRow(index)),
+                        false,
+                    ));
+                }
+                if model.claim_rows.is_empty() {
+                    out.push(widget(
+                        [x, 112.0, w, 18.0],
+                        "Нет данных. Нажми «Обновить /claims» в «Карта».",
+                        None,
+                        false,
+                    ));
+                }
+                out.push(widget(
+                    [x, height - 30.0, w * 0.3 - 3.0, 18.0],
+                    "←",
+                    Some(Control::ClaimsPrevious),
+                    false,
+                ));
+                out.push(widget(
+                    [x + w * 0.3, height - 30.0, w * 0.4 - 3.0, 18.0],
+                    format!("{}/{} · {} чанков", page + 1, pages, model.claim_rows.len()),
+                    None,
+                    false,
+                ));
+                out.push(widget(
+                    [x + w * 0.7, height - 30.0, w * 0.3, 18.0],
+                    "→",
+                    Some(Control::ClaimsNext),
+                    false,
+                ));
+                return out;
+            }
+        };
+        for (i, row) in rows.into_iter().enumerate() {
+            let n = row.len();
+            for (j, (label, control)) in row.into_iter().enumerate() {
+                out.push(widget(
+                    [
+                        x + j as f32 * w / n as f32,
+                        80.0 + i as f32 * 20.0,
+                        w / n as f32 - 3.0,
+                        18.0,
+                    ],
+                    label,
+                    Some(control),
+                    self.focus.is_some()
+                        && matches!(control,Control::Field(f) if self.focus==Some(f)),
+                ));
+            }
+        }
+        out
+    }
+    fn chat_layout(&self, model: &ViewModel, x: f32, w: f32, mut out: Vec<Widget>) -> Vec<Widget> {
+        for (i, (section, label)) in [
+            (ChatSection::Appearance, "Вид / позиция"),
+            (ChatSection::Notifications, "Уведомления"),
+            (ChatSection::Spam, "Антиспам"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            out.push(widget(
+                [x + i as f32 * w / 3.0, 56.0, w / 3.0 - 3.0, 18.0],
+                label,
+                Some(Control::ChatSection(section)),
+                self.chat_section == section,
+            ));
+        }
+        let p = model.chat_preferences;
+        let pair = |field: ChatOption, name: &str, value: String| {
+            vec![
+                (
+                    format!("{name} − {value}"),
+                    Control::ChatAdjust(field, -1),
+                    false,
+                ),
+                (
+                    format!("{name} + {value}"),
+                    Control::ChatAdjust(field, 1),
+                    false,
+                ),
+            ]
+        };
+        let rows = match self.chat_section {
+            ChatSection::Appearance => vec![
+                vec![
+                    (
+                        format!("Чат: {}", on(model.chat_modern)),
+                        Control::ChatModern,
+                        model.chat_modern,
+                    ),
+                    (
+                        format!("Google→RU: {}", on(model.chat_translate)),
+                        Control::ChatTranslate,
+                        model.chat_translate,
+                    ),
+                ],
+                pair(ChatOption::Width, "Ширина", p.width.to_string()),
+                pair(ChatOption::Height, "Высота", p.height.to_string()),
+                pair(
+                    ChatOption::Scale,
+                    "Масштаб",
+                    format!("{}%", (p.scale * 100.0).round() as u16),
+                ),
+                vec![(
+                    format!("Положение: {}", p.placement.label()),
+                    Control::ChatPlacement,
+                    false,
+                )],
+                pair(ChatOption::OffsetX, "Сдвиг X", p.offset_x.to_string()),
+                pair(ChatOption::OffsetY, "Сдвиг Y", p.offset_y.to_string()),
+            ],
+            ChatSection::Notifications => vec![
+                vec![(
+                    format!("Вид: {}", p.notifications.label()),
+                    Control::ChatStyle,
+                    false,
+                )],
+                vec![(
+                    format!("Входы / выходы: {}", on(p.presence)),
+                    Control::ChatPresence,
+                    p.presence,
+                )],
+                vec![(
+                    format!("Смерти: {}", on(p.deaths)),
+                    Control::ChatDeaths,
+                    p.deaths,
+                )],
+                pair(ChatOption::Duration, "Время", format!("{} с", p.duration)),
+                pair(
+                    ChatOption::Opacity,
+                    "Фон",
+                    format!("{}%", (p.opacity * 100.0).round() as u16),
+                ),
+                pair(
+                    ChatOption::EventWidth,
+                    "Ширина событий",
+                    p.event_width.to_string(),
+                ),
+            ],
+            ChatSection::Spam => vec![
+                vec![(
+                    format!("Режим: {}", p.repeats.label()),
+                    Control::ChatRepeats,
+                    false,
+                )],
+                pair(
+                    ChatOption::RepeatWindow,
+                    "Интервал",
+                    format!("{} с", p.repeat_window),
+                ),
+                vec![(
+                    format!("Игнорировать префикс: {} симв.", p.ignore_prefix),
+                    Control::ChatPrefix,
+                    false,
+                )],
+            ],
+        };
+        for (i, row) in rows.into_iter().enumerate() {
+            let n = row.len();
+            for (j, (label, control, selected)) in row.into_iter().enumerate() {
+                out.push(widget(
+                    [
+                        x + j as f32 * w / n as f32,
+                        80.0 + i as f32 * 20.0,
+                        w / n as f32 - 3.0,
+                        18.0,
+                    ],
+                    label,
+                    Some(control),
+                    selected,
+                ));
+            }
+        }
+        if self.chat_section == ChatSection::Spam {
+            out.push(widget(
+                [x, 206.0, w - 3.0, 18.0],
+                "Сбросить настройки чата",
+                Some(Control::ChatReset),
+                false,
+            ));
+            for (i, label) in [
+                "Одинаковые сообщения одного автора → ×N",
+                "ЛКМ по сообщению: оригинал / перевод",
+                "Префикс 10 / 11 — для времени [12:34:56]",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    [x, 146.0 + i as f32 * 20.0, w, 18.0],
+                    label,
+                    None,
+                    false,
+                ));
+            }
+        }
         out
     }
     fn party_layout(
@@ -737,6 +1155,193 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::ClaimsSection(section) => {
+                self.claims_section = section;
+                self.focus = None;
+                self.claims_page = 0;
+                if section == ClaimsSection::Colours {
+                    self.own_claim_color = format!("#{:06X}", model.claims.own_color);
+                    self.friend_claim_color = format!("#{:06X}", model.claims.friend_color);
+                }
+                None
+            }
+            Control::OpenMap => Some(Action::OpenMap),
+            Control::ClaimRow(index) => model.claim_rows.get(index).map(|c| Action::FocusClaim {
+                dimension: c.dimension.clone(),
+                x: c.x,
+                z: c.z,
+            }),
+            Control::ClaimsPrevious => {
+                self.claims_page = self.claims_page.saturating_sub(1);
+                None
+            }
+            Control::ClaimsNext => {
+                let per = (((height - 140.0) / 20.0).floor() as usize).clamp(2, 10);
+                self.claims_page =
+                    (self.claims_page + 1).min(model.claim_rows.len().div_ceil(per).max(1) - 1);
+                None
+            }
+            Control::MapReset => Some(Action::SetMap(map::Preferences::default())),
+            Control::BorderReset => Some(Action::SetClaims(ClaimsSettings::default())),
+            Control::ApplyClaimColours => {
+                let parse = |s: &str| {
+                    s.trim()
+                        .strip_prefix('#')
+                        .unwrap_or(s.trim())
+                        .len()
+                        .eq(&6)
+                        .then(|| u32::from_str_radix(s.trim().trim_start_matches('#'), 16).ok())
+                        .flatten()
+                };
+                if let (Some(own), Some(friend)) = (
+                    parse(&self.own_claim_color),
+                    parse(&self.friend_claim_color),
+                ) {
+                    let mut v = model.claims.clone();
+                    v.own_color = own;
+                    v.friend_color = friend;
+                    Some(Action::SetClaims(v))
+                } else {
+                    self.notice = "Цвет должен быть #RRGGBB".into();
+                    None
+                }
+            }
+            Control::MapToggle
+            | Control::MapCorner
+            | Control::MapLayer
+            | Control::MapMarks
+            | Control::MapGrid
+            | Control::MapCoordinates
+            | Control::MapOwn
+            | Control::MapFriends
+            | Control::MapLabels
+            | Control::MapSort
+            | Control::MapDimensions
+            | Control::BorderGrid => {
+                let mut p = model.map_preferences;
+                match control {
+                    Control::MapToggle => p.minimap = !p.minimap,
+                    Control::MapCorner => p.corner = (p.corner + 1) % 4,
+                    Control::MapLayer => p.layer = p.layer.next(),
+                    Control::MapMarks => p.marks = !p.marks,
+                    Control::MapGrid => p.grid = !p.grid,
+                    Control::MapCoordinates => p.coordinates = !p.coordinates,
+                    Control::MapOwn => p.own = !p.own,
+                    Control::MapFriends => p.friends = !p.friends,
+                    Control::MapLabels => p.labels = !p.labels,
+                    Control::MapSort => p.sort = p.sort.next(),
+                    Control::MapDimensions => p.all_dimensions = !p.all_dimensions,
+                    Control::BorderGrid => {
+                        p.grid_step = match p.grid_step {
+                            8 => 16,
+                            16 => 32,
+                            32 => 0,
+                            _ => 8,
+                        }
+                    }
+                    _ => {}
+                }
+                Some(Action::SetMap(p))
+            }
+            Control::MapAdjust(field, d) => {
+                let mut p = model.map_preferences;
+                match field {
+                    MapOption::Size => {
+                        p.size = (i32::from(p.size) + i32::from(d) * 16).max(0) as u16
+                    }
+                    MapOption::Zoom => p.zoom *= if d > 0 { 2.0 } else { 0.5 },
+                    MapOption::Fill => p.fill += f32::from(d) * 0.05,
+                    MapOption::Outline => {
+                        p.outline = (i16::from(p.outline) + i16::from(d)).clamp(1, 3) as u8
+                    }
+                }
+                Some(Action::SetMap(p.normalized()))
+            }
+            Control::BorderAdjust(field, d) => {
+                let mut v = model.claims.clone();
+                let choose = |old: f32, values: &[f32]| {
+                    let index = values.iter().position(|v| *v == old).unwrap_or(0);
+                    values[(index as i32 + i32::from(d)).clamp(0, values.len() as i32 - 1) as usize]
+                };
+                match field {
+                    BorderOption::Distance => {
+                        v.distance = choose(v.distance, &[64.0, 160.0, 256.0, 512.0])
+                    }
+                    BorderOption::Height => v.height = choose(v.height, &[16.0, 32.0, 64.0, 384.0]),
+                    BorderOption::Opacity => {
+                        v.opacity = (v.opacity + f32::from(d) * 0.05).clamp(0.05, 1.0)
+                    }
+                    BorderOption::Width => {
+                        v.line_width = (v.line_width + f32::from(d)).clamp(1.0, 6.0)
+                    }
+                }
+                Some(Action::SetClaims(v))
+            }
+
+            Control::ChatSection(section) => {
+                self.chat_section = section;
+                None
+            }
+            Control::ChatReset => Some(Action::SetChat(Preferences::default())),
+            Control::ChatPlacement => {
+                let mut p = model.chat_preferences;
+                p.placement = p.placement.next();
+                Some(Action::SetChat(p))
+            }
+            Control::ChatStyle => {
+                let mut p = model.chat_preferences;
+                p.notifications = p.notifications.next();
+                Some(Action::SetChat(p))
+            }
+            Control::ChatPresence => {
+                let mut p = model.chat_preferences;
+                p.presence = !p.presence;
+                Some(Action::SetChat(p))
+            }
+            Control::ChatDeaths => {
+                let mut p = model.chat_preferences;
+                p.deaths = !p.deaths;
+                Some(Action::SetChat(p))
+            }
+            Control::ChatRepeats => {
+                let mut p = model.chat_preferences;
+                p.repeats = p.repeats.next();
+                Some(Action::SetChat(p))
+            }
+            Control::ChatPrefix => {
+                let mut p = model.chat_preferences;
+                p.ignore_prefix = match p.ignore_prefix {
+                    0 => 10,
+                    10 => 11,
+                    _ => 0,
+                };
+                Some(Action::SetChat(p))
+            }
+            Control::ChatAdjust(field, delta) => {
+                let mut p = model.chat_preferences;
+                let d = i32::from(delta);
+                let adjust =
+                    |v: u16, step: i32| (i32::from(v) + d * step).clamp(0, u16::MAX as i32) as u16;
+                match field {
+                    ChatOption::Width => p.width = adjust(p.width, 20),
+                    ChatOption::Height => p.height = adjust(p.height, 20),
+                    ChatOption::Scale => {
+                        p.scale = ((p.scale * 100.0 + delta as f32 * 5.0).round()) / 100.0
+                    }
+                    ChatOption::Opacity => p.opacity += delta as f32 * 0.05,
+                    ChatOption::OffsetX => {
+                        p.offset_x = p.offset_x.saturating_add(i16::from(delta) * 8)
+                    }
+                    ChatOption::OffsetY => {
+                        p.offset_y = p.offset_y.saturating_add(i16::from(delta) * 8)
+                    }
+                    ChatOption::Duration => p.duration = adjust(p.duration, 1),
+                    ChatOption::EventWidth => p.event_width = adjust(p.event_width, 10),
+                    ChatOption::RepeatWindow => p.repeat_window = adjust(p.repeat_window, 2),
+                }
+                Some(Action::SetChat(p.normalized()))
+            }
+
             Control::ChatModern => Some(Action::ToggleChat),
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
@@ -874,13 +1479,6 @@ impl Menu {
                     Control::OwnVisible => s.own_visible = !s.own_visible,
                     Control::FriendsVisible => s.friends_visible = !s.friends_visible,
                     Control::ThroughWalls => s.through_walls = !s.through_walls,
-                    Control::Height => s.height = cycle(s.height, &[16.0, 32.0, 64.0, 384.0]),
-                    Control::Distance => {
-                        s.distance = cycle(s.distance, &[64.0, 160.0, 256.0, 512.0])
-                    }
-                    Control::Opacity => s.opacity = cycle(s.opacity, &[0.25, 0.45, 0.7, 1.0]),
-                    Control::OwnColor => s.own_color = cycle_color(s.own_color),
-                    Control::FriendColor => s.friend_color = cycle_color(s.friend_color),
                     _ => return None,
                 };
                 Some(Action::SetClaims(s))
@@ -907,6 +1505,8 @@ impl Menu {
             Field::PeerCode => &mut self.peer_code,
             Field::RelayUrl => &mut self.relay_url,
             Field::RelayToken => &mut self.access_token,
+            Field::OwnClaimColor => &mut self.own_claim_color,
+            Field::FriendClaimColor => &mut self.friend_claim_color,
         })
     }
     pub fn text(&self) -> &str {
@@ -916,6 +1516,8 @@ impl Menu {
             Some(Field::PeerCode) => &self.peer_code,
             Some(Field::RelayUrl) => &self.relay_url,
             Some(Field::RelayToken) => &self.access_token,
+            Some(Field::OwnClaimColor) => &self.own_claim_color,
+            Some(Field::FriendClaimColor) => &self.friend_claim_color,
             None => "",
         }
     }
@@ -952,12 +1554,15 @@ impl Menu {
         };
         let limit = match field {
             Field::Name => 48,
-            Field::Color => 7,
+            Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PeerCode => 24,
             Field::RelayUrl => 2048,
             Field::RelayToken => 1024,
         };
-        if (field == Field::Color && !(c.is_ascii_hexdigit() || c == '#'))
+        if (matches!(
+            field,
+            Field::Color | Field::OwnClaimColor | Field::FriendClaimColor
+        ) && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
         {
             return;
@@ -990,6 +1595,12 @@ impl Menu {
                     Field::RelayToken
                 } else {
                     Field::RelayUrl
+                }
+            } else if self.tab == Tab::Claims && self.claims_section == ClaimsSection::Colours {
+                if self.focus == Some(Field::OwnClaimColor) {
+                    Field::FriendClaimColor
+                } else {
+                    Field::OwnClaimColor
                 }
             } else if self.tab == Tab::Party {
                 Field::PeerCode
@@ -1072,22 +1683,6 @@ impl Menu {
 fn on(value: bool) -> &'static str {
     if value { "вкл." } else { "выкл." }
 }
-fn cycle(value: f32, values: &[f32]) -> f32 {
-    values
-        .iter()
-        .copied()
-        .find(|v| *v > value + 0.001)
-        .unwrap_or(values[0])
-}
-fn cycle_color(value: u32) -> u32 {
-    let colors = [0x55ff88, 0x55bbff, 0xffcc55, 0xff6688, 0xcc88ff, 0xffffff];
-    let i = colors
-        .iter()
-        .position(|v| *v == value)
-        .unwrap_or(colors.len() - 1);
-    colors[(i + 1) % colors.len()]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1128,8 +1723,11 @@ mod tests {
             tab: Tab::Claims,
             ..Menu::default()
         };
-        let Some(Action::SetClaims(updated)) = menu.activate(&model, 240.0, Control::Opacity)
-        else {
+        let Some(Action::SetClaims(updated)) = menu.activate(
+            &model,
+            240.0,
+            Control::BorderAdjust(BorderOption::Opacity, 1),
+        ) else {
             panic!("opacity must produce a settings action");
         };
         assert!(!updated.enabled);
@@ -1384,5 +1982,100 @@ mod tests {
         m.key("key.keyboard.left", 0);
         m.key("key.keyboard.delete", 0);
         assert_eq!(m.name, "Kdk1a2s");
+    }
+    #[test]
+    fn all_chat_settings_pages_fit_small_gui_and_keep_controls_separate() {
+        for section in [
+            ChatSection::Appearance,
+            ChatSection::Notifications,
+            ChatSection::Spam,
+        ] {
+            let menu = Menu {
+                tab: Tab::Chat,
+                chat_section: section,
+                ..Menu::default()
+            };
+            let widgets = menu.layout(&ViewModel::default(), 320.0, 240.0);
+            for widget in &widgets {
+                let [x, y, w, h] = widget.rect;
+                assert!(x >= 0.0 && y >= 0.0 && x + w <= 320.0 && y + h <= 240.0);
+            }
+            let controls: Vec<_> = widgets.iter().filter(|w| w.control.is_some()).collect();
+            for (i, a) in controls.iter().enumerate() {
+                for b in controls.iter().skip(i + 1) {
+                    assert!(
+                        a.rect[0] + a.rect[2] <= b.rect[0]
+                            || b.rect[0] + b.rect[2] <= a.rect[0]
+                            || a.rect[1] + a.rect[3] <= b.rect[1]
+                            || b.rect[1] + b.rect[3] <= a.rect[1],
+                        "overlapping controls"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn claims_sections_are_grouped_fit_small_gui_and_custom_colours_apply() {
+        let model = ViewModel {
+            claim_rows: (0..20)
+                .map(|i| ClaimRow {
+                    dimension: "minecraft:overworld".into(),
+                    x: i * 16,
+                    z: 0,
+                    label: format!("Чанк {i}"),
+                })
+                .collect(),
+            ..ViewModel::default()
+        };
+        for section in [
+            ClaimsSection::Map,
+            ClaimsSection::Borders,
+            ClaimsSection::Colours,
+            ClaimsSection::List,
+        ] {
+            let menu = Menu {
+                tab: Tab::Claims,
+                claims_section: section,
+                ..Menu::default()
+            };
+            let widgets = menu.layout(&model, 320.0, 240.0);
+            for w in &widgets {
+                assert!(
+                    w.rect[0] >= 0.0
+                        && w.rect[1] >= 0.0
+                        && w.rect[0] + w.rect[2] <= 320.0
+                        && w.rect[1] + w.rect[3] <= 240.0
+                );
+            }
+            let controls: Vec<_> = widgets.iter().filter(|w| w.control.is_some()).collect();
+            for (i, a) in controls.iter().enumerate() {
+                for b in controls.iter().skip(i + 1) {
+                    assert!(
+                        a.rect[0] + a.rect[2] <= b.rect[0]
+                            || b.rect[0] + b.rect[2] <= a.rect[0]
+                            || a.rect[1] + a.rect[3] <= b.rect[1]
+                            || b.rect[1] + b.rect[3] <= a.rect[1]
+                    );
+                }
+            }
+        }
+        let mut menu = Menu {
+            tab: Tab::Claims,
+            claims_section: ClaimsSection::Colours,
+            focus: Some(Field::OwnClaimColor),
+            own_claim_color: "#123ABC".into(),
+            friend_claim_color: "#FEDCBA".into(),
+            ..Menu::default()
+        };
+        let Some(Action::SetClaims(p)) = menu.activate(&model, 224.0, Control::ApplyClaimColours)
+        else {
+            panic!()
+        };
+        assert_eq!(p.own_color, 0x123abc);
+        assert_eq!(p.friend_color, 0xfedcba);
+        menu.key("key.keyboard.home", 0);
+        menu.key("key.keyboard.delete", 0);
+        menu.character('#');
+        assert_eq!(menu.own_claim_color, "#123ABC");
     }
 }

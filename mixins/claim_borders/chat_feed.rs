@@ -1,4 +1,5 @@
 // Compact chat model, independent of game rendering and networking.
+use super::claim_borders_chat_preferences::{Preferences, RepeatMode};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,11 +17,16 @@ pub struct Entry {
     pub original: String,
     pub translated: Option<String>,
     pub at: u64,
+    pub created_at: u64,
     pub joined: Option<bool>,
+    pub repetitions: u32,
+    pub show_original: bool,
+    comparison: (Kind, String, String),
+    raw: String,
 }
 impl Entry {
     pub fn body(&self, translated: bool) -> &str {
-        if translated {
+        if translated && !self.show_original {
             self.translated.as_deref().unwrap_or(&self.original)
         } else {
             &self.original
@@ -117,8 +123,24 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
     }
     (Kind::System, String::new(), line.into(), None)
 }
+fn comparison_key(raw: &str, ignore: u8) -> (Kind, String, String) {
+    let key: String = raw.chars().skip(ignore as usize).collect();
+    let (kind, name, body, _) = classify(&key);
+    (kind, name, body)
+}
 impl Feed {
+    #[cfg(test)]
     pub fn push(&mut self, line: &str, now: u64) -> Option<u64> {
+        self.push_with(
+            line,
+            now,
+            Preferences {
+                repeats: RepeatMode::Off,
+                ..Preferences::default()
+            },
+        )
+    }
+    pub fn push_with(&mut self, line: &str, now: u64, preferences: Preferences) -> Option<u64> {
         if line.trim().is_empty() {
             return None;
         }
@@ -138,6 +160,35 @@ impl Feed {
             }
             return None;
         }
+        let comparison = comparison_key(&bounded, preferences.ignore_prefix);
+        if matches!(kind, Kind::Message | Kind::System) && preferences.repeats != RepeatMode::Off {
+            let candidate = self
+                .entries
+                .iter()
+                .enumerate()
+                .rev()
+                .take(if preferences.repeats == RepeatMode::Consecutive {
+                    1
+                } else {
+                    50
+                })
+                .find(|(_, e)| {
+                    e.kind == kind
+                        && e.name == name
+                        && e.comparison == comparison
+                        && now >= e.at
+                        && now - e.at <= u64::from(preferences.repeat_window) * 1000
+                })
+                .map(|(i, _)| i);
+            if let Some(index) = candidate {
+                let mut previous = self.entries.remove(index)?;
+                previous.repetitions = previous.repetitions.saturating_add(1);
+                previous.at = now;
+                // Keep the cached translation and the per-message original toggle.
+                self.entries.push_back(previous);
+                return self.entries.back().map(|e| e.id);
+            }
+        }
         self.next = self.next.saturating_add(1);
         self.entries.push_back(Entry {
             id: self.next,
@@ -146,12 +197,29 @@ impl Feed {
             original: body,
             translated: None,
             at: now,
+            created_at: now,
             joined,
+            repetitions: 1,
+            show_original: false,
+            comparison,
+            raw: bounded,
         });
         if self.entries.len() > 200 {
             self.entries.pop_front();
         }
         Some(self.next)
+    }
+    pub fn reconfigure(&mut self, preferences: Preferences) {
+        for entry in &mut self.entries {
+            entry.comparison = comparison_key(&entry.raw, preferences.ignore_prefix);
+        }
+    }
+    pub fn toggle_original(&mut self, id: u64) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            entry.show_original = !entry.show_original;
+            return true;
+        }
+        false
     }
     pub fn clear(&mut self) {
         self.entries.clear();
@@ -217,5 +285,73 @@ mod tests {
         assert!(feed.entries[0].translated.is_none());
         feed.translate(new, "новое".into());
         assert_eq!(feed.entries[0].body(true), "новое");
+    }
+    #[test]
+    fn recent_spam_compacts_without_merging_authors_or_distinct_messages() {
+        let mut f = Feed::default();
+        let p = Preferences::default();
+        let id = f.push_with("<Alice> привет", 0, p).unwrap();
+        f.translate(id, "hello".into());
+        f.toggle_original(id);
+        f.push_with("<Bob> привет", 10, p);
+        f.push_with("<Alice> другое", 20, p);
+        assert_eq!(f.push_with("<Alice> привет", 30, p), Some(id));
+        assert_eq!(f.entries.len(), 3);
+        let entry = f.entries.back().unwrap();
+        assert_eq!(entry.repetitions, 2);
+        assert_eq!(entry.created_at, 0);
+        assert!(entry.show_original);
+        assert_eq!(entry.body(true), "привет");
+        f.toggle_original(id);
+        assert_eq!(f.entries.back().unwrap().body(true), "hello");
+        f.push_with("<Alice> привет", 20000, p);
+        assert_eq!(f.entries.len(), 4);
+    }
+    #[test]
+    fn consecutive_off_and_ignored_timestamp_prefix() {
+        let mut f = Feed::default();
+        let p = Preferences {
+            repeats: RepeatMode::Consecutive,
+            ..Preferences::default()
+        };
+        f.push_with("<Alice> one", 0, p);
+        f.push_with("<Bob> two", 1, p);
+        f.push_with("<Alice> one", 2, p);
+        assert_eq!(f.entries.len(), 3);
+        f.push_with("<Alice> one", 3, p);
+        assert_eq!(f.entries.len(), 3);
+        f.push_with(
+            "<Alice> one",
+            4,
+            Preferences {
+                repeats: RepeatMode::Off,
+                ..p
+            },
+        );
+        assert_eq!(f.entries.len(), 4);
+        f.clear();
+        let p = Preferences {
+            ignore_prefix: 11,
+            ..Preferences::default()
+        };
+        f.push_with("[12:00:00] <Alice> one", 0, p);
+        f.push_with("[12:00:01] <Alice> one", 1, p);
+        assert_eq!(f.entries.len(), 1);
+        assert_eq!(f.entries[0].repetitions, 2);
+        f.push_with("[12:00:02] <Bob> one", 2, p);
+        assert_eq!(f.entries.len(), 2);
+    }
+    #[test]
+    fn changing_prefix_setting_reindexes_existing_history() {
+        let mut f = Feed::default();
+        f.push_with("[12:00:00] <Alice> hello", 0, Preferences::default());
+        let p = Preferences {
+            ignore_prefix: 11,
+            ..Preferences::default()
+        };
+        f.reconfigure(p);
+        f.push_with("[12:00:01] <Alice> hello", 1, p);
+        assert_eq!(f.entries.len(), 1);
+        assert_eq!(f.entries[0].repetitions, 2);
     }
 }

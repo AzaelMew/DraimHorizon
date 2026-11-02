@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.5.0"
+version = "0.6.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -308,4 +308,48 @@ helper = "chat_local_hook.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "text", ty = "&str", value = "text" },
+]
+
+[[module]]
+id = "chat-preferences"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_chat_preferences"
+source = "chat_preferences.rs"
+
+[[module]]
+id = "claim-map"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map"
+source = "claim_map.rs"
+
+[[module]]
+id = "map-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_view"
+source = "map_view.rs"
+
+[[module]]
+id = "map-backend"
+file = "crates/horizon-client/src/game/extras.rs"
+name = "claim_borders_map_backend"
+source = "map_backend.rs"
+
+[[injection]]
+id = "claim-minimap"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_minimap"
+helper = "map_minimap_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "minimap", ty = "&mut Option<crate::game::native_hooks::NativeMinimap>", value = "&mut *minimap" },
+]
+
+[[injection]]
+id = "claim-map-image"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::extras::Game<'_>::update_minimap"
+helper = "map_update_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]

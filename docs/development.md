@@ -4,7 +4,7 @@
 
 - `mixins/claim_borders/runtime.rs` — парсер ответа SMP `/claims`, кеш сеанса и построение внешнего контура. Один исходник используется standalone Cargo-библиотекой и внедряемым модулем.
 - Остальные `.rs` в bundle — тонкие адаптеры чата, команд, отрисовки и переподключения.
-- `horizon-mixin.toml` — 21 HEAD-инъекция (два cancellable) и десять модулей; точная ревизия Horizon закреплена в `compatibility.json`.
+- `horizon-mixin.toml` — native hooks и точечные HEAD-инъекции; точная ревизия Horizon закреплена в `compatibility.json`.
 - Для рисования используются штатные `Gizmos` (depth-tested или `on_top`); новый GPU-пайплайн не добавляется.
 - `/claims` содержит блоковые начала чанков, не номера чанков. Формат проверен по `horizon-rust/horizon-mods/native/smp/mixins/smp/smp_claims.rs`.
 
@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.5.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.6.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -89,3 +89,7 @@ Workflow проверяет feature-ветки и отдаёт `.hnmod` как A
 Launcher `src/github_mods.rs` сохраняет `<id>.origin.json` при установке по GitHub-ссылке. Проект из релиза следует `releases/latest`, а `is_update` сравнивает теги. Поэтому в релизе обязательны обычный tag/release и актуальный `.hnmod`; локальная ручная установка файла не даёт лаунчеру сведения о репозитории. Source-only пакет и версия в `horizon-native.json` проверяются штатным `cargo horizon-mod check`.
 
 Chat cards and translation use `chat_feed.rs`, `chat_view.rs` and the bundled relay client translation worker. Native compilation is currently disabled in release CI by repository choice; run it locally against the exact pin before publishing.
+
+Chat geometry and persistent preferences are shared in `chat_preferences.rs`; click hit boxes are stored in final GUI coordinates after scaling. Antispam operates on original text before translation and keeps author identity separate.
+
+Claim cartography: `claim_map.rs` owns settings, projection, claim overlays and sorting; `map_view.rs` owns map UI; `map_backend.rs` is injected as a child of `game::extras` to reuse Horizon terrain scanning and its dynamic atlas slot. Extra source hash for `game/extras.rs` is recorded in compatibility.json. Terrain is limited to loaded chunks and is not persisted.

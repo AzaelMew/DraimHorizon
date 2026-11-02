@@ -24,6 +24,13 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|p| p.into_inner());
     f(&mut state)
 }
+pub(super) fn claims_settings() {
+    state(|s| {
+        s.menu.tab = model::Tab::Claims;
+        s.menu.claims_section = model::ClaimsSection::Map;
+        s.menu.focus = None;
+    });
+}
 pub(super) fn reset() {
     state(|s| *s = State::default());
 }
@@ -157,6 +164,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     let label = match s.menu.focus {
                         Some(model::Field::Name) => "Имя: ",
                         Some(model::Field::Color) => "Цвет: ",
+                        Some(model::Field::OwnClaimColor) => "Свои: ",
+                        Some(model::Field::FriendClaimColor) => "Друзья: ",
                         Some(model::Field::PeerCode) => "Код друга: ",
                         _ => "",
                     };

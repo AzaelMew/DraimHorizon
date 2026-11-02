@@ -219,9 +219,106 @@ pub(super) fn reset() {
 
 pub(super) fn frame(game: &mut Game<'_>) {
     service_menu(game);
-    if game.native_on(claims::ID) && game.remote.is_some() && ensure(game) {
-        poll_network(game);
+    if !game.native_on(claims::ID) {
+        crate::game::claim_borders_map_view::reset();
+        return;
     }
+    if game.native_on(claims::ID) && game.native_player().is_some() && ensure(game) {
+        if game.remote.is_some() {
+            poll_network(game);
+        }
+        let source = map_snapshot(game);
+        crate::game::claim_borders_map_view::sync(game, source);
+    }
+    if crate::game::claim_borders_map_view::take_close() {
+        game.native_mod_screen_close(claims::ID);
+    }
+}
+pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::Snapshot {
+    use crate::game::claim_borders_map as map;
+    let Some(player) = game.native_player() else {
+        return map::Snapshot::default();
+    };
+    let dimension = if player.dimension.contains(':') {
+        player.dimension.to_owned()
+    } else {
+        format!("minecraft:{}", player.dimension)
+    };
+    let own = claims::with_state(|s| s.shared_claims());
+    let known = own.is_some();
+    state(|c| {
+        let mut cells: Vec<_> = own
+            .unwrap_or_default()
+            .into_iter()
+            .map(|claim| map::Cell {
+                dimension: claim.dimension,
+                x: claim.x,
+                z: claim.z,
+                owner: "Вы".into(),
+                own: true,
+            })
+            .collect();
+        let mut marks = Vec::new();
+        if let Some(store) = &c.waypoints {
+            for w in store.all(&c.scope) {
+                marks.push(map::Mark {
+                    dimension: w.dimension.clone(),
+                    position: [w.position[0], w.position[2]],
+                    label: w.name.clone(),
+                    color: w.color,
+                });
+            }
+        }
+        let online: Vec<_> = c
+            .peers
+            .iter()
+            .filter(|peer| {
+                c.tab_cache
+                    .iter()
+                    .any(|(uuid, name)| *uuid == peer.uuid && *name == peer.name)
+                    && c.pins.as_ref().and_then(|p| p.get(&c.scope, peer.uuid))
+                        == Some(peer.code.as_str())
+            })
+            .map(|peer| peer.uuid)
+            .collect();
+        if let Some(p) = &c.party {
+            for friend in p.online(&online, now(c)) {
+                marks.push(map::Mark {
+                    dimension: friend.snapshot.dimension.clone(),
+                    position: [friend.snapshot.position[0], friend.snapshot.position[2]],
+                    label: friend.name.clone(),
+                    color: c.visual.friend_color,
+                });
+                for claim in friend.claims.unwrap_or_default() {
+                    cells.push(map::Cell {
+                        dimension: claim.dimension,
+                        x: claim.x,
+                        z: claim.z,
+                        owner: friend.name.clone(),
+                        own: false,
+                    });
+                }
+            }
+        }
+        map::Snapshot {
+            scope: c.scope.clone(),
+            dimension,
+            player: [player.x, player.y, player.z],
+            cells,
+            marks,
+            own_known: known,
+            own_color: c.visual.own_color,
+            friend_color: c.visual.friend_color,
+        }
+    })
+}
+pub(super) fn open_map(game: &mut Game<'_>) {
+    if !game.native_on(claims::ID) || !ensure(game) {
+        return;
+    }
+    open_menu(game);
+    let source = map_snapshot(game);
+    crate::game::claim_borders_map_view::open(source, None, false);
 }
 
 pub(super) fn tick(game: &mut Game<'_>) {
@@ -773,6 +870,39 @@ pub(super) fn visual_settings() -> visualization::Settings {
 
 fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     let chat = crate::game::claim_borders_chat_view::settings(game);
+    let map_preferences = crate::game::claim_borders_map_view::settings(game);
+    let map_source = map_snapshot(game);
+    let claim_rows = crate::game::claim_borders_map::sorted_cells(
+        &map_source,
+        crate::game::claim_borders_map::Preferences {
+            own: true,
+            friends: true,
+            ..map_preferences
+        },
+    )
+    .into_iter()
+    .map(|c| {
+        let distance = (c.x as f64 + 8.0 - map_source.player[0])
+            .hypot(c.z as f64 + 8.0 - map_source.player[2]);
+        menu::ClaimRow {
+            label: format!(
+                "{} · [{},{}] · {} · {}",
+                c.owner,
+                c.x.div_euclid(16),
+                c.z.div_euclid(16),
+                crate::game::claim_borders_map::dimension_label(&c.dimension),
+                if c.dimension == map_source.dimension {
+                    format!("{distance:.0}м")
+                } else {
+                    "другой мир".into()
+                }
+            ),
+            dimension: c.dimension,
+            x: c.x,
+            z: c.z,
+        }
+    })
+    .collect();
     let tab = if game.remote.is_some() {
         cached_online(game)
     } else {
@@ -861,10 +991,14 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 own_color: settings.own_color,
                 friend_color: settings.friend_color,
                 opacity: settings.opacity,
+                line_width: settings.line_width,
             },
             status: c.menu_feedback.clone(),
             chat_modern: chat.modern,
             chat_translate: chat.translate,
+            chat_preferences: chat.preferences,
+            map_preferences,
+            claim_rows,
         }
     })
 }
@@ -920,6 +1054,24 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::ClearRelayToken => {
             configure_network(String::new(), None, true)?;
             Ok(vec!["Токен relay удалён.".into()])
+        }
+        Action::OpenMap => {
+            let source = map_snapshot(game);
+            crate::game::claim_borders_map_view::open(source, None, true);
+            Ok(Vec::new())
+        }
+        Action::FocusClaim { dimension, x, z } => {
+            let source = map_snapshot(game);
+            crate::game::claim_borders_map_view::open(source, Some((dimension, x, z)), true);
+            Ok(Vec::new())
+        }
+        Action::SetMap(preferences) => {
+            crate::game::claim_borders_map_view::configure(game, preferences);
+            Ok(Vec::new())
+        }
+        Action::SetChat(preferences) => {
+            crate::game::claim_borders_chat_view::configure(game, preferences);
+            Ok(Vec::new())
         }
         Action::ToggleChat => {
             crate::game::claim_borders_chat_view::toggle(game, false);
@@ -977,6 +1129,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 next.through_walls = settings.through_walls;
                 next.own_color = settings.own_color;
                 next.friend_color = settings.friend_color;
+                next.set("width", &settings.line_width.to_string())?;
                 next.set("opacity", &settings.opacity.to_string())?;
                 next.distance = match settings.distance {
                     64.0 => 64,

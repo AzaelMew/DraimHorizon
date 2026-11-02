@@ -229,10 +229,19 @@ fn parse_color(value: &str) -> Result<u32, String> {
 
 /// Dimension filtering belongs to the adapter. Compute the perimeter before distance
 /// culling so adjacent chunks never acquire false walls at the visibility boundary.
+#[cfg(test)]
 pub fn geometry(
     chunks: impl IntoIterator<Item = (i32, i32)>,
     player: [f64; 3],
     settings: &Settings,
+) -> Vec<Segment> {
+    geometry_with_spacing(chunks, player, settings, 8)
+}
+pub fn geometry_with_spacing(
+    chunks: impl IntoIterator<Item = (i32, i32)>,
+    player: [f64; 3],
+    settings: &Settings,
+    spacing: u8,
 ) -> Vec<Segment> {
     if !player.iter().all(|v| v.is_finite()) || settings.validate().is_err() {
         return Vec::new();
@@ -249,10 +258,10 @@ pub fn geometry(
         .collect();
     let (bottom, top) = settings.span.bounds(player[1]);
     let mut heights = vec![bottom];
-    let mut y = bottom + 8.0;
-    while y < top {
+    let mut y = bottom + f64::from(spacing);
+    while spacing > 0 && y < top {
         heights.push(y);
-        y += 8.0;
+        y += f64::from(spacing);
     }
     heights.push(top);
     let mut lines = Vec::new();
@@ -411,5 +420,15 @@ mod tests {
         assert!(settings.save(&path).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"corrupt");
         fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn sparse_grid_and_outline_preserve_outer_edges_with_fewer_lines() {
+        let settings = Settings::default();
+        let dense = geometry_with_spacing([(0, 0)], [8.0, 64.0, 8.0], &settings, 8);
+        let sparse = geometry_with_spacing([(0, 0)], [8.0, 64.0, 8.0], &settings, 16);
+        let outline = geometry_with_spacing([(0, 0)], [8.0, 64.0, 8.0], &settings, 0);
+        assert!(dense.len() > sparse.len());
+        assert!(sparse.len() > outline.len());
+        assert_eq!(outline.len(), 12);
     }
 }

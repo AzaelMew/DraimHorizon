@@ -31,13 +31,14 @@ fn claim_borders_render(game: &crate::game::Game<'_>, gizmos: &mut horizon_clien
         Vec::new()
     };
     for (claims, friend) in [(&friends, true), (&own, false)] {
-        let segments = visual::geometry(
+        let segments = visual::geometry_with_spacing(
             claims
                 .iter()
                 .filter(|c| c.dimension == dimension)
                 .map(|c| (c.x, c.z)),
             position,
             &settings,
+            crate::game::claim_borders_map_view::settings(game).grid_step,
         );
         let color = settings.styled_color(friend);
         for (start, end) in segments {
