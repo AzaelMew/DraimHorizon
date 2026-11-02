@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "Claim Borders";
-pub const VERSION: &str = "0.8.0";
+pub const VERSION: &str = "0.9.0";
 pub const DESCRIPTION: &str = "M: управление Waypoints, Party и границами. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
@@ -81,7 +81,7 @@ pub fn parse_claims(message: &str) -> Result<Option<Vec<Claim>>, ParseError> {
     Ok(Some(claims.into_iter().collect()))
 }
 
-fn strip_formatting(text: &str) -> String {
+pub fn strip_formatting(text: &str) -> String {
     let mut chars = text.chars();
     let mut plain = String::with_capacity(text.len());
     while let Some(c) = chars.next() {
@@ -146,6 +146,12 @@ impl State {
         self.claims.clear();
         self.pending = None;
         self.claims_known = false;
+    }
+
+    pub fn restore(&mut self, claims: Vec<Claim>) {
+        self.claims = claims;
+        self.claims_known = true;
+        self.pending = None;
     }
 
     pub fn begin_refresh(&mut self) {

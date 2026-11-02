@@ -12,5 +12,6 @@ fn claim_borders_chat(
         m::with_state(|state| {
             state.receive_chat(&content.plain());
         });
+        crate::game::claim_borders_claim_memory::server(&content.plain());
     }
 }

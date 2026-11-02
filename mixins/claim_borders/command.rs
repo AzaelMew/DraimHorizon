@@ -4,6 +4,7 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         m::with_state(|state| state.clear());
         return;
     }
+    crate::game::claim_borders_teleport_view::command(command);
     if *ran {
         return;
     }
@@ -20,8 +21,7 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         return; // Preserve the actual server command and its response.
     }
     if matches!(name, "claim" | "unclaim") && words.next().is_none() {
-        m::with_state(|state| state.clear());
-        game.native_chat("[Claim Borders] Claims may change. Run /claims to refresh borders.");
+        crate::game::claim_borders_claim_memory::command(game, command);
         return;
     }
     if name != "claimborders" {

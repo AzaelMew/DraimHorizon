@@ -71,6 +71,7 @@ pub struct Preferences {
     pub remember: bool,
     pub shading: bool,
     pub profile: u8,
+    pub mobs: u8,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -94,6 +95,7 @@ impl Default for Preferences {
             remember: true,
             shading: true,
             profile: 0,
+            mobs: 1,
         }
     }
 }
@@ -101,6 +103,7 @@ impl Preferences {
     pub fn normalized(mut self) -> Self {
         self.corner %= 4;
         self.profile %= 8;
+        self.mobs %= 3;
         self.size = self.size.clamp(64, 192);
         self.zoom = if self.zoom.is_finite() {
             self.zoom.clamp(0.5, 4.0)
@@ -120,7 +123,7 @@ impl Preferences {
     }
     pub fn encode(self) -> String {
         let p = self.normalized();
-        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step,"remember":p.remember,"shading":p.shading,"profile":p.profile}).to_string()
+        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step,"remember":p.remember,"shading":p.shading,"profile":p.profile,"mobs":p.mobs}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, String> {
         if raw.len() > 4096 {
@@ -161,6 +164,7 @@ impl Preferences {
             remember: flag("remember", true),
             shading: flag("shading", true),
             profile: v["profile"].as_u64().unwrap_or(0).min(7) as u8,
+            mobs: v["mobs"].as_u64().unwrap_or(1).min(2) as u8,
         }
         .normalized())
     }
@@ -183,6 +187,27 @@ pub struct Mark {
     pub label: String,
     pub color: u32,
 }
+#[derive(Clone, Debug)]
+pub struct MobMark {
+    pub position: [f64; 3],
+    pub label: String,
+    pub hostile: bool,
+}
+pub fn mob_group(id: &str, category: &str) -> Option<bool> {
+    if id == "minecraft:player" {
+        return None;
+    }
+    match category {
+        "monster" => Some(true),
+        "creature"
+        | "ambient"
+        | "axolotls"
+        | "underground_water_creature"
+        | "water_creature"
+        | "water_ambient" => Some(false),
+        _ => None,
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
     pub scope: String,
@@ -193,6 +218,7 @@ pub struct Snapshot {
     pub yaw: f32,
     pub cells: Vec<Cell>,
     pub marks: Vec<Mark>,
+    pub mobs: Vec<MobMark>,
     pub own_known: bool,
     pub own_color: u32,
     pub friend_color: u32,
@@ -418,6 +444,14 @@ pub fn paint_aspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radar_includes_living_categories_and_excludes_players_and_items() {
+        assert_eq!(mob_group("minecraft:zombie", "monster"), Some(true));
+        assert_eq!(mob_group("minecraft:cow", "creature"), Some(false));
+        assert_eq!(mob_group("minecraft:squid", "water_creature"), Some(false));
+        assert_eq!(mob_group("minecraft:player", "creature"), None);
+        assert_eq!(mob_group("minecraft:item", "misc"), None);
+    }
     #[test]
     fn rectangular_view_projection_and_scale_remain_geographic() {
         let view = View {

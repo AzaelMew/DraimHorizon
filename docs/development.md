@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.8.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.9.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -103,3 +103,11 @@ Exploration: `map_history.rs` stores 16×16-chunk regions, including canonical m
 `map_worker.rs` owns all disk I/O and terrain composition. At most 2048 coalesced tiles and one latest render request/result wait in each direction; unchanged renders reuse an image. The game thread scans already loaded terrain around the player under the native budget, then applies current claims and icons to the returned image. Panning never changes the scan centre. Normal frames do not wait for disk; `save_for_exit` waits up to three seconds for pending writes. A hard crash may lose the last second of unsaved exploration. No old 0.7.0 terrain can be migrated because it was never stored.
 
 View coordinates remain geographic across rectangular viewports; the full map has a separate atlas texture, while the minimap keeps Horizon’s existing 128² slot. Stored terrain is local, and no relay protocol or source pin changes are needed.
+
+Outgoing chat: `outgoing.rs` orders up to eight pending entries, splits English text by packet UTF-16 limits and falls back on timeout; `outgoing_view.rs` intercepts normalized user chat before the original send path, preserves history, and calls `send_signed_chat` directly after translation. Commands bypass the queue. Direction-specific translation workers share the same bounded HTTP parser and never mix target-language caches. Disconnect clears all pending sends.
+
+`claim_directory.rs` stores per-owner, key-bound complete claim lists with monotonic persisted revisions; `[DHC1]` pages are independent of DHP party consent and remain E2E encrypted by the existing relay. Receivers validate tab membership, unique peer UUID, key pin, origins/dimensions/counts/revisions and full page completion before saving. Requests for cached lists do not run a game-server command. `claim_memory.rs` bootstraps once when no own record exists, observes server-confirmed claim/unclaim for the original command location/dimension, and exposes offline owners to both map and border rendering. This is owner-reported cached data, not server authority or Mojang identity verification; external changes need manual refresh. New clients learn directly from online owners, not offline relay storage.
+
+`teleport.rs` accepts only the known server request grammar and whitelisted command variants with a Minecraft nickname; `teleport_view.rs` creates at most eight local requests, renders three cards, and drains click-selected commands on the game thread. Only server-sourced messages can create cards; the native chat cursor and exact current viewport are required for a click. Expiry, duplicate-click consumption and reset on disconnect prevent stale requests crossing sessions.
+
+Mob radar reads interpolated loaded living entities only, excluding player/misc types; positions are bounded to 512 nearest marks and never persisted. Colours describe entity categories, not current aggression. Existing source pins and relay service protocol remain compatible.

@@ -243,6 +243,22 @@ fn map_marks(
         .filter(|m| m.dimension == dimension)
         .collect();
     marks.sort_by_key(|m| (m.player.is_some(), m.friend));
+    if p.mobs > 0 && source.dimension == dimension {
+        for mob in source.mobs.iter().filter(|m| p.mobs != 2 || m.hostile) {
+            let at = xy([mob.position[0], mob.position[2]]);
+            if !contains(rect, at) {
+                continue;
+            }
+            let alpha = if (mob.position[1] - source.player[1]).abs() > 16.0 {
+                0x88
+            } else {
+                0xff
+            };
+            let color = (alpha << 24) | if mob.hostile { 0xf07876 } else { 0x86ce9a };
+            game.native_fill(batch, [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0], 0xd0101720);
+            game.native_fill(batch, [at[0] - 1.5, at[1] - 1.5, 3.0, 3.0], color);
+        }
+    }
     if p.marks {
         for mark in marks {
             let at = xy(mark.position);
@@ -712,6 +728,36 @@ pub(super) fn render(
                         rect[1] + rect[3],
                     );
                 }
+            }
+        }
+        if p.mobs > 0 && dimension == source.dimension && contains(rect, screen.mouse) {
+            if let Some(mob) = source
+                .mobs
+                .iter()
+                .filter(|m| p.mobs != 2 || m.hostile)
+                .find(|m| {
+                    let xy = actual.pixel_aspect([m.position[0], m.position[2]], 128.0, aspect);
+                    let at = [
+                        rect[0] + xy[0] / 128.0 * rect[2],
+                        rect[1] + xy[1] / 128.0 * rect[3],
+                    ];
+                    (at[0] - screen.mouse[0]).abs() < 5.0 && (at[1] - screen.mouse[1]).abs() < 5.0
+                })
+            {
+                let x = screen.mouse[0].clamp(
+                    rect[0] + 2.0,
+                    (rect[0] + rect[2] - 132.0).max(rect[0] + 2.0),
+                );
+                let y = (screen.mouse[1] - 24.0).max(rect[1] + 2.0);
+                game.native_fill(batch, [x, y, 130.0, 20.0], 0xed101821);
+                label(
+                    game,
+                    batch,
+                    &format!("{} · Y {:.0}", mob.label, mob.position[1]),
+                    [x + 4.0, y + 6.0],
+                    122.0,
+                    if mob.hostile { 0xf07876 } else { 0x86ce9a },
+                );
             }
         }
         let text = if contains(rect, screen.mouse) {

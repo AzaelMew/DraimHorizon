@@ -110,7 +110,7 @@ fn state<T>(f: impl FnOnce(&mut Client) -> T) -> T {
     f(&mut client)
 }
 
-fn scope(game: &Game<'_>) -> Option<(String, u128)> {
+pub(super) fn scope(game: &Game<'_>) -> Option<(String, u128)> {
     game.native_player()?;
     if let Some(remote) = &game.remote {
         let own = remote.profile();
@@ -230,6 +230,9 @@ pub(super) fn reset() {
 }
 
 pub(super) fn frame(game: &mut Game<'_>) {
+    crate::game::claim_borders_outgoing_view::frame(game);
+    crate::game::claim_borders_teleport_view::frame(game);
+    crate::game::claim_borders_claim_memory::frame(game);
     service_menu(game);
     crate::game::claim_borders_inventory_sort_view::frame(game);
     if !game.native_on(claims::ID) {
@@ -323,7 +326,8 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
     } else {
         format!("minecraft:{}", player.dimension)
     };
-    let own = claims::with_state(|s| s.shared_claims());
+    let own = claims::with_state(|s| s.shared_claims())
+        .or_else(crate::game::claim_borders_claim_memory::own);
     let known = own.is_some();
     state(|c| {
         let mut cells: Vec<_> = own
@@ -365,6 +369,22 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
             .collect();
         if let Some(p) = &c.party {
             for friend in p.online(&online, now(c)) {
+                if !crate::game::claim_borders_claim_memory::known(friend.uuid) {
+                    cells.extend(
+                        friend
+                            .claims
+                            .clone()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|c| map::Cell {
+                                dimension: c.dimension,
+                                x: c.x,
+                                z: c.z,
+                                owner: friend.name.clone(),
+                                own: false,
+                            }),
+                    );
+                }
                 let native = entity_position(game, friend.uuid);
                 marks.push(map::Mark {
                     player: Some(friend.uuid),
@@ -384,16 +404,16 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                     label: friend.name.clone(),
                     color: c.visual.friend_color,
                 });
-                for claim in friend.claims.unwrap_or_default() {
-                    cells.push(map::Cell {
-                        dimension: claim.dimension,
-                        x: claim.x,
-                        z: claim.z,
-                        owner: friend.name.clone(),
-                        own: false,
-                    });
-                }
             }
+        }
+        for (owner, land) in crate::game::claim_borders_claim_memory::others() {
+            cells.extend(land.into_iter().map(|claim| map::Cell {
+                dimension: claim.dimension,
+                x: claim.x,
+                z: claim.z,
+                owner: owner.clone(),
+                own: false,
+            }));
         }
         for (uuid, name) in &c.tab_cache {
             if *uuid == c.own || marks.iter().any(|m| m.player == Some(*uuid)) {
@@ -416,6 +436,35 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
             }
         }
         map::Snapshot {
+            mobs: {
+                let mut mobs: Vec<_> = game
+                    .mobs
+                    .iter()
+                    .filter(|m| !m.removed && m.health > 0.0)
+                    .filter_map(|m| {
+                        let hostile = map::mob_group(&m.kind.id, &m.kind.category)?;
+                        let pos = m.previous.lerp(m.position, game.clock.fraction());
+                        Some(map::MobMark {
+                            position: [pos.x, pos.y, pos.z],
+                            hostile,
+                            label: m
+                                .kind
+                                .id
+                                .strip_prefix("minecraft:")
+                                .unwrap_or(&m.kind.id)
+                                .replace('_', " "),
+                        })
+                    })
+                    .collect();
+                mobs.sort_by(|a, b| {
+                    let d = |m: &map::MobMark| {
+                        (m.position[0] - player.x).powi(2) + (m.position[2] - player.z).powi(2)
+                    };
+                    d(a).total_cmp(&d(b))
+                });
+                mobs.truncate(512);
+                mobs
+            },
             scope: c.scope.clone(),
             dimension,
             player: [player.x, player.y, player.z],
@@ -681,6 +730,15 @@ pub(super) fn visuals(
                 if friend.uuid == c.own {
                     continue;
                 }
+                if !crate::game::claim_borders_claim_memory::known(friend.uuid) {
+                    territories.extend(friend.claims.clone().unwrap_or_default().into_iter().map(
+                        |c| claims::Claim {
+                            dimension: c.dimension,
+                            x: c.x,
+                            z: c.z,
+                        },
+                    ));
+                }
                 rows.push(overlay::FriendRow {
                     name: friend.name.clone(),
                     health_percent: Some(friend.health_percent.round().clamp(0.0, 100.0) as u8),
@@ -700,15 +758,9 @@ pub(super) fn visuals(
                         });
                     }
                 }
-                territories.extend(friend.claims.unwrap_or_default().into_iter().map(|claim| {
-                    claims::Claim {
-                        dimension: claim.dimension,
-                        x: claim.x,
-                        z: claim.z,
-                    }
-                }));
             }
         }
+
         c.cached_at = now(c);
         c.cached_territories = territories.clone();
         (rows, markers, territories)
@@ -991,13 +1043,20 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
 }
 
 pub(super) fn territories() -> Vec<claims::Claim> {
-    state(|c| {
+    let mut land: Vec<_> = crate::game::claim_borders_claim_memory::others()
+        .into_iter()
+        .flat_map(|(_, land)| land)
+        .collect();
+    land.extend(state(|c| {
         if now(c).saturating_sub(c.cached_at) <= 1000 && c.relay != Relay::Off {
             c.cached_territories.clone()
         } else {
             Vec::new()
         }
-    })
+    }));
+    land.sort();
+    land.dedup();
+    land
 }
 
 pub(super) fn visual_settings() -> visualization::Settings {
@@ -1216,6 +1275,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             status: c.menu_feedback.clone(),
             chat_modern: chat.modern,
             chat_translate: chat.translate,
+            chat_outgoing: crate::game::claim_borders_outgoing_view::enabled(game),
             chat_preferences: chat.preferences,
             map_preferences,
             claim_rows,
@@ -1321,6 +1381,22 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::SetChat(preferences) => {
             crate::game::claim_borders_chat_view::configure(game, preferences);
             Ok(Vec::new())
+        }
+        Action::ClearClaimCache => {
+            crate::game::claim_borders_claim_memory::clear_others();
+            Ok(vec!["Кеш приватов игроков сброшен; онлайн-игроки передадут свои данные при переподключении.".into()])
+        }
+        Action::ToggleOutgoing => {
+            let on = !crate::game::claim_borders_outgoing_view::enabled(game);
+            game.native_set_setting(
+                claims::ID,
+                "chat_outgoing_en",
+                if on { "true" } else { "false" },
+            );
+            Ok(vec![format!(
+                "Перевод своих сообщений RU → EN: {}",
+                if on { "вкл." } else { "выкл." }
+            )])
         }
         Action::ToggleChat => {
             crate::game::claim_borders_chat_view::toggle(game, false);
@@ -1552,6 +1628,12 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
     {
         return None;
     }
+    if body.starts_with("[DHC1] ") {
+        if state(|c| c.peers.iter().filter(|p| p.uuid == peer.uuid).count() == 1) {
+            crate::game::claim_borders_claim_memory::receive(&peer, &body, tab);
+        }
+        return None;
+    }
     let kind = frame_kind(&body)?;
     state(|c| {
         let time = now(c);
@@ -1643,20 +1725,23 @@ fn poll_network(game: &mut Game<'_>) {
     let tab = cached_online(game);
     for event in events {
         match event {
-            websocket::Event::Connected { code } => state(|c| {
-                c.connected = true;
-                c.own_code = code;
-                c.network_status = "WebSocket подключён · E2E".into();
-                c.controls.clear();
-                c.pages.clear();
-                c.last_hello.clear();
-                c.last_status.clear();
-                c.last_snapshots.clear();
-                c.last_claims.clear();
-                if let Some(p) = &mut c.party {
-                    p.disconnect();
-                }
-            }),
+            websocket::Event::Connected { code } => {
+                crate::game::claim_borders_claim_memory::network_reset();
+                state(|c| {
+                    c.connected = true;
+                    c.own_code = code;
+                    c.network_status = "WebSocket подключён · E2E".into();
+                    c.controls.clear();
+                    c.pages.clear();
+                    c.last_hello.clear();
+                    c.last_status.clear();
+                    c.last_snapshots.clear();
+                    c.last_claims.clear();
+                    if let Some(p) = &mut c.party {
+                        p.disconnect();
+                    }
+                });
+            }
             websocket::Event::Peers(peers) => state(|c| {
                 if let Some(p) = &mut c.party {
                     for friend in p.friends() {
@@ -1705,4 +1790,35 @@ fn poll_network(game: &mut Game<'_>) {
             websocket::Event::Notice { message } => state(|c| c.network_status = message),
         }
     }
+}
+
+pub(super) fn claim_peers(game: &mut Game<'_>) -> Vec<websocket::Peer> {
+    let tab = cached_online(game);
+    state(|c| {
+        if !c.connected {
+            Vec::new()
+        } else {
+            c.peers
+                .iter()
+                .filter(|p| {
+                    p.uuid != c.own
+                        && c.peers.iter().filter(|q| q.uuid == p.uuid).count() == 1
+                        && tab
+                            .iter()
+                            .any(|(id, name)| *id == p.uuid && name.eq_ignore_ascii_case(&p.name))
+                })
+                .cloned()
+                .collect()
+        }
+    })
+}
+pub(super) fn claim_identity() -> String {
+    state(|c| c.own_code.clone())
+}
+pub(super) fn claim_send(code: &str, body: &str) -> bool {
+    state(|c| {
+        c.network
+            .as_ref()
+            .is_some_and(|h| h.send(code, body).is_ok())
+    })
 }

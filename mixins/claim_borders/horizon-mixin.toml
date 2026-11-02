@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.8.0"
+version = "0.9.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -404,3 +404,50 @@ id = "map-flush-on-exit"
 kind = "HEAD"
 target = "horizon_client::game::Game<'_>::save_for_exit"
 helper = "map_exit_hook.rs"
+
+[[module]]
+id = "outgoing"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_outgoing"
+source = "outgoing.rs"
+
+[[module]]
+id = "outgoing-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_outgoing_view"
+source = "outgoing_view.rs"
+
+[[module]]
+id = "teleport"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_teleport"
+source = "teleport.rs"
+
+[[module]]
+id = "teleport-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_teleport_view"
+source = "teleport_view.rs"
+
+[[module]]
+id = "claim-directory"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_directory"
+source = "claim_directory.rs"
+
+[[module]]
+id = "claim-memory"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_memory"
+source = "claim_memory.rs"
+
+[[injection]]
+id = "outgoing-translation"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::chat::Game<'_>::handle_chat_input"
+helper = "outgoing_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+ { name = "message", ty = "&str", value = "message" },
+]

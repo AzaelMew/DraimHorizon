@@ -4,6 +4,10 @@ fn claim_borders_menu_mouse(
     button: i32,
     canceled: &mut bool,
 ) {
+    crate::game::claim_borders_teleport_view::mouse(game, screen, button, canceled);
+    if *canceled {
+        return;
+    }
     crate::game::claim_borders_inventory_sort_view::mouse(game, screen, button, canceled);
     if *canceled {
         return;

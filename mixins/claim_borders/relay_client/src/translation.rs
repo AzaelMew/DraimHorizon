@@ -1,4 +1,4 @@
-//! Optional, local-display-only translation. Never writes to the game connection.
+//! Bounded translation workers; callers decide whether to display or send the result.
 use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
@@ -16,9 +16,18 @@ pub struct Translator {
     requests: SyncSender<(u64, String)>,
     results: Receiver<(u64, Option<String>)>,
     stop: Arc<AtomicBool>,
+    english: bool,
 }
 impl Default for Translator {
     fn default() -> Self {
+        Self::new(false)
+    }
+}
+impl Translator {
+    pub fn english() -> Self {
+        Self::new(true)
+    }
+    fn new(english: bool) -> Self {
         let (tx, rx) = mpsc::sync_channel::<(u64, String)>(32);
         let (done, results) = mpsc::sync_channel(64);
         let stop = Arc::new(AtomicBool::new(false));
@@ -44,7 +53,7 @@ impl Default for Translator {
                     } else if Instant::now() < retry {
                         None
                     } else {
-                        match request(&agent, ENDPOINT, &text) {
+                        match request(&agent, ENDPOINT, &text, if english { "en" } else { "ru" }) {
                             Ok(value) => {
                                 if cache.len() >= 256
                                     && let Some(old) = order.pop_front()
@@ -68,12 +77,19 @@ impl Default for Translator {
             requests: tx,
             results,
             stop,
+            english,
         }
     }
 }
 impl Translator {
     pub fn submit(&self, id: u64, text: &str) -> bool {
-        if text.len() > 4096 || !needs_translation(text) {
+        if text.len() > 4096
+            || !(if self.english {
+                needs_english(text)
+            } else {
+                needs_translation(text)
+            })
+        {
             return false;
         }
         self.requests.try_send((id, text.into())).is_ok()
@@ -92,12 +108,21 @@ pub fn needs_translation(text: &str) -> bool {
         .any(|c| c.is_alphabetic() && !('\u{0400}'..='\u{052f}').contains(&c))
         && !text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
 }
-fn request(agent: &ureq::Agent, endpoint: &str, text: &str) -> Result<String, String> {
+pub fn needs_english(text: &str) -> bool {
+    !text.trim_start().starts_with('/')
+        && text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
+}
+fn request(
+    agent: &ureq::Agent,
+    endpoint: &str,
+    text: &str,
+    target: &str,
+) -> Result<String, String> {
     let response = agent
         .get(endpoint)
         .query("client", "gtx")
         .query("sl", "auto")
-        .query("tl", "ru")
+        .query("tl", target)
         .query("dt", "t")
         .query("q", text)
         .call()
@@ -130,6 +155,12 @@ fn request(agent: &ureq::Agent, endpoint: &str, text: &str) -> Result<String, St
 mod tests {
     use super::*;
     #[test]
+    fn english_translation_covers_mixed_russian_but_never_commands() {
+        assert!(needs_english("Привет everyone"));
+        assert!(!needs_english("Hello"));
+        assert!(!needs_english("/msg Alex Привет"));
+    }
+    #[test]
     fn russian_and_nonlinguistic_text_is_not_sent() {
         assert!(!needs_translation("Привет"));
         assert!(!needs_translation("123 :D Привет"));
@@ -139,43 +170,54 @@ mod tests {
     #[test]
     fn provider_response_and_query_are_handled_on_loopback() {
         use std::io::Write;
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let worker = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(Duration::from_secs(2)))
+        for target in ["ru", "en"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let worker = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut input = Vec::new();
+                let mut byte = [0];
+                while !input.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    input.push(byte[0]);
+                }
+                let request = String::from_utf8(input).unwrap();
+                assert!(request.contains(&format!("tl={target}")));
+                assert!(!request.contains("q=hello&tl=en"));
+                let body = if target == "ru" {
+                    r#"[[["Привет","hello",null,null]],null,"en"]"#
+                } else {
+                    r#"[[["Hello","Привет",null,null]],null,"ru"]"#
+                };
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
                 .unwrap();
-            let mut input = Vec::new();
-            let mut byte = [0];
-            while !input.ends_with(b"\r\n\r\n") {
-                socket.read_exact(&mut byte).unwrap();
-                input.push(byte[0]);
-            }
-            let request = String::from_utf8(input).unwrap();
-            assert!(request.contains("tl=ru"));
-            assert!(!request.contains("q=hello&tl=en"));
-            let body = r#"[[["Привет","hello",null,null]],null,"en"]"#;
-            write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .unwrap();
-        });
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(2))
-            .build();
-        assert_eq!(
-            request(
-                &agent,
-                &format!("http://{address}/translate"),
-                "hello&tl=en"
-            )
-            .unwrap(),
-            "Привет"
-        );
-        worker.join().unwrap();
+            });
+            let agent = ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(2))
+                .build();
+            assert_eq!(
+                request(
+                    &agent,
+                    &format!("http://{address}/translate"),
+                    "hello&tl=en",
+                    target,
+                )
+                .unwrap(),
+                if target == "ru" {
+                    "Привет"
+                } else {
+                    "Hello"
+                }
+            );
+            worker.join().unwrap();
+        }
     }
 }

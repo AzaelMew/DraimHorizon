@@ -1,0 +1,131 @@
+// Async outbound translation, scoped to one live connection; no delayed messages cross servers.
+use crate::game::{Game, claim_borders as claims, claim_borders_outgoing as model};
+use claim_borders_relay_client::translation::{Translator, needs_english};
+use std::{
+    collections::VecDeque,
+    sync::{Mutex, OnceLock},
+    time::Instant,
+};
+#[derive(Default)]
+struct State {
+    scope: String,
+    queue: model::Queue,
+    translator: Option<Translator>,
+    parts: VecDeque<String>,
+    clock: Option<Instant>,
+    last: u64,
+}
+fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
+    static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+    f(&mut STATE
+        .get_or_init(|| Mutex::new(State::default()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))
+}
+pub(super) fn reset() {
+    state(|s| *s = State::default());
+}
+pub(super) fn enabled(game: &Game<'_>) -> bool {
+    game.native_setting(claims::ID, "chat_outgoing_en")
+        .as_deref()
+        != Some("false")
+}
+fn scope(game: &Game<'_>) -> Option<String> {
+    let r = game.remote.as_ref()?;
+    Some(format!("{}#{:032x}", r.session.address, r.profile()))
+}
+pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
+    if !game.native_on(claims::ID) || game.remote.is_none() {
+        return false;
+    }
+    let text = horizon_client::chat::normalize_chat_message(text);
+    if text.is_empty() || text.starts_with('/') || !game.chat_abilities().allows(&text) {
+        return false;
+    }
+    let translate = enabled(game) && needs_english(&text);
+    let current = scope(game).unwrap();
+    let result = state(|s| {
+        if s.scope != current {
+            *s = State {
+                scope: current,
+                ..State::default()
+            };
+        }
+        if !translate && s.queue.messages.is_empty() && s.parts.is_empty() {
+            return None;
+        }
+        let now = s
+            .clock
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            .as_millis() as u64;
+        let id = match s.queue.push(&text, now, translate) {
+            Ok(id) => id,
+            Err(e) => return Some(Err(e)),
+        };
+        if translate
+            && !s
+                .translator
+                .get_or_insert_with(Translator::english)
+                .submit(id, &text)
+        {
+            s.queue.complete(id, None);
+        }
+        Some(Ok(()))
+    });
+    if let Some(result) = result {
+        game.ui.chat.add_recent(&text);
+        if let Err(error) = result {
+            game.native_chat(error);
+        }
+        true
+    } else {
+        false
+    }
+}
+pub(super) fn frame(game: &mut Game<'_>) {
+    if !game.native_on(claims::ID) || scope(game).is_none() {
+        reset();
+        return;
+    }
+    let current = scope(game).unwrap();
+    let (message, failure) = state(|s| {
+        if s.scope != current {
+            *s = State::default();
+            return (None, false);
+        }
+        let now = s
+            .clock
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            .as_millis() as u64;
+        if let Some(worker) = &s.translator {
+            while let Some((id, result)) = worker.poll() {
+                s.queue.complete(id, result);
+            }
+        }
+        let mut failure = false;
+        if s.parts.is_empty()
+            && let Some((text, failed)) = s.queue.pop(now)
+        {
+            s.parts.extend(model::split(&text));
+            failure = failed;
+        }
+        if now.saturating_sub(s.last) < 1000 {
+            return (None, failure);
+        }
+        let part = s.parts.pop_front();
+        if part.is_some() {
+            s.last = now;
+        }
+        (part, failure)
+    });
+    if failure {
+        game.native_chat("[Перевод] Сервис недоступен: отправляется исходный текст.");
+    }
+    if let Some(message) = message
+        && game.chat_abilities().send_messages
+    {
+        game.send_signed_chat(&message);
+    }
+}

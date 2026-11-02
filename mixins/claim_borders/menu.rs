@@ -93,6 +93,7 @@ pub struct ViewModel {
     pub status: String,
     pub chat_modern: bool,
     pub chat_translate: bool,
+    pub chat_outgoing: bool,
     pub chat_preferences: Preferences,
     pub map_preferences: map::Preferences,
     pub claim_rows: Vec<ClaimRow>,
@@ -144,6 +145,8 @@ pub enum Action {
     },
     SetMap(map::Preferences),
     ToggleChat,
+    ToggleOutgoing,
+    ClearClaimCache,
     ToggleTranslation,
     SetChat(Preferences),
     PasteFromClipboard,
@@ -164,6 +167,8 @@ impl std::fmt::Debug for Action {
                 .finish(),
             Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
             Self::SetChat(p) => f.debug_tuple("SetChat").field(p).finish(),
+            Self::ClearClaimCache => f.write_str("ClearClaimCache"),
+            Self::ToggleOutgoing => f.write_str("ToggleOutgoing"),
             Self::ToggleChat => f.write_str("ToggleChat"),
             Self::ToggleTranslation => f.write_str("ToggleTranslation"),
             Self::CopyText(_) => f.write_str("CopyText"),
@@ -263,7 +268,9 @@ pub enum Control {
     MapMarks,
     MapRemember,
     MapShading,
+    MapMobs,
     MapProfile,
+    ClearClaimCache,
     MapGrid,
     MapCoordinates,
     MapOwn,
@@ -288,6 +295,7 @@ pub enum Control {
     ChatReset,
     ChatModern,
     ChatTranslate,
+    ChatOutgoing,
     Tab(Tab),
     Close,
     Row(usize),
@@ -485,7 +493,7 @@ impl Menu {
             ));
         }
         if self.tab == Tab::Chat {
-            return self.chat_layout(model, x, w, out);
+            return self.chat_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -669,13 +677,19 @@ impl Menu {
                     format!("Координаты: {}", on(p.coordinates)),
                     Control::MapCoordinates,
                 ),
-                vec![(
-                    format!("Тени рельефа: {}", on(p.shading)),
+                pair(
+                    format!("Тени: {}", on(p.shading)),
                     Control::MapShading,
-                )],
+                    format!("Мобы: {}", ["выкл.", "все", "опасные"][p.mobs as usize]),
+                    Control::MapMobs,
+                ),
                 vec![("Сбросить настройки карты".into(), Control::MapReset)],
             ],
             ClaimsSection::Storage => vec![
+                vec![(
+                    "Сбросить кеш приватов игроков".into(),
+                    Control::ClearClaimCache,
+                )],
                 vec![(
                     format!("Запись карты: {}", on(p.remember)),
                     Control::MapRemember,
@@ -744,7 +758,7 @@ impl Menu {
                 pair(
                     format!("Свои на карте: {}", on(p.own)),
                     Control::MapOwn,
-                    format!("Друзья на карте: {}", on(p.friends)),
+                    format!("Игроки на карте: {}", on(p.friends)),
                     Control::MapFriends,
                 ),
                 vec![(
@@ -844,7 +858,7 @@ impl Menu {
             .enumerate()
             {
                 out.push(widget(
-                    [x, 130.0 + i as f32 * 12.0, w, 10.0],
+                    [x, 150.0 + i as f32 * 12.0, w, 10.0],
                     text,
                     None,
                     false,
@@ -871,7 +885,14 @@ impl Menu {
         }
         out
     }
-    fn chat_layout(&self, model: &ViewModel, x: f32, w: f32, mut out: Vec<Widget>) -> Vec<Widget> {
+    fn chat_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
         for (i, (section, label)) in [
             (ChatSection::Appearance, "Вид / позиция"),
             (ChatSection::Notifications, "Уведомления"),
@@ -916,6 +937,11 @@ impl Menu {
                         model.chat_translate,
                     ),
                 ],
+                vec![(
+                    format!("Мои сообщения RU → EN: {}", on(model.chat_outgoing)),
+                    Control::ChatOutgoing,
+                    model.chat_outgoing,
+                )],
                 pair(ChatOption::Width, "Ширина", p.width.to_string()),
                 pair(ChatOption::Height, "Высота", p.height.to_string()),
                 pair(
@@ -977,15 +1003,16 @@ impl Menu {
                 )],
             ],
         };
+        let step = ((height - 88.0) / rows.len() as f32).clamp(12.0, 20.0);
         for (i, row) in rows.into_iter().enumerate() {
             let n = row.len();
             for (j, (label, control, selected)) in row.into_iter().enumerate() {
                 out.push(widget(
                     [
                         x + j as f32 * w / n as f32,
-                        80.0 + i as f32 * 20.0,
+                        80.0 + i as f32 * step,
                         w / n as f32 - 3.0,
-                        18.0,
+                        step - 2.0,
                     ],
                     label,
                     Some(control),
@@ -1295,6 +1322,7 @@ impl Menu {
                     (self.claims_page + 1).min(model.claim_rows.len().div_ceil(per).max(1) - 1);
                 None
             }
+            Control::ClearClaimCache => Some(Action::ClearClaimCache),
             Control::MapReset => Some(Action::SetMap(map::Preferences::default())),
             Control::BorderReset => Some(Action::SetClaims(ClaimsSettings::default())),
             Control::ApplyClaimColours => {
@@ -1325,6 +1353,7 @@ impl Menu {
             | Control::MapLayer
             | Control::MapRemember
             | Control::MapProfile
+            | Control::MapMobs
             | Control::MapShading
             | Control::MapMarks
             | Control::MapGrid
@@ -1342,6 +1371,7 @@ impl Menu {
                     Control::MapLayer => p.layer = p.layer.next(),
                     Control::MapRemember => p.remember = !p.remember,
                     Control::MapProfile => p.profile = (p.profile + 1) % 8,
+                    Control::MapMobs => p.mobs = (p.mobs + 1) % 3,
                     Control::MapShading => p.shading = !p.shading,
                     Control::MapMarks => p.marks = !p.marks,
                     Control::MapGrid => p.grid = !p.grid,
@@ -1462,6 +1492,7 @@ impl Menu {
                 Some(Action::SetChat(p.normalized()))
             }
 
+            Control::ChatOutgoing => Some(Action::ToggleOutgoing),
             Control::ChatModern => Some(Action::ToggleChat),
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),

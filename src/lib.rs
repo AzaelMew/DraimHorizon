@@ -35,3 +35,11 @@ pub mod map_history;
 pub use map_history as claim_borders_map_history;
 #[path = "../mixins/claim_borders/map_worker.rs"]
 pub mod map_worker;
+
+pub use claims as claim_borders;
+#[path = "../mixins/claim_borders/claim_directory.rs"]
+pub mod claim_directory;
+#[path = "../mixins/claim_borders/outgoing.rs"]
+pub mod outgoing;
+#[path = "../mixins/claim_borders/teleport.rs"]
+pub mod teleport;

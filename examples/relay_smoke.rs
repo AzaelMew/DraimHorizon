@@ -75,6 +75,44 @@ fn main() {
             None
         }
     });
+    // Public land sync is encrypted and authenticated, but independent of party friendship.
+    let mut owner = claim_borders::claim_directory::Directory::default();
+    let land: Vec<_> = (0..60)
+        .map(|x| claim_borders::claims::Claim {
+            dimension: "minecraft:overworld".into(),
+            x: x * 16,
+            z: -16,
+        })
+        .collect();
+    owner.local(1, "Alice", &ac, land.clone()).unwrap();
+    let mut receiver = claim_borders::claim_directory::Directory::default();
+    for frame in claim_borders::claim_directory::Directory::frames(&owner.records[&1]).unwrap() {
+        a.send(&bc, &frame).unwrap();
+        let (peer, body) = message(&b);
+        assert_eq!(peer.uuid, 1);
+        receiver
+            .receive(peer.uuid, &peer.name, &peer.code, &body, 1)
+            .unwrap();
+    }
+    assert_eq!(receiver.records[&1].claims, land);
+    let saved = root.join("cached-land.json");
+    receiver.save(&saved, "server#Bob").unwrap();
+    assert_eq!(
+        claim_borders::claim_directory::Directory::load(&saved, "server#Bob")
+            .unwrap()
+            .records[&1]
+            .claims,
+        land
+    );
+    owner.local(1, "Alice", &ac, Vec::new()).unwrap();
+    for frame in claim_borders::claim_directory::Directory::frames(&owner.records[&1]).unwrap() {
+        a.send(&bc, &frame).unwrap();
+        let (peer, body) = message(&b);
+        receiver
+            .receive(peer.uuid, &peer.name, &peer.code, &body, 2)
+            .unwrap();
+    }
+    assert!(receiver.records[&1].claims.is_empty());
     let mut ap = Party::new("server#Alice", 1);
     let mut bp = Party::new("server#Bob", 2);
     let request = ap.invite(2, "Bob", 0).unwrap().remove(0);
@@ -205,6 +243,6 @@ fn main() {
     drop(b);
     let _ = std::fs::remove_dir_all(root);
     println!(
-        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, pin/replay rejection, high-rate telemetry, reconnect and disconnect cleanup"
+        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, public cached land and removals, pin/replay rejection, high-rate telemetry, reconnect and disconnect cleanup"
     );
 }
