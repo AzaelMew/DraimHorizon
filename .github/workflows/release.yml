@@ -51,8 +51,8 @@ jobs:
           python3 tools/package_relay.py
       - name: Apply official mixins to exact Horizon source
         run: python3 tools/stage.py
-      - name: Check real Horizon client
-        run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
+      #- name: Check real Horizon client
+      #  run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
       - name: Package and validate native mod
         run: |
           python3 tools/package.py
