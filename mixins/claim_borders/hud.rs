@@ -1,7 +1,6 @@
 // Native HUD drawing through the existing atlas, with no additional GPU pipeline.
 use crate::game::Game;
 use crate::game::claim_borders_overlay as model;
-use horizon_client::extras::Corner;
 use horizon_client::extras_hud::Corners;
 use horizon_client::hud::{HudBatch, rgba};
 use horizon_client::text::Text;
@@ -9,8 +8,8 @@ use horizon_client::text::Text;
 pub(super) fn draw(
     game: &mut Game<'_>,
     batch: &mut HudBatch,
-    corners: &mut Corners,
-    friends: &[model::FriendRow],
+    _corners: &mut Corners,
+    _friends: &[model::FriendRow],
     markers: &[model::Marker],
 ) {
     if !game.native_on(crate::game::claim_borders::ID)
@@ -19,40 +18,6 @@ pub(super) fn draw(
         || game.native_player().is_none()
     {
         return;
-    }
-    if game.native_corner_shown(Corner::TopLeft) && !friends.is_empty() {
-        let displayed: Vec<String> = friends.iter().take(8).map(model::friend_label).collect();
-        let mut labels = vec!["Party".to_owned()];
-        labels.extend(displayed);
-        if friends.len() > 8 {
-            labels.push(format!("+{} online", friends.len() - 8));
-        }
-        let width = labels
-            .iter()
-            .map(|s| game.native_text_width(s))
-            .fold(0.0, f32::max)
-            + 6.0;
-        let height = labels.len() as f32 * 10.0 + 4.0;
-        let (x, y) = corners.place(Corner::TopLeft, width, height);
-        let visible_height = height.min((batch.height - y - 2.0).max(0.0));
-        if visible_height >= 14.0 {
-            game.native_fill(batch, [x, y, width, visible_height], 0x8800_0000);
-            for (i, label) in labels.iter().enumerate() {
-                let line_y = y + 2.0 + i as f32 * 10.0;
-                if line_y + 9.0 > y + visible_height {
-                    break;
-                }
-                // Literal text: a player name cannot inject legacy formatting codes.
-                batch.text_styled(
-                    &game.gui.atlas,
-                    &Text::literal(label),
-                    x + 3.0,
-                    line_y,
-                    rgba(225, 245, 255, 255),
-                    true,
-                );
-            }
-        }
     }
     // This is the same previous-frame camera snapshot the vanilla locator bar uses.
     let Some((camera, yaw, pitch, fov)) = game.locator_camera else {
@@ -63,10 +28,35 @@ pub(super) fn draw(
         if !marker.alpha.is_finite() || marker.alpha <= 0.0 {
             continue;
         }
-        let Some([x, y]) = model::project(camera, yaw, pitch, fov, viewport, marker.position)
-        else {
+        let mut position = marker.position;
+        if let Some(uuid) = marker.player
+            && let Some(pos) = crate::game::claim_borders_client::entity_position(game, uuid)
+        {
+            position = [pos[0], pos[1] + 2.2, pos[2]];
+        }
+        let Some([x, y]) = model::project(camera, yaw, pitch, fov, viewport, position) else {
             continue;
         };
+        if let Some(uuid) = marker.player {
+            let alpha = (marker.alpha.clamp(0.15, 1.0) * 255.0) as u8;
+            let x = (x - 6.0).clamp(1.0, (batch.width - 13.0).max(1.0));
+            let y = (y - 6.0).clamp(1.0, (batch.height - 13.0).max(1.0));
+            game.native_fill(
+                batch,
+                [x - 1.0, y - 1.0, 14.0, 14.0],
+                ((alpha as u32) << 24) | 0x77c7ef,
+            );
+            let skin = crate::game::claim_borders_client::avatar(uuid);
+            crate::game::claim_borders_avatar_draw::face(
+                game,
+                batch,
+                &skin,
+                [x + 6.0, y + 6.0],
+                12.0,
+                rgba(255, 255, 255, alpha),
+            );
+            continue;
+        }
         let Some(distance) = model::distance_label(marker.distance) else {
             continue;
         };
@@ -80,7 +70,18 @@ pub(super) fn draw(
             continue;
         };
         let [icon_x, icon_y, icon_w, icon_h] = layout.icon;
-        batch.fill(&game.gui.atlas, icon_x, icon_y, icon_w, icon_h, color);
+        let cx = icon_x + icon_w * 0.5;
+        let cy = icon_y + icon_h * 0.5;
+        batch.fill_quad(
+            &game.gui.atlas,
+            [
+                [cx, cy - 3.0],
+                [cx + 3.0, cy],
+                [cx, cy + 3.0],
+                [cx - 3.0, cy],
+            ],
+            color,
+        );
         let [left, top, width, height] = layout.bounds;
         let center_x = left + width / 2.0;
         for (label, line_y, line_color) in [

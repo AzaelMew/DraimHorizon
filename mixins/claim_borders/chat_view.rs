@@ -113,7 +113,22 @@ pub(super) fn reset() {
         s.translator = None;
     });
 }
+pub(super) fn capture_content(
+    game: &Game<'_>,
+    text: &horizon_client::text::Text,
+    source: horizon_client::chat::ChatSource,
+) {
+    let semantic = if source == horizon_client::chat::ChatSource::Server {
+        Some(text.component())
+    } else {
+        None
+    };
+    capture_inner(game, &text.plain(), semantic.as_ref());
+}
 pub(super) fn capture(game: &Game<'_>, text: &str) {
+    capture_inner(game, text, None);
+}
+fn capture_inner(game: &Game<'_>, text: &str, component: Option<&serde_json::Value>) {
     if !game.native_on(claims::ID) {
         return;
     }
@@ -132,7 +147,11 @@ pub(super) fn capture(game: &Game<'_>, text: &str) {
         } else {
             None
         };
-        s.feed.push_with(text, now, preferences);
+        if let Some(component) = component {
+            s.feed.push_component(text, component, now, preferences);
+        } else {
+            s.feed.push_with(text, now, preferences);
+        }
         if let Some(anchor) = anchor {
             if let Some(position) = s
                 .feed

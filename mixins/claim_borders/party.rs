@@ -1,6 +1,6 @@
 // Pure, bounded client-to-client friendship and telemetry protocol.
 // Sender identity is supplied by the authenticated chat adapter, never JSON.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -87,12 +87,51 @@ struct Session {
     last_snapshot_seq: u64,
     last_claim_seq: u64,
     snapshot: Option<(Snapshot, u64)>,
-    previous_snapshot: Option<(Snapshot, u64)>,
+    snapshots: VecDeque<(Snapshot, u64)>,
     claims: Vec<Claim>,
     claims_revision: Option<u64>,
     assembly: Option<Assembly>,
 }
 
+fn render_snapshot(session: &Session, now: u64) -> Option<Snapshot> {
+    let (latest, _) = session.snapshot.as_ref()?;
+    let mut shown = latest.clone();
+    let target = now.saturating_sub(100);
+    if let Some((first, at)) = session.snapshots.front()
+        && target <= *at
+    {
+        shown.position = first.position;
+        return Some(shown);
+    }
+    let mut previous: Option<(&Snapshot, u64)> = None;
+    for (sample, at) in &session.snapshots {
+        if let Some((old, old_at)) = previous
+            && target <= *at
+            && *at > old_at
+        {
+            let t = (target.saturating_sub(old_at) as f64 / (*at - old_at) as f64).clamp(0.0, 1.0);
+            for (i, pos) in shown.position.iter_mut().enumerate() {
+                *pos = old.position[i] + (sample.position[i] - old.position[i]) * t;
+            }
+            return Some(shown);
+        }
+        previous = Some((sample, *at));
+    }
+    if session.snapshots.len() >= 2 {
+        let (last, last_at) = session.snapshots.back()?;
+        let (previous, previous_at) = &session.snapshots[session.snapshots.len() - 2];
+        if last_at > previous_at {
+            let extra =
+                target.saturating_sub(*last_at).min(100) as f64 / (*last_at - *previous_at) as f64;
+            for (i, pos) in shown.position.iter_mut().enumerate() {
+                *pos += (last.position[i] - previous.position[i])
+                    .mul_add(extra, 0.0)
+                    .clamp(-6.0, 6.0);
+            }
+        }
+    }
+    Some(shown)
+}
 #[derive(Clone)]
 struct Record {
     friend: Friend,
@@ -179,6 +218,15 @@ impl Party {
         Ok(vec![out])
     }
 
+    pub fn decline(&mut self, uuid: u128, now: u64) -> Result<Vec<Outbound>, String> {
+        self.prune(now);
+        let pending = self.incoming.remove(&uuid).ok_or("Invitation not found.")?;
+        Ok(vec![outbound(
+            uuid,
+            &pending.name,
+            json!(["n", pending.nonce]),
+        )?])
+    }
     pub fn accept(&mut self, uuid: u128, now: u64) -> Result<Vec<Outbound>, String> {
         self.prune(now);
         if self.friends.len() >= MAX_FRIENDS && !self.friends.contains_key(&uuid) {
@@ -271,6 +319,18 @@ impl Party {
             .and_then(Value::as_str)
             .ok_or("Missing party frame kind.")?;
         match kind {
+            "n" => {
+                arity(a, 2)?;
+                let nonce = nonzero(&a[1])?;
+                if self
+                    .outgoing
+                    .get(&uuid)
+                    .is_none_or(|pending| pending.nonce != nonce)
+                {
+                    return Err("Unexpected declined invitation.".into());
+                }
+                self.outgoing.remove(&uuid);
+            }
             "i" => {
                 arity(a, 2)?;
                 let nonce = nonzero(&a[1])?;
@@ -405,7 +465,20 @@ impl Party {
                 let record = self.checked_session(uuid, nonce, seq, false)?;
                 record.friend.name = name.into();
                 record.session.last_snapshot_seq = seq;
-                record.session.previous_snapshot = record.session.snapshot.take();
+                if record.session.snapshot.as_ref().is_some_and(|(old, _)| {
+                    old.dimension != snapshot.dimension
+                        || old
+                            .position
+                            .iter()
+                            .zip(snapshot.position)
+                            .any(|(a, b)| (a - b).abs() > 32.0)
+                }) {
+                    record.session.snapshots.clear();
+                }
+                record.session.snapshots.push_back((snapshot.clone(), now));
+                while record.session.snapshots.len() > 16 {
+                    record.session.snapshots.pop_front();
+                }
                 record.session.snapshot = Some((snapshot, now));
             }
             "c" => {
@@ -596,28 +669,7 @@ impl Party {
                 Some(OnlineFriend {
                     uuid: r.friend.uuid,
                     name: r.friend.name.clone(),
-                    snapshot: {
-                        let mut shown = snapshot.clone();
-                        if let Some((previous, previous_at)) = &r.session.previous_snapshot
-                            && previous.dimension == snapshot.dimension
-                            && at > previous_at
-                            && previous
-                                .position
-                                .iter()
-                                .zip(snapshot.position)
-                                .all(|(a, b)| (a - b).abs() < 32.0)
-                        {
-                            let fraction = (now.saturating_sub(75).saturating_sub(*previous_at)
-                                as f64
-                                / (at - previous_at) as f64)
-                                .clamp(0.0, 1.0);
-                            for (i, pos) in shown.position.iter_mut().enumerate() {
-                                *pos = previous.position[i]
-                                    + (snapshot.position[i] - previous.position[i]) * fraction;
-                            }
-                        }
-                        shown
-                    },
+                    snapshot: render_snapshot(&r.session, now).unwrap_or_else(|| snapshot.clone()),
                     health_percent: snapshot.health_percent(),
                     claims: r.session.claims_revision.map(|_| r.session.claims.clone()),
                 })
@@ -1319,12 +1371,36 @@ mod tests {
         snap.health = 10.0;
         let second = a.snapshot_for(B, snap.clone()).unwrap();
         b.receive(A, "Alice", &second.body, 1050).unwrap();
-        let shown = b.online(&[A], 1100).remove(0);
+        let shown = b.online(&[A], 1125).remove(0);
         assert!((shown.snapshot.position[0] - 0.5).abs() < 0.001);
         assert_eq!(shown.health_percent, 50.0);
         snap.position[0] = 100.0;
         let teleport = a.snapshot_for(B, snap).unwrap();
         b.receive(A, "Alice", &teleport.body, 1150).unwrap();
         assert_eq!(b.online(&[A], 1150)[0].snapshot.position[0], 100.0);
+    }
+    #[test]
+    fn interpolation_keeps_older_samples_when_packets_arrive_in_bursts() {
+        let (mut a, mut b) = parties();
+        for (n, time) in [(0.0, 1000), (1.0, 1050), (2.0, 1100)] {
+            let mut s = snapshot();
+            s.position[0] = n;
+            let f = a.snapshot_for(B, s).unwrap();
+            b.receive(A, "Alice", &f.body, time).unwrap();
+        }
+        assert!((b.online(&[A], 1125)[0].snapshot.position[0] - 0.5).abs() < 0.001);
+        assert!((b.online(&[A], 1150)[0].snapshot.position[0] - 1.0).abs() < 0.001);
+    }
+    #[test]
+    fn declined_invitation_never_establishes_friendship() {
+        let mut a = Party::new("a", 1);
+        let mut b = Party::new("b", 2);
+        let invite = a.invite(B, "Bob", 0).unwrap().remove(0);
+        b.receive(A, "Alice", &invite.body, 1).unwrap();
+        let no = b.decline(A, 2).unwrap().remove(0);
+        a.receive(B, "Bob", &no.body, 3).unwrap();
+        assert!(!a.awaiting(B, 3));
+        assert!(b.pending(3).is_empty());
+        assert!(a.friends().is_empty() && b.friends().is_empty());
     }
 }

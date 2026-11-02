@@ -4,6 +4,9 @@ fn claim_borders_menu_key(
     modifiers: u32,
     canceled: &mut bool,
 ) {
+    if key == "key.keyboard.escape" {
+        crate::game::claim_borders_inventory_sort_view::reset();
+    }
     if crate::game::claim_borders_map_view::key(game, key, canceled) {
         return;
     }

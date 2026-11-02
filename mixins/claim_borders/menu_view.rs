@@ -120,7 +120,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         s.menu.clamp_page(&s.model, s.height);
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
         for widget in widgets {
-            let [x, y, w, h] = widget.rect;
+            let [mut x, y, mut w, h] = widget.rect;
             let hover = widget.control.is_some()
                 && screen.mouse[0] >= x
                 && screen.mouse[0] < x + w
@@ -144,6 +144,30 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         0xff3a4053
                     },
                 );
+            }
+            if s.menu.tab == model::Tab::Party
+                && let Some(model::Control::Row(index)) = widget.control
+                && let Some(row) = s.model.party.get(index)
+            {
+                let skin = if row.skin.is_empty() {
+                    horizon_client::tab_list::default_skin(row.uuid)
+                } else {
+                    row.skin.as_str()
+                };
+                let mut draws = Vec::new();
+                horizon_client::tab_list::face(
+                    &mut draws,
+                    skin,
+                    (x + 4.0) as i32,
+                    (y + 5.0) as i32,
+                    12,
+                    true,
+                    false,
+                    u32::MAX,
+                );
+                horizon_client::hud_layout::paint(batch, &game.gui.atlas, &draws);
+                x += 18.0;
+                w -= 18.0;
             }
             let color = if widget.muted {
                 0x8995a5

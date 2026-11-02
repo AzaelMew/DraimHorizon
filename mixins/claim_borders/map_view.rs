@@ -191,25 +191,153 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
 pub(in crate::game) fn published(dimension: String, view: model::View) {
     state(|s| s.published = Some((dimension, view)));
 }
+fn map_marks(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    source: &model::Snapshot,
+    dimension: &str,
+    view: model::View,
+    rect: [f32; 4],
+    p: model::Preferences,
+    full: bool,
+) {
+    let xy = |world| {
+        let point = view.pixel(world, 128.0);
+        [
+            rect[0] + point[0] / 128.0 * rect[2],
+            rect[1] + point[1] / 128.0 * rect[3],
+        ]
+    };
+    let start = batch.vertices.len();
+    let mut marks: Vec<_> = source
+        .marks
+        .iter()
+        .filter(|m| m.dimension == dimension)
+        .collect();
+    marks.sort_by_key(|m| (m.player.is_some(), m.friend));
+    if p.marks {
+        for mark in marks {
+            let at = xy(mark.position);
+            if !contains(rect, at) {
+                continue;
+            }
+            if let Some(uuid) = mark.player {
+                let size = if full { 10.0 } else { 8.0 };
+                let color = if mark.friend {
+                    source.friend_color
+                } else {
+                    0xe9c66b
+                };
+                game.native_fill(
+                    batch,
+                    [
+                        at[0] - size * 0.5 - 1.0,
+                        at[1] - size * 0.5 - 1.0,
+                        size + 2.0,
+                        size + 2.0,
+                    ],
+                    0xff000000 | color,
+                );
+                let skin = if mark.skin.is_empty() {
+                    horizon_client::tab_list::default_skin(uuid)
+                } else {
+                    &mark.skin
+                };
+                crate::game::claim_borders_avatar_draw::face(game, batch, skin, at, size, u32::MAX);
+            } else {
+                batch.fill_quad(
+                    &game.gui.atlas,
+                    [
+                        [at[0], at[1] - 4.0],
+                        [at[0] + 4.0, at[1]],
+                        [at[0], at[1] + 4.0],
+                        [at[0] - 4.0, at[1]],
+                    ],
+                    0xff142031,
+                );
+                batch.fill_quad(
+                    &game.gui.atlas,
+                    [
+                        [at[0], at[1] - 3.0],
+                        [at[0] + 3.0, at[1]],
+                        [at[0], at[1] + 3.0],
+                        [at[0] - 3.0, at[1]],
+                    ],
+                    0xff000000 | mark.color,
+                );
+            }
+            if full && p.labels {
+                label(
+                    game,
+                    batch,
+                    &mark.label,
+                    [at[0] + 8.0, at[1] - 4.0],
+                    100.0,
+                    mark.color,
+                );
+            }
+        }
+    }
+    if source.dimension == dimension {
+        let at = xy([source.player[0], source.player[2]]);
+        if contains(rect, at) {
+            let size = 10.0;
+            game.native_fill(batch, [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0], 0xffe7f8ff);
+            let skin = if source.player_skin.is_empty() {
+                horizon_client::tab_list::default_skin(source.player_uuid)
+            } else {
+                &source.player_skin
+            };
+            crate::game::claim_borders_avatar_draw::face(game, batch, skin, at, size, u32::MAX);
+        }
+    }
+    batch.clip_since(
+        start,
+        rect[0] + 1.0,
+        rect[1] + 1.0,
+        rect[0] + rect[2] - 1.0,
+        rect[1] + rect[3] - 1.0,
+    );
+}
 pub(super) fn hud(
     game: &Game<'_>,
     batch: &mut HudBatch,
     corners: &mut horizon_client::extras_hud::Corners,
 ) {
     let p = settings(game);
-    if wanted(game).is_none()
-        || !p.coordinates
-        || game.ui.hide_gui
-        || !game.native_corner_shown(corner(p.corner))
-    {
+    if wanted(game).is_none() || game.ui.hide_gui || !game.native_corner_shown(corner(p.corner)) {
         return;
     }
-    if let Some(player) = game.native_player() {
+    let (source, image) = state(|s| (s.source.clone(), s.published.clone()));
+    let (Some(source), Some((dimension, view))) = (source, image) else {
+        return;
+    };
+    let (x, next_y) = corners.place(corner(p.corner), p.size as f32, 0.0);
+    let y = if p.corner < 2 {
+        next_y - p.size as f32 - 2.0
+    } else {
+        next_y + 2.0
+    };
+    map_marks(
+        game,
+        batch,
+        &source,
+        &dimension,
+        view,
+        [x, y, p.size as f32, p.size as f32],
+        p,
+        false,
+    );
+    if p.coordinates {
         let (x, y) = corners.place(corner(p.corner), p.size as f32, 11.0);
         label(
             game,
             batch,
-            &format!("X {:.0}  Z {:.0}", player.x.floor(), player.z.floor()),
+            &format!(
+                "X {:.0}  Z {:.0}",
+                source.player[0].floor(),
+                source.player[2].floor()
+            ),
             [x, y],
             p.size as f32,
             0xe0e7f0,
@@ -439,7 +567,7 @@ pub(super) fn render(
         label(
             game,
             batch,
-            &format!("Друзья онлайн: {friends}"),
+            &format!("Приваты друзей: {friends}"),
             [x, 188.0],
             width,
             source.friend_color,
@@ -514,6 +642,7 @@ pub(super) fn render(
             width,
             0x8999af,
         );
+        map_marks(game, batch, &source, &dimension, actual, rect, p, true);
         if p.labels && actual.blocks_per_pixel <= 2.0 {
             let mut owners = BTreeSet::new();
             for cell in source
@@ -541,22 +670,6 @@ pub(super) fn render(
                         },
                     );
                     batch.clip_since(start, rect[0], rect[1], rect[0] + side, rect[1] + side);
-                }
-            }
-            if p.marks {
-                let mut shown = 0;
-                for mark in source.marks.iter().filter(|m| m.dimension == dimension) {
-                    let at = actual.pixel(mark.position, 128.0);
-                    let xy = [
-                        rect[0] + at[0] / 128.0 * side + 3.0,
-                        rect[1] + at[1] / 128.0 * side,
-                    ];
-                    if contains(rect, xy) && shown < 32 {
-                        let start = batch.vertices.len();
-                        label(game, batch, &mark.label, xy, 90.0, mark.color);
-                        batch.clip_since(start, rect[0], rect[1], rect[0] + side, rect[1] + side);
-                        shown += 1;
-                    }
                 }
             }
         }

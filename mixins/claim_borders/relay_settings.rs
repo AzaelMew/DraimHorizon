@@ -1,4 +1,4 @@
-// Explicit relay configuration and independently verified contact identity pins.
+// Explicit relay configuration and selected contact identity pins.
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-/// UUID and nickname are only metadata. Consent is bound to a separately verified key code.
+/// UUID and nickname are only metadata. Consent is bound to the selected peer key, not its displayed name.
 pub fn permits_frame(
     pinned: Option<&str>,
     pending: Option<&str>,
@@ -22,7 +22,7 @@ pub fn permits_frame(
     }
     match kind {
         "i" => !awaiting || pending == Some(code),
-        "a" => awaiting && pending == Some(code),
+        "a" | "n" => awaiting && pending == Some(code),
         _ => false,
     }
 }

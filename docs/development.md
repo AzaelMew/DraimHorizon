@@ -93,3 +93,7 @@ Chat cards and translation use `chat_feed.rs`, `chat_view.rs` and the bundled re
 Chat geometry and persistent preferences are shared in `chat_preferences.rs`; click hit boxes are stored in final GUI coordinates after scaling. Antispam operates on original text before translation and keeps author identity separate.
 
 Claim cartography: `claim_map.rs` owns settings, projection, claim overlays and sorting; `map_view.rs` owns map UI; `map_backend.rs` is injected as a child of `game::extras` to reuse Horizon terrain scanning and its dynamic atlas slot. Extra source hash for `game/extras.rs` is recorded in compatibility.json. Terrain is limited to loaded chunks and is not persisted.
+
+Player faces use float-positioned atlas vertices to avoid GUI pixel snapping. Near-player markers resolve Horizon entities; far-player snapshots use a bounded interpolation deque. The roster is scoped to the game tab and relay realm, with selected contact keys pinned on mutual acceptance (TOFU, not Mojang identity verification).
+
+`inventory_sort.rs` plans bounded chest transactions; `inventory_sort_view.rs` first simulates each plan in a disposable `menu_session`, checks cursor, drops, metadata and untouched player slots, then emits normal `menu_ops`. Server corrections or changed menus stop the operation.

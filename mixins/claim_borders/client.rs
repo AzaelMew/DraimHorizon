@@ -6,7 +6,7 @@ use crate::game::{
     claim_borders_party as party, claim_borders_relay_settings as relay_settings,
     claim_borders_visualization as visualization, claim_borders_waypoints as waypoints,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -40,6 +40,10 @@ struct Client {
     pins: Option<relay_settings::PinStore>,
     connected: bool,
     own_code: String,
+    auto_relay: bool,
+    manual_off: bool,
+    last_auto: u64,
+    avatars: BTreeMap<u128, String>,
     network_status: String,
     peers: Vec<websocket::Peer>,
     pending_codes: BTreeMap<u128, String>,
@@ -78,6 +82,10 @@ impl Default for Client {
             pins: None,
             connected: false,
             own_code: String::new(),
+            auto_relay: true,
+            manual_off: false,
+            last_auto: 0,
+            avatars: BTreeMap::new(),
             network_status: "Relay отключён".into(),
             peers: Vec::new(),
             pending_codes: BTreeMap::new(),
@@ -150,6 +158,10 @@ fn ensure(game: &mut Game<'_>) -> bool {
         scope,
         own,
         root,
+        auto_relay: game
+            .native_setting(claims::ID, "relay_autoconnect")
+            .as_deref()
+            != Some("false"),
         ..Client::default()
     };
     let mut errors = Vec::new();
@@ -219,20 +231,87 @@ pub(super) fn reset() {
 
 pub(super) fn frame(game: &mut Game<'_>) {
     service_menu(game);
+    crate::game::claim_borders_inventory_sort_view::frame(game);
     if !game.native_on(claims::ID) {
         crate::game::claim_borders_map_view::reset();
         return;
     }
     if game.native_on(claims::ID) && game.native_player().is_some() && ensure(game) {
         if game.remote.is_some() {
+            let auto = state(|c| {
+                c.auto_relay
+                    && !c.manual_off
+                    && c.network.is_none()
+                    && c.network_settings
+                        .as_ref()
+                        .is_some_and(|s| !s.url.is_empty())
+                    && (c.last_auto == 0 || now(c).saturating_sub(c.last_auto) >= 3000)
+            });
+            if auto {
+                state(|c| c.last_auto = now(c).max(1));
+                if let Err(error) = start_network(game) {
+                    state(|c| c.network_status = error);
+                }
+            }
             poll_network(game);
         }
+        prepare_avatars(game);
         let source = map_snapshot(game);
         crate::game::claim_borders_map_view::sync(game, source);
     }
     if crate::game::claim_borders_map_view::take_close() {
         game.native_mod_screen_close(claims::ID);
     }
+}
+pub(super) fn entity_position(game: &Game<'_>, uuid: u128) -> Option<[f64; 3]> {
+    let entity = game.remote.as_ref()?.player_entity(uuid)?;
+    let mob = game.mobs.iter().find(|m| m.id == entity && !m.removed)?;
+    let pos = mob.previous.lerp(mob.position, game.clock.fraction());
+    Some([pos.x, pos.y, pos.z])
+}
+pub(super) fn avatar(uuid: u128) -> String {
+    state(|c| c.avatars.get(&uuid).cloned())
+        .unwrap_or_else(|| horizon_client::tab_list::default_skin(uuid).into())
+}
+fn prepare_avatars(game: &mut Game<'_>) {
+    let (own, important): (u128, BTreeSet<_>) = state(|c| {
+        let mut ids: BTreeSet<_> = c
+            .party
+            .as_ref()
+            .map(|p| p.friends().into_iter().map(|f| f.uuid).collect())
+            .unwrap_or_default();
+        ids.insert(c.own);
+        ids.extend(c.peers.iter().map(|p| p.uuid));
+        (c.own, ids)
+    });
+    let mut players = game
+        .remote_tab_players()
+        .map(|(p, _, _)| p)
+        .unwrap_or_default();
+    let tab = players.iter().map(|p| (p.uuid, p.name.clone())).collect();
+    players.sort_by_key(|p| (p.uuid != own, !important.contains(&p.uuid), p.uuid));
+    let mut avatars = BTreeMap::new();
+    for p in players
+        .into_iter()
+        .filter(|p| {
+            important.contains(&p.uuid)
+                || game
+                    .remote
+                    .as_ref()
+                    .and_then(|r| r.player_entity(p.uuid))
+                    .is_some()
+        })
+        .take(128)
+        .collect::<Vec<_>>()
+    {
+        let skin = game.face_skin(p.uuid, &p.skin);
+        avatars.insert(p.uuid, skin);
+    }
+    state(|c| {
+        c.avatars = avatars;
+        c.tab_cache = tab;
+        c.tab_at = now(c);
+    });
 }
 pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::Snapshot {
     use crate::game::claim_borders_map as map;
@@ -262,6 +341,9 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
         if let Some(store) = &c.waypoints {
             for w in store.all(&c.scope) {
                 marks.push(map::Mark {
+                    player: None,
+                    friend: false,
+                    skin: String::new(),
                     dimension: w.dimension.clone(),
                     position: [w.position[0], w.position[2]],
                     label: w.name.clone(),
@@ -283,9 +365,22 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
             .collect();
         if let Some(p) = &c.party {
             for friend in p.online(&online, now(c)) {
+                let native = entity_position(game, friend.uuid);
                 marks.push(map::Mark {
-                    dimension: friend.snapshot.dimension.clone(),
-                    position: [friend.snapshot.position[0], friend.snapshot.position[2]],
+                    player: Some(friend.uuid),
+                    friend: true,
+                    skin: c.avatars.get(&friend.uuid).cloned().unwrap_or_else(|| {
+                        horizon_client::tab_list::default_skin(friend.uuid).into()
+                    }),
+                    dimension: if native.is_some() {
+                        dimension.clone()
+                    } else {
+                        friend.snapshot.dimension.clone()
+                    },
+                    position: native.map_or(
+                        [friend.snapshot.position[0], friend.snapshot.position[2]],
+                        |p| [p[0], p[2]],
+                    ),
                     label: friend.name.clone(),
                     color: c.visual.friend_color,
                 });
@@ -300,10 +395,36 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 }
             }
         }
+        for (uuid, name) in &c.tab_cache {
+            if *uuid == c.own || marks.iter().any(|m| m.player == Some(*uuid)) {
+                continue;
+            }
+            if let Some(pos) = entity_position(game, *uuid) {
+                marks.push(map::Mark {
+                    player: Some(*uuid),
+                    friend: false,
+                    skin: c
+                        .avatars
+                        .get(uuid)
+                        .cloned()
+                        .unwrap_or_else(|| horizon_client::tab_list::default_skin(*uuid).into()),
+                    dimension: dimension.clone(),
+                    position: [pos[0], pos[2]],
+                    label: name.clone(),
+                    color: 0xe9c66b,
+                });
+            }
+        }
         map::Snapshot {
             scope: c.scope.clone(),
             dimension,
             player: [player.x, player.y, player.z],
+            player_uuid: c.own,
+            player_skin: c
+                .avatars
+                .get(&c.own)
+                .cloned()
+                .unwrap_or_else(|| horizon_client::tab_list::default_skin(c.own).into()),
             cells,
             marks,
             own_known: known,
@@ -541,6 +662,7 @@ pub(super) fn visuals(
             for w in store.list(&c.scope, player.dimension) {
                 if let Some(distance) = w.distance_from(position) {
                     markers.push(overlay::Marker {
+                        player: None,
                         label: w.name.clone(),
                         position: w.position,
                         color: w.color,
@@ -568,6 +690,7 @@ pub(super) fn visuals(
                         let mut anchor = friend.snapshot.position;
                         anchor[1] += 2.3;
                         markers.push(overlay::Marker {
+                            player: Some(friend.uuid),
                             label: friend.name.clone(),
                             position: anchor,
                             color: 0x55bbff,
@@ -726,7 +849,10 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                 Ok(vec!["[Party] Подключение к WebSocket relay.".into()])
             }
             "off" => {
-                state(stop_network);
+                state(|c| {
+                    stop_network(c);
+                    c.manual_off = true;
+                });
                 Ok(vec!["[Party] Relay отключён.".into()])
             }
             _ => Err("/party relay on|off. URL настраивается в меню M → Party → Relay.".into()),
@@ -756,7 +882,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             lines.extend(p.friends().iter().map(|f| format!("[Party] {}", f.name)));
             lines.extend(p.pending(time).iter().map(|f| {
                 format!(
-                    "[Party] Приглашение {}. Введите проверенный код в меню для принятия.",
+                    "[Party] Приглашение {}. Примите его в M → Пати → Приглашения.",
                     f.name
                 )
             }));
@@ -785,14 +911,23 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                     return Err("Сначала подключитесь к relay в меню.".into());
                 }
                 let code = args[1].trim().to_ascii_lowercase();
-                if code.len() != 24 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return Err("Введите 24-значный код друга, сверенный вне игры; имя не подтверждает личность.".into());
-                }
-                let peer = c
+                let matches: Vec<_> = c
                     .peers
                     .iter()
-                    .find(|peer| peer.code == code)
-                    .ok_or("Этот код сейчас не подключён к relay в вашей группе сервера.")?;
+                    .filter(|peer| peer.code == code || peer.name.eq_ignore_ascii_case(&code))
+                    .collect();
+                if matches.len() != 1 {
+                    return Err(
+                        "Выбери одного доступного игрока из списка пользователей мода.".into(),
+                    );
+                }
+                let peer = matches[0];
+                if c.peers.iter().filter(|p| p.uuid == peer.uuid).count() != 1 {
+                    return Err(
+                        "Для игрока обнаружено несколько ключей. Дождитесь переподключения.".into(),
+                    );
+                }
+                let code = peer.code.clone();
                 if !tab
                     .iter()
                     .any(|(id, name)| *id == peer.uuid && name.eq_ignore_ascii_case(&peer.name))
@@ -813,13 +948,13 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             let frames = match action {
                 "invite" | "add" => {
                     if pins.get(&c.scope, uuid).is_some_and(|old| old != code) {
-                        return Err("У друга изменился ключ. Сначала удалите старую дружбу, затем заново сверьте код.".into());
+                        return Err("Ключ игрока изменился. Удалите прежнюю дружбу и подтвердите новое приглашение.".into());
                     }
                     candidate.invite(uuid, &name, time)?
                 }
                 "accept" => {
                     if c.pending_codes.get(&uuid) != Some(&code) {
-                        return Err("Приглашение не соответствует введённому коду.".into());
+                        return Err("Приглашение не соответствует выбранному игроку.".into());
                     }
                     let frames = candidate.accept(uuid, time)?;
                     pins.pin(&c.scope, uuid, &code)?;
@@ -840,7 +975,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             c.last_claims.remove(&uuid);
             c.last_status.remove(&uuid);
             c.cached_territories.clear();
-            // Retain the exact verified destination until its queued ACK/removal has been delivered.
+            // Retain the exact selected destination until its queued ACK/removal has been delivered.
             if !code.is_empty() {
                 c.pending_codes.insert(uuid, code);
             }
@@ -848,7 +983,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             return Ok(vec![format!("[Party] {action}: {name}")]);
         }
         Ok(vec![
-            "[Party] /party relay on|off | invite КОД | accept КОД | remove НИК | list | sync"
+            "[Party] /party relay on|off | invite НИК | accept НИК | remove НИК | list | sync"
                 .into(),
         ])
     })
@@ -935,32 +1070,115 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         if let Some(p) = &mut c.party {
             let live = p.online(&ids, time);
             for friend in p.friends() {
-                let detail = if let Some(s) = live.iter().find(|s| s.uuid == friend.uuid) {
-                    format!("В сети · {:.0}% HP", s.health_percent)
-                } else if ids.contains(&friend.uuid) {
-                    "В сети · нет свежих данных".into()
+                let code = c
+                    .pins
+                    .as_ref()
+                    .and_then(|p| p.get(&c.scope, friend.uuid))
+                    .unwrap_or("")
+                    .to_owned();
+                let present = c.connected
+                    && c.peers
+                        .iter()
+                        .any(|peer| peer.uuid == friend.uuid && peer.code == code)
+                    && ids.contains(&friend.uuid);
+                let changed = c
+                    .peers
+                    .iter()
+                    .any(|peer| peer.uuid == friend.uuid && peer.code != code);
+                let detail = if changed {
+                    "Ключ изменился — добавьте заново".into()
+                } else if let Some(s) = live.iter().find(|s| s.uuid == friend.uuid) {
+                    format!("Друг · {:.0}% HP", s.health_percent)
+                } else if present {
+                    "Друг · синхронизация…".into()
                 } else {
-                    "Не в сети".into()
+                    "Друг · не в сети мода".into()
                 };
                 rows.push(menu::PartyRow {
-                    code: c
-                        .pins
-                        .as_ref()
-                        .and_then(|p| p.get(&c.scope, friend.uuid))
-                        .unwrap_or("")
-                        .to_owned(),
+                    uuid: friend.uuid,
+                    code,
                     name: friend.name,
+                    skin: c.avatars.get(&friend.uuid).cloned().unwrap_or_else(|| {
+                        horizon_client::tab_list::default_skin(friend.uuid).into()
+                    }),
                     detail,
                     pending: false,
+                    friend: true,
+                    online: present,
+                    blocked: changed,
+                    outgoing: false,
                 });
             }
-            rows.extend(p.pending(time).into_iter().map(|f| menu::PartyRow {
-                code: c.pending_codes.get(&f.uuid).cloned().unwrap_or_default(),
-                name: f.name,
-                detail: "Входящее приглашение".into(),
-                pending: true,
-            }));
+            for f in p.pending(time) {
+                let code = c.pending_codes.get(&f.uuid).cloned().unwrap_or_default();
+                rows.push(menu::PartyRow {
+                    uuid: f.uuid,
+                    skin: c
+                        .avatars
+                        .get(&f.uuid)
+                        .cloned()
+                        .unwrap_or_else(|| horizon_client::tab_list::default_skin(f.uuid).into()),
+                    code: code.clone(),
+                    name: f.name,
+                    detail: "Хочет добавить вас в друзья".into(),
+                    pending: true,
+                    friend: false,
+                    online: c
+                        .peers
+                        .iter()
+                        .any(|peer| peer.uuid == f.uuid && peer.code == code),
+                    blocked: false,
+                    outgoing: false,
+                });
+            }
         }
+        for peer in &c.peers {
+            if peer.uuid == c.own
+                || rows.iter().any(|row| row.uuid == peer.uuid)
+                || !tab
+                    .iter()
+                    .any(|(id, name)| *id == peer.uuid && name.eq_ignore_ascii_case(&peer.name))
+            {
+                continue;
+            }
+            let blocked = c.peers.iter().filter(|p| p.uuid == peer.uuid).count() != 1;
+            rows.push(menu::PartyRow {
+                uuid: peer.uuid,
+                code: peer.code.clone(),
+                name: peer.name.clone(),
+                detail: if blocked {
+                    "Неоднозначная личность"
+                } else {
+                    "Пользователь мода · доступен"
+                }
+                .into(),
+                pending: false,
+                friend: false,
+                online: true,
+                blocked,
+                outgoing: c
+                    .party
+                    .as_mut()
+                    .is_some_and(|p| p.awaiting(peer.uuid, time)),
+                skin: c
+                    .avatars
+                    .get(&peer.uuid)
+                    .cloned()
+                    .unwrap_or_else(|| horizon_client::tab_list::default_skin(peer.uuid).into()),
+            });
+        }
+        for row in &mut rows {
+            if row.outgoing {
+                row.detail = "Приглашение отправлено".into();
+            }
+        }
+        rows.sort_by(|a, b| {
+            b.pending
+                .cmp(&a.pending)
+                .then(b.online.cmp(&a.online))
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                .then(a.code.cmp(&b.code))
+        });
         let settings = &c.visual;
         menu::ViewModel {
             waypoints,
@@ -971,7 +1189,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 .as_ref()
                 .map(|s| s.url.clone())
                 .unwrap_or_default(),
-            relay_code: c.own_code.clone(),
+            relay_connected: c.connected,
+            relay_auto: c.auto_relay,
             relay_token_present: c
                 .network_settings
                 .as_ref()
@@ -1040,10 +1259,39 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             waypoint_command(game, &["color", &id.to_string(), &format!("#{color:06X}")])
         }
         Action::DeleteWaypoint { id } => waypoint_command(game, &["remove", &id.to_string()]),
+        Action::Decline { uuid } => state(|c| {
+            let time = now(c);
+            if c.controls.len() >= 32 {
+                return Err("Очередь занята".into());
+            }
+            let frames = c
+                .party
+                .as_mut()
+                .ok_or("Пати недоступна")?
+                .decline(uuid, time)?;
+            c.controls.extend(frames);
+            Ok(Vec::new())
+        }),
         Action::Invite { code } => party_command(game, &["invite", &code]),
         Action::Accept { code } => party_command(game, &["accept", &code]),
         Action::RemoveFriend { name } => party_command(game, &["remove", &name]),
         Action::RelayOff => party_command(game, &["relay", "off"]),
+        Action::ToggleAutoRelay => {
+            let on = state(|c| {
+                c.auto_relay = !c.auto_relay;
+                if c.auto_relay {
+                    c.manual_off = false;
+                    c.last_auto = 0;
+                }
+                c.auto_relay
+            });
+            game.native_set_setting(
+                claims::ID,
+                "relay_autoconnect",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
         Action::RelayConnect => party_command(game, &["relay", "on"]),
         Action::ConfigureRelay { url, access_token } => {
             configure_network(url, access_token, false)?;
@@ -1085,15 +1333,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             use horizon_client::clipboard::Clipboard;
             game.clipboard.set(&text);
             Ok(Vec::new())
-        }
-        Action::CopyOwnCode => {
-            use horizon_client::clipboard::Clipboard;
-            let code = state(|c| c.own_code.clone());
-            if code.is_empty() {
-                return Err("Подключитесь к relay, чтобы получить свой код.".into());
-            }
-            game.clipboard.set(&code);
-            Ok(vec!["Код скопирован. Передайте его другу вне игры.".into()])
         }
         Action::PasteFromClipboard => {
             use horizon_client::clipboard::Clipboard;
@@ -1267,6 +1506,7 @@ fn start_network(game: &mut Game<'_>) -> Result<(), String> {
             identity_path: c.root.join(format!("relay-identity-{uuid:032x}.json")),
             access_token: settings.access_token.clone(),
         })?;
+        c.manual_off = false;
         c.network = Some(handle);
         c.relay = Relay::WebSocket;
         c.connected = false;
@@ -1367,10 +1607,12 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
             c.cached_territories.clear();
         }
         c.controls.extend(frames);
-        if invited {
+        if kind == "n" {
+            Some(format!("{} отклонил приглашение", peer.name))
+        } else if invited {
             Some(format!(
-                "Приглашение от {}. Сверьте её/его код вне игры и введите код вручную в меню: {}",
-                peer.name, peer.code
+                "Приглашение от {}. Откройте M → Пати → Приглашения.",
+                peer.name
             ))
         } else if changed {
             Some(format!("Список друзей обновлён: {}", peer.name))

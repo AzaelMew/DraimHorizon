@@ -26,3 +26,6 @@ pub use chat_preferences as claim_borders_chat_preferences;
 #[path = "../mixins/claim_borders/claim_map.rs"]
 pub mod claim_map;
 pub use claim_map as claim_borders_map;
+
+#[path = "../mixins/claim_borders/inventory_sort.rs"]
+pub mod inventory_sort;

@@ -165,6 +165,9 @@ pub struct Cell {
 }
 #[derive(Clone, Debug)]
 pub struct Mark {
+    pub player: Option<u128>,
+    pub friend: bool,
+    pub skin: String,
     pub dimension: String,
     pub position: [f64; 2],
     pub label: String,
@@ -175,6 +178,8 @@ pub struct Snapshot {
     pub scope: String,
     pub dimension: String,
     pub player: [f64; 3],
+    pub player_uuid: u128,
+    pub player_skin: String,
     pub cells: Vec<Cell>,
     pub marks: Vec<Mark>,
     pub own_known: bool,
@@ -284,7 +289,7 @@ pub fn paint(
     dimension: &str,
     snapshot: &Snapshot,
     p: Preferences,
-    full: bool,
+    _full: bool,
 ) {
     if image.len() != size * size * 4
         || !view.blocks_per_pixel.is_finite()
@@ -362,14 +367,6 @@ pub fn paint(
                 1,
             );
         }
-    }
-    if p.marks {
-        for mark in snapshot.marks.iter().filter(|m| m.dimension == dimension) {
-            dot(mark.position, mark.color, 1);
-        }
-    }
-    if full && snapshot.dimension == dimension {
-        dot([snapshot.player[0], snapshot.player[2]], 0xffffff, 2);
     }
 }
 #[cfg(test)]

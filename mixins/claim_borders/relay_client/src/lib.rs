@@ -186,7 +186,7 @@ fn worker(
             }
             thread::sleep(Duration::from_millis(100));
         }
-        backoff = (backoff * 2).min(30);
+        backoff = (backoff * 2).min(5);
     }
 }
 fn session(

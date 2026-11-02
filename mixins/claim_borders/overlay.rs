@@ -8,6 +8,7 @@ pub struct FriendRow {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Marker {
+    pub player: Option<u128>,
     pub label: String,
     /// World-space label anchor; dimensions are filtered by the caller.
     pub position: [f64; 3],
@@ -141,6 +142,7 @@ pub fn distance_label(distance: f64) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 pub fn friend_label(row: &FriendRow) -> String {
     match row.health_percent {
         Some(percent) => format!("{}  {}%", row.name, percent.min(100)),

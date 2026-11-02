@@ -8,8 +8,14 @@ pub struct WaypointRow {
     pub detail: String,
     pub color: u32,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PartyRow {
+    pub uuid: u128,
+    pub friend: bool,
+    pub online: bool,
+    pub blocked: bool,
+    pub outgoing: bool,
+    pub skin: String,
     pub code: String,
     pub name: String,
     pub detail: String,
@@ -79,8 +85,9 @@ pub struct ViewModel {
     pub party: Vec<PartyRow>,
     pub relay: String,
     pub relay_url: String,
-    pub relay_code: String,
     pub relay_token_present: bool,
+    pub relay_connected: bool,
+    pub relay_auto: bool,
     pub claims: ClaimsSettings,
     pub status: String,
     pub chat_modern: bool,
@@ -109,6 +116,9 @@ pub enum Action {
     Invite {
         code: String,
     },
+    Decline {
+        uuid: u128,
+    },
     Accept {
         code: String,
     },
@@ -118,12 +128,12 @@ pub enum Action {
     RefreshClaims,
     RelayOff,
     RelayConnect,
+    ToggleAutoRelay,
     ConfigureRelay {
         url: String,
         access_token: Option<String>,
     },
     ClearRelayToken,
-    CopyOwnCode,
     CopyText(String),
     OpenMap,
     FocusClaim {
@@ -142,6 +152,8 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Decline { uuid } => f.debug_tuple("Decline").field(uuid).finish(),
+            Self::ToggleAutoRelay => f.write_str("ToggleAutoRelay"),
             Self::OpenMap => f.write_str("OpenMap"),
             Self::FocusClaim { dimension, x, z } => f
                 .debug_tuple("FocusClaim")
@@ -187,7 +199,6 @@ impl std::fmt::Debug for Action {
             Self::RelayOff => f.write_str("RelayOff"),
             Self::RelayConnect => f.write_str("RelayConnect"),
             Self::ClearRelayToken => f.write_str("ClearRelayToken"),
-            Self::CopyOwnCode => f.write_str("CopyOwnCode"),
             Self::PasteFromClipboard => f.write_str("PasteFromClipboard"),
             Self::Close => f.write_str("Close"),
         }
@@ -211,6 +222,13 @@ pub enum Field {
     FriendClaimColor,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum PartyFilter {
+    Friends,
+    #[default]
+    Users,
+    Invitations,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ChatSection {
     #[default]
     Appearance,
@@ -231,6 +249,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    PartyFilter(PartyFilter),
+    ToggleAutoRelay,
     ClaimsSection(ClaimsSection),
     OpenMap,
     ClaimRow(usize),
@@ -275,6 +295,7 @@ pub enum Control {
     Color,
     Delete,
     Invite,
+    Decline,
     Accept,
     Remove,
     Refresh,
@@ -284,7 +305,6 @@ pub enum Control {
     RelayConnect,
     RelayBack,
     ClearRelayToken,
-    CopyOwnCode,
     BordersEnabled,
     OwnVisible,
     FriendsVisible,
@@ -301,6 +321,7 @@ pub struct Widget {
 #[derive(Clone)]
 pub struct Menu {
     pub tab: Tab,
+    pub party_filter: PartyFilter,
     pub chat_section: ChatSection,
     pub claims_section: ClaimsSection,
     pub claims_page: usize,
@@ -323,6 +344,7 @@ impl Default for Menu {
     fn default() -> Self {
         Self {
             tab: Tab::Waypoints,
+            party_filter: PartyFilter::Users,
             chat_section: ChatSection::Appearance,
             claims_section: ClaimsSection::Map,
             claims_page: 0,
@@ -375,6 +397,13 @@ impl Menu {
             }),
             Tab::Claims | Tab::Chat => None,
         });
+        if self.tab == Tab::Party
+            && self
+                .selected
+                .is_some_and(|i| !self.party_indices(next).contains(&i))
+        {
+            self.selected = None;
+        }
         self.clamp_page(next, height);
     }
     pub fn clamp_page(&mut self, model: &ViewModel, height: f32) {
@@ -386,7 +415,7 @@ impl Menu {
     }
     fn page_size(&self, height: f32) -> usize {
         if self.tab == Tab::Party {
-            (((height - 216.0) / 24.0).floor() as usize).clamp(1, 12)
+            (((height - 176.0) / 24.0).floor() as usize).clamp(1, 12)
         } else {
             Self::rows_per_page(height)
         }
@@ -394,7 +423,7 @@ impl Menu {
     fn count(&self, model: &ViewModel) -> usize {
         match self.tab {
             Tab::Waypoints => model.waypoints.len(),
-            Tab::Party => model.party.len(),
+            Tab::Party => self.party_indices(model).len(),
             Tab::Claims | Tab::Chat => 0,
         }
     }
@@ -950,6 +979,19 @@ impl Menu {
         }
         out
     }
+    fn party_indices(&self, model: &ViewModel) -> Vec<usize> {
+        model
+            .party
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| match self.party_filter {
+                PartyFilter::Friends => p.friend,
+                PartyFilter::Users => p.online && !p.pending,
+                PartyFilter::Invitations => p.pending,
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
     fn party_layout(
         &self,
         model: &ViewModel,
@@ -1013,122 +1055,143 @@ impl Menu {
                 ));
             }
             out.push(widget(
+                [x + w / 2.0, 186.0, w / 2.0 - 3.0, 22.0],
+                format!("Автоподключение: {}", on(model.relay_auto)),
+                Some(Control::ToggleAutoRelay),
+                model.relay_auto,
+            ));
+            out.push(widget(
                 [x, 212.0, w, 10.0],
-                "Сначала сохраните адрес, затем подключите.",
+                "После сохранения relay подключается автоматически.",
                 None,
                 false,
             ));
         } else {
+            out.push(widget([x, 54.0, w, 14.0], &model.relay, None, false));
             out.push(widget(
-                [x, 54.0, w, 14.0],
-                if model.relay_code.is_empty() {
-                    "Ваш код: подключите relay".into()
-                } else {
-                    format!("Ваш код: {}", model.relay_code)
-                },
-                None,
-                false,
-            ));
-            out.push(widget([x, 70.0, w, 12.0], &model.relay, None, false));
-            out.push(widget(
-                [x, 86.0, w / 2.0 - 3.0, 20.0],
+                [x, 72.0, w / 2.0 - 3.0, 18.0],
                 "Настроить relay",
                 Some(Control::RelaySetup),
                 false,
             ));
             out.push(widget(
-                [x + w / 2.0, 86.0, w / 2.0, 20.0],
-                "Копировать код",
-                Some(Control::CopyOwnCode),
+                [x + w / 2.0, 72.0, w / 2.0, 18.0],
+                if model.relay_connected {
+                    "Отключить"
+                } else {
+                    "Подключить"
+                },
+                Some(if model.relay_connected {
+                    Control::RelayOff
+                } else {
+                    Control::RelayConnect
+                }),
                 false,
             ));
-            let per = self.page_size(height);
-            for (slot, index) in
-                (self.page * per..((self.page + 1) * per).min(model.party.len())).enumerate()
-            {
-                let row = &model.party[index];
-                out.push(widget(
-                    [x, 110.0 + slot as f32 * 24.0, w, 22.0],
-                    format!(
-                        "{} · {}{} · {}",
-                        row.code,
-                        if row.pending { "[+] " } else { "" },
-                        row.name,
-                        row.detail
-                    ),
-                    Some(Control::Row(index)),
-                    self.selected == Some(index),
-                ));
-            }
-            if model.party.is_empty() {
-                out.push(widget(
-                    [x, 112.0, w, 16.0],
-                    "Нет друзей. Получите код друга лично.",
-                    None,
-                    false,
-                ));
-            }
-            let b = 110.0 + per as f32 * 24.0;
-            out.push(widget(
-                [x, b, 28.0, 18.0],
-                "<",
-                Some(Control::Previous),
-                false,
-            ));
-            out.push(widget(
-                [x + 32.0, b, w - 64.0, 18.0],
-                format!(
-                    "{} / {}",
-                    self.page + 1,
-                    model.party.len().div_ceil(per).max(1)
-                ),
-                None,
-                false,
-            ));
-            out.push(widget(
-                [x + w - 28.0, b, 28.0, 18.0],
-                ">",
-                Some(Control::Next),
-                false,
-            ));
-            out.push(widget(
-                [x, b + 22.0, w, 20.0],
-                format!("Код друга: {}", self.peer_code),
-                Some(Control::Field(Field::PeerCode)),
-                self.focus == Some(Field::PeerCode),
-            ));
-            for (i, (control, label)) in [
-                (Control::Invite, "Пригласить"),
-                (Control::Accept, "Принять"),
-                (Control::Remove, "Убрать друга"),
+            for (i, (filter, title)) in [
+                (PartyFilter::Friends, "Друзья"),
+                (PartyFilter::Users, "С модом"),
+                (PartyFilter::Invitations, "Приглашения"),
             ]
             .into_iter()
             .enumerate()
             {
                 out.push(widget(
-                    [x + i as f32 * w / 4.0, b + 46.0, w / 4.0 - 3.0, 20.0],
-                    label,
-                    Some(control),
+                    [x + i as f32 * w / 3.0, 94.0, w / 3.0 - 3.0, 18.0],
+                    title,
+                    Some(Control::PartyFilter(filter)),
+                    self.party_filter == filter,
+                ));
+            }
+            let indices = self.party_indices(model);
+            let per = self.page_size(height);
+            let pages = indices.len().div_ceil(per).max(1);
+            let page = self.page.min(pages - 1);
+            for (slot, index) in indices
+                .iter()
+                .copied()
+                .skip(page * per)
+                .take(per)
+                .enumerate()
+            {
+                let row = &model.party[index];
+                out.push(widget(
+                    [x, 118.0 + slot as f32 * 24.0, w, 22.0],
+                    format!("{} · {}", row.name, row.detail),
+                    Some(Control::Row(index)),
+                    self.selected == Some(index),
+                ));
+            }
+            if indices.is_empty() {
+                out.push(widget(
+                    [x, 120.0, w, 18.0],
+                    match self.party_filter {
+                        PartyFilter::Friends => "Пока нет друзей. Выбери игрока в «С модом».",
+                        PartyFilter::Users => "Здесь появятся игроки вашего relay на этом сервере.",
+                        PartyFilter::Invitations => "Нет входящих приглашений.",
+                    },
+                    None,
                     false,
                 ));
             }
+            let b = 118.0 + per as f32 * 24.0;
             out.push(widget(
-                [x, b + 70.0, w, 12.0],
-                "Имена не проверены; сверяйте коды вне игры.",
+                [x, b, 28.0, 16.0],
+                "←",
+                Some(Control::Previous),
+                false,
+            ));
+            out.push(widget(
+                [x + 32.0, b, w - 64.0, 16.0],
+                format!("{} / {}", page + 1, pages),
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x + w - 28.0, b, 28.0, 16.0],
+                "→",
+                Some(Control::Next),
+                false,
+            ));
+            let selected = self.selected.and_then(|i| model.party.get(i));
+            let (primary, title) = match selected {
+                Some(p) if p.pending => (Control::Accept, "Принять приглашение"),
+                Some(p) if p.friend => (Control::Remove, "Удалить друга"),
+                _ => (Control::Invite, "Пригласить игрока"),
+            };
+            out.push(widget(
+                [x, height - 38.0, w * 0.62 - 3.0, 18.0],
+                title,
+                Some(primary),
+                false,
+            ));
+            out.push(widget(
+                [x + w * 0.62, height - 38.0, w * 0.38, 18.0],
+                if selected.is_some_and(|p| p.pending) {
+                    "Отклонить"
+                } else {
+                    "Обновить приваты"
+                },
+                Some(if selected.is_some_and(|p| p.pending) {
+                    Control::Decline
+                } else {
+                    Control::Refresh
+                }),
+                false,
+            ));
+        }
+        if !self.relay_setup {
+            out.push(widget(
+                [x, height - 17.0, w, 12.0],
+                if self.notice.is_empty() {
+                    &model.status
+                } else {
+                    &self.notice
+                },
                 None,
                 false,
             ));
         }
-        out.push(widget(
-            [x, height - 17.0, w, 12.0],
-            if self.notice.is_empty() {
-                &model.status
-            } else {
-                &self.notice
-            },
-            None,
-            false,
-        ));
         out
     }
     pub fn click(&mut self, model: &ViewModel, size: [f32; 2], mouse: [f32; 2]) -> Option<Action> {
@@ -1150,11 +1213,23 @@ impl Menu {
             .and_then(|i| model.waypoints.get(i))
             .map(|r| r.id);
         let name = self.name.trim().to_owned();
-        let code = self.peer_code.trim().to_ascii_lowercase();
         let color = u32::from_str_radix(self.color.trim().trim_start_matches('#'), 16)
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::Decline => self
+                .selected
+                .and_then(|i| model.party.get(i))
+                .filter(|p| p.pending)
+                .map(|p| Action::Decline { uuid: p.uuid }),
+            Control::PartyFilter(filter) => {
+                self.party_filter = filter;
+                self.selected = None;
+                self.page = 0;
+                self.focus = None;
+                None
+            }
+            Control::ToggleAutoRelay => Some(Action::ToggleAutoRelay),
             Control::ClaimsSection(section) => {
                 self.claims_section = section;
                 self.focus = None;
@@ -1415,21 +1490,35 @@ impl Menu {
                 })
             }
             Control::Invite | Control::Accept => {
-                if code.len() != 24 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    self.notice = "Введите 24 hex-символа кода, полученного от друга.".into();
+                let Some(row) = self.selected.and_then(|i| model.party.get(i)) else {
+                    self.notice = "Выбери игрока из списка".into();
+                    return None;
+                };
+                if row.blocked || row.code.is_empty() || !row.online {
+                    self.notice = "Игрок сейчас недоступен".into();
                     return None;
                 }
-                Some(if control == Control::Invite {
-                    Action::Invite { code }
+                if control == Control::Accept {
+                    if !row.pending {
+                        return None;
+                    }
+                    Some(Action::Accept {
+                        code: row.code.clone(),
+                    })
                 } else {
-                    Action::Accept { code }
-                })
+                    if row.friend || row.pending || row.outgoing {
+                        return None;
+                    }
+                    Some(Action::Invite {
+                        code: row.code.clone(),
+                    })
+                }
             }
             Control::Remove => {
                 let Some(row) = self
                     .selected
                     .and_then(|i| model.party.get(i))
-                    .filter(|row| !row.pending)
+                    .filter(|row| row.friend)
                 else {
                     self.notice = "Выберите друга в списке.".into();
                     return None;
@@ -1471,7 +1560,6 @@ impl Menu {
                 self.access_token.clear();
                 Some(Action::ClearRelayToken)
             }
-            Control::CopyOwnCode => (!model.relay_code.is_empty()).then_some(Action::CopyOwnCode),
             _ => {
                 let mut s = model.claims.clone();
                 match control {
@@ -1603,7 +1691,8 @@ impl Menu {
                     Field::OwnClaimColor
                 }
             } else if self.tab == Tab::Party {
-                Field::PeerCode
+                self.focus = None;
+                return true;
             } else if self.focus == Some(Field::Name) {
                 Field::Color
             } else {
@@ -1787,32 +1876,32 @@ mod tests {
         assert!(!format!("{model:?}").contains("never-display"));
     }
     #[test]
-    fn row_selection_never_fills_verified_code_or_sends_an_invite() {
+    fn selecting_an_invitation_does_not_accept_until_explicit_click() {
         let model = ViewModel {
             party: vec![PartyRow {
+                uuid: 42,
                 name: "Friend".into(),
                 code: "abcdef0123456789abcdef01".into(),
-                detail: String::new(),
                 pending: true,
+                online: true,
+                ..PartyRow::default()
             }],
             ..ViewModel::default()
         };
         let mut menu = Menu {
             tab: Tab::Party,
+            party_filter: PartyFilter::Invitations,
             ..Menu::default()
         };
         assert_eq!(menu.activate(&model, 240.0, Control::Row(0)), None);
         assert!(menu.peer_code.is_empty());
-        assert_eq!(menu.activate(&model, 240.0, Control::Accept), None);
-        menu.peer_code = "1234567890abcdef12345678".into();
-        assert_eq!(menu.activate(&model, 240.0, Control::Row(0)), None);
-        assert_eq!(menu.peer_code, "1234567890abcdef12345678");
         assert_eq!(
             menu.activate(&model, 240.0, Control::Accept),
             Some(Action::Accept {
-                code: menu.peer_code.clone()
+                code: model.party[0].code.clone()
             })
         );
+        assert_eq!(menu.activate(&model, 240.0, Control::Invite), None);
     }
     #[test]
     fn remove_uses_selected_friend_and_never_peer_code_input() {
@@ -1822,6 +1911,8 @@ mod tests {
                 code: "a".repeat(24),
                 detail: String::new(),
                 pending: false,
+                friend: true,
+                ..PartyRow::default()
             }],
             ..ViewModel::default()
         };
@@ -1881,26 +1972,34 @@ mod tests {
         );
     }
     #[test]
-    fn peer_code_is_hex_bounded_and_keyboard_never_submits() {
-        let model = ViewModel::default();
+    fn users_are_invited_by_selection_without_exposing_codes() {
+        let mut model = ViewModel {
+            party: vec![PartyRow {
+                uuid: 42,
+                name: "Friend".into(),
+                code: "abcdef0123456789abcdef01".into(),
+                online: true,
+                ..PartyRow::default()
+            }],
+            ..ViewModel::default()
+        };
         let mut menu = Menu {
             tab: Tab::Party,
-            focus: Some(Field::PeerCode),
             ..Menu::default()
         };
-        for c in "XYZabcdef0123456789abcdef0123456789".chars() {
-            menu.character(c);
-        }
-        assert_eq!(menu.peer_code, "abcdef0123456789abcdef01");
-        assert!(menu.key("key.keyboard.enter", 0));
-        assert!(menu.key("key.keyboard.m", 0));
+        assert_eq!(menu.activate(&model, 240.0, Control::Invite), None);
+        menu.activate(&model, 240.0, Control::Row(0));
         assert_eq!(
             menu.activate(&model, 240.0, Control::Invite),
             Some(Action::Invite {
-                code: menu.peer_code.clone()
+                code: model.party[0].code.clone()
             })
         );
-        menu.peer_code = "a".repeat(23);
+        for w in menu.layout(&model, 320.0, 240.0) {
+            assert!(!w.text.contains(&model.party[0].code));
+            assert_ne!(w.control, Some(Control::Field(Field::PeerCode)));
+        }
+        model.party[0].blocked = true;
         assert_eq!(menu.activate(&model, 240.0, Control::Invite), None);
     }
     #[test]

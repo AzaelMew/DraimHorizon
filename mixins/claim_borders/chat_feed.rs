@@ -1,5 +1,6 @@
 // Compact chat model, independent of game rendering and networking.
 use super::claim_borders_chat_preferences::{Preferences, RepeatMode};
+use serde_json::Value;
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +52,19 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
     if let Some((name, tail)) = line.split_once(' ')
         && player_name(name)
     {
-        if tail == "joined the game" || tail.starts_with("joined for the first time") {
+        if [
+            "joined the game",
+            "присоединился к игре",
+            "присоединилась к игре",
+            "вошёл в игру",
+            "вошел в игру",
+            "зашёл на сервер",
+            "зашел на сервер",
+            "подключился к серверу",
+        ]
+        .contains(&tail)
+            || tail.starts_with("joined for the first time")
+        {
             return (
                 Kind::Presence,
                 name.into(),
@@ -64,7 +77,17 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
                 Some(true),
             );
         }
-        if tail == "left the game" {
+        if [
+            "left the game",
+            "покинул игру",
+            "покинула игру",
+            "вышел из игры",
+            "вышла из игры",
+            "отключился",
+            "отключилась",
+        ]
+        .contains(&tail)
+        {
             return (
                 Kind::Presence,
                 name.into(),
@@ -73,6 +96,32 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
             );
         }
         if [
+            "was burned",
+            "was roasted",
+            "was obliterated",
+            "was stung",
+            "was struck",
+            "was squished",
+            "was doomed",
+            "blew up",
+            "fell ",
+            "walked into",
+            "discovered the floor",
+            "left the confines",
+            "был убит",
+            "была убита",
+            "утонул",
+            "утонула",
+            "разбился",
+            "разбилась",
+            "сгорел",
+            "сгорела",
+            "погиб",
+            "погибла",
+            "умер",
+            "умерла",
+            "упал",
+            "упала",
             "was slain by ",
             "fell from ",
             "drowned",
@@ -123,6 +172,49 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
     }
     (Kind::System, String::new(), line.into(), None)
 }
+fn component_plain(value: &Value) -> String {
+    if let Some(text) = value.as_str() {
+        return text.into();
+    }
+    if let Some(parts) = value.as_array() {
+        return parts.iter().map(component_plain).collect();
+    }
+    let mut text = value["text"].as_str().unwrap_or("").to_owned();
+    if let Some(extra) = value["extra"].as_array() {
+        for part in extra {
+            text.push_str(&component_plain(part));
+        }
+    }
+    text
+}
+fn semantic_event(value: &Value, line: &str) -> Option<(Kind, String, String, Option<bool>)> {
+    if let Some(parts) = value.as_array() {
+        return parts.iter().take(32).find_map(|v| semantic_event(v, line));
+    }
+    if let Some(key) = value["translate"].as_str() {
+        // Player chat bodies cannot impersonate a system event via nested components.
+        if key.starts_with("chat.type.") {
+            return None;
+        }
+        let name = component_plain(&value["with"][0]);
+        if player_name(&name) {
+            if key == "multiplayer.player.joined" || key == "multiplayer.player.joined.renamed" {
+                return Some((Kind::Presence, name, "Подключился".into(), Some(true)));
+            }
+            if key == "multiplayer.player.left" {
+                return Some((Kind::Presence, name, "Отключился".into(), Some(false)));
+            }
+            if key.starts_with("death.") {
+                let body = line.strip_prefix(&name).unwrap_or(line).trim().to_owned();
+                return Some((Kind::Death, name, body, None));
+            }
+        }
+    }
+    if let Some(extra) = value["extra"].as_array() {
+        return extra.iter().find_map(|v| semantic_event(v, line));
+    }
+    None
+}
 fn comparison_key(raw: &str, ignore: u8) -> (Kind, String, String) {
     let key: String = raw.chars().skip(ignore as usize).collect();
     let (kind, name, body, _) = classify(&key);
@@ -141,11 +233,29 @@ impl Feed {
         )
     }
     pub fn push_with(&mut self, line: &str, now: u64, preferences: Preferences) -> Option<u64> {
+        self.push_decoded(line, now, preferences, None)
+    }
+    pub fn push_component(
+        &mut self,
+        line: &str,
+        component: &Value,
+        now: u64,
+        preferences: Preferences,
+    ) -> Option<u64> {
+        self.push_decoded(line, now, preferences, semantic_event(component, line))
+    }
+    fn push_decoded(
+        &mut self,
+        line: &str,
+        now: u64,
+        preferences: Preferences,
+        event: Option<(Kind, String, String, Option<bool>)>,
+    ) -> Option<u64> {
         if line.trim().is_empty() {
             return None;
         }
         let bounded: String = line.chars().take(2048).collect();
-        let (kind, name, body, joined) = classify(&bounded);
+        let (kind, name, body, joined) = event.unwrap_or_else(|| classify(&bounded));
         if kind == Kind::Presence
             && let Some(old) = self
                 .entries
@@ -353,5 +463,30 @@ mod tests {
         f.push_with("[12:00:01] <Alice> hello", 1, p);
         assert_eq!(f.entries.len(), 1);
         assert_eq!(f.entries[0].repetitions, 2);
+    }
+    #[test]
+    fn system_components_are_classified_independent_of_client_language() {
+        let p = Preferences::default();
+        let mut f = Feed::default();
+        f.push_component(
+            "Steve присоединился к игре",
+            &serde_json::json!({"translate":"multiplayer.player.joined","with":[{"text":"Steve"}]}),
+            0,
+            p,
+        );
+        f.push_with("Steve joined for the first time: welcome!", 1, p);
+        assert_eq!(f.entries.len(), 1);
+        assert_eq!(f.entries[0].kind, Kind::Presence);
+        f.push_component(
+            "Steve покинул игру",
+            &serde_json::json!({"translate":"multiplayer.player.left","with":["Steve"]}),
+            2,
+            p,
+        );
+        f.push_component("Steve was burned to a crisp whilst fighting Zombie",&serde_json::json!({"translate":"death.attack.onFire.player","with":["Steve","Zombie"]}),3,p);
+        assert_eq!(f.entries[1].kind, Kind::Presence);
+        assert_eq!(f.entries[2].kind, Kind::Death);
+        assert_eq!(classify("Steve покинул игру").0, Kind::Presence);
+        assert_eq!(classify("Steve был убит зомби").0, Kind::Death);
     }
 }

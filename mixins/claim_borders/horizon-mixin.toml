@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.6.0"
+version = "0.7.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -353,3 +353,21 @@ helper = "map_update_hook.rs"
 bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]
+
+[[module]]
+id = "inventory-sort"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_inventory_sort"
+source = "inventory_sort.rs"
+
+[[module]]
+id = "inventory-sort-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_inventory_sort_view"
+source = "inventory_sort_view.rs"
+
+[[module]]
+id = "avatar-draw"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_avatar_draw"
+source = "avatar_draw.rs"

@@ -7,6 +7,6 @@ fn horizon_chat_capture(
     let allowed = !matches!(trust, crate::game::remote::ChatTrust::NotSecure)
         || !game.settings.file.bool("onlyShowSecureChat");
     if allowed && game.ui.chat.shows(source) {
-        crate::game::claim_borders_chat_view::capture(game, &content.plain());
+        crate::game::claim_borders_chat_view::capture_content(game, content, source);
     }
 }
