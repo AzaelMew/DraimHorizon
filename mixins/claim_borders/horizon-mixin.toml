@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.4.0"
+version = "0.5.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -264,3 +264,48 @@ id = "relay-settings"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_relay_settings"
 source = "relay_settings.rs"
+
+[[module]]
+id = "chat-feed"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_chat_feed"
+source = "chat_feed.rs"
+
+[[module]]
+id = "chat-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_chat_view"
+source = "chat_view.rs"
+
+[[injection]]
+id = "chat-capture"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::signed_chat_line"
+helper = "chat_capture_hook.rs"
+bindings = [
+  { name = "trust", ty = "&crate::game::remote::ChatTrust", value = "&trust" },
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "content", ty = "&horizon_client::text::Text", value = "&content" },
+  { name = "source", ty = "horizon_client::chat::ChatSource", value = "source" },
+]
+
+[[injection]]
+id = "chat-cards"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::chat::Game<'_>::draw_chat"
+helper = "chat_draw_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]
+
+[[injection]]
+id = "chat-local"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_chat"
+helper = "chat_local_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "text", ty = "&str", value = "text" },
+]

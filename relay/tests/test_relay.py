@@ -45,7 +45,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         await self.server.wait_closed()
 
     async def socket(self):
-        ws = await connect(self.url, compression=None)
+        ws = await connect(self.url, compression=None, max_queue=256, close_timeout=1)
         self.sockets.append(ws)
         return ws
 
@@ -58,6 +58,28 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         await ws.send(encode(identity.auth(await self.receive(ws))))
         self.assertEqual(await self.receive(ws), ["ready", identity.code])
         return ws, identity
+
+    async def test_default_has_no_connection_or_rate_quotas(self):
+        clients = [await self.login(Identity()) for _ in range(12)]
+        self.assertEqual(self.relay.connections, 12)
+        sender, _ = clients[0]
+        receiver, identity = clients[1]
+        for n in range(40):
+            await sender.send(encode(["box", identity.code, str(n)]))
+            while True:
+                frame = await self.receive(receiver)
+                if frame[0] == "box":
+                    self.assertEqual(frame[2], str(n))
+                    break
+
+    async def test_initial_directory_can_exceed_live_queue_size(self):
+        self.relay.limits = replace(Limits(), queue=2)
+        for _ in range(3):
+            await self.login(Identity())
+            await asyncio.sleep(0.01)
+        ws, _ = await self.login(Identity())
+        frames = [await self.receive(ws) for _ in range(3)]
+        self.assertTrue(all(frame[0] == "peer" for frame in frames))
 
     async def test_routing_realm_isolation_and_cleanup(self):
         alice, a = await self.login()
@@ -107,7 +129,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
             await first.recv()
 
     async def test_limits_and_malformed_packets(self):
-        self.relay.limits = replace(Limits(), rate=0, burst=2, ip=2)
+        self.relay.limits = replace(Limits(), rate=0.001, burst=2, ip=2)
         first, ident = await self.login()
         second, _ = await self.login(Identity("other"))
         third = await self.socket()
@@ -168,7 +190,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
                 return response.status, response.read()
         status, body = await asyncio.to_thread(health)
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), ["ok", "1.0.0"])
+        self.assertEqual(json.loads(body), ["ok", "1.1.0"])
 
     async def test_auth_deadline_oversize_and_binary(self):
         self.relay.limits = replace(Limits(), auth_timeout=0.05)

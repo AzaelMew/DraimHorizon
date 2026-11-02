@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/claim_borders-0.3.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/claim_borders-0.5.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -87,3 +87,5 @@ Workflow проверяет feature-ветки и отдаёт `.hnmod` как A
 `menu.rs` — pure-модель состояний, полей и действий; `menu_view.rs` рисует штатный модальный экран и принимает события. `client::service_menu` выполняет действия на игровом потоке, а не под mutex рендера. Escape/смена сервера сбрасывает очередь; подтверждение подписанного обмена не может быть вызвано серверной кликабельной командой. Все параметры визуализации проходят проверку до атомарной записи.
 
 Launcher `src/github_mods.rs` сохраняет `<id>.origin.json` при установке по GitHub-ссылке. Проект из релиза следует `releases/latest`, а `is_update` сравнивает теги. Поэтому в релизе обязательны обычный tag/release и актуальный `.hnmod`; локальная ручная установка файла не даёт лаунчеру сведения о репозитории. Source-only пакет и версия в `horizon-native.json` проверяются штатным `cargo horizon-mod check`.
+
+Chat cards and translation use `chat_feed.rs`, `chat_view.rs` and the bundled relay client translation worker. Native compilation is currently disabled in release CI by repository choice; run it locally against the exact pin before publishing.

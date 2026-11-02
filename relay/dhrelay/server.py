@@ -52,12 +52,12 @@ def parse(raw: str | bytes) -> list:
 
 @dataclass(frozen=True)
 class Limits:
-    total: int = 256
-    realm: int = 64
-    ip: int = 8
+    total: int = 0
+    realm: int = 0
+    ip: int = 0
     queue: int = 128
     auth_timeout: float = 10.0
-    rate: float = 10.0
+    rate: float = 0.0
     burst: int = 20
 
 
@@ -145,7 +145,8 @@ class Relay:
 
     async def handler(self, ws: ServerConnection):
         ip = self.client_ip(ws)
-        if self.connections >= self.limits.total or self.ips[ip] >= self.limits.ip:
+        if ((self.limits.total > 0 and self.connections >= self.limits.total)
+                or (self.limits.ip > 0 and self.ips[ip] >= self.limits.ip)):
             await ws.close(1013, "connection limit")
             return
         self.connections += 1
@@ -157,7 +158,7 @@ class Relay:
             async with asyncio.timeout(self.limits.auth_timeout):
                 await ws.send(encode(["challenge", nonce.hex()]))
                 realm, key, cert, signature = self.authenticate(parse(await ws.recv()), nonce)
-            if key in self.peers or self.realms[realm] >= self.limits.realm:
+            if key in self.peers or (self.limits.realm > 0 and self.realms[realm] >= self.limits.realm):
                 await ws.close(1008, "identity or realm limit")
                 return
             code = hashlib.sha256(key).digest()[:12].hex()
@@ -170,18 +171,22 @@ class Relay:
             self.peers[key] = peer
             self.codes[realm, code] = peer
             self.realms[realm] += 1
-            self.offer(peer, ["ready", code])
             for other in existing:
-                self.offer(peer, ["peer", other.cert, other.signature])
                 self.offer(other, ["peer", cert, signature])
+            # Stream the initial directory directly: it must not overflow the
+            # bounded live queue when a realm contains more than 128 players.
+            await ws.send(encode(["ready", code]))
+            for other in existing:
+                await ws.send(encode(["peer", other.cert, other.signature]))
             writer = asyncio.create_task(self.writer(peer))
             async for raw in ws:
                 now = time.monotonic()
                 peer.tokens = min(self.limits.burst, peer.tokens + (now - peer.updated) * self.limits.rate)
                 peer.updated = now
-                if peer.tokens < 1:
-                    raise ValueError("rate limit")
-                peer.tokens -= 1
+                if self.limits.rate > 0:
+                    if peer.tokens < 1:
+                        raise ValueError("rate limit")
+                    peer.tokens -= 1
                 frame = parse(raw)
                 if len(frame) != 3 or frame[0] != "box":
                     raise ValueError("invalid message")
@@ -226,7 +231,11 @@ class Relay:
 
 
 async def run(host: str, port: int):
-    relay = Relay(os.environ.get("RELAY_ACCESS_TOKEN", ""),
+    limits = Limits(total=int(os.environ.get("RELAY_MAX_CONNECTIONS", "0")),
+                    realm=int(os.environ.get("RELAY_MAX_REALM", "0")),
+                    ip=int(os.environ.get("RELAY_MAX_IP", "0")),
+                    rate=float(os.environ.get("RELAY_RATE", "0")))
+    relay = Relay(os.environ.get("RELAY_ACCESS_TOKEN", ""), limits=limits,
                   trusted_proxy_cidrs=os.environ.get("RELAY_TRUSTED_PROXY_CIDRS",
                                                      "127.0.0.0/8,::1/128"))
     stopped = asyncio.Event()

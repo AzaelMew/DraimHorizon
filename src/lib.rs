@@ -15,3 +15,6 @@ pub mod menu;
 
 #[path = "../mixins/claim_borders/relay_settings.rs"]
 pub mod relay_settings;
+
+#[path = "../mixins/claim_borders/chat_feed.rs"]
+pub mod chat_feed;

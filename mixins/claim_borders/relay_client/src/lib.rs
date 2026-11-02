@@ -1,6 +1,7 @@
 //! Bounded, background WebSocket transport with authenticated end-to-end encryption.
 //! UUIDs and names are self-claimed. Callers must pair identity codes out of band.
 mod crypto;
+pub mod translation;
 mod websocket;
 use crypto::{Identity, Verified, string};
 use serde_json::{Value, json};
@@ -8,7 +9,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
@@ -43,11 +44,17 @@ struct Command {
     peer_code: String,
     body: String,
 }
+#[derive(Default)]
+struct Latest {
+    outbound: HashMap<String, Command>,
+    inbound: HashMap<String, Event>,
+}
 pub struct Handle {
     commands: SyncSender<Command>,
     events: Receiver<Event>,
     stop: Arc<AtomicBool>,
     connected: Arc<AtomicBool>,
+    latest: Arc<Mutex<Latest>>,
 }
 impl Handle {
     pub fn spawn(config: Config) -> Result<Self, String> {
@@ -69,25 +76,33 @@ impl Handle {
         {
             return Err("invalid access token".into());
         }
-        let (command_tx, command_rx) = mpsc::sync_channel(16);
-        let (event_tx, event_rx) = mpsc::sync_channel(128);
+        let latest = Arc::new(Mutex::new(Latest::default()));
+        let snapshots = latest.clone();
+        let (command_tx, command_rx) = mpsc::sync_channel(128);
+        let (event_tx, event_rx) = mpsc::sync_channel(512);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let connected = Arc::new(AtomicBool::new(false));
         let online = connected.clone();
         thread::Builder::new()
             .name("claim-relay".into())
-            .spawn(move || worker(config, command_rx, event_tx, stopped, online))
+            .spawn(move || worker(config, command_rx, event_tx, stopped, online, snapshots))
             .map_err(|e| e.to_string())?;
         Ok(Self {
             commands: command_tx,
             events: event_rx,
             stop,
             connected,
+            latest,
         })
     }
     pub fn try_event(&self) -> Option<Event> {
-        self.events.try_recv().ok()
+        if let Ok(event) = self.events.try_recv() {
+            return Some(event);
+        }
+        let mut latest = self.latest.lock().unwrap_or_else(|p| p.into_inner());
+        let code = latest.inbound.keys().next()?.clone();
+        latest.inbound.remove(&code)
     }
     pub fn send(&self, peer_code: &str, body: &str) -> Result<(), String> {
         crypto::unhex::<12>(peer_code)?;
@@ -96,6 +111,20 @@ impl Handle {
         }
         if !self.connected.load(Ordering::Acquire) {
             return Err("relay is disconnected".into());
+        }
+        if body.starts_with("[DHP1] [\"s\",") {
+            let mut latest = self.latest.lock().unwrap_or_else(|p| p.into_inner());
+            if latest.outbound.len() >= 128 && !latest.outbound.contains_key(peer_code) {
+                return Err("snapshot destinations full".into());
+            }
+            latest.outbound.insert(
+                peer_code.to_owned(),
+                Command {
+                    peer_code: peer_code.to_owned(),
+                    body: body.to_owned(),
+                },
+            );
+            return Ok(());
         }
         self.commands
             .try_send(Command {
@@ -120,6 +149,7 @@ fn worker(
     events: SyncSender<Event>,
     stop: Arc<AtomicBool>,
     online: Arc<AtomicBool>,
+    latest: Arc<Mutex<Latest>>,
 ) {
     let identity = match Identity::load(&config.identity_path) {
         Ok(i) => i,
@@ -130,10 +160,19 @@ fn worker(
     };
     let mut backoff = 1;
     while !stop.load(Ordering::Acquire) {
-        let result = session(&config, &identity, &commands, &events, &stop, &online);
-        online.store(false, Ordering::Release);
+        let result = session(
+            &config, &identity, &commands, &events, &stop, &online, &latest,
+        );
+        if online.swap(false, Ordering::AcqRel) {
+            backoff = 1;
+        }
         // Pending application data is never sent across reconnects without user retry.
         while commands.try_recv().is_ok() {}
+        {
+            let mut latest = latest.lock().unwrap_or_else(|p| p.into_inner());
+            latest.outbound.clear();
+            latest.inbound.clear();
+        }
         if stop.load(Ordering::Acquire) {
             break;
         }
@@ -157,6 +196,7 @@ fn session(
     events: &SyncSender<Event>,
     stop: &AtomicBool,
     online: &AtomicBool,
+    latest: &Mutex<Latest>,
 ) -> Result<(), String> {
     let url = websocket::Url::parse(&config.url)?;
     let mut ws = websocket::WebSocket::connect(&url, config.access_token.as_deref())?;
@@ -185,31 +225,55 @@ fn session(
     let mut peers = HashMap::<String, Verified>::new();
     let mut replay = Replay::default();
     let mut authenticated = false;
-    let mut next_send = std::time::Instant::now();
+    let mut directory_dirty = false;
+    let mut directory_published = std::time::Instant::now();
     while !stop.load(Ordering::Acquire) {
         if !authenticated && std::time::Instant::now() > deadline {
             return Err("relay authentication timeout".into());
         }
-        if authenticated && std::time::Instant::now() >= next_send {
-            match commands.try_recv() {
-                Ok(command) => {
-                    next_send = std::time::Instant::now() + Duration::from_millis(125);
-                    if let Some(peer) = peers.get(&command.peer_code) {
-                        let envelope = crypto::seal(identity, &config.realm, peer, &command.body)?;
-                        ws.send(
-                            &json!(["box", command.peer_code, envelope.to_string()]).to_string(),
-                        )?;
-                    } else {
-                        emit(
-                            events,
-                            Event::Notice {
-                                message: "recipient is offline".into(),
-                            },
-                        )?;
+        if directory_dirty && directory_published.elapsed() >= Duration::from_millis(25) {
+            emit_peers(events, &peers)?;
+            directory_dirty = false;
+            directory_published = std::time::Instant::now();
+        }
+        if authenticated {
+            for _ in 0..32 {
+                match commands.try_recv() {
+                    Ok(command) => {
+                        if let Some(peer) = peers.get(&command.peer_code) {
+                            let envelope =
+                                crypto::seal(identity, &config.realm, peer, &command.body)?;
+                            ws.send(
+                                &json!(["box", command.peer_code, envelope.to_string()])
+                                    .to_string(),
+                            )?;
+                        } else {
+                            emit(
+                                events,
+                                Event::Notice {
+                                    message: "recipient is offline".into(),
+                                },
+                            )?;
+                        }
                     }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return Ok(()),
                 }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+        if authenticated {
+            let snapshots: Vec<_> = latest
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .outbound
+                .drain()
+                .map(|(_, command)| command)
+                .collect();
+            for command in snapshots {
+                if let Some(peer) = peers.get(&command.peer_code) {
+                    let envelope = crypto::seal(identity, &config.realm, peer, &command.body)?;
+                    ws.send(&json!(["box", command.peer_code, envelope.to_string()]).to_string())?;
+                }
             }
         }
         let Some(text) = ws.poll()? else { continue };
@@ -240,11 +304,11 @@ fn session(
                     return Err("invalid peer directory".into());
                 }
                 peers.insert(peer.peer.code.clone(), peer);
-                emit_peers(events, &peers)?;
+                directory_dirty = true;
             }
             "gone" if authenticated && fields.len() == 2 => {
                 peers.remove(string(&value[1])?);
-                emit_peers(events, &peers)?;
+                directory_dirty = true;
             }
             "box" if authenticated && fields.len() == 3 => {
                 let sender = string(&value[1])?;
@@ -262,13 +326,19 @@ fn session(
                 if let Ok((nonce, body)) = crypto::open(identity, &config.realm, peer, &envelope)
                     && replay.insert(format!("{sender}:{nonce}"))
                 {
-                    emit(
-                        events,
-                        Event::Message {
-                            peer: peer.peer.clone(),
-                            body,
-                        },
-                    )?;
+                    let snapshot = body.starts_with("[DHP1] [\"s\",");
+                    let event = Event::Message {
+                        peer: peer.peer.clone(),
+                        body,
+                    };
+                    if snapshot {
+                        let mut latest = latest.lock().unwrap_or_else(|p| p.into_inner());
+                        if latest.inbound.len() < 128 || latest.inbound.contains_key(sender) {
+                            latest.inbound.insert(sender.into(), event);
+                        }
+                    } else {
+                        emit(events, event)?;
+                    }
                 }
             }
             "error" if fields.len() == 2 => {
@@ -380,5 +450,27 @@ mod tests {
             assert!(replay.insert(i.to_string()));
         }
         assert_eq!(replay.seen.len(), 1024);
+    }
+    #[test]
+    fn telemetry_keeps_only_latest_snapshot_without_dropping_controls() {
+        let (tx, rx) = mpsc::sync_channel(2);
+        let (_, events) = mpsc::sync_channel(2);
+        let handle = Handle {
+            commands: tx,
+            events,
+            stop: Arc::new(AtomicBool::new(false)),
+            connected: Arc::new(AtomicBool::new(true)),
+            latest: Arc::new(Mutex::new(Latest::default())),
+        };
+        let code = "ab".repeat(12);
+        for n in 0..100 {
+            handle.send(&code, &format!("[DHP1] [\"s\",{n}]")).unwrap();
+        }
+        let latest = handle.latest.lock().unwrap();
+        assert_eq!(latest.outbound.len(), 1);
+        assert_eq!(latest.outbound[&code].body, "[DHP1] [\"s\",99]");
+        drop(latest);
+        handle.send(&code, "[DHP1] [\"i\",1]").unwrap();
+        assert_eq!(rx.try_recv().unwrap().body, "[DHP1] [\"i\",1]");
     }
 }

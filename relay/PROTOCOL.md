@@ -25,7 +25,7 @@ Parent mod additionally matches UUID/name to the current game tab and requires r
 1. Server -> `["challenge", nonce_hex64]` (32 secure random bytes, one use, expires in 10s).
 2. Client -> `["auth", cert_string, cert_signature_hex128, challenge_signature_hex128]`.
 3. challenge signature covers `b"DHRelay-auth-v1\0" + nonce_bytes + cert_utf8`.
-4. Server checks optional access token, all certificate fields and signatures, realm limits;
+4. Server checks optional access token, all certificate fields and signatures, optional configured realm limits;
    then sends `["ready", own_code]`.
 5. Server sends one `["peer", cert_string, cert_signature_hex128]` per OTHER peer in the same realm.
    New peer broadcasts same peer frame to existing realm connections. No cross-realm discovery.
@@ -40,7 +40,7 @@ and Notice{message}. Peer {code:String, uuid:u128, name:String}; cryptographic k
 Client -> `["box", recipient_code, opaque_string]`.
 Server -> recipient `["box", authenticated_sender_code, opaque_string]`.
 Recipient must currently be in the same realm; otherwise `["error", "recipient_offline"]`.
-Limits:256 global clients,64/realm,8/IP; token-bucket 10messages/s burst20, bounded queues128.
+Relay 1.1.0 defaults: no global, realm, IP or message-rate quotas. Optional operator quotas use 0 to disable. Per-receiver queues remain bounded at 128 frames; the initial directory is streamed separately.
 Relay never parses opaque data and never logs it, tokens, certificates or health/coordinates.
 
 ## End-to-end box (inside opaque_string)

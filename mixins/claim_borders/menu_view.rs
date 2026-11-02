@@ -13,6 +13,7 @@ struct State {
     // Release is consumed only if this screen consumed the matching press.
     pressed: Vec<i32>,
     height: f32,
+    suppress_shortcut: Option<(char, std::time::Instant)>,
     paste_fields: VecDeque<model::Field>,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
@@ -96,9 +97,19 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     if !owned(game) {
         return;
     }
-    game.native_fill(batch, screen.rect, 0xdf101820);
+    game.native_fill(batch, screen.rect, 0x9c080b12);
+    let pw = (screen.rect[2] - 16.0).clamp(220.0, 640.0);
+    let ph = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
+    let px = (screen.rect[2] - pw) * 0.5;
+    let py = (screen.rect[3] - ph) * 0.5;
+    game.native_fill(batch, [px, py, pw, ph], 0xf0181c28);
+    game.native_fill(batch, [px, py, pw, 2.0], 0xff8b7bff);
+    if pw >= 380.0 {
+        game.native_fill(batch, [px, py + 2.0, 78.0, ph - 2.0], 0xff111520);
+        game.native_text(batch, "SOCIAL", [px + 10.0, py + 20.0], 0xa99eff, false);
+    }
     state(|s| {
-        s.height = screen.rect[3];
+        s.height = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
         s.menu.clamp_page(&s.model, s.height);
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
         for widget in widgets {
@@ -110,20 +121,20 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && screen.mouse[1] < y + h;
             if widget.control.is_some() {
                 let color = if widget.selected {
-                    0xf0306882
+                    0xff6050ae
                 } else if hover {
-                    0xf0445668
+                    0xff34364c
                 } else {
-                    0xe0293544
+                    0xff242938
                 };
                 game.native_fill(batch, widget.rect, color);
                 game.native_fill(
                     batch,
                     [x, y + h - 1.0, w, 1.0],
                     if widget.selected {
-                        0xff6dd5ed
+                        0xffb2a5ff
                     } else {
-                        0xff536071
+                        0xff3a4053
                     },
                 );
             }
@@ -134,17 +145,65 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             } else {
                 0xe6edf5
             };
+            let display_text =
+                if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
+                    let cursor = s.menu.cursor();
+                    let prefix_len = s.menu.text()[..cursor].chars().count();
+                    let shown = if s.menu.focus == Some(model::Field::RelayToken) {
+                        "*".repeat(prefix_len)
+                    } else {
+                        s.menu.text()[..cursor].to_owned()
+                    };
+                    let label = match s.menu.focus {
+                        Some(model::Field::Name) => "Имя: ",
+                        Some(model::Field::Color) => "Цвет: ",
+                        Some(model::Field::PeerCode) => "Код друга: ",
+                        _ => "",
+                    };
+                    let rest = if s.menu.focus == Some(model::Field::RelayToken) {
+                        "*".repeat(s.menu.text()[cursor..].chars().count())
+                    } else {
+                        s.menu.text()[cursor..].to_owned()
+                    };
+                    format!("{label}{shown}│{rest}")
+                } else {
+                    widget.text.clone()
+                };
             let text =
                 if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
-                    clipped_tail(game, &widget.text, (w - 8.0).max(0.0))
+                    {
+                        let (prefix, suffix) =
+                            display_text.split_once('│').unwrap_or((&display_text, ""));
+                        let prefix = clipped_tail(game, prefix, (w - 14.0).max(0.0) * 0.65);
+                        let remaining = (w - 14.0 - game.native_text_width(&prefix)).max(0.0);
+                        format!("{prefix}│{}", clipped(game, suffix, remaining))
+                    }
                 } else {
-                    clipped(game, &widget.text, (w - 8.0).max(0.0))
+                    clipped(game, &display_text, (w - 8.0).max(0.0))
                 };
-            game.native_text(batch, &text, [x + 4.0, y + (h - 8.0) * 0.5], color, true);
             if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
-                let cursor = (x + 4.0 + game.native_text_width(&text)).min(x + w - 3.0);
-                game.native_fill(batch, [cursor, y + 4.0, 1.0, h - 8.0], 0xffeeeeee);
+                let selected = s.menu.selection();
+                if !selected.is_empty()
+                    && let Some(caret) = text.find('│')
+                {
+                    let cursor = s.menu.cursor();
+                    let caret_x = x + 4.0 + game.native_text_width(&text[..caret]);
+                    let value = s.menu.text();
+                    let measure = |part: &str| {
+                        if s.menu.focus == Some(model::Field::RelayToken) {
+                            game.native_text_width(&"*".repeat(part.chars().count()))
+                        } else {
+                            game.native_text_width(part)
+                        }
+                    };
+                    let left = (caret_x - measure(&value[selected.start..cursor])).max(x + 4.0);
+                    let right = (caret_x + measure(&value[cursor..selected.end])).min(x + w - 4.0);
+                    if right > left {
+                        game.native_fill(batch, [left, y + 3.0, right - left, h - 6.0], 0x995f50b8);
+                    }
+                }
             }
+            game.native_text(batch, &text, [x + 4.0, y + (h - 8.0) * 0.5], color, true);
         }
     });
 }
@@ -177,7 +236,7 @@ pub(super) fn mouse(
 }
 pub(super) fn scroll(
     game: &Game<'_>,
-    screen: &NativeScreenView<'_>,
+    _screen: &NativeScreenView<'_>,
     scroll: [f64; 2],
     canceled: &mut bool,
 ) {
@@ -185,15 +244,31 @@ pub(super) fn scroll(
         return;
     }
     *canceled = true;
-    state(|s| s.menu.scroll(&s.model, screen.rect[3], scroll[1]));
+    state(|s| s.menu.scroll(&s.model, s.height, scroll[1]));
 }
 pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut bool) {
     if !owned(game) {
         return;
     }
     state(|s| {
+        if modifiers & (2 | 8) != 0 && matches!(key, "key.keyboard.c" | "key.keyboard.x") {
+            *canceled = true;
+            s.suppress_shortcut = Some((
+                if key.ends_with(".c") { 'c' } else { 'x' },
+                std::time::Instant::now(),
+            ));
+            let selected = s.menu.selected_text();
+            if !selected.is_empty() {
+                enqueue(s, model::Action::CopyText(selected));
+            }
+            if key.ends_with(".x") {
+                s.menu.delete_selection();
+            }
+            return;
+        }
         if key == "key.keyboard.v" && modifiers & (2 | 8) != 0 {
             *canceled = true;
+            s.suppress_shortcut = Some(('v', std::time::Instant::now()));
             if let Some(field) = s.menu.focus
                 && s.actions.len() < 32
             {
@@ -212,5 +287,17 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) {
         return;
     }
     *canceled = true;
-    state(|s| s.menu.character(c));
+    if (game.modifiers.control_key() && !game.modifiers.alt_key()) || game.modifiers.super_key() {
+        state(|s| s.suppress_shortcut = None);
+        return;
+    }
+    state(|s| {
+        if let Some((shortcut, at)) = s.suppress_shortcut.take()
+            && c.eq_ignore_ascii_case(&shortcut)
+            && at.elapsed().as_millis() < 100
+        {
+            return;
+        }
+        s.menu.character(c);
+    });
 }

@@ -137,12 +137,74 @@ fn main() {
         }
     }
     assert_eq!(bp.online(&[1], 8)[0].claims.as_ref().unwrap().len(), 2);
+    let traffic_started = Instant::now();
+    for n in 0..40 {
+        let frame = ap
+            .snapshot_for(
+                2,
+                Snapshot {
+                    dimension: "minecraft:overworld".into(),
+                    position: [n as f64, 64.0, 48.0],
+                    health: 15.0,
+                    max_health: 20.0,
+                },
+            )
+            .unwrap();
+        a.send(&bc, &frame.body).unwrap();
+        let (_, body) = message(&b);
+        bp.receive(1, "Alice", &body, 100 + n).unwrap();
+    }
+    assert!(
+        traffic_started.elapsed() < Duration::from_secs(5),
+        "telemetry still serialized behind old 125ms pacing"
+    );
+    drop(b);
+    wait(&a, |e| {
+        if let Event::Peers(peers) = e {
+            (!peers.iter().any(|p| p.code == bc)).then_some(())
+        } else {
+            None
+        }
+    });
+    ap.forget_session(2);
+    bp.disconnect();
+    let b = make(2, "Bob");
+    let reconnected = wait(&b, |e| {
+        if let Event::Connected { code } = e {
+            Some(code)
+        } else {
+            None
+        }
+    });
+    assert_eq!(reconnected, bc);
+    wait(&a, |e| {
+        if let Event::Peers(peers) = e {
+            peers.iter().any(|p| p.code == bc).then_some(())
+        } else {
+            None
+        }
+    });
+    wait(&b, |e| {
+        if let Event::Peers(peers) = e {
+            peers.iter().any(|p| p.code == ac).then_some(())
+        } else {
+            None
+        }
+    });
+    let hello = ap.start_session(2, 1000).unwrap().remove(0);
+    a.send(&bc, &hello.body).unwrap();
+    let (_, body) = message(&b);
+    let reply = bp.receive(1, "Alice", &body, 1001).unwrap().remove(0);
+    b.send(&ac, &reply.body).unwrap();
+    let (_, body) = message(&a);
+    ap.receive(2, "Bob", &body, 1002).unwrap();
+    assert!(ap.peer_ready(2));
     bp.forget_session(1);
-    assert!(bp.online(&[1], 9).is_empty());
+    assert!(bp.online(&[1], 1003).is_empty());
     drop(a);
     drop(b);
     let _ = std::fs::remove_dir_all(root);
     println!(
-        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, pin/replay rejection, disconnect cleanup"
+        "PASS: two real WebSocket clients, mutual consent, E2E status/claims, pin/replay rejection, high-rate telemetry, reconnect and disconnect cleanup"
     );
 }

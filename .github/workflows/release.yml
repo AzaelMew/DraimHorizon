@@ -23,7 +23,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     env:
       RUSTUP_TOOLCHAIN: '1.99.1'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -43,6 +43,7 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
       - name: Verify relay and encrypted client exchange
+        timeout-minutes: 5
         run: |
           python3 -m pip install -r relay/requirements.txt
           PYTHONPATH=relay python3 -m unittest discover -s relay/tests -v
@@ -50,12 +51,14 @@ jobs:
           python3 tools/test_relay_container.py
           python3 tools/package_relay.py
       - name: Apply official mixins to exact Horizon source
+        timeout-minutes: 8
         run: python3 tools/stage.py
-      # Native client compilation is disabled here; verified locally for 0.4.0.
+      # Native client compilation is disabled here; verified locally for 0.5.0.
       #- name: Check real Horizon client
       #  timeout-minutes: 10
       #  run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
       - name: Package and validate native mod
+        timeout-minutes: 5
         run: |
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"

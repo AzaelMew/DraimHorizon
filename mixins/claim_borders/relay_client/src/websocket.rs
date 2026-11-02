@@ -78,6 +78,8 @@ pub(crate) struct WebSocket {
     input: Vec<u8>,
     fragment: Vec<u8>,
     fragmented: bool,
+    last_received: Instant,
+    last_ping: Instant,
 }
 impl WebSocket {
     pub fn connect(url: &Url, token: Option<&str>) -> Result<Self> {
@@ -192,6 +194,8 @@ impl WebSocket {
             input: Vec::new(),
             fragment: Vec::new(),
             fragmented: false,
+            last_received: Instant::now(),
+            last_ping: Instant::now(),
         })
     }
     pub fn send(&mut self, text: &str) -> Result<()> {
@@ -220,6 +224,13 @@ impl WebSocket {
             .map_err(|e| e.to_string())
     }
     pub fn poll(&mut self) -> Result<Option<String>> {
+        if self.last_received.elapsed() > Duration::from_secs(15) {
+            return Err("relay heartbeat timeout".into());
+        }
+        if self.last_ping.elapsed() > Duration::from_secs(5) {
+            self.write_frame(9, b"dh")?;
+            self.last_ping = Instant::now();
+        }
         let deadline = Instant::now() + Duration::from_millis(25);
         for _ in 0..32 {
             if Instant::now() >= deadline {
@@ -269,6 +280,7 @@ impl WebSocket {
             match self.io.read(&mut buf) {
                 Ok(0) => return Err("relay disconnected".into()),
                 Ok(n) => {
+                    self.last_received = Instant::now();
                     self.input.extend_from_slice(&buf[..n]);
                     if self.input.len() > MAX_FRAME + 4096 + 14 {
                         return Err("input exceeds frame limit".into());
@@ -362,6 +374,8 @@ mod tests {
                 input: Vec::new(),
                 fragment: Vec::new(),
                 fragmented: false,
+                last_received: Instant::now(),
+                last_ping: Instant::now(),
             },
             output,
         )
@@ -423,5 +437,15 @@ mod tests {
         assert_eq!(parse_frame(&[0x01, 1, b'a']).unwrap().unwrap().2, 1);
         assert_eq!(parse_frame(&[0x80, 1, b'b']).unwrap().unwrap().2, 0);
         assert_eq!(parse_frame(&[0x89, 1, b'x']).unwrap().unwrap().2, 9);
+    }
+    #[test]
+    fn heartbeat_bounds_dead_connections_and_keeps_idle_links_alive() {
+        let (mut dead, _) = socket(Vec::new());
+        dead.last_received = Instant::now() - Duration::from_secs(16);
+        assert_eq!(dead.poll().unwrap_err(), "relay heartbeat timeout");
+        let (mut alive, out) = socket(vec![0x81, 2, b'o', b'k']);
+        alive.last_ping = Instant::now() - Duration::from_secs(6);
+        assert_eq!(alive.poll().unwrap(), Some("ok".into()));
+        assert_eq!(out.lock().unwrap()[0], 0x89);
     }
 }

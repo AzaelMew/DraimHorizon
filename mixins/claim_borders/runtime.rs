@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "Claim Borders";
-pub const VERSION: &str = "0.4.0";
+pub const VERSION: &str = "0.5.0";
 pub const DESCRIPTION: &str = "M: управление Waypoints, Party и границами. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;

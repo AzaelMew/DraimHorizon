@@ -30,7 +30,7 @@ pub fn permits_frame(
 const SETTINGS_LIMIT: u64 = 16 * 1024;
 const PINS_LIMIT: u64 = 256 * 1024;
 const MAX_SCOPES: usize = 128;
-const MAX_PINS: usize = 4;
+const MAX_PINS: usize = 64;
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -477,11 +477,14 @@ mod tests {
     #[test]
     fn bounded_scopes_and_contacts_reject_without_mutation() {
         let mut pins = PinStore::default();
-        for uuid in 0..4 {
+        for uuid in 0..MAX_PINS as u128 {
             pins.pin("server#account", uuid, CODE).unwrap();
         }
         let before = pins.clone();
-        assert!(pins.pin("server#account", 5, CODE).is_err());
+        assert!(
+            pins.pin("server#account", MAX_PINS as u128 + 1, CODE)
+                .is_err()
+        );
         assert_eq!(pins, before);
         assert!(pins.pin("server#account", 0, "not-hex").is_err());
         assert_eq!(pins, before);

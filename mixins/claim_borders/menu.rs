@@ -50,6 +50,8 @@ pub struct ViewModel {
     pub relay_token_present: bool,
     pub claims: ClaimsSettings,
     pub status: String,
+    pub chat_modern: bool,
+    pub chat_translate: bool,
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
@@ -86,6 +88,9 @@ pub enum Action {
     },
     ClearRelayToken,
     CopyOwnCode,
+    CopyText(String),
+    ToggleChat,
+    ToggleTranslation,
     PasteFromClipboard,
     SetClaims(ClaimsSettings),
     Close,
@@ -93,6 +98,9 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::ToggleChat => f.write_str("ToggleChat"),
+            Self::ToggleTranslation => f.write_str("ToggleTranslation"),
+            Self::CopyText(_) => f.write_str("CopyText"),
             Self::ConfigureRelay { url, access_token } => f
                 .debug_struct("ConfigureRelay")
                 .field("url", url)
@@ -137,6 +145,7 @@ pub enum Tab {
     Waypoints,
     Party,
     Claims,
+    Chat,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
@@ -148,6 +157,8 @@ pub enum Field {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    ChatModern,
+    ChatTranslate,
     Tab(Tab),
     Close,
     Row(usize),
@@ -200,6 +211,8 @@ pub struct Menu {
     pub relay_url: String,
     pub access_token: String,
     pub notice: String,
+    pub caret: usize,
+    pub anchor: Option<usize>,
 }
 impl Default for Menu {
     fn default() -> Self {
@@ -215,6 +228,8 @@ impl Default for Menu {
             relay_url: String::new(),
             access_token: String::new(),
             notice: String::new(),
+            caret: usize::MAX,
+            anchor: None,
         }
     }
 }
@@ -248,7 +263,7 @@ impl Menu {
                     .iter()
                     .position(|row| row.code == old.code && row.pending == old.pending)
             }),
-            Tab::Claims => None,
+            Tab::Claims | Tab::Chat => None,
         });
         self.clamp_page(next, height);
     }
@@ -270,20 +285,39 @@ impl Menu {
         match self.tab {
             Tab::Waypoints => model.waypoints.len(),
             Tab::Party => model.party.len(),
-            Tab::Claims => 0,
+            Tab::Claims | Tab::Chat => 0,
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
+        let panel_w = (width - 16.0).clamp(220.0, 640.0);
+        let panel_h = (height - 16.0).clamp(200.0, 400.0);
+        let sidebar = if panel_w >= 380.0 { 78.0 } else { 0.0 };
+        let x = (width - panel_w) * 0.5;
+        let y = (height - panel_h) * 0.5;
+        let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
+        for widget in &mut widgets {
+            widget.rect[0] += x + sidebar;
+            widget.rect[1] += y;
+            if sidebar > 0.0
+                && let Some(Control::Tab(tab)) = widget.control
+            {
+                let i = match tab {
+                    Tab::Waypoints => 0,
+                    Tab::Party => 1,
+                    Tab::Claims => 2,
+                    Tab::Chat => 3,
+                };
+                widget.rect = [x + 6.0, y + 44.0 + i as f32 * 26.0, sidebar - 10.0, 22.0];
+            }
+        }
+        widgets
+    }
+    fn legacy_layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
         let w = (width - 16.0).clamp(220.0, 590.0);
         let x = (width - w) * 0.5;
         let y = 8.0;
         let mut out = vec![
-            widget(
-                [x, y, w - 30.0, 18.0],
-                "Horizon · Метки / Пати / Клеймы",
-                None,
-                false,
-            ),
+            widget([x, y, w - 30.0, 18.0], "HORIZON  /  SOCIAL", None, false),
             widget(
                 [x + w - 26.0, y, 26.0, 18.0],
                 "X",
@@ -295,16 +329,50 @@ impl Menu {
             (Tab::Waypoints, "Метки"),
             (Tab::Party, "Пати"),
             (Tab::Claims, "Клеймы"),
+            (Tab::Chat, "Чат"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 3.0, y + 22.0, w / 3.0 - 3.0, 20.0],
+                [x + i as f32 * w / 4.0, y + 22.0, w / 4.0 - 3.0, 20.0],
                 label,
                 Some(Control::Tab(tab)),
                 self.tab == tab,
             ));
+        }
+        if self.tab == Tab::Chat {
+            out.push(widget(
+                [x, 64.0, w, 22.0],
+                format!("Карточки чата: {}", on(model.chat_modern)),
+                Some(Control::ChatModern),
+                model.chat_modern,
+            ));
+            out.push(widget(
+                [x, 92.0, w, 22.0],
+                format!("Автоперевод на русский: {}", on(model.chat_translate)),
+                Some(Control::ChatTranslate),
+                model.chat_translate,
+            ));
+            out.push(widget(
+                [x, 124.0, w, 18.0],
+                "Перевод: Google · только отображение у тебя",
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x, 144.0, w, 18.0],
+                "При включении текст сообщений передаётся Google.",
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x, 170.0, w, 18.0],
+                "Колесо в чате — история · оригинал сохраняется",
+                None,
+                false,
+            ));
+            return out;
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -620,7 +688,7 @@ impl Menu {
             .enumerate()
             {
                 out.push(widget(
-                    [x + i as f32 * w / 3.0, b + 46.0, w / 3.0 - 3.0, 20.0],
+                    [x + i as f32 * w / 4.0, b + 46.0, w / 4.0 - 3.0, 20.0],
                     label,
                     Some(control),
                     false,
@@ -655,7 +723,7 @@ impl Menu {
             self.focus = None;
             return None;
         };
-        self.activate(model, size[1], control)
+        self.activate(model, (size[1] - 16.0).clamp(200.0, 400.0), control)
     }
     fn activate(&mut self, model: &ViewModel, height: f32, control: Control) -> Option<Action> {
         self.notice.clear();
@@ -669,6 +737,8 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::ChatModern => Some(Action::ToggleChat),
+            Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
             Control::Tab(t) => {
                 self.tab = t;
@@ -681,6 +751,8 @@ impl Menu {
             }
             Control::Field(f) => {
                 self.focus = Some(f);
+                self.caret = usize::MAX;
+                self.anchor = None;
                 None
             }
             Control::Row(i) => {
@@ -837,8 +909,36 @@ impl Menu {
             Field::RelayToken => &mut self.access_token,
         })
     }
+    pub fn text(&self) -> &str {
+        match self.focus {
+            Some(Field::Name) => &self.name,
+            Some(Field::Color) => &self.color,
+            Some(Field::PeerCode) => &self.peer_code,
+            Some(Field::RelayUrl) => &self.relay_url,
+            Some(Field::RelayToken) => &self.access_token,
+            None => "",
+        }
+    }
+    pub fn cursor(&self) -> usize {
+        self.caret.min(self.text().len())
+    }
+    pub fn selection(&self) -> std::ops::Range<usize> {
+        let cursor = self.cursor();
+        let anchor = self.anchor.unwrap_or(cursor).min(self.text().len());
+        cursor.min(anchor)..cursor.max(anchor)
+    }
+    pub fn selected_text(&self) -> String {
+        self.text()[self.selection()].to_owned()
+    }
+    pub fn delete_selection(&mut self) {
+        let range = self.selection();
+        self.caret = range.start;
+        self.anchor = None;
+        if let Some(text) = self.focused_text() {
+            text.replace_range(range, "");
+        }
+    }
     pub fn paste(&mut self, text: &str) {
-        // The same limits and character policy apply to typing and pasted input.
         for c in text.chars() {
             self.character(c);
         }
@@ -862,10 +962,15 @@ impl Menu {
         {
             return;
         }
-        if let Some(text) = self.focused_text()
-            && text.chars().count() < limit
-        {
-            text.push(c);
+        let range = self.selection();
+        let count = self.text().chars().count() - self.text()[range.clone()].chars().count();
+        if count >= limit {
+            return;
+        }
+        self.caret = range.start + c.len_utf8();
+        self.anchor = None;
+        if let Some(text) = self.focused_text() {
+            text.replace_range(range, &c.to_string());
         }
     }
     /// False only for Escape when the native screen should close itself.
@@ -893,13 +998,72 @@ impl Menu {
             } else {
                 Field::Name
             });
+            self.caret = usize::MAX;
+            self.anchor = None;
+            return true;
         }
-        if let Some(text) = self.focused_text() {
-            if key == "key.keyboard.backspace" {
-                text.pop();
-            }
-            if key == "key.keyboard.a" && modifiers & (2 | 8) != 0 {
-                text.clear();
+        if self.focus.is_none() {
+            return true;
+        }
+        let cursor = self.cursor();
+        let range = self.selection();
+        let shift = modifiers & 1 != 0;
+        let control = modifiers & (2 | 8) != 0;
+        if key == "key.keyboard.a" && control {
+            self.anchor = Some(0);
+            self.caret = self.text().len();
+            return true;
+        }
+        let previous = self.text()[..cursor]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(i, _)| i);
+        let next = self.text()[cursor..]
+            .chars()
+            .next()
+            .map_or(cursor, |c| cursor + c.len_utf8());
+        let target = match key {
+            "key.keyboard.left" => Some(if !shift && !range.is_empty() {
+                range.start
+            } else if control {
+                0
+            } else {
+                previous
+            }),
+            "key.keyboard.right" => Some(if !shift && !range.is_empty() {
+                range.end
+            } else if control {
+                self.text().len()
+            } else {
+                next
+            }),
+            "key.keyboard.home" => Some(0),
+            "key.keyboard.end" => Some(self.text().len()),
+            _ => None,
+        };
+        if let Some(target) = target {
+            self.anchor = if shift {
+                Some(self.anchor.unwrap_or(cursor))
+            } else {
+                None
+            };
+            self.caret = target;
+            return true;
+        }
+        if matches!(key, "key.keyboard.backspace" | "key.keyboard.delete") {
+            if !range.is_empty() {
+                self.delete_selection();
+            } else {
+                let deletion = if key.ends_with("backspace") {
+                    previous..cursor
+                } else {
+                    cursor..next
+                };
+                self.caret = deletion.start;
+                self.anchor = None;
+                if let Some(text) = self.focused_text() {
+                    text.replace_range(deletion, "");
+                }
             }
         }
         true
@@ -983,7 +1147,7 @@ mod tests {
     }
     #[test]
     fn controls_fit_minimum_gui() {
-        for tab in [Tab::Waypoints, Tab::Party, Tab::Claims] {
+        for tab in [Tab::Waypoints, Tab::Party, Tab::Claims, Tab::Chat] {
             let menu = Menu {
                 tab,
                 ..Menu::default()
@@ -1173,7 +1337,9 @@ mod tests {
         m.key("key.keyboard.backspace", 0);
         assert_eq!(m.name.chars().count(), 47);
         m.key("key.keyboard.a", 2);
-        assert!(m.name.is_empty());
+        assert_eq!(m.selection(), 0..m.name.len());
+        m.character('й');
+        assert_eq!(m.name, "й");
     }
     #[test]
     fn empty_selection_and_invalid_color_cannot_mutate() {
@@ -1198,5 +1364,25 @@ mod tests {
             .rect;
         m.click(&v, [400.0, 280.0], [rect[0] + 1.0, rect[1] + 1.0]);
         assert_eq!(m.tab, Tab::Party);
+    }
+    #[test]
+    fn edits_in_middle_and_unicode_selection_work() {
+        let mut m = Menu {
+            name: "ksadk1a2s".into(),
+            focus: Some(Field::Name),
+            ..Menu::default()
+        };
+        m.key("key.keyboard.home", 0);
+        m.key("key.keyboard.delete", 0);
+        m.character('K');
+        assert_eq!(m.name, "Ksadk1a2s");
+        m.key("key.keyboard.right", 1);
+        m.key("key.keyboard.right", 1);
+        assert_eq!(m.selected_text(), "sa");
+        m.paste("я");
+        assert_eq!(m.name, "Kяdk1a2s");
+        m.key("key.keyboard.left", 0);
+        m.key("key.keyboard.delete", 0);
+        assert_eq!(m.name, "Kdk1a2s");
     }
 }

@@ -2,7 +2,7 @@
 
 This repository builds Claim Borders, a client-side native mod for https://github.com/horizon-rust/horizon.
 Communicate with the user in Russian unless they request another language.
-The native `.hnmod` displays own/friend claims, a party HUD and waypoints. Mutual friendship and peer telemetry use existing `/msg`; there is no server-side mod. Exact source/tool pins live in `compatibility.json`. Runtime is shared by Cargo tests and the injected module.
+The native `.hnmod` displays own/friend claims, a party HUD and waypoints. Mutual friendship and peer telemetry use a separately deployed encrypted WebSocket relay; there is no game-server mod. Exact source/tool pins live in `compatibility.json`. Runtime is shared by Cargo tests and the injected module.
 
 Use GPT-6.1 Sol with medium reasoning for all agents, as requested by the user.
 

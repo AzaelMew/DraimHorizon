@@ -27,6 +27,8 @@ struct Client {
     started: Instant,
     last_send: u64,
     last_status: BTreeMap<u128, u64>,
+    last_snapshots: BTreeMap<u128, party::Snapshot>,
+    status_cursor: usize,
     last_hello: BTreeMap<u128, u64>,
     last_claims: BTreeMap<u128, u64>,
     claim_revision: u64,
@@ -63,6 +65,8 @@ impl Default for Client {
             started: Instant::now(),
             last_send: 0,
             last_status: BTreeMap::new(),
+            last_snapshots: BTreeMap::new(),
+            status_cursor: 0,
             last_hello: BTreeMap::new(),
             last_claims: BTreeMap::new(),
             claim_revision: 1,
@@ -213,6 +217,13 @@ pub(super) fn reset() {
     state(|c| *c = Client::default());
 }
 
+pub(super) fn frame(game: &mut Game<'_>) {
+    service_menu(game);
+    if game.native_on(claims::ID) && game.remote.is_some() && ensure(game) {
+        poll_network(game);
+    }
+}
+
 pub(super) fn tick(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) {
         state(|c| {
@@ -222,6 +233,7 @@ pub(super) fn tick(game: &mut Game<'_>) {
             stop_network(c);
             c.cached_territories.clear();
             c.last_status.clear();
+            c.last_snapshots.clear();
             c.last_claims.clear();
             c.last_hello.clear();
             if let Some(p) = &mut c.party {
@@ -238,9 +250,9 @@ pub(super) fn tick(game: &mut Game<'_>) {
         return;
     }
     poll_network(game);
-    // Network work is handled in the background; the game emits at most eight frames/second.
+    // Sample at the game tick rate; transport work stays on its background thread.
     if !state(|c| {
-        c.relay == Relay::WebSocket && c.connected && now(c).saturating_sub(c.last_send) >= 125
+        c.relay == Relay::WebSocket && c.connected && now(c).saturating_sub(c.last_send) >= 50
     }) {
         return;
     }
@@ -270,125 +282,138 @@ pub(super) fn tick(game: &mut Game<'_>) {
     if warn {
         game.native_chat("[Party] Sharing supports at most 64 claims. Your full private list is retained locally; friend territory sharing is cleared for this update.");
     }
-    let outgoing = state(|c| {
-        let time = now(c);
-        c.last_send = time;
-        if c.own_claims != own_claims {
-            c.own_claims = own_claims;
-            if c.own_claims
-                .as_ref()
-                .is_none_or(|claims| claims.len() <= 64)
-            {
-                c.share_warning = false;
+    for _ in 0..16 {
+        let outgoing = state(|c| {
+            let time = now(c);
+            c.last_send = time;
+            if c.own_claims != own_claims {
+                c.own_claims = own_claims.clone();
+                if c.own_claims
+                    .as_ref()
+                    .is_none_or(|claims| claims.len() <= 64)
+                {
+                    c.share_warning = false;
+                }
+                c.claim_revision = c.claim_revision.saturating_add(1);
+                c.pages.clear();
+                c.last_claims.clear();
             }
-            c.claim_revision = c.claim_revision.saturating_add(1);
-            c.pages.clear();
-            c.last_claims.clear();
-        }
-        let p = c.party.as_mut()?;
-        let friends: Vec<_> = p.friends().iter().map(|f| f.uuid).collect();
-        for uuid in friends
-            .iter()
-            .copied()
-            .filter(|id| tab.iter().any(|(u, _)| u == id))
-        {
-            if !p.peer_ready(uuid)
-                && (!c.last_hello.contains_key(&uuid)
-                    || time.saturating_sub(*c.last_hello.get(&uuid).unwrap_or(&0)) >= 10_000)
+            let p = c.party.as_mut()?;
+            let mut friends: Vec<_> = p.friends().iter().map(|f| f.uuid).collect();
+            let count = friends.len();
+            if count > 0 {
+                friends.rotate_left(c.status_cursor % count);
+            }
+            for uuid in friends
+                .iter()
+                .copied()
+                .filter(|id| tab.iter().any(|(u, _)| u == id))
             {
-                if let Ok(frames) = p.start_session(uuid, time) {
-                    if c.controls.len() + frames.len() <= 32 {
-                        c.controls.extend(frames);
+                if !p.peer_ready(uuid)
+                    && (!c.last_hello.contains_key(&uuid)
+                        || time.saturating_sub(*c.last_hello.get(&uuid).unwrap_or(&0)) >= 10_000)
+                {
+                    if let Ok(frames) = p.start_session(uuid, time) {
+                        if c.controls.len() + frames.len() <= 32 {
+                            c.controls.extend(frames);
+                        }
+                    }
+                    c.last_hello.insert(uuid, time);
+                }
+                if p.peer_ready(uuid) && c.last_claims.get(&uuid) != Some(&c.claim_revision) {
+                    let shared: Vec<_> = c
+                        .own_claims
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|claim| party::Claim {
+                            dimension: claim.dimension.clone(),
+                            x: claim.x,
+                            z: claim.z,
+                        })
+                        .collect();
+                    // Never present a truncated set as the friend's complete territory.
+                    // More than 64 claims shares an empty set, with one local warning.
+                    let bounded = if shared.len() > 64 {
+                        &[][..]
+                    } else {
+                        shared.as_slice()
+                    };
+                    if let Ok(frames) = p.claims_for(uuid, c.claim_revision, bounded) {
+                        if c.pages.len() + frames.len() <= 256 {
+                            c.pages.extend(frames);
+                            c.last_claims.insert(uuid, c.claim_revision);
+                        }
                     }
                 }
-                c.last_hello.insert(uuid, time);
             }
-            if p.peer_ready(uuid) && c.last_claims.get(&uuid) != Some(&c.claim_revision) {
-                let shared: Vec<_> = c
-                    .own_claims
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|claim| party::Claim {
-                        dimension: claim.dimension.clone(),
-                        x: claim.x,
-                        z: claim.z,
-                    })
-                    .collect();
-                // Never present a truncated set as the friend's complete territory.
-                // More than 64 claims shares an empty set, with one local warning.
-                let bounded = if shared.len() > 64 {
-                    &[][..]
-                } else {
-                    shared.as_slice()
+            // Keep an offline removal queued until the player returns during this connection.
+            let waiting = c.controls.len();
+            for _ in 0..waiting {
+                let Some(frame) = c.controls.pop_front() else {
+                    break;
                 };
-                if let Ok(frames) = p.claims_for(uuid, c.claim_revision, bounded) {
-                    if c.pages.len() + frames.len() <= 256 {
-                        c.pages.extend(frames);
+                if tab.iter().any(|(id, _)| *id == frame.uuid) {
+                    return Some((frame, c.relay, time));
+                }
+                if frame.body.starts_with("[DHP1] [\"d\",") {
+                    c.controls.push_back(frame);
+                }
+            }
+            for uuid in friends
+                .iter()
+                .copied()
+                .filter(|id| tab.iter().any(|(u, _)| u == id))
+            {
+                if p.peer_ready(uuid)
+                    && (!c.last_status.contains_key(&uuid)
+                        || (time.saturating_sub(*c.last_status.get(&uuid).unwrap_or(&0)) >= 50
+                            && (c.last_snapshots.get(&uuid) != Some(&snapshot)
+                                || time.saturating_sub(*c.last_status.get(&uuid).unwrap_or(&0))
+                                    >= 1000)))
+                {
+                    if let Ok(frame) = p.snapshot_for(uuid, snapshot.clone()) {
+                        c.last_status.insert(uuid, time);
+                        c.last_snapshots.insert(uuid, snapshot.clone());
+                        c.status_cursor = c.status_cursor.wrapping_add(1);
+                        return Some((frame, c.relay, time));
                     }
                 }
-                c.last_claims.insert(uuid, c.claim_revision);
             }
-        }
-        // Keep an offline removal queued until the player returns during this connection.
-        let waiting = c.controls.len();
-        for _ in 0..waiting {
-            let Some(frame) = c.controls.pop_front() else {
-                break;
-            };
-            if tab.iter().any(|(id, _)| *id == frame.uuid) {
-                return Some((frame, c.relay, time));
-            }
-            if frame.body.starts_with("[DHP1] [\"d\",") {
-                c.controls.push_back(frame);
-            }
-        }
-        for uuid in friends
-            .iter()
-            .copied()
-            .filter(|id| tab.iter().any(|(u, _)| u == id))
-        {
-            if p.peer_ready(uuid)
-                && (!c.last_status.contains_key(&uuid)
-                    || time.saturating_sub(*c.last_status.get(&uuid).unwrap_or(&0)) >= 1000)
-            {
-                if let Ok(frame) = p.snapshot_for(uuid, snapshot.clone()) {
-                    c.last_status.insert(uuid, time);
+            while let Some(frame) = c.pages.pop_front() {
+                if tab.iter().any(|(id, _)| *id == frame.uuid) && p.peer_ready(frame.uuid) {
                     return Some((frame, c.relay, time));
                 }
             }
-        }
-        while let Some(frame) = c.pages.pop_front() {
-            if tab.iter().any(|(id, _)| *id == frame.uuid) && p.peer_ready(frame.uuid) {
-                return Some((frame, c.relay, time));
-            }
-        }
-        None
-    });
-    let Some((frame, _, _)) = outgoing else {
-        return;
-    };
-    state(|c| {
-        let code = c
-            .pins
-            .as_ref()
-            .and_then(|p| p.get(&c.scope, frame.uuid))
-            .map(str::to_owned)
-            .or_else(|| c.pending_codes.get(&frame.uuid).cloned());
-        let result = match (&c.network, code) {
-            (Some(handle), Some(code)) => handle.send(&code, &frame.body),
-            _ => Err("Relay contact unavailable.".into()),
+            None
+        });
+        let Some((frame, _, _)) = outgoing else {
+            return;
         };
-        if let Err(error) = result {
-            // A full worker queue must not discard a claims page or consent response.
-            if frame.body.starts_with("[DHP1] [\"c\",") {
-                c.pages.push_front(frame);
-            } else if c.controls.len() < 32 {
-                c.controls.push_front(frame);
+        state(|c| {
+            let code = c
+                .pins
+                .as_ref()
+                .and_then(|p| p.get(&c.scope, frame.uuid))
+                .map(str::to_owned)
+                .or_else(|| c.pending_codes.get(&frame.uuid).cloned());
+            let result = match (&c.network, code) {
+                (Some(handle), Some(code)) => handle.send(&code, &frame.body),
+                _ => Err("Relay contact unavailable.".into()),
+            };
+            if let Err(error) = result {
+                // A full worker queue must not discard a claims page or consent response.
+                if frame.body.starts_with("[DHP1] [\"c\",") {
+                    c.pages.push_front(frame);
+                } else if frame.body.starts_with("[DHP1] [\"s\",") {
+                    c.last_status.remove(&frame.uuid);
+                } else if c.controls.len() < 32 {
+                    c.controls.push_front(frame);
+                }
+                c.network_status = error;
             }
-            c.network_status = error;
-        }
-    });
+        });
+    }
 }
 
 pub(super) fn visuals(
@@ -747,6 +772,7 @@ pub(super) fn visual_settings() -> visualization::Settings {
 }
 
 fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
+    let chat = crate::game::claim_borders_chat_view::settings(game);
     let tab = if game.remote.is_some() {
         cached_online(game)
     } else {
@@ -837,6 +863,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 opacity: settings.opacity,
             },
             status: c.menu_feedback.clone(),
+            chat_modern: chat.modern,
+            chat_translate: chat.translate,
         }
     })
 }
@@ -892,6 +920,19 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::ClearRelayToken => {
             configure_network(String::new(), None, true)?;
             Ok(vec!["Токен relay удалён.".into()])
+        }
+        Action::ToggleChat => {
+            crate::game::claim_borders_chat_view::toggle(game, false);
+            Ok(Vec::new())
+        }
+        Action::ToggleTranslation => {
+            crate::game::claim_borders_chat_view::toggle(game, true);
+            Ok(Vec::new())
+        }
+        Action::CopyText(text) => {
+            use horizon_client::clipboard::Clipboard;
+            game.clipboard.set(&text);
+            Ok(Vec::new())
         }
         Action::CopyOwnCode => {
             use horizon_client::clipboard::Clipboard;
@@ -1007,6 +1048,7 @@ fn stop_network(c: &mut Client) {
     c.cached_territories.clear();
     c.last_claims.clear();
     c.last_status.clear();
+    c.last_snapshots.clear();
     c.last_hello.clear();
     if let Some(p) = &mut c.party {
         p.disconnect();
@@ -1213,6 +1255,7 @@ fn poll_network(game: &mut Game<'_>) {
                 c.pages.clear();
                 c.last_hello.clear();
                 c.last_status.clear();
+                c.last_snapshots.clear();
                 c.last_claims.clear();
                 if let Some(p) = &mut c.party {
                     p.disconnect();
@@ -1232,6 +1275,9 @@ fn poll_network(game: &mut Game<'_>) {
                             });
                         if !present {
                             p.forget_session(friend.uuid);
+                            c.last_hello.remove(&friend.uuid);
+                            c.last_status.remove(&friend.uuid);
+                            c.last_claims.remove(&friend.uuid);
                         }
                     }
                 }
@@ -1253,6 +1299,7 @@ fn poll_network(game: &mut Game<'_>) {
                 c.pending_codes.clear();
                 c.last_claims.clear();
                 c.last_status.clear();
+                c.last_snapshots.clear();
                 c.last_hello.clear();
                 c.cached_territories.clear();
                 if let Some(p) = &mut c.party {

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 
 pub const PREFIX: &str = "[DHP1] ";
-pub const MAX_FRIENDS: usize = 4;
+pub const MAX_FRIENDS: usize = 64;
 const MAX_PENDING: usize = 8;
 const MAX_CLAIMS: usize = 64;
 const MAX_BODY: usize = 180;
@@ -87,6 +87,7 @@ struct Session {
     last_snapshot_seq: u64,
     last_claim_seq: u64,
     snapshot: Option<(Snapshot, u64)>,
+    previous_snapshot: Option<(Snapshot, u64)>,
     claims: Vec<Claim>,
     claims_revision: Option<u64>,
     assembly: Option<Assembly>,
@@ -404,6 +405,7 @@ impl Party {
                 let record = self.checked_session(uuid, nonce, seq, false)?;
                 record.friend.name = name.into();
                 record.session.last_snapshot_seq = seq;
+                record.session.previous_snapshot = record.session.snapshot.take();
                 record.session.snapshot = Some((snapshot, now));
             }
             "c" => {
@@ -594,7 +596,28 @@ impl Party {
                 Some(OnlineFriend {
                     uuid: r.friend.uuid,
                     name: r.friend.name.clone(),
-                    snapshot: snapshot.clone(),
+                    snapshot: {
+                        let mut shown = snapshot.clone();
+                        if let Some((previous, previous_at)) = &r.session.previous_snapshot
+                            && previous.dimension == snapshot.dimension
+                            && at > previous_at
+                            && previous
+                                .position
+                                .iter()
+                                .zip(snapshot.position)
+                                .all(|(a, b)| (a - b).abs() < 32.0)
+                        {
+                            let fraction = (now.saturating_sub(75).saturating_sub(*previous_at)
+                                as f64
+                                / (at - previous_at) as f64)
+                                .clamp(0.0, 1.0);
+                            for (i, pos) in shown.position.iter_mut().enumerate() {
+                                *pos = previous.position[i]
+                                    + (snapshot.position[i] - previous.position[i]) * fraction;
+                            }
+                        }
+                        shown
+                    },
                     health_percent: snapshot.health_percent(),
                     claims: r.session.claims_revision.map(|_| r.session.claims.clone()),
                 })
@@ -1284,5 +1307,24 @@ mod tests {
             a.invite(uuid, "Player", 10).unwrap();
         }
         assert!(a.invite(109, "Player", 10).is_err());
+    }
+    #[test]
+    fn movement_interpolates_but_health_and_teleports_are_immediate() {
+        let (mut a, mut b) = parties();
+        let mut snap = snapshot();
+        snap.position[0] = 0.0;
+        let first = a.snapshot_for(B, snap.clone()).unwrap();
+        b.receive(A, "Alice", &first.body, 1000).unwrap();
+        snap.position[0] = 1.0;
+        snap.health = 10.0;
+        let second = a.snapshot_for(B, snap.clone()).unwrap();
+        b.receive(A, "Alice", &second.body, 1050).unwrap();
+        let shown = b.online(&[A], 1100).remove(0);
+        assert!((shown.snapshot.position[0] - 0.5).abs() < 0.001);
+        assert_eq!(shown.health_percent, 50.0);
+        snap.position[0] = 100.0;
+        let teleport = a.snapshot_for(B, snap).unwrap();
+        b.receive(A, "Alice", &teleport.body, 1150).unwrap();
+        assert_eq!(b.online(&[A], 1150)[0].snapshot.position[0], 100.0);
     }
 }
