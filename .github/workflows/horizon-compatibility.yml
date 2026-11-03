@@ -60,14 +60,8 @@ jobs:
           PY
       - name: Test mod runtime
         run: |
-          cargo fmt --all
-          rustfmt --edition 2024 mixins/claim_borders/*.rs
-          python3 - <<'PY'
-          import json,subprocess
-          from pathlib import Path
-          changed=subprocess.check_output(["git","diff","--name-only"],text=True).splitlines()
-          print("FORMATTED_SOURCE_JSON "+json.dumps({p:Path(p).read_text() for p in changed if p.endswith(".rs")},separators=(",",":")))
-          PY
+          cargo fmt --all --check
+          rustfmt --edition 2024 --check mixins/claim_borders/*.rs
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
       - name: Smoke test public translation provider

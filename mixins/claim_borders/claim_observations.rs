@@ -45,34 +45,60 @@ pub fn reply(text: &str) -> Option<(i32, i32, Option<String>)> {
     }
     Some((parse(x)?, parse(z)?, owner))
 }
-pub fn denied_owner(text:&str)->Option<String>{
-    let owner=text.trim().strip_prefix("This land is claimed by ")?.strip_suffix('.')?;
-    name(owner).then(||owner.to_owned())
+pub fn denied_owner(text: &str) -> Option<String> {
+    let owner = text
+        .trim()
+        .strip_prefix("This land is claimed by ")?
+        .strip_suffix('.')?;
+    name(owner).then(|| owner.to_owned())
 }
 /// Bind an owner-only denial to one recent, unambiguous block target.
 #[derive(Default)]
-pub struct BreakEvidence{
-    recent:BTreeMap<Claim,u64>,
-    blocked_until:u64,
+pub struct BreakEvidence {
+    recent: BTreeMap<Claim, u64>,
+    blocked_until: u64,
 }
-impl BreakEvidence{
-    const TTL:u64=4000;
-    fn prune(&mut self,now:u64){self.recent.retain(|_,at|now>=*at&&now-*at<=Self::TTL);}
-    pub fn interrupt(&mut self,now:u64){self.recent.clear();self.blocked_until=now.saturating_add(Self::TTL);}
-    pub fn attempt(&mut self,dimension:&str,pos:[i32;3],now:u64){
-        self.prune(now);
-        if now<self.blocked_until{return;}
-        let claim=Claim{dimension:dimension.into(),x:pos[0].div_euclid(16)*16,z:pos[2].div_euclid(16)*16};
-        if !valid(&claim){return;}
-        if self.recent.len()>=8&&!self.recent.contains_key(&claim){self.interrupt(now);return;}
-        self.recent.insert(claim,now);
+impl BreakEvidence {
+    const TTL: u64 = 4000;
+    fn prune(&mut self, now: u64) {
+        self.recent
+            .retain(|_, at| now >= *at && now - *at <= Self::TTL);
     }
-    pub fn denial(&mut self,dimension:&str,text:&str,now:u64)->Option<(Claim,String)>{
-        let owner=denied_owner(text)?;self.prune(now);
-        if now<self.blocked_until||self.recent.len()!=1{return None;}
-        let claim=self.recent.keys().next()?.clone();
-        if claim.dimension!=dimension{return None;}
-        self.recent.clear();Some((claim,owner))
+    pub fn interrupt(&mut self, now: u64) {
+        self.recent.clear();
+        self.blocked_until = now.saturating_add(Self::TTL);
+    }
+    pub fn attempt(&mut self, dimension: &str, pos: [i32; 3], now: u64) {
+        self.prune(now);
+        if now < self.blocked_until {
+            return;
+        }
+        let claim = Claim {
+            dimension: dimension.into(),
+            x: pos[0].div_euclid(16) * 16,
+            z: pos[2].div_euclid(16) * 16,
+        };
+        if !valid(&claim) {
+            return;
+        }
+        if self.recent.len() >= 8 && !self.recent.contains_key(&claim) {
+            self.interrupt(now);
+            return;
+        }
+        self.recent.insert(claim, now);
+    }
+    pub fn denial(&mut self, dimension: &str, text: &str, now: u64) -> Option<(Claim, String)> {
+        let owner = denied_owner(text)?;
+        self.prune(now);
+        if now < self.blocked_until || self.recent.len() != 1 {
+            return None;
+        }
+        let claim = self.recent.keys().next()?.clone();
+        if claim.dimension != dimension {
+            return None;
+        }
+        self.recent.clear();
+        Some((claim, owner))
     }
 }
 impl Observations {
@@ -191,21 +217,55 @@ fn decode(v: &Value, reporter: &str) -> Result<Record, String> {
 mod tests {
     use super::*;
     #[test]
-    fn actionbar_binds_the_target_not_the_players_chunk_and_rejects_ambiguity(){
-        let mut b=BreakEvidence::default();
-        assert!(b.denial("minecraft:overworld","This land is claimed by Alex.",100).is_none());
-        b.attempt("minecraft:overworld",[-17,64,32],100);
-        let (claim,owner)=b.denial("minecraft:overworld","This land is claimed by Freskinlord.",200).unwrap();
-        assert_eq!((claim.x,claim.z),(-32,32));assert_eq!(owner,"Freskinlord");
-        assert!(b.denial("minecraft:overworld","This land is claimed by Alex.",201).is_none());
-        b.attempt("minecraft:overworld",[0,64,0],300);
-        b.attempt("minecraft:overworld",[16,64,0],301);
-        assert!(b.denial("minecraft:overworld","This land is claimed by Alex.",400).is_none());
-        assert!(b.denial("minecraft:the_nether","This land is claimed by Alex.",400).is_none());
-        b.attempt("minecraft:overworld",[0,64,0],5000);
-        assert!(b.denial("minecraft:overworld","This land is claimed by Alex.",10000).is_none());
-        b.attempt("minecraft:overworld",[0,64,0],11000);b.interrupt(11001);
-        assert!(b.denial("minecraft:overworld","This land is claimed by Alex.",11002).is_none());
+    fn actionbar_binds_the_target_not_the_players_chunk_and_rejects_ambiguity() {
+        let mut b = BreakEvidence::default();
+        assert!(
+            b.denial("minecraft:overworld", "This land is claimed by Alex.", 100)
+                .is_none()
+        );
+        b.attempt("minecraft:overworld", [-17, 64, 32], 100);
+        let (claim, owner) = b
+            .denial(
+                "minecraft:overworld",
+                "This land is claimed by Freskinlord.",
+                200,
+            )
+            .unwrap();
+        assert_eq!((claim.x, claim.z), (-32, 32));
+        assert_eq!(owner, "Freskinlord");
+        assert!(
+            b.denial("minecraft:overworld", "This land is claimed by Alex.", 201)
+                .is_none()
+        );
+        b.attempt("minecraft:overworld", [0, 64, 0], 300);
+        b.attempt("minecraft:overworld", [16, 64, 0], 301);
+        assert!(
+            b.denial("minecraft:overworld", "This land is claimed by Alex.", 400)
+                .is_none()
+        );
+        assert!(
+            b.denial("minecraft:the_nether", "This land is claimed by Alex.", 400)
+                .is_none()
+        );
+        b.attempt("minecraft:overworld", [0, 64, 0], 5000);
+        assert!(
+            b.denial(
+                "minecraft:overworld",
+                "This land is claimed by Alex.",
+                10000
+            )
+            .is_none()
+        );
+        b.attempt("minecraft:overworld", [0, 64, 0], 11000);
+        b.interrupt(11001);
+        assert!(
+            b.denial(
+                "minecraft:overworld",
+                "This land is claimed by Alex.",
+                11002
+            )
+            .is_none()
+        );
         assert!(denied_owner("<Steve> This land is claimed by Alex.").is_none());
         assert!(denied_owner("This land is claimed by Alex;op.").is_none());
         assert!(denied_owner("This land is claimed by Alex. extra").is_none());

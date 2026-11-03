@@ -76,17 +76,25 @@ impl Role {
     }
 }
 pub fn listing_text(b: &Button) -> Option<String> {
+    // Encoded stacks carry the server's listing facts in their final lore lines.
+    // A custom item name must not override those facts.
+    if let Some(at) = b.lore.iter().rposition(|l| l.starts_with('#')) {
+        let first = &b.lore[at];
+        if first.split('·').count() == 4 {
+            return Some(first.clone());
+        }
+        if let Some(lines) = b.lore.get(at..at + 4) {
+            let text = lines.join(" · ");
+            if text.len() <= 4096 {
+                return Some(text);
+            }
+        }
+    }
     if b.name.starts_with('#') && b.name.split('·').count() == 4 {
-        return Some(b.name.clone());
+        Some(b.name.clone())
+    } else {
+        None
     }
-    let at = b.lore.iter().position(|l| l.starts_with('#'))?;
-    let first = &b.lore[at];
-    if first.split('·').count() == 4 {
-        return Some(first.clone());
-    }
-    let lines = b.lore.get(at..at + 4)?;
-    let text = lines.join(" · ");
-    (text.len() <= 4096).then_some(text)
 }
 pub fn market_detail(page: &Page) -> bool {
     page.family == Kind::Market
@@ -462,6 +470,15 @@ mod tests {
         unnamed.name.clear();
         assert_eq!(role(&p, &unnamed), Role::Listing);
         assert_eq!(listing_text(&unnamed), listing_text(&custom));
+        let mut forged = custom.clone();
+        forged.name = "#9 1 Dirt · 99 coins (99 each) · Wrong · 1d left".into();
+        assert_eq!(listing_text(&forged), listing_text(&custom));
+        let legacy = Button {
+            name: listing_text(&custom).unwrap(),
+            lore: Vec::new(),
+            ..custom.clone()
+        };
+        assert_eq!(listing_text(&legacy), listing_text(&custom));
         assert_eq!(
             role(&p, &b(11, "minecraft:chest", "Other (91 listings)")),
             Role::Category
