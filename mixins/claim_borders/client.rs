@@ -237,6 +237,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     crate::game::claim_borders_claim_memory::frame(game);
     crate::game::claim_borders_claim_observations_view::frame(game);
     service_menu(game);
+    crate::game::claim_borders_inventory_search_view::frame(game);
     crate::game::claim_borders_inventory_sort_view::frame(game);
     if !game.native_on(claims::ID) {
         crate::game::claim_borders_map_view::reset();

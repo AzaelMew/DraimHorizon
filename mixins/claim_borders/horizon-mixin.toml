@@ -668,3 +668,28 @@ id = "ui-view"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_ui_view"
 source = "ui_view.rs"
+
+[[module]]
+id = "input"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_input"
+source = "input.rs"
+
+[[module]]
+id = "inventory-search"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_inventory_search_view"
+source = "inventory_search_view.rs"
+
+[[injection]]
+id = "inventory-search-highlight"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_item_decorations"
+helper = "inventory_search_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+ { name = "x", ty = "f32", value = "x" },
+ { name = "y", ty = "f32", value = "y" },
+ { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]

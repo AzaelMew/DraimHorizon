@@ -8,6 +8,7 @@ fn claim_borders_menu_render(
     if !crate::game::claim_borders_economy_view::render(game, batch, screen)
         && !crate::game::claim_borders_map_view::render(game, batch, screen)
     {
+        crate::game::claim_borders_inventory_search_view::render(game,batch,screen);
         crate::game::claim_borders_inventory_sort_view::render(game, batch, screen);
         crate::game::claim_borders_menu_view::render(game, batch, screen);
     }

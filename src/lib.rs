@@ -77,3 +77,6 @@ pub mod inventory_preferences;
 
 #[path = "../mixins/claim_borders/ui_style.rs"]
 pub mod ui_style;
+
+#[path = "../mixins/claim_borders/input.rs"]
+pub mod input;
