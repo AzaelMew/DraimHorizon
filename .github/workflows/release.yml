@@ -18,7 +18,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: claim-borders-${{ github.ref }}
+  group: claim-borders-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verify:
