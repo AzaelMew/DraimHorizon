@@ -193,7 +193,7 @@ fn age(at: u64, now: u64) -> String {
         format!("{} с назад", now.saturating_sub(at) / 1000)
     }
 }
-fn item_label(game: &Game<'_>, id: &str) -> String {
+pub(super) fn item_label(game: &Game<'_>, id: &str) -> String {
     let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
     let prefix = if game.res.items().get(id).is_some_and(|i| i.block.is_some()) {
         "block"
@@ -466,6 +466,10 @@ pub(super) fn render(
                     ),
                     0x94b5ca,
                 );
+                if !book.movers.is_empty() {
+                    line(game,batch,x,&mut y,width,&format!("Динамика за 24 ч · {}",age(book.movers_at,now)),0xb9a7e8);
+                    for mover in book.movers.iter().take(if h>300.0{5}else{2}){line(game,batch,x,&mut y,width,mover,if mover.contains('▲'){0x94d5ae}else{0xdfa68d});}
+                }
                 y += 8.0;
                 let deals = book.opportunities(p, now, own);
                 let best = deals
@@ -505,7 +509,7 @@ pub(super) fn render(
                         x,
                         &mut y,
                         width,
-                        "Откройте AH и Market или нажмите «Обновить цены».",
+                        "Цены и лоты обновляются автоматически при открытии.",
                         0x94b5ca,
                     );
                     line(

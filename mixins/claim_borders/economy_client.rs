@@ -29,6 +29,7 @@ pub struct Status {
     pub sale: Option<Hand>,
     pub menu_token: String,
     pub menu_slots: Vec<(usize, String, Option<u64>)>,
+    pub page:Option<scan::Page>,
 }
 struct State {
     scope: String,
@@ -53,6 +54,8 @@ struct State {
     menu_token: String,
     nav_last: u64,
     return_scan: bool,
+    auto_cycle:bool,
+    last_auto:u64,
     seen_pages: std::collections::BTreeSet<u64>,
     ah_pages: std::collections::BTreeSet<u64>,
 }
@@ -81,6 +84,8 @@ impl Default for State {
             menu_token: String::new(),
             nav_last: 0,
             return_scan: false,
+            auto_cycle:false,
+            last_auto:0,
             seen_pages: std::collections::BTreeSet::new(),
             ah_pages: std::collections::BTreeSet::new(),
         }
@@ -106,6 +111,7 @@ pub(super) fn reset() {
     flush();
     state(|s| *s = State::default());
     view::reset();
+    crate::game::claim_borders_commerce_view::reset();
 }
 pub(super) fn flush() {
     state(|s| {
@@ -191,6 +197,7 @@ pub(super) fn command(command: &str) {
 }
 pub(super) fn cancel_scan() {
     state(|s| {
+        s.auto_cycle=false;
         if s.scanner.active {
             s.scanner.stop();
             s.return_scan = false;
@@ -298,33 +305,7 @@ fn actions(game: &mut Game<'_>) {
                     view::notice("Сначала включите модуль экономики".into());
                     continue;
                 }
-                let now = now();
-                state(|s| {
-                    s.scanner.start(kind, now);
-                    s.status.scanning = true;
-                    s.status.pages = 0;
-                    s.status.message =
-                        "Сканер: только навигация, ручной ввод остановит обход".into();
-                    s.return_scan = true;
-                    s.seen_pages.clear();
-                    if kind == scan::Kind::Auction {
-                        s.book.generation = s.book.generation.wrapping_add(1);
-                        s.book.complete_scan = false;
-                        s.ah_pages.clear();
-                        s.book.observed_pages = 0;
-                    }
-                });
-                view::close();
-                request(
-                    game,
-                    if kind == scan::Kind::Auction {
-                        "ah"
-                    } else {
-                        "market"
-                    }
-                    .into(),
-                    false,
-                );
+                start_scan(game,kind,false);
             }
             Action::Stop => cancel_scan(),
             Action::Close => {
@@ -417,8 +398,8 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
     }
     let title = game.remote_menu_title()?.plain();
     let family = match title.to_ascii_lowercase().as_str() {
-        "market" => scan::Kind::Market,
-        "auction house" => scan::Kind::Auction,
+        "market" | "рынок" | "маркет" => scan::Kind::Market,
+        "auction house" | "аукцион" | "аукционный дом" => scan::Kind::Auction,
         _ => return None,
     };
     let token = format!(
@@ -517,6 +498,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
     }
+    crate::game::claim_borders_commerce_view::frame(game);
     actions(game);
     let due = state(|s| {
         if now.saturating_sub(s.last_frame) < 200 {
@@ -529,6 +511,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
         return;
     }
     let ui_visible = view::visible();
+    let auto=state(|s|{
+        if ui_visible&&game.native_mod_screen()==Some(claims::ID)&&s.pref.flag("enabled")&&s.pref.flag("auto_poll")&&!s.scanner.active&&s.status.sale.is_none()&&(s.last_auto==0||now.saturating_sub(s.last_auto)>120_000){
+            s.last_auto=now;s.auto_cycle=true;true
+        }else{false}
+    });
+    if auto{start_scan(game,scan::Kind::Market,true);}
+
     let sidebar = crate::game::scoreboard::claim_borders_economy_sidebar::read(game);
     let held = game
         .inventory
@@ -574,6 +563,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     let mut finish = false;
     state(|s| {
         if let Some((page, token)) = &page {
+            s.status.page=Some(page.clone());
             s.status.menu_token = token.clone();
             s.status.menu_slots = page
                 .buttons
@@ -685,7 +675,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let _ = game.menu_ops(&[(Some(300 + slot), 0, Input::Pickup)]);
     }
     if finish {
-        client::open_trades(game);
+        let next=state(|s|if s.auto_cycle&&s.scanner.kind==Some(scan::Kind::Market){true}else{s.auto_cycle=false;false});
+        if next{start_scan(game,scan::Kind::Auction,true);}else{client::open_trades(game);}
     }
     let read_command = state(|s| {
         if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
@@ -723,4 +714,50 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let quiet = read(|_, p, _, _| p.flag("quiet"));
         request(game, command, quiet);
     }
+}
+
+fn start_scan(game:&mut Game<'_>,kind:scan::Kind,automatic:bool){
+    let now=now();
+                state(|s| {
+                    s.auto_cycle=automatic;
+                    s.last_auto=now;
+                    s.scanner.start(kind, now);
+                    s.status.scanning = true;
+                    s.status.pages = 0;
+                    s.status.message =
+                        "Сканер: только навигация, ручной ввод остановит обход".into();
+                    s.return_scan = true;
+                    s.seen_pages.clear();
+                    if kind == scan::Kind::Auction {
+                        s.book.generation = s.book.generation.wrapping_add(1);
+                        s.book.complete_scan = false;
+                        s.ah_pages.clear();
+                        s.book.observed_pages = 0;
+                    }
+                });
+                view::close();
+                request(
+                    game,
+                    if kind == scan::Kind::Auction {
+                        "ah"
+                    } else {
+                        "market"
+                    }
+                    .into(),
+                    false,
+                );
+}
+
+pub(super) fn server_page(game:&Game<'_>)->Option<(scan::Page,String)>{
+    if !game.native_on(claims::ID)||game.screen!=Screen::Inventory{return None;}
+    let token=format!("{:?}|{}",game.remote_menu(),game.draimhorizons_menu_stamp());
+    read(|_,p,status,_|if p.flag("enabled")&&p.flag("overlay")&&status.menu_token==token{status.page.clone().map(|page|(page,token))}else{None})
+}
+pub(super) fn server_click(game:&mut Game<'_>,token:&str,button:&scan::Button)->bool{
+    let Some((page,actual))=menu(game)else{return false;};
+    if actual!=token||!page.buttons.iter().any(|b|b.slot==button.slot&&b.item==button.item&&b.name==button.name&&b.lore==button.lore){return false;}
+    let allowed=read(|_,p,_,_|p.flag("enabled"));
+    if !allowed{return false;}
+    cancel_scan();
+    game.menu_ops(&[(Some(300+button.slot),0,Input::Pickup)])
 }

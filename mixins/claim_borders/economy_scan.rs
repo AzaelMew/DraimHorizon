@@ -82,14 +82,14 @@ impl Scanner {
         let arrow = |slot: usize, name: &str| {
             page.buttons
                 .iter()
-                .any(|b| b.slot == slot && b.item == "minecraft:arrow" && b.name == name)
+                .any(|b| b.slot == slot && b.item == "minecraft:arrow" && (b.name==name||matches!((name,b.name.as_str()),("Back","Назад")|("Next page","Следующая страница"))))
         };
         let click = match page.family {
             Kind::Auction => {
                 if let Some(b) = page.buttons.iter().find(|b| {
                     b.slot == 10
                         && b.item == "minecraft:nether_star"
-                        && b.name.starts_with("All listings (")
+                        && (b.name.starts_with("All listings (")||b.name.starts_with("Все лоты ("))
                 }) {
                     Some(b.slot)
                 } else if arrow(51, "Next page") {
@@ -103,7 +103,7 @@ impl Scanner {
                     && page.buttons.iter().any(|b| {
                         b.slot < 45
                             && b.lore.iter().any(|s| {
-                                s.strip_suffix(" items")
+                                s.strip_suffix(" items").or_else(||s.strip_suffix(" предметов"))
                                     .is_some_and(|n| n.parse::<u32>().is_ok())
                             })
                     });

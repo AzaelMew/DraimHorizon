@@ -8,6 +8,7 @@ fn claim_borders_menu_mouse(
         return;
     }
     if crate::game::claim_borders_outgoing_view::toggle_mouse(game, screen, button, false, canceled) {return;}
+    if crate::game::claim_borders_commerce_view::mouse(game, screen, button, false, canceled) {return;}
     if crate::game::claim_borders_waypoint_view::release(button, canceled) {
         return;
     }

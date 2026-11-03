@@ -718,3 +718,9 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
 ]
+
+[[module]]
+id = "commerce-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_commerce_view"
+source = "commerce_view.rs"
