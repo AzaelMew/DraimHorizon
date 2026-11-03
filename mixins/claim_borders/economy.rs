@@ -1069,7 +1069,7 @@ impl Book {
         }
     }
     pub fn encode(&self, scope: &str) -> String {
-        json!({"schema":1,"scope":scope,"day":self.day,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
+        json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
     }
     pub fn decode(raw: &str, scope: &str) -> Result<Self, String> {
         if raw.len() > 4 * 1024 * 1024 {
@@ -1081,6 +1081,8 @@ impl Book {
         }
         let mut book = Self {
             day: v["day"].as_u64().unwrap_or(0),
+            movers:v["movers"].as_array().map(|rows|rows.iter().take(10).filter_map(Value::as_str).map(|s|s.chars().take(120).collect()).collect()).unwrap_or_default(),
+            movers_at:v["movers_at"].as_u64().unwrap_or(0),
             ..Self::default()
         };
         let rows = v["quotes"]

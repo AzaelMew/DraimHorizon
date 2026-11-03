@@ -63,6 +63,9 @@ jobs:
           PY
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
+      - name: Smoke test public translation provider
+        continue-on-error: true
+        run: cargo test --locked -p claim-borders-relay-client public_provider_translates_fixed_greeting -- --ignored --nocapture
       - name: Stage official mixins
         run: python3 tools/stage.py 2>&1 | tee compatibility-stage.log
       - name: Test the pinned indexer correction

@@ -715,6 +715,7 @@ kind = "RETURN"
 target = "horizon_client::game::chat::Game<'_>::draw_chat_screen"
 helper = "chat_toggle_hook.rs"
 bindings = [
+ { name = "value", ty = "()", value = "$value" },
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
 ]

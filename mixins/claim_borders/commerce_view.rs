@@ -55,7 +55,7 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
         if s.token!=token{s.token=token.clone();s.pending=None;s.page=0;s.hits.clear();}
         s.hits.clear();
         ui::fill(game,batch,[x,y,w,h],0xee182636);
-        ui::icon(game,batch,ui::Icon::Shop,[x+10.0,y+9.0,14.0,14.0],ui::preferences(game).accent.color());
+        ui::icon(game,batch,ui::Icon::Market,[x+10.0,y+9.0,14.0,14.0],ui::preferences(game).accent.color());
         ui::text(game,batch,if page.family==scan::Kind::Market{"MARKET · Серверный рынок"}else{"AH · Аукцион"},[x+32.0,y+12.0],0xe3ebf3,false);
         let query=[x+8.0,y+32.0,w-16.0,18.0];
         ui::button(game,batch,query,&format!("Поиск: {}{}",s.query.value,if s.focus{"│"}else{""}),s.focus,screen.mouse);s.hits.push((query,Hit::Search));
@@ -67,7 +67,7 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
         for(i,b)in entries.iter().skip(s.page*per).take(per).enumerate(){
             let r=[x+8.0+(i%columns) as f32*cw,y+57.0+(i/columns) as f32*32.0,cw-4.0,29.0];
             let detail=b.lore.iter().find(|l|l.starts_with("Price: ")||l.starts_with("Цена: ")).or_else(||b.lore.first()).map(String::as_str).unwrap_or(if nav(&page,b){"Открыть"}else{"Нажмите для просмотра"});
-            row(game,batch,s,r,&caption(game,&page,b),detail,Hit::Server((*b).clone()),screen.mouse,if nav(&page,b){ui::Icon::ArrowRight}else{ui::Icon::Shop});
+            row(game,batch,s,r,&caption(game,&page,b),detail,Hit::Server((*b).clone()),screen.mouse,if nav(&page,b){ui::Icon::Next}else{ui::Icon::Market});
         }
         let bottom=y+h-57.0;
         ui::button(game,batch,[x+8.0,bottom,28.0,18.0],"←",false,screen.mouse);s.hits.push(([x+8.0,bottom,28.0,18.0],Hit::Page(-1)));
