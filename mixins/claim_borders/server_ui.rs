@@ -35,43 +35,163 @@ fn money(value: Option<(i64, u64)>) -> String {
         crate::game::claim_borders_economy::fmt(v)
     })
 }
-fn card(game:&Game<'_>,batch:&mut HudBatch,corners:&mut horizon_client::extras_hud::Corners,p:&crate::game::claim_borders_economy::Preferences,title:&str,icon:ui::Icon,lines:&[(String,u32)],key:&str){
-    let scale=p.get("sidebar_scale") as f32/100.0;
-    let width=(p.get("sidebar_width") as f32*scale).min(batch.width-12.0);
-    let height=(27.0+lines.len() as f32*13.0)*scale;
-    let (x,y)=corners.place(crate::game::claim_borders_map_view::corner(p.get("sidebar_corner") as u8),width,height);
-    let start=batch.vertices.len();let left=x/scale;let top=y/scale;let w=width/scale;
-    ui::fill(game,batch,[left,top,w,height/scale],((p.get("sidebar_opacity") as u32*255/100)<<24)|0x101c29);
-    ui::icon(game,batch,icon,[left+8.0,top+7.0,11.0,11.0],ui::preferences(game).accent.color());
-    label(game,batch,title,[left+25.0,top+8.0],w-33.0,0xbce8d7);
-    for(i,(text,color))in lines.iter().enumerate(){label(game,batch,text,[left+9.0,top+25.0+i as f32*13.0],w-18.0,*color);}
-    ui::finish(game,batch,start,"sidebar-card",key);batch.scale_since(start,0.0,0.0,scale,scale);
+fn card(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    corners: &mut horizon_client::extras_hud::Corners,
+    p: &crate::game::claim_borders_economy::Preferences,
+    title: &str,
+    icon: ui::Icon,
+    lines: &[(String, u32)],
+    key: &str,
+) {
+    let scale = p.get("sidebar_scale") as f32 / 100.0;
+    let width = (p.get("sidebar_width") as f32 * scale).min(batch.width - 12.0);
+    let height = (27.0 + lines.len() as f32 * 13.0) * scale;
+    let (x, y) = corners.place(
+        crate::game::claim_borders_map_view::corner(p.get("sidebar_corner") as u8),
+        width,
+        height,
+    );
+    let start = batch.vertices.len();
+    let left = x / scale;
+    let top = y / scale;
+    let w = width / scale;
+    ui::fill(
+        game,
+        batch,
+        [left, top, w, height / scale],
+        ((p.get("sidebar_opacity") as u32 * 255 / 100) << 24) | 0x101c29,
+    );
+    ui::icon(
+        game,
+        batch,
+        icon,
+        [left + 8.0, top + 7.0, 11.0, 11.0],
+        ui::preferences(game).accent.color(),
+    );
+    label(
+        game,
+        batch,
+        title,
+        [left + 25.0, top + 8.0],
+        w - 33.0,
+        0xbce8d7,
+    );
+    for (i, (text, color)) in lines.iter().enumerate() {
+        label(
+            game,
+            batch,
+            text,
+            [left + 9.0, top + 25.0 + i as f32 * 13.0],
+            w - 18.0,
+            *color,
+        );
+    }
+    ui::finish(game, batch, start, "sidebar-card", key);
+    batch.scale_since(start, 0.0, 0.0, scale, scale);
 }
-pub(super) fn sidebar(game:&Game<'_>,batch:&mut HudBatch,corners:&mut horizon_client::extras_hud::Corners){
-    if game.ui.hide_gui||game.native_player().is_none()||!matches!(game.screen,Screen::Playing|Screen::Chat){return;}
-    data::read(|book,p,status,_|{
-        if !p.flag("custom_sidebar"){return;}
-        let value=|keys:&[&str]|status.sidebar.iter().find(|(k,_)|keys.iter().any(|key|k.trim().trim_end_matches(':').eq_ignore_ascii_case(key))).map(|(_,v)|v.trim().to_owned());
-        let mut performance=vec![(format!("FPS  {:.0}",game.fps),0xdce5ed)];
-        if p.flag("sidebar_tps"){performance.push((crate::game::claim_borders_server_tps_view::label(),0x9edccb));}
-        performance.push((format!("Онлайн  {}",value(&["Online","Онлайн"]).unwrap_or_else(||"—".into())),0xdce5ed));
-        performance.push((format!("В игре  {}",value(&["Playtime","Время игры"]).unwrap_or("—".into())),0xdce5ed));
-        card(game,batch,corners,p,"СЕРВЕР · КЛИЕНТ",ui::Icon::Signal,&performance,"performance");
-        let mut economy=vec![(format!("Баланс  {} монет",money(book.balance)),0xf0d68a)];
-        if p.flag("enabled")&&p.flag("sidebar_limits"){
-            economy.push(("Продажа серверу · осталось".into(),0x9aacc0));
-            economy.push((format!("{} / {} монет",money(book.coin_left),book.coin_cap.map_or("—".into(),crate::game::claim_borders_economy::fmt)),0xc3dfd3));
-            if book.coin_left.is_some_and(|(n,_)|n==0){economy.push(("Сброс лимита · 00:00 UTC".into(),0xd0a778));}
+pub(super) fn sidebar(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    corners: &mut horizon_client::extras_hud::Corners,
+) {
+    if game.ui.hide_gui
+        || game.native_player().is_none()
+        || !matches!(game.screen, Screen::Playing | Screen::Chat)
+    {
+        return;
+    }
+    data::read(|book, p, status, _| {
+        if !p.flag("custom_sidebar") {
+            return;
         }
-        let richest:Vec<_>=status.sidebar.iter().filter(|(k,_)|{let k=k.trim();k.starts_with("1.")||k.starts_with("2.")||k.starts_with("3.")}).take(3).collect();
-        if !richest.is_empty()&&batch.height>=230.0 {
-            economy.push(("Богатейшие игроки".into(),0x9aacc0));
-            for(k,v)in richest{
-                let budget=p.get("sidebar_width") as f32-28.0-game.native_text_width(v);
-                economy.push((format!("{}  {}",ui::clip(game,k.trim(),budget),v.trim()),0xb8c9d7));
+        let value = |keys: &[&str]| {
+            status
+                .sidebar
+                .iter()
+                .find(|(k, _)| {
+                    keys.iter()
+                        .any(|key| k.trim().trim_end_matches(':').eq_ignore_ascii_case(key))
+                })
+                .map(|(_, v)| v.trim().to_owned())
+        };
+        let mut performance = vec![(format!("FPS  {:.0}", game.fps), 0xdce5ed)];
+        if p.flag("sidebar_tps") {
+            performance.push((
+                crate::game::claim_borders_server_tps_view::label(),
+                0x9edccb,
+            ));
+        }
+        performance.push((
+            format!(
+                "Онлайн  {}",
+                value(&["Online", "Онлайн"]).unwrap_or_else(|| "—".into())
+            ),
+            0xdce5ed,
+        ));
+        performance.push((
+            format!(
+                "В игре  {}",
+                value(&["Playtime", "Время игры"]).unwrap_or("—".into())
+            ),
+            0xdce5ed,
+        ));
+        card(
+            game,
+            batch,
+            corners,
+            p,
+            "СЕРВЕР · КЛИЕНТ",
+            ui::Icon::Signal,
+            &performance,
+            "performance",
+        );
+        let mut economy = vec![(format!("Баланс  {} монет", money(book.balance)), 0xf0d68a)];
+        if p.flag("enabled") && p.flag("sidebar_limits") {
+            economy.push(("Продажа серверу · осталось".into(), 0x9aacc0));
+            economy.push((
+                format!(
+                    "{} / {} монет",
+                    money(book.coin_left),
+                    book.coin_cap
+                        .map_or("—".into(), crate::game::claim_borders_economy::fmt)
+                ),
+                0xc3dfd3,
+            ));
+            if book.coin_left.is_some_and(|(n, _)| n == 0) {
+                economy.push(("Сброс лимита · 00:00 UTC".into(), 0xd0a778));
             }
         }
-        card(game,batch,corners,p,"ЭКОНОМИКА",ui::Icon::Wallet,&economy,"economy");
+        let richest: Vec<_> = status
+            .sidebar
+            .iter()
+            .filter(|(k, _)| {
+                let k = k.trim();
+                k.starts_with("1.") || k.starts_with("2.") || k.starts_with("3.")
+            })
+            .take(3)
+            .collect();
+        if !richest.is_empty() && batch.height >= 230.0 {
+            economy.push(("Богатейшие игроки".into(), 0x9aacc0));
+            for (k, v) in richest {
+                let budget = p.get("sidebar_width") as f32 - 28.0 - game.native_text_width(v);
+                economy.push((
+                    format!("{}  {}", ui::clip(game, k.trim(), budget), v.trim()),
+                    0xb8c9d7,
+                ));
+            }
+        }
+        card(
+            game,
+            batch,
+            corners,
+            p,
+            "ЭКОНОМИКА",
+            ui::Icon::Wallet,
+            &economy,
+            "economy",
+        );
     });
 }
 pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
@@ -154,7 +274,12 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         }
         for col in 0..columns {
             let left = x + 10.0 + col as f32 * cw;
-            ui::fill(game,batch,[left-2.0,y+25.0,cw-4.0,rows as f32*22.0+23.0],0x70111e2c);
+            ui::fill(
+                game,
+                batch,
+                [left - 2.0, y + 25.0, cw - 4.0, rows as f32 * 22.0 + 23.0],
+                0x70111e2c,
+            );
             label(
                 game,
                 batch,
@@ -180,9 +305,19 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             let row = i % rows;
             let left = x + 10.0 + col as f32 * cw;
             let top = y + 42.0 + row as f32 * 22.0;
-            let friend=is_friend(player.uuid);
-            ui::fill(game,batch,[left+1.0,top-1.0,cw-10.0,19.0],if friend{0x8033474a}else{0x80233142});
-            ui::fill(game,batch,[left+1.0,top+3.0,2.0,11.0],if friend{0xff91cfac}else{0xff7798b9});
+            let friend = is_friend(player.uuid);
+            ui::fill(
+                game,
+                batch,
+                [left + 1.0, top - 1.0, cw - 10.0, 19.0],
+                if friend { 0x8033474a } else { 0x80233142 },
+            );
+            ui::fill(
+                game,
+                batch,
+                [left + 1.0, top + 3.0, 2.0, 11.0],
+                if friend { 0xff91cfac } else { 0xff7798b9 },
+            );
             let skin = game.face_skin(player.uuid, &player.skin);
             crate::game::claim_borders_avatar_draw::face(
                 game,

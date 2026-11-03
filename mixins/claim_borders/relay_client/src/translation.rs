@@ -112,10 +112,11 @@ impl Drop for Translator {
         self.stop.store(true, Ordering::Release);
     }
 }
-pub fn needs_translation(text: &str) -> bool {
-    text.chars()
-        .any(|c| c.is_alphabetic() && !('\u{0400}'..='\u{052f}').contains(&c))
-        && !text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
+pub fn needs_translation(text:&str)->bool{
+    if text.trim_start().starts_with('/'){return false;}
+    let foreign=|c:char|c.is_alphabetic()&&!('\u{0400}'..='\u{052f}').contains(&c);
+    if !text.chars().any(|c|('\u{0400}'..='\u{052f}').contains(&c)){return text.chars().any(foreign);}
+    text.split_whitespace().any(|word|word.chars().filter(|c|foreign(*c)).count()>=2)
 }
 pub fn needs_english(text: &str) -> bool {
     !text.trim_start().starts_with('/')
@@ -188,6 +189,8 @@ mod tests {
         assert!(!needs_translation("Привет"));
         assert!(!needs_translation("123 :D Привет"));
         assert!(needs_translation("hello"));
+        assert!(needs_translation("Привет, how are you?"));
+        assert!(!needs_translation("/msg Alex hello"));
         assert!(needs_translation("こんにちは"));
     }
     #[test]

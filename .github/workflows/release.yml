@@ -78,6 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -95,4 +96,20 @@ jobs:
             echo "Release $tag already exists; keeping published artifacts unchanged."
             exit 0
           fi
+          # Publish only the exact source that passed native client compilation.
+          for attempt in $(seq 1 90); do
+            native_state="$(gh api -X GET "repos/$GH_REPO/actions/workflows/horizon-compatibility.yml/runs" -f head_sha="$GITHUB_SHA" -f event=push --jq '.workflow_runs[] | select(.head_sha == env.GITHUB_SHA) | [.status, (.conclusion // "pending")] | join(" ")')"
+            if [ "$native_state" = "completed success" ]; then
+              break
+            fi
+            if [[ "$native_state" == completed* ]]; then
+              echo "Native validation rejected $GITHUB_SHA: $native_state"
+              exit 1
+            fi
+            if [ "$attempt" = 90 ]; then
+              echo "Timed out waiting for native validation of $GITHUB_SHA"
+              exit 1
+            fi
+            sleep 20
+          done
           gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizons ${version} — Horizon f42ef42" --notes-file docs/release-notes.md

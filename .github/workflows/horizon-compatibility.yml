@@ -1,10 +1,17 @@
-name: Interaction workflows native validation
+name: Validate Horizon f42ef42 client
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/horizon-compatibility.yml'
       - 'mixins/**'
+      - 'src/**'
+      - 'relay/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/release.yml'
       - 'tools/**'
       - 'compatibility.json'
 defaults:

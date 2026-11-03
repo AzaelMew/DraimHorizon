@@ -19,8 +19,18 @@ pub struct Page {
     pub buttons: Vec<Button>,
 }
 // A confirmation expires, and cannot be replayed after a page, slot or price update.
-pub fn confirmed_button(page:&Page,window:&str,expected_window:&str,button:&Button,prepared_at:u64,now:u64)->bool{
-    now>=prepared_at&&now-prepared_at<=10_000&&window==expected_window&&page.buttons.iter().any(|b|b==button)
+pub fn confirmed_button(
+    page: &Page,
+    window: &str,
+    expected_window: &str,
+    button: &Button,
+    prepared_at: u64,
+    now: u64,
+) -> bool {
+    now >= prepared_at
+        && now - prepared_at <= 10_000
+        && window == expected_window
+        && page.buttons.iter().any(|b| b == button)
 }
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -84,16 +94,23 @@ impl Scanner {
             return Step::Stopped("Достигнут предел страниц".into());
         }
         let arrow = |slot: usize, name: &str| {
-            page.buttons
-                .iter()
-                .any(|b| b.slot == slot && b.item == "minecraft:arrow" && (b.name==name||matches!((name,b.name.as_str()),("Back","Назад")|("Next page","Следующая страница"))))
+            page.buttons.iter().any(|b| {
+                b.slot == slot
+                    && b.item == "minecraft:arrow"
+                    && (b.name == name
+                        || matches!(
+                            (name, b.name.as_str()),
+                            ("Back", "Назад") | ("Next page", "Следующая страница")
+                        ))
+            })
         };
         let click = match page.family {
             Kind::Auction => {
                 if let Some(b) = page.buttons.iter().find(|b| {
                     b.slot == 10
                         && b.item == "minecraft:nether_star"
-                        && (b.name.starts_with("All listings (")||b.name.starts_with("Все лоты ("))
+                        && (b.name.starts_with("All listings (")
+                            || b.name.starts_with("Все лоты ("))
                 }) {
                     Some(b.slot)
                 } else if arrow(51, "Next page") {
@@ -107,7 +124,8 @@ impl Scanner {
                     && page.buttons.iter().any(|b| {
                         b.slot < 45
                             && b.lore.iter().any(|s| {
-                                s.strip_suffix(" items").or_else(||s.strip_suffix(" предметов"))
+                                s.strip_suffix(" items")
+                                    .or_else(|| s.strip_suffix(" предметов"))
                                     .is_some_and(|n| n.parse::<u32>().is_ok())
                             })
                     });
@@ -172,16 +190,36 @@ impl Scanner {
 mod tests {
     use super::*;
     #[test]
-    fn confirmation_expires_and_rejects_changed_prices_and_windows(){
-        let button=Button{slot:20,item:"minecraft:lime_concrete".into(),name:"Buy 16 for 50 coins".into(),lore:vec!["Exact server total".into()]};
-        let mut page=Page{family:Kind::Market,fingerprint:1,buttons:vec![button.clone()]};
-        assert!(confirmed_button(&page,"window-a","window-a",&button,100,101));
-        assert!(!confirmed_button(&page,"window-b","window-a",&button,100,101));
-        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,10101));
-        page.buttons[0].name="Buy 16 for 60 coins".into();
-        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,101));
-        page.buttons[0]=button.clone();page.buttons[0].lore.push("Limit changed".into());
-        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,101));
+    fn confirmation_expires_and_rejects_changed_prices_and_windows() {
+        let button = Button {
+            slot: 20,
+            item: "minecraft:lime_concrete".into(),
+            name: "Buy 16 for 50 coins".into(),
+            lore: vec!["Exact server total".into()],
+        };
+        let mut page = Page {
+            family: Kind::Market,
+            fingerprint: 1,
+            buttons: vec![button.clone()],
+        };
+        assert!(confirmed_button(
+            &page, "window-a", "window-a", &button, 100, 101
+        ));
+        assert!(!confirmed_button(
+            &page, "window-b", "window-a", &button, 100, 101
+        ));
+        assert!(!confirmed_button(
+            &page, "window-a", "window-a", &button, 100, 10101
+        ));
+        page.buttons[0].name = "Buy 16 for 60 coins".into();
+        assert!(!confirmed_button(
+            &page, "window-a", "window-a", &button, 100, 101
+        ));
+        page.buttons[0] = button.clone();
+        page.buttons[0].lore.push("Limit changed".into());
+        assert!(!confirmed_button(
+            &page, "window-a", "window-a", &button, 100, 101
+        ));
     }
     #[test]
     fn auction_scanner_never_clicks_buy_or_confirm_controls() {

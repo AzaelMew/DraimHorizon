@@ -53,7 +53,7 @@ struct State {
     error: String,
     copy: Option<String>,
     paste: bool,
-    suppress:Option<std::time::Instant>,
+    suppress: Option<std::time::Instant>,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
@@ -74,7 +74,7 @@ pub(super) fn editing() -> bool {
 pub(super) fn open_create(dimension: String, position: [f64; 3], quick: bool) {
     state(|s| {
         s.quick = quick;
-        s.suppress=quick.then(std::time::Instant::now);
+        s.suppress = quick.then(std::time::Instant::now);
         s.error.clear();
         s.draft = Some(Draft {
             id: None,
@@ -684,7 +684,14 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) -> bool {
         return false;
     }
     *canceled = true;
-    if state(|s|s.suppress.take().is_some_and(|at|at.elapsed().as_millis()<150)&&c.eq_ignore_ascii_case(&'x')){return true;}
+    if state(|s| {
+        s.suppress
+            .take()
+            .is_some_and(|at| at.elapsed().as_millis() < 150)
+            && c.eq_ignore_ascii_case(&'x')
+    }) {
+        return true;
+    }
     if !game.modifiers.control_key() {
         state(|s| {
             if let Some(d) = s.draft.as_mut() {

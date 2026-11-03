@@ -56,6 +56,7 @@ struct State {
     return_scan: bool,
     auto_cycle:bool,
     last_auto:u64,
+    opening:Option<(String,u64)>,
     seen_pages: std::collections::BTreeSet<u64>,
     ah_pages: std::collections::BTreeSet<u64>,
 }
@@ -86,6 +87,7 @@ impl Default for State {
             return_scan: false,
             auto_cycle:false,
             last_auto:0,
+            opening:None,
             seen_pages: std::collections::BTreeSet::new(),
             ah_pages: std::collections::BTreeSet::new(),
         }
@@ -181,6 +183,7 @@ pub(super) fn command(command: &str) {
         if s.scanner.active {
             s.scanner.stop();
             s.return_scan = false;
+            s.status.scanning=false;s.auto_cycle=false;s.opening=None;
             s.status.message = "Сканирование остановлено командой игрока".into();
         }
         s.replies.manual(command);
@@ -198,6 +201,7 @@ pub(super) fn command(command: &str) {
 pub(super) fn cancel_scan() {
     state(|s| {
         s.auto_cycle=false;
+        s.opening=None;
         if s.scanner.active {
             s.scanner.stop();
             s.return_scan = false;
@@ -618,7 +622,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
                 s.dirty = true;
             }
-            if s.scanner.active {
+            let ready=if let Some((old,at))=&s.opening{
+                if old!=token&&s.scanner.kind==Some(page.family){s.opening=None;true}
+                else if now.saturating_sub(*at)>10_000{
+                    s.scanner.stop();s.status.scanning=false;s.auto_cycle=false;s.return_scan=false;s.opening=None;s.status.message="Сервер не открыл запрошенное меню".into();false
+                }else{false}
+            }else{true};
+            if s.scanner.active && ready {
                 match s.scanner.next(
                     page,
                     now,
@@ -718,7 +728,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
 
 fn start_scan(game:&mut Game<'_>,kind:scan::Kind,automatic:bool){
     let now=now();
+    let old=format!("{:?}|{}",game.remote_menu(),game.draimhorizons_menu_stamp());
                 state(|s| {
+                    s.opening=Some((old,now));
                     s.auto_cycle=automatic;
                     s.last_auto=now;
                     s.scanner.start(kind, now);

@@ -205,18 +205,30 @@ pub(super) fn item_label(game: &Game<'_>, id: &str) -> String {
         &path.replace('_', " "),
     )
 }
-pub(super)fn market_lore(game:&Game<'_>,text:&str)->String{
-    if let Some((name,change))=text.split_once('▲').or_else(||text.split_once('▼')){
-        if let Some(id)=model::id(name.trim()).filter(|id|game.res.items().get(id).is_some()){
-            let arrow=if text.contains('▲'){'▲'}else{'▼'};
-            return format!("{} {arrow}{}",item_label(game,&id),change);
+pub(super) fn market_lore(game: &Game<'_>, text: &str) -> String {
+    if let Some((name, change)) = text.split_once('▲').or_else(|| text.split_once('▼')) {
+        if let Some(id) = model::id(name.trim()).filter(|id| game.res.items().get(id).is_some()) {
+            let arrow = if text.contains('▲') { '▲' } else { '▼' };
+            return format!("{} {arrow}{}", item_label(game, &id), change);
         }
     }
-    text.replace("Price: ","Цена: ").replace(" each, to buy or sell"," / шт. · купить / продать")
-        .replace(" each (the market doesn't buy it)"," / шт. · сервер не покупает")
-        .replace(" each (the market doesn't sell it)"," / шт. · сервер не продаёт")
-        .replace("Traded in 24 h: ","Объём за 24 ч: ").replace("You may still sell ","Можно продать ещё ").replace(" today"," сегодня")
-        .replace("Base price: ","Базовая цена: ").replace("1 h ","1 ч ").replace("24 h ","24 ч ").replace("unchanged","без изменений")
+    text.replace("Price: ", "Цена: ")
+        .replace(" each, to buy or sell", " / шт. · купить / продать")
+        .replace(
+            " each (the market doesn't buy it)",
+            " / шт. · сервер не покупает",
+        )
+        .replace(
+            " each (the market doesn't sell it)",
+            " / шт. · сервер не продаёт",
+        )
+        .replace("Traded in 24 h: ", "Объём за 24 ч: ")
+        .replace("You may still sell ", "Можно продать ещё ")
+        .replace(" today", " сегодня")
+        .replace("Base price: ", "Базовая цена: ")
+        .replace("1 h ", "1 ч ")
+        .replace("24 h ", "24 ч ")
+        .replace("unchanged", "без изменений")
 }
 fn value(v: Option<model::Coins>) -> String {
     v.map_or("—".into(), model::fmt)
@@ -480,8 +492,30 @@ pub(super) fn render(
                     0x94b5ca,
                 );
                 if !book.movers.is_empty() {
-                    line(game,batch,x,&mut y,width,&format!("Динамика за 24 ч · {}",age(book.movers_at,now)),0xb9a7e8);
-                    for mover in book.movers.iter().take(if h>300.0{5}else{2}){line(game,batch,x,&mut y,width,&market_lore(game,mover),if mover.contains('▲'){0x94d5ae}else{0xdfa68d});}
+                    line(
+                        game,
+                        batch,
+                        x,
+                        &mut y,
+                        width,
+                        &format!("Динамика за 24 ч · {}", age(book.movers_at, now)),
+                        0xb9a7e8,
+                    );
+                    for mover in book.movers.iter().take(if h > 300.0 { 5 } else { 2 }) {
+                        line(
+                            game,
+                            batch,
+                            x,
+                            &mut y,
+                            width,
+                            &market_lore(game, mover),
+                            if mover.contains('▲') {
+                                0x94d5ae
+                            } else {
+                                0xdfa68d
+                            },
+                        );
+                    }
                 }
                 y += 8.0;
                 let deals = book.opportunities(p, now, own);
