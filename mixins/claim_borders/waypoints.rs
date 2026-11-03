@@ -14,6 +14,14 @@ const MAX_FILE_BYTES: u64 = 262_144;
 const MAX_NAME_CHARS: usize = 48;
 const MAX_WORLD: f64 = 30_000_000.0;
 
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub enum MarkerKind {#[default] Pin,Home,Portal,Chest,Star}
+impl MarkerKind {
+    pub fn code(self)->&'static str {match self{Self::Pin=>"pin",Self::Home=>"home",Self::Portal=>"portal",Self::Chest=>"chest",Self::Star=>"star"}}
+    pub fn label(self)->&'static str {match self{Self::Pin=>"Метка",Self::Home=>"Дом",Self::Portal=>"Портал",Self::Chest=>"Хранилище",Self::Star=>"Важное"}}
+    pub fn parse(s:&str)->Option<Self>{Some(match s{"pin"=>Self::Pin,"home"=>Self::Home,"portal"=>Self::Portal,"chest"=>Self::Chest,"star"=>Self::Star,_=>return None})}
+    pub fn next(self)->Self{match self{Self::Pin=>Self::Home,Self::Home=>Self::Portal,Self::Portal=>Self::Chest,Self::Chest=>Self::Star,Self::Star=>Self::Pin}}
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Waypoint {
     pub id: u64,
@@ -22,6 +30,7 @@ pub struct Waypoint {
     pub position: [f64; 3],
     /// Opaque RGB. The renderer applies distance-dependent alpha separately.
     pub color: u32,
+    pub kind: MarkerKind,
 }
 
 impl Waypoint {
@@ -106,11 +115,19 @@ impl WaypointStore {
                 dimension,
                 position,
                 color,
+                kind:MarkerKind::Pin,
             });
         self.next_id = next;
         Ok(id)
     }
 
+    pub fn update(&mut self,server:&str,id:u64,name:&str,color:u32,kind:MarkerKind)->Result<(),WaypointError>{
+        let name=validate_name(name)?.to_owned();validate_color(color)?;
+        let w=self.find_mut(server,id)?;w.name=name;w.color=color;w.kind=kind;Ok(())
+    }
+    pub fn set_kind(&mut self,server:&str,id:u64,kind:MarkerKind)->Result<(),WaypointError>{
+        self.find_mut(server,id)?.kind=kind;Ok(())
+    }
     pub fn rename(&mut self, server: &str, id: u64, name: &str) -> Result<(), WaypointError> {
         let name = validate_name(name)?.to_owned();
         self.find_mut(server, id)?.name = name;
@@ -233,12 +250,12 @@ impl WaypointStore {
     fn to_bytes(&self) -> Result<Vec<u8>, WaypointError> {
         let servers: serde_json::Map<String, Value> = self.servers.iter().map(|(server, entries)| {
             let entries: Vec<Value> = entries.iter().map(|w| json!({
-                "id": w.id, "name": w.name, "dimension": w.dimension, "position": w.position, "color": w.color,
+                "id": w.id, "name": w.name, "dimension": w.dimension, "position": w.position, "color": w.color, "kind":w.kind.code(),
             })).collect();
             (server.clone(), Value::Array(entries))
         }).collect();
         let mut bytes = serde_json::to_vec_pretty(
-            &json!({"schema": 1, "next_id": self.next_id, "servers": servers}),
+            &json!({"schema": 2, "next_id": self.next_id, "servers": servers}),
         )
         .map_err(|_| WaypointError::Invalid("Cannot encode waypoint storage."))?;
         bytes.push(b'\n');
@@ -252,7 +269,8 @@ impl WaypointStore {
         let value: Value = serde_json::from_slice(bytes)
             .map_err(|_| WaypointError::Invalid("Waypoint file is not valid JSON."))?;
         exact_keys(&value, &["schema", "next_id", "servers"])?;
-        if value["schema"].as_u64() != Some(1) {
+        let schema=value["schema"].as_u64();
+        if !matches!(schema,Some(1|2)) {
             return Err(WaypointError::Invalid("Unknown waypoint schema."));
         }
         let next_id = value["next_id"]
@@ -278,7 +296,8 @@ impl WaypointStore {
                 .ok_or(WaypointError::Invalid("Invalid waypoint list."))?;
             let mut parsed = Vec::new();
             for entry in entries {
-                exact_keys(entry, &["id", "name", "dimension", "position", "color"])?;
+                if schema==Some(1){exact_keys(entry,&["id","name","dimension","position","color"])?;}
+                else{exact_keys(entry,&["id","name","dimension","position","color","kind"])?;}
                 let id = entry["id"]
                     .as_u64()
                     .filter(|n| *n > 0 && *n < next_id)
@@ -319,6 +338,7 @@ impl WaypointStore {
                     dimension,
                     position,
                     color,
+                    kind:if schema==Some(1){MarkerKind::Pin}else{MarkerKind::parse(entry["kind"].as_str().unwrap_or("")).ok_or(WaypointError::Invalid("Invalid marker kind."))?},
                 });
             }
             if !parsed.is_empty() {
@@ -565,7 +585,7 @@ mod tests {
         assert!(WaypointStore::load(&path).is_err());
         assert!(WaypointStore::default().save(&path).is_err());
         assert_eq!(fs::read(&path).unwrap(), corrupt);
-        fs::write(&path, br#"{"schema":2,"next_id":1,"servers":{}}"#).unwrap();
+        fs::write(&path, br#"{"schema":99,"next_id":1,"servers":{}}"#).unwrap();
         assert!(WaypointStore::load(&path).is_err());
         fs::remove_file(path).unwrap();
     }
@@ -622,4 +642,17 @@ mod tests {
         assert_eq!(opacity(1e9), 0.22);
         assert_eq!(opacity(0.0), 1.0);
     }
+    #[test]
+    fn legacy_markers_migrate_without_losing_ids_and_kinds_roundtrip(){
+        let raw=br#"{"schema":1,"next_id":8,"servers":{"test":[{"id":7,"name":"Home","dimension":"minecraft:overworld","position":[1,64,2],"color":123}]}}"#;
+        let mut store=WaypointStore::from_bytes(raw).unwrap();
+        assert_eq!(store.all("test")[0].kind,MarkerKind::Pin);
+        store.update("test",7,"Portal",0xffcc55,MarkerKind::Portal).unwrap();
+        let new=WaypointStore::from_bytes(&store.to_bytes().unwrap()).unwrap();
+        assert_eq!(new.all("test")[0].id,7);assert_eq!(new.all("test")[0].position,[1.,64.,2.]);
+        assert_eq!(new.all("test")[0].kind,MarkerKind::Portal);
+        assert!(store.update("test",7,"",0,MarkerKind::Star).is_err());
+        assert_eq!(store.all("test")[0].name,"Portal");
+    }
+
 }
