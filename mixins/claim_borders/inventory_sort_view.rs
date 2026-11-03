@@ -379,13 +379,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             let p = s.preferences.policy(&area.key);
             if p.visible || editing {
                 let first = slot_rect(game, screen, area.slots[0]);
-                let right = area
-                    .slots
-                    .iter()
-                    .map(|i| slot_rect(game, screen, *i)[0] + 16.0)
-                    .fold(first[0], f32::max);
-                let x =
-                    (right + 4.0 + p.offset[0] as f32).clamp(0.0, (batch.width - 16.0).max(0.0));
+                // Use the panel edge: hopper/dispenser grids are narrower than the player inventory.
+                let x = screen.rect[0] + screen.rect[2] + 3.0 + p.offset[0] as f32;
+                let x = x.clamp(0.0, (batch.width - 16.0).max(0.0));
                 let base_y =
                     (first[1] + p.offset[1] as f32).clamp(0.0, (batch.height - 64.0).max(0.0));
                 for (i, op) in [
