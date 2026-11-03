@@ -5,7 +5,7 @@ pub enum Kind {
     Market,
     Auction,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Button {
     pub slot: usize,
     pub item: String,
@@ -17,6 +17,10 @@ pub struct Page {
     pub family: Kind,
     pub fingerprint: u64,
     pub buttons: Vec<Button>,
+}
+// A confirmation expires, and cannot be replayed after a page, slot or price update.
+pub fn confirmed_button(page:&Page,window:&str,expected_window:&str,button:&Button,prepared_at:u64,now:u64)->bool{
+    now>=prepared_at&&now-prepared_at<=10_000&&window==expected_window&&page.buttons.iter().any(|b|b==button)
 }
 #[derive(Clone, Debug)]
 pub enum Step {
@@ -167,6 +171,18 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn confirmation_expires_and_rejects_changed_prices_and_windows(){
+        let button=Button{slot:20,item:"minecraft:lime_concrete".into(),name:"Buy 16 for 50 coins".into(),lore:vec!["Exact server total".into()]};
+        let mut page=Page{family:Kind::Market,fingerprint:1,buttons:vec![button.clone()]};
+        assert!(confirmed_button(&page,"window-a","window-a",&button,100,101));
+        assert!(!confirmed_button(&page,"window-b","window-a",&button,100,101));
+        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,10101));
+        page.buttons[0].name="Buy 16 for 60 coins".into();
+        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,101));
+        page.buttons[0]=button.clone();page.buttons[0].lore.push("Limit changed".into());
+        assert!(!confirmed_button(&page,"window-a","window-a",&button,100,101));
+    }
     #[test]
     fn auction_scanner_never_clicks_buy_or_confirm_controls() {
         let mut s = Scanner::default();

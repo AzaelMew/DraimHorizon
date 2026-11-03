@@ -753,9 +753,9 @@ pub(super) fn server_page(game:&Game<'_>)->Option<(scan::Page,String)>{
     let token=format!("{:?}|{}",game.remote_menu(),game.draimhorizons_menu_stamp());
     read(|_,p,status,_|if p.flag("enabled")&&p.flag("overlay")&&status.menu_token==token{status.page.clone().map(|page|(page,token))}else{None})
 }
-pub(super) fn server_click(game:&mut Game<'_>,token:&str,button:&scan::Button)->bool{
+pub(super) fn server_click(game:&mut Game<'_>,token:&str,button:&scan::Button,prepared_at:u64)->bool{
     let Some((page,actual))=menu(game)else{return false;};
-    if actual!=token||!page.buttons.iter().any(|b|b.slot==button.slot&&b.item==button.item&&b.name==button.name&&b.lore==button.lore){return false;}
+    if !scan::confirmed_button(&page,&actual,token,button,prepared_at,now()){return false;}
     let allowed=read(|_,p,_,_|p.flag("enabled"));
     if !allowed{return false;}
     cancel_scan();

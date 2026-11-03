@@ -594,7 +594,10 @@ fn fresh(at: u64, now: u64, ttl: i64) -> bool {
 }
 fn quote_line(text: &str) -> Option<(Option<Coins>, Option<Coins>)> {
     let text = text.trim().trim_end_matches('.');
-    let text=text.strip_prefix("Price: ").or_else(||text.strip_prefix("Цена: ")).unwrap_or(text);
+    let text = text
+        .strip_prefix("Price: ")
+        .or_else(|| text.strip_prefix("Цена: "))
+        .unwrap_or(text);
     if let Some(s) = text
         .strip_suffix(" each, to buy or sell")
         .or_else(|| text.strip_suffix(" each to buy or sell"))
@@ -608,9 +611,16 @@ fn quote_line(text: &str) -> Option<(Option<Coins>, Option<Coins>)> {
     if let Some(s) = text.strip_suffix(" each, to sell (the market doesn't sell it)") {
         return Some((None, amount(s)));
     }
-    if let Some(s)=text.strip_suffix(" each (the market doesn't buy it)"){return Some((amount(s),None));}
-    if let Some(s)=text.strip_suffix(" each (the market doesn't sell it)"){return Some((None,amount(s)));}
-    if let Some(s)=text.strip_suffix(" за шт., купить или продать"){let p=amount(s)?;return Some((Some(p),Some(p)));}
+    if let Some(s) = text.strip_suffix(" each (the market doesn't buy it)") {
+        return Some((amount(s), None));
+    }
+    if let Some(s) = text.strip_suffix(" each (the market doesn't sell it)") {
+        return Some((None, amount(s)));
+    }
+    if let Some(s) = text.strip_suffix(" за шт., купить или продать") {
+        let p = amount(s)?;
+        return Some((Some(p), Some(p)));
+    }
     let mut buy = None;
     let mut sell = None;
     if let Some((_, s)) = text.split_once("the market pays ") {
@@ -733,9 +743,24 @@ impl Book {
         }
     }
     pub fn market_slot(&mut self, item: &str, lines: &[String], now: u64) {
-        if item=="minecraft:paper"&&lines.iter().any(|l|l.contains("Movers over 24")||l.contains("Динамика за 24")){
-            self.movers=lines.iter().filter(|l|l.contains('▲')||l.contains('▼')||l.contains("No move")||l.contains("Без изменений")).take(10).map(|l|l.chars().take(120).collect()).collect();
-            self.movers_at=now;return;
+        if item == "minecraft:paper"
+            && lines
+                .iter()
+                .any(|l| l.contains("Movers over 24") || l.contains("Динамика за 24"))
+        {
+            self.movers = lines
+                .iter()
+                .filter(|l| {
+                    l.contains('▲')
+                        || l.contains('▼')
+                        || l.contains("No move")
+                        || l.contains("Без изменений")
+                })
+                .take(10)
+                .map(|l| l.chars().take(120).collect())
+                .collect();
+            self.movers_at = now;
+            return;
         }
         let (mut buy, mut sell, mut quoted) = (None, None, false);
         for line in lines {
@@ -752,8 +777,11 @@ impl Book {
             if let Some(value) = line.strip_prefix("1 h ") {
                 self.quotes.entry(item.into()).or_default().hour = Some(value.into());
             }
-            if let Some(value)=line.strip_prefix("Traded in 24 h: ").or_else(||line.strip_prefix("Продано за 24 ч: ")){
-                self.quotes.entry(item.into()).or_default().volume=number(value);
+            if let Some(value) = line
+                .strip_prefix("Traded in 24 h: ")
+                .or_else(|| line.strip_prefix("Продано за 24 ч: "))
+            {
+                self.quotes.entry(item.into()).or_default().volume = number(value);
             }
             if let Some(value) = line.strip_prefix("24 h ") {
                 self.quotes.entry(item.into()).or_default().day = Some(value.into());
@@ -1081,8 +1109,17 @@ impl Book {
         }
         let mut book = Self {
             day: v["day"].as_u64().unwrap_or(0),
-            movers:v["movers"].as_array().map(|rows|rows.iter().take(10).filter_map(Value::as_str).map(|s|s.chars().take(120).collect()).collect()).unwrap_or_default(),
-            movers_at:v["movers_at"].as_u64().unwrap_or(0),
+            movers: v["movers"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .take(10)
+                        .filter_map(Value::as_str)
+                        .map(|s| s.chars().take(120).collect())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            movers_at: v["movers_at"].as_u64().unwrap_or(0),
             ..Self::default()
         };
         let rows = v["quotes"]
@@ -1150,14 +1187,35 @@ mod tests {
     use super::*;
     #[test]
     fn actual_market_lore_prices_limits_volume_and_movers() {
-        let mut b=Book::default();
-        b.market_slot("minecraft:leather",&["Price: 3.01 each, to buy or sell".into(),"You may still sell 7 today".into(),"24 h ▲ 4.1%".into(),"Traded in 24 h: 123".into()],100);
-        let q=&b.quotes["minecraft:leather"];
-        assert_eq!(q.buy,Some(301));assert_eq!(q.sell,Some(301));assert_eq!(q.left,Some((7,100)));assert_eq!(q.volume,Some(123));
-        b.market_slot("minecraft:gravel",&["Price: 2 each (the market doesn't buy it)".into()],100);
-        assert_eq!(b.quotes["minecraft:gravel"].sell,None);
-        b.market_slot("minecraft:paper",&["Movers over 24 hours".into(),"Pumpkin ▲ 11.8%".into()],100);
-        assert_eq!(b.movers,["Pumpkin ▲ 11.8%"]);assert!(!b.quotes.contains_key("minecraft:paper"));
+        let mut b = Book::default();
+        b.market_slot(
+            "minecraft:leather",
+            &[
+                "Price: 3.01 each, to buy or sell".into(),
+                "You may still sell 7 today".into(),
+                "24 h ▲ 4.1%".into(),
+                "Traded in 24 h: 123".into(),
+            ],
+            100,
+        );
+        let q = &b.quotes["minecraft:leather"];
+        assert_eq!(q.buy, Some(301));
+        assert_eq!(q.sell, Some(301));
+        assert_eq!(q.left, Some((7, 100)));
+        assert_eq!(q.volume, Some(123));
+        b.market_slot(
+            "minecraft:gravel",
+            &["Price: 2 each (the market doesn't buy it)".into()],
+            100,
+        );
+        assert_eq!(b.quotes["minecraft:gravel"].sell, None);
+        b.market_slot(
+            "minecraft:paper",
+            &["Movers over 24 hours".into(), "Pumpkin ▲ 11.8%".into()],
+            100,
+        );
+        assert_eq!(b.movers, ["Pumpkin ▲ 11.8%"]);
+        assert!(!b.quotes.contains_key("minecraft:paper"));
     }
     const NOW: u64 = 100_000;
     fn sample() -> (Book, Preferences, Listing) {

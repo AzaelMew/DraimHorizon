@@ -54,14 +54,22 @@ pub(super) fn sidebar(game:&Game<'_>,batch:&mut HudBatch,corners:&mut horizon_cl
         let value=|keys:&[&str]|status.sidebar.iter().find(|(k,_)|keys.iter().any(|key|k.trim().trim_end_matches(':').eq_ignore_ascii_case(key))).map(|(_,v)|v.trim().to_owned());
         let mut performance=vec![(format!("FPS  {:.0}",game.fps),0xdce5ed)];
         if p.flag("sidebar_tps"){performance.push((crate::game::claim_borders_server_tps_view::label(),0x9edccb));}
-        performance.push((format!("Онлайн  {}",value(&["Online","Онлайн"]).unwrap_or_else(||game.remote_tab_players().map(|(p,_,_)|p.len().to_string()).unwrap_or("—".into()))),0xdce5ed));
+        performance.push((format!("Онлайн  {}",value(&["Online","Онлайн"]).unwrap_or_else(||"—".into())),0xdce5ed));
         performance.push((format!("В игре  {}",value(&["Playtime","Время игры"]).unwrap_or("—".into())),0xdce5ed));
-        card(game,batch,corners,p,"СЕРВЕР И ПРОИЗВОДИТЕЛЬНОСТЬ",ui::Icon::Signal,&performance,"performance");
+        card(game,batch,corners,p,"СЕРВЕР · КЛИЕНТ",ui::Icon::Signal,&performance,"performance");
         let mut economy=vec![(format!("Баланс  {} монет",money(book.balance)),0xf0d68a)];
         if p.flag("enabled")&&p.flag("sidebar_limits"){
             economy.push(("Продажа серверу · осталось".into(),0x9aacc0));
             economy.push((format!("{} / {} монет",money(book.coin_left),book.coin_cap.map_or("—".into(),crate::game::claim_borders_economy::fmt)),0xc3dfd3));
             if book.coin_left.is_some_and(|(n,_)|n==0){economy.push(("Сброс лимита · 00:00 UTC".into(),0xd0a778));}
+        }
+        let richest:Vec<_>=status.sidebar.iter().filter(|(k,_)|{let k=k.trim();k.starts_with("1.")||k.starts_with("2.")||k.starts_with("3.")}).take(3).collect();
+        if !richest.is_empty()&&batch.height>=230.0 {
+            economy.push(("Богатейшие игроки".into(),0x9aacc0));
+            for(k,v)in richest{
+                let budget=p.get("sidebar_width") as f32-28.0-game.native_text_width(v);
+                economy.push((format!("{}  {}",ui::clip(game,k.trim(),budget),v.trim()),0xb8c9d7));
+            }
         }
         card(game,batch,corners,p,"ЭКОНОМИКА",ui::Icon::Wallet,&economy,"economy");
     });

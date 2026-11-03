@@ -8,7 +8,9 @@ fn claim_borders_menu_scroll(
         *canceled = true;
         return;
     }
-    if crate::game::claim_borders_commerce_view::scroll(game, scroll[1], canceled) {return;}
+    if crate::game::claim_borders_commerce_view::scroll(game, scroll[1], canceled) {
+        return;
+    }
     if crate::game::claim_borders_waypoint_view::scroll(game, screen, scroll[1], canceled) {
         return;
     }

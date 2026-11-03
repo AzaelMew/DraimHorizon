@@ -7,20 +7,31 @@ struct Pending{token:String,button:scan::Button,at:u64}
 #[derive(Clone)]
 enum Hit{Server(scan::Button),Confirm,Cancel,Page(i32),Search,Standard}
 #[derive(Default)]
-struct State{token:String,hidden:String,query:TextInput,focus:bool,page:usize,hits:Vec<([f32;4],Hit)>,pending:Option<Pending>,action:Option<Pending>,pressed:BTreeSet<i32>,notice:String,copy:Option<String>,paste:bool}
+struct State{icons:Vec<(usize,horizon_client::items::ItemStack)>,token:String,hidden:String,query:TextInput,focus:bool,page:usize,hits:Vec<([f32;4],Hit)>,pending:Option<Pending>,action:Option<Pending>,pressed:BTreeSet<i32>,notice:String,copy:Option<String>,paste:bool}
 fn state<T>(f:impl FnOnce(&mut State)->T)->T{static S:OnceLock<Mutex<State>>=OnceLock::new();f(&mut S.get_or_init(||Mutex::new(State::default())).lock().unwrap_or_else(|p|p.into_inner()))}
 pub(super)fn reset(){state(|s|*s=State::default());}
+pub(super)fn active(game:&Game<'_>)->bool{live(game).is_some()}
 fn live(game:&Game<'_>)->Option<(scan::Page,String)>{
     let page=data::server_page(game)?;
     if state(|s|s.hidden==page.1){None}else{Some(page)}
 }
 pub(super)fn frame(game:&mut Game<'_>){
     if !game.native_on(claims::ID)||game.remote.is_none(){reset();return;}
+    if game.screen==Screen::Inventory{
+        let mut icons=Vec::new();
+        let _=game.menu_session(|menu,_,_|{
+            if matches!(menu.kind(),horizon_client::menu::Kind::Chest(6)){
+                for slot in 0..54 {if let Some(stack)=menu.slot(slot){icons.push((slot,stack.clone()));}}
+            }
+            Some(false)
+        });
+        state(|s|s.icons=icons);
+    }
     let (action,copy,paste)=state(|s|(s.action.take(),s.copy.take(),std::mem::take(&mut s.paste)));
     if let Some(copy)=copy{game.clipboard.set(&copy);}
     if paste{let v=game.clipboard.get();state(|s|{s.query.insert(&v,64);s.page=0;});}
     if let Some(p)=action{
-        let ok=data::now().saturating_sub(p.at)<=10_000&&data::server_click(game,&p.token,&p.button);
+        let ok=data::now().saturating_sub(p.at)<=10_000&&data::server_click(game,&p.token,&p.button,p.at);
         state(|s|s.notice=if ok{"Запрос отправлен серверу".into()}else{"Окно, цена или предмет изменились. Выберите действие заново.".into()});
     }
     if game.screen!=Screen::Inventory{state(|s|{s.pending=None;s.focus=false;s.hits.clear();s.hidden.clear();});}
@@ -34,14 +45,22 @@ fn nav(page:&scan::Page,b:&scan::Button)->bool{
 }
 fn caption(game:&Game<'_>,page:&scan::Page,b:&scan::Button)->String{
     let name=b.name.as_str();
-    if name.starts_with("Buy ") {return name.replacen("Buy ","Купить ",1).replace(" for "," за ").replace("coins","монет");}
-    if name.starts_with("Sell ") {return name.replacen("Sell ","Продать ",1).replace(" for "," за ").replace("coins","монет").replace("all","всё");}
+    let subject=page.buttons.iter().find(|b|b.slot==13&&page.family==scan::Kind::Market).map(|b|crate::game::claim_borders_economy_view::item_label(game,&b.item)).unwrap_or_default();
+    if name.starts_with("Buy ") {return format!("{} · {subject}",name.replacen("Buy ","Купить ",1).replace(" for "," за ").replace("coins","монет"));}
+    if name.starts_with("Sell ") {return format!("{} · {subject}",name.replacen("Sell ","Продать ",1).replace(" for "," за ").replace("coins","монет").replace("all","всё"));}
     match name{"Next page"=>"Следующая страница".into(),"Previous page"=>"Предыдущая страница".into(),"Back"=>"Назад".into(),"Close"=>"Закрыть".into(),"Movers over 24 hours"=>"Динамика за 24 часа".into(),
-        _=>if page.family==scan::Kind::Market&&b.slot<45&&b.lore.iter().any(|l|l.starts_with("Price: ")){crate::game::claim_borders_economy_view::item_label(game,&b.item)}else{name.into()}}
+        _=>if page.family==scan::Kind::Auction&&name.starts_with('#'){
+            let mut parts:Vec<_>=name.split('·').map(str::trim).map(str::to_owned).collect();
+            if parts.len()==4{
+                if let Some((prefix,_))=parts[0].split_once(' '){let count=parts[0].split_whitespace().nth(1).unwrap_or("");parts[0]=format!("{prefix} {count} {}",crate::game::claim_borders_economy_view::item_label(game,&b.item));}
+                parts.join(" · ")
+            }else{name.into()}
+        }else if page.family==scan::Kind::Market&&b.slot<45&&b.lore.iter().any(|l|l.starts_with("Price: ")){crate::game::claim_borders_economy_view::item_label(game,&b.item)}else{name.into()}}
 }
 fn row(game:&Game<'_>,batch:&mut HudBatch,s:&mut State,r:[f32;4],text:&str,detail:&str,hit:Hit,mouse:[f32;2],icon:ui::Icon){
     ui::button_base(game,batch,r,text,false,mouse);
-    ui::icon(game,batch,icon,[r[0]+6.0,r[1]+8.0,12.0,12.0],ui::preferences(game).accent.color());
+    let stack=if let Hit::Server(b)=&hit{s.icons.iter().find(|(slot,_)|*slot==b.slot).map(|(_,stack)|stack)}else{None};
+    if let Some(stack)=stack{game.draw_item(batch,stack,r[0]+4.0,r[1]+6.0);}else{ui::icon(game,batch,icon,[r[0]+6.0,r[1]+8.0,12.0,12.0],ui::preferences(game).accent.color());}
     ui::text(game,batch,&ui::clip(game,text,r[2]-30.0),[r[0]+24.0,r[1]+5.0],0xe3ebf3,false);
     ui::text(game,batch,&ui::clip(game,detail,r[2]-30.0),[r[0]+24.0,r[1]+17.0],0x9aacc0,false);s.hits.push((r,hit));
 }
@@ -50,7 +69,7 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
     let w=(batch.width-16.0).clamp(220.0,740.0);let h=(batch.height-16.0).clamp(180.0,430.0);
     let x=(batch.width-w)*0.5;let y=(batch.height-h)*0.5;let start=batch.vertices.len();
     // Cover vanilla slots so the displayed cards and captured hit regions always agree.
-    game.native_fill(batch,[0.0,0.0,batch.width,batch.height],0xff111b27);
+    game.native_fill(batch,[0.0,0.0,batch.width,batch.height],0x80111b27);
     state(|s|{
         if s.token!=token{s.token=token.clone();s.pending=None;s.page=0;s.hits.clear();}
         s.hits.clear();
@@ -61,13 +80,13 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
         ui::button(game,batch,query,&format!("Поиск: {}{}",s.query.value,if s.focus{"│"}else{""}),s.focus,screen.mouse);s.hits.push((query,Hit::Search));
         let columns=if w>=560.0{3}else if w>=300.0{2}else{1};
         let rows=(((h-122.0)/32.0).floor() as usize).max(1);let per=columns*rows;
-        let entries:Vec<_>=page.buttons.iter().filter(|b|crate::game::claim_borders_input::matches(&s.query.value,&format!("{} {} {}",caption(game,&page,b),b.item,b.lore.join(" ")))).collect();
+        let entries:Vec<_>=page.buttons.iter().filter(|b|!b.name.trim().is_empty()).filter(|b|crate::game::claim_borders_input::matches(&s.query.value,&format!("{} {} {}",caption(game,&page,b),b.item,b.lore.join(" ")))).collect();
         let pages=entries.len().div_ceil(per).max(1);s.page=s.page.min(pages-1);
         let cw=(w-16.0)/columns as f32;
         for(i,b)in entries.iter().skip(s.page*per).take(per).enumerate(){
             let r=[x+8.0+(i%columns) as f32*cw,y+57.0+(i/columns) as f32*32.0,cw-4.0,29.0];
             let detail=b.lore.iter().find(|l|l.starts_with("Price: ")||l.starts_with("Цена: ")).or_else(||b.lore.first()).map(String::as_str).unwrap_or(if nav(&page,b){"Открыть"}else{"Нажмите для просмотра"});
-            row(game,batch,s,r,&caption(game,&page,b),detail,Hit::Server((*b).clone()),screen.mouse,if nav(&page,b){ui::Icon::Next}else{ui::Icon::Market});
+            row(game,batch,s,r,&caption(game,&page,b),&crate::game::claim_borders_economy_view::market_lore(game,detail),Hit::Server((*b).clone()),screen.mouse,if nav(&page,b){ui::Icon::Next}else{ui::Icon::Market});
         }
         let bottom=y+h-57.0;
         ui::button(game,batch,[x+8.0,bottom,28.0,18.0],"←",false,screen.mouse);s.hits.push(([x+8.0,bottom,28.0,18.0],Hit::Page(-1)));
@@ -83,11 +102,12 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
             ui::text(game,batch,"Проверьте действие и серверную цену",[mx+10.0,my+10.0],0xf0d68a,false);
             ui::text(game,batch,&ui::clip(game,&caption(game,&page,&p.button),mw-20.0),[mx+10.0,my+27.0],0xe3ebf3,false);
             let max=(((mh-94.0)/12.0).floor() as usize).max(1);
-            for(i,l)in p.button.lore.iter().take(max).enumerate(){ui::text(game,batch,&ui::clip(game,l,mw-20.0),[mx+10.0,my+45.0+i as f32*12.0],0xb6c7d9,false);}
+            for(i,l)in p.button.lore.iter().take(max).enumerate(){ui::text(game,batch,&ui::clip(game,&crate::game::claim_borders_economy_view::market_lore(game,l),mw-20.0),[mx+10.0,my+45.0+i as f32*12.0],0xb6c7d9,false);}
             let transaction=!nav(&page,&p.button);
+            let passive=p.button.slot==48||(page.family==scan::Kind::Market&&(p.button.slot==46||p.button.slot==13));
             let cr=[mx+10.0,my+mh-28.0,(mw-26.0)*0.5,20.0];let ok=[mx+mw*0.5+3.0,my+mh-28.0,(mw-26.0)*0.5,20.0];
             ui::button(game,batch,cr,"Отмена",false,screen.mouse);s.hits.push((cr,Hit::Cancel));
-            ui::button(game,batch,ok,if transaction{"Подтвердить действие"}else{"Открыть"},false,screen.mouse);s.hits.push((ok,Hit::Confirm));
+            if !passive{ui::button(game,batch,ok,if transaction{"Подтвердить действие"}else{"Открыть"},false,screen.mouse);s.hits.push((ok,Hit::Confirm));}
             ui::text(game,batch,"Итог и ограничения определяет сервер",[mx+10.0,my+mh-43.0],0x9aacc0,false);
         }
     });

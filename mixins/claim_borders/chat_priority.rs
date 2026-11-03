@@ -95,9 +95,9 @@ mod tests {
     use super::*;
     #[test]
     fn legacy_opt_out_cannot_hide_friends() {
-        let p=Preferences::decode(r#"{"schema":1,"rules":[],"friends":false}"#).unwrap();
-        assert!(p.rule("Friend",true).unwrap().pinned);
-        assert!(p.rule("Stranger",false).is_none());
+        let p = Preferences::decode(r#"{"schema":1,"rules":[],"friends":false}"#).unwrap();
+        assert!(p.rule("Friend", true).unwrap().pinned);
+        assert!(p.rule("Stranger", false).is_none());
     }
     #[test]
     fn names_match_exactly_and_settings_round_trip() {

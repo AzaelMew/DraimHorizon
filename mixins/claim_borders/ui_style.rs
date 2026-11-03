@@ -574,6 +574,10 @@ mod tests {
     #[test]
     fn icons_fit_their_grid_and_exist_for_the_inventory_controls() {
         for icon in [
+            Icon::Search,
+            Icon::Portal,
+            Icon::Chest,
+            Icon::Star,
             Icon::Pin,
             Icon::People,
             Icon::Map,

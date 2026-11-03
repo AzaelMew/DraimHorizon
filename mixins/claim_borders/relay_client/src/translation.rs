@@ -54,7 +54,15 @@ impl Translator {
                     } else if Instant::now() < retry {
                         None
                     } else {
-                        match request(&agent, ENDPOINT, &text, if english { "en" } else { "ru" }).or_else(|_|request(&agent,"https://translate.google.com/translate_a/single",&text,if english{"en"}else{"ru"})) {
+                        match request(&agent, ENDPOINT, &text, if english { "en" } else { "ru" })
+                            .or_else(|_| {
+                                request(
+                                    &agent,
+                                    "https://translate.google.com/translate_a/single",
+                                    &text,
+                                    if english { "en" } else { "ru" },
+                                )
+                            }) {
                             Ok(value) => {
                                 if cache.len() >= 256
                                     && let Some(old) = order.pop_front()
@@ -158,9 +166,16 @@ mod tests {
     #[test]
     #[ignore = "Public provider smoke test; sends only a fixed greeting"]
     fn public_provider_translates_fixed_greeting() {
-        let agent=ureq::AgentBuilder::new().timeout(Duration::from_secs(8)).redirects(3).build();
-        let value=request(&agent,ENDPOINT,"Hello world","ru").unwrap();
-        assert!(value.chars().any(|c|('\u{0400}'..='\u{052f}').contains(&c)));
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(8))
+            .redirects(3)
+            .build();
+        let value = request(&agent, ENDPOINT, "Hello world", "ru").unwrap();
+        assert!(
+            value
+                .chars()
+                .any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
+        );
     }
     #[test]
     fn english_translation_covers_mixed_russian_but_never_commands() {

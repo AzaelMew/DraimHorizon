@@ -342,8 +342,18 @@ fn map_marks(
                     );
                 }
             } else {
-                let kind=if mark.friend{crate::game::claim_borders_waypoints::MarkerKind::Pin}else{crate::game::claim_borders_client::waypoint_kind(dimension,mark.position)};
-                ui::icon(game,batch,crate::game::claim_borders_waypoint_view::icon(kind),[at[0]-5.0,at[1]-5.0,10.0,10.0],mark.color);
+                let kind = if mark.friend {
+                    crate::game::claim_borders_waypoints::MarkerKind::Pin
+                } else {
+                    crate::game::claim_borders_client::waypoint_kind(dimension, mark.position)
+                };
+                ui::icon(
+                    game,
+                    batch,
+                    crate::game::claim_borders_waypoint_view::icon(kind),
+                    [at[0] - 5.0, at[1] - 5.0, 10.0, 10.0],
+                    mark.color,
+                );
             }
             if full && p.labels {
                 label(
@@ -660,7 +670,9 @@ pub(super) fn render(
     let (source, dimension, view, image, warning) = state(|s| {
         s.rect = Some(rect);
         if let Some(drag) = &s.drag {
-            if (screen.mouse[0]-drag.mouse[0]).hypot(screen.mouse[1]-drag.mouse[1])>5.0 {s.left_click=None;}
+            if (screen.mouse[0] - drag.mouse[0]).hypot(screen.mouse[1] - drag.mouse[1]) > 5.0 {
+                s.left_click = None;
+            }
             s.view.center = [
                 drag.center[0]
                     - f64::from(
@@ -966,25 +978,56 @@ pub(super) fn mouse(
         {
             operate(game, button);
         } else {
-            let target=state(|s| {
-                let rect=s.rect?;
-                if !contains(rect,screen.mouse){return None;}
-                let (dimension,view,aspect)=s.published.clone()?;
-                if dimension!=s.dimension{return None;}
-                let double=s.left_click.as_ref().is_some_and(|(at,old,dim)|at.elapsed().as_millis()<=400&&dim==&dimension&&(old[0]-screen.mouse[0]).hypot(old[1]-screen.mouse[1])<5.0);
-                s.left_click=Some((std::time::Instant::now(),screen.mouse,dimension.clone()));
-                s.drag=Some(Drag{mouse:screen.mouse,center:s.view.center});s.follow=false;
-                if !double{return None;}
-                s.left_click=None;s.drag=None;
-                let world=view.world_aspect([(screen.mouse[0]-rect[0])/rect[2]*128.0,(screen.mouse[1]-rect[1])/rect[3]*128.0],128.0,aspect);
-                Some((dimension,world,7.0*128.0*f64::from(view.blocks_per_pixel)/f64::from(rect[3])))
+            let target = state(|s| {
+                let rect = s.rect?;
+                if !contains(rect, screen.mouse) {
+                    return None;
+                }
+                let (dimension, view, aspect) = s.published.clone()?;
+                if dimension != s.dimension {
+                    return None;
+                }
+                let double = s.left_click.as_ref().is_some_and(|(at, old, dim)| {
+                    at.elapsed().as_millis() <= 400
+                        && dim == &dimension
+                        && (old[0] - screen.mouse[0]).hypot(old[1] - screen.mouse[1]) < 5.0
+                });
+                s.left_click = Some((std::time::Instant::now(), screen.mouse, dimension.clone()));
+                s.drag = Some(Drag {
+                    mouse: screen.mouse,
+                    center: s.view.center,
+                });
+                s.follow = false;
+                if !double {
+                    return None;
+                }
+                s.left_click = None;
+                s.drag = None;
+                let world = view.world_aspect(
+                    [
+                        (screen.mouse[0] - rect[0]) / rect[2] * 128.0,
+                        (screen.mouse[1] - rect[1]) / rect[3] * 128.0,
+                    ],
+                    128.0,
+                    aspect,
+                );
+                Some((
+                    dimension,
+                    world,
+                    7.0 * 128.0 * f64::from(view.blocks_per_pixel) / f64::from(rect[3]),
+                ))
             });
-            if let Some((dim,point,radius))=target{
-                if let Some(w)=crate::game::claim_borders_client::own_waypoints().into_iter()
-                    .filter(|w|w.dimension==dim)
-                    .map(|w|{let d=(w.position[0]-point[0]).hypot(w.position[2]-point[1]);(w.id,d)})
-                    .filter(|(_,d)|*d<=radius)
-                    .min_by(|a,b|a.1.total_cmp(&b.1)){
+            if let Some((dim, point, radius)) = target {
+                if let Some(w) = crate::game::claim_borders_client::own_waypoints()
+                    .into_iter()
+                    .filter(|w| w.dimension == dim)
+                    .map(|w| {
+                        let d = (w.position[0] - point[0]).hypot(w.position[2] - point[1]);
+                        (w.id, d)
+                    })
+                    .filter(|(_, d)| *d <= radius)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                {
                     crate::game::claim_borders_waypoint_view::queue_delete(w.0);
                 }
             }
