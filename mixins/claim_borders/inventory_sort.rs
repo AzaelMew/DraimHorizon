@@ -225,6 +225,7 @@ pub fn traversal(indices: &[usize], columns: usize, by_columns: bool) -> Vec<usi
     }
     result
 }
+#[cfg(test)]
 pub fn next(slots: &[Option<Stack>]) -> Result<Option<Plan>, String> {
     next_sort(slots, &(0..slots.len()).collect::<Vec<_>>(), Mode::Id)
 }
