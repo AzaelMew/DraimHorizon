@@ -113,6 +113,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
         });
     }
 }
+fn detail_page(page: &scan::Page) -> bool {
+    page.buttons
+        .iter()
+        .any(|b| b.slot == 39 && b.item == "minecraft:map")
+}
 fn nav(page: &scan::Page, b: &scan::Button) -> bool {
     b.item == "minecraft:arrow" && [45, 47, 51].contains(&b.slot)
         || b.slot == 53 && b.item == "minecraft:barrier"
@@ -127,6 +132,7 @@ fn nav(page: &scan::Page, b: &scan::Button) -> bool {
             && (b.name.starts_with("All listings") || b.name.starts_with("Все лоты"))
         || page.family == scan::Kind::Market
             && b.slot < 45
+            && !(b.slot == 13 && detail_page(page))
             && b.lore
                 .iter()
                 .any(|l| l.starts_with("Price: ") || l.starts_with("Цена: "))

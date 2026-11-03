@@ -29,7 +29,7 @@ pub struct Status {
     pub sale: Option<Hand>,
     pub menu_token: String,
     pub menu_slots: Vec<(usize, String, Option<u64>)>,
-    pub page:Option<scan::Page>,
+    pub page: Option<scan::Page>,
 }
 struct State {
     scope: String,
@@ -54,9 +54,9 @@ struct State {
     menu_token: String,
     nav_last: u64,
     return_scan: bool,
-    auto_cycle:bool,
-    last_auto:u64,
-    opening:Option<(String,u64)>,
+    auto_cycle: bool,
+    last_auto: u64,
+    opening: Option<(String, u64)>,
     seen_pages: std::collections::BTreeSet<u64>,
     ah_pages: std::collections::BTreeSet<u64>,
 }
@@ -85,9 +85,9 @@ impl Default for State {
             menu_token: String::new(),
             nav_last: 0,
             return_scan: false,
-            auto_cycle:false,
-            last_auto:0,
-            opening:None,
+            auto_cycle: false,
+            last_auto: 0,
+            opening: None,
             seen_pages: std::collections::BTreeSet::new(),
             ah_pages: std::collections::BTreeSet::new(),
         }
@@ -183,7 +183,9 @@ pub(super) fn command(command: &str) {
         if s.scanner.active {
             s.scanner.stop();
             s.return_scan = false;
-            s.status.scanning=false;s.auto_cycle=false;s.opening=None;
+            s.status.scanning = false;
+            s.auto_cycle = false;
+            s.opening = None;
             s.status.message = "Сканирование остановлено командой игрока".into();
         }
         s.replies.manual(command);
@@ -200,8 +202,8 @@ pub(super) fn command(command: &str) {
 }
 pub(super) fn cancel_scan() {
     state(|s| {
-        s.auto_cycle=false;
-        s.opening=None;
+        s.auto_cycle = false;
+        s.opening = None;
         if s.scanner.active {
             s.scanner.stop();
             s.return_scan = false;
@@ -309,7 +311,7 @@ fn actions(game: &mut Game<'_>) {
                     view::notice("Сначала включите модуль экономики".into());
                     continue;
                 }
-                start_scan(game,kind,false);
+                start_scan(game, kind, false);
             }
             Action::Stop => cancel_scan(),
             Action::Close => {
@@ -515,12 +517,25 @@ pub(super) fn frame(game: &mut Game<'_>) {
         return;
     }
     let ui_visible = view::visible();
-    let auto=state(|s|{
-        if ui_visible&&game.native_mod_screen()==Some(claims::ID)&&s.pref.flag("enabled")&&s.pref.flag("auto_poll")&&!s.scanner.active&&s.status.sale.is_none()&&(s.last_auto==0||now.saturating_sub(s.last_auto)>120_000){
-            s.last_auto=now;s.auto_cycle=true;true
-        }else{false}
+    let auto = state(|s| {
+        if ui_visible
+            && game.native_mod_screen() == Some(claims::ID)
+            && s.pref.flag("enabled")
+            && s.pref.flag("auto_poll")
+            && !s.scanner.active
+            && s.status.sale.is_none()
+            && (s.last_auto == 0 || now.saturating_sub(s.last_auto) > 120_000)
+        {
+            s.last_auto = now;
+            s.auto_cycle = true;
+            true
+        } else {
+            false
+        }
     });
-    if auto{start_scan(game,scan::Kind::Market,true);}
+    if auto {
+        start_scan(game, scan::Kind::Market, true);
+    }
 
     let sidebar = crate::game::scoreboard::claim_borders_economy_sidebar::read(game);
     let held = game
@@ -567,7 +582,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     let mut finish = false;
     state(|s| {
         if let Some((page, token)) = &page {
-            s.status.page=Some(page.clone());
+            s.status.page = Some(page.clone());
             s.status.menu_token = token.clone();
             s.status.menu_slots = page
                 .buttons
@@ -622,12 +637,24 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
                 s.dirty = true;
             }
-            let ready=if let Some((old,at))=&s.opening{
-                if old!=token&&s.scanner.kind==Some(page.family){s.opening=None;true}
-                else if now.saturating_sub(*at)>10_000{
-                    s.scanner.stop();s.status.scanning=false;s.auto_cycle=false;s.return_scan=false;s.opening=None;s.status.message="Сервер не открыл запрошенное меню".into();false
-                }else{false}
-            }else{true};
+            let ready = if let Some((old, at)) = &s.opening {
+                if old != token && s.scanner.kind == Some(page.family) {
+                    s.opening = None;
+                    true
+                } else if now.saturating_sub(*at) > 10_000 {
+                    s.scanner.stop();
+                    s.status.scanning = false;
+                    s.auto_cycle = false;
+                    s.return_scan = false;
+                    s.opening = None;
+                    s.status.message = "Сервер не открыл запрошенное меню".into();
+                    false
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
             if s.scanner.active && ready {
                 match s.scanner.next(
                     page,
@@ -685,8 +712,20 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let _ = game.menu_ops(&[(Some(300 + slot), 0, Input::Pickup)]);
     }
     if finish {
-        let next=state(|s|if s.auto_cycle&&s.scanner.kind==Some(scan::Kind::Market){true}else{s.auto_cycle=false;false});
-        if next{start_scan(game,scan::Kind::Auction,true);}else{client::open_trades(game);}
+        let next = state(|s| {
+            if s.auto_cycle && s.scanner.kind == Some(scan::Kind::Market) {
+                true
+            } else {
+                s.auto_cycle = false;
+                s.last_auto = now;
+                false
+            }
+        });
+        if next {
+            start_scan(game, scan::Kind::Auction, true);
+        } else {
+            client::open_trades(game);
+        }
     }
     let read_command = state(|s| {
         if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
@@ -726,50 +765,76 @@ pub(super) fn frame(game: &mut Game<'_>) {
     }
 }
 
-fn start_scan(game:&mut Game<'_>,kind:scan::Kind,automatic:bool){
-    let now=now();
-    let old=format!("{:?}|{}",game.remote_menu(),game.draimhorizons_menu_stamp());
-                state(|s| {
-                    s.opening=Some((old,now));
-                    s.auto_cycle=automatic;
-                    s.last_auto=now;
-                    s.scanner.start(kind, now);
-                    s.status.scanning = true;
-                    s.status.pages = 0;
-                    s.status.message =
-                        "Сканер: только навигация, ручной ввод остановит обход".into();
-                    s.return_scan = true;
-                    s.seen_pages.clear();
-                    if kind == scan::Kind::Auction {
-                        s.book.generation = s.book.generation.wrapping_add(1);
-                        s.book.complete_scan = false;
-                        s.ah_pages.clear();
-                        s.book.observed_pages = 0;
-                    }
-                });
-                view::close();
-                request(
-                    game,
-                    if kind == scan::Kind::Auction {
-                        "ah"
-                    } else {
-                        "market"
-                    }
-                    .into(),
-                    false,
-                );
+fn start_scan(game: &mut Game<'_>, kind: scan::Kind, automatic: bool) {
+    let now = now();
+    let old = format!(
+        "{:?}|{}",
+        game.remote_menu(),
+        game.draimhorizons_menu_stamp()
+    );
+    state(|s| {
+        s.opening = Some((old, now));
+        s.auto_cycle = automatic;
+        s.last_auto = now;
+        s.scanner.start(kind, now);
+        s.status.scanning = true;
+        s.status.pages = 0;
+        s.status.message = "Сканер: только навигация, ручной ввод остановит обход".into();
+        s.return_scan = true;
+        s.seen_pages.clear();
+        if kind == scan::Kind::Auction {
+            s.book.generation = s.book.generation.wrapping_add(1);
+            s.book.complete_scan = false;
+            s.ah_pages.clear();
+            s.book.observed_pages = 0;
+        }
+    });
+    view::close();
+    request(
+        game,
+        if kind == scan::Kind::Auction {
+            "ah"
+        } else {
+            "market"
+        }
+        .into(),
+        false,
+    );
 }
 
-pub(super) fn server_page(game:&Game<'_>)->Option<(scan::Page,String)>{
-    if !game.native_on(claims::ID)||game.screen!=Screen::Inventory{return None;}
-    let token=format!("{:?}|{}",game.remote_menu(),game.draimhorizons_menu_stamp());
-    read(|_,p,status,_|if p.flag("enabled")&&p.flag("overlay")&&status.menu_token==token{status.page.clone().map(|page|(page,token))}else{None})
+pub(super) fn server_page(game: &Game<'_>) -> Option<(scan::Page, String)> {
+    if !game.native_on(claims::ID) || game.screen != Screen::Inventory {
+        return None;
+    }
+    let token = format!(
+        "{:?}|{}",
+        game.remote_menu(),
+        game.draimhorizons_menu_stamp()
+    );
+    read(|_, p, status, _| {
+        if p.flag("enabled") && p.flag("overlay") && status.menu_token == token {
+            status.page.clone().map(|page| (page, token))
+        } else {
+            None
+        }
+    })
 }
-pub(super) fn server_click(game:&mut Game<'_>,token:&str,button:&scan::Button,prepared_at:u64)->bool{
-    let Some((page,actual))=menu(game)else{return false;};
-    if !scan::confirmed_button(&page,&actual,token,button,prepared_at,now()){return false;}
-    let allowed=read(|_,p,_,_|p.flag("enabled"));
-    if !allowed{return false;}
+pub(super) fn server_click(
+    game: &mut Game<'_>,
+    token: &str,
+    button: &scan::Button,
+    prepared_at: u64,
+) -> bool {
+    let Some((page, actual)) = menu(game) else {
+        return false;
+    };
+    if !scan::confirmed_button(&page, &actual, token, button, prepared_at, now()) {
+        return false;
+    }
+    let allowed = read(|_, p, _, _| p.flag("enabled"));
+    if !allowed {
+        return false;
+    }
     cancel_scan();
-    game.menu_ops(&[(Some(300+button.slot),0,Input::Pickup)])
+    game.menu_ops(&[(Some(300 + button.slot), 0, Input::Pickup)])
 }

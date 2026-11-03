@@ -45,14 +45,27 @@ fn card(
     lines: &[(String, u32)],
     key: &str,
 ) {
-    let scale = p.get("sidebar_scale") as f32 / 100.0;
+    let natural_height = 27.0 + lines.len() as f32 * 13.0;
+    let scale = (p.get("sidebar_scale") as f32 / 100.0)
+        .min((batch.height - 8.0) / natural_height)
+        .max(0.25);
     let width = (p.get("sidebar_width") as f32 * scale).min(batch.width - 12.0);
-    let height = (27.0 + lines.len() as f32 * 13.0) * scale;
-    let (x, y) = corners.place(
-        crate::game::claim_borders_map_view::corner(p.get("sidebar_corner") as u8),
+    let height = natural_height * scale;
+    let preferred = p.get("sidebar_corner") as u8;
+    let (mut x, mut y) = corners.place(
+        crate::game::claim_borders_map_view::corner(preferred),
         width,
         height,
     );
+    if y < 2.0 || y + height > batch.height - 2.0 {
+        (x, y) = corners.place(
+            crate::game::claim_borders_map_view::corner(preferred ^ 1),
+            width,
+            height,
+        );
+    }
+    x = x.clamp(2.0, (batch.width - width - 2.0).max(2.0));
+    y = y.clamp(2.0, (batch.height - height - 2.0).max(2.0));
     let start = batch.vertices.len();
     let left = x / scale;
     let top = y / scale;

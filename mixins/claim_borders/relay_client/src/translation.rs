@@ -112,11 +112,16 @@ impl Drop for Translator {
         self.stop.store(true, Ordering::Release);
     }
 }
-pub fn needs_translation(text:&str)->bool{
-    if text.trim_start().starts_with('/'){return false;}
-    let foreign=|c:char|c.is_alphabetic()&&!('\u{0400}'..='\u{052f}').contains(&c);
-    if !text.chars().any(|c|('\u{0400}'..='\u{052f}').contains(&c)){return text.chars().any(foreign);}
-    text.split_whitespace().any(|word|word.chars().filter(|c|foreign(*c)).count()>=2)
+pub fn needs_translation(text: &str) -> bool {
+    if text.trim_start().starts_with('/') {
+        return false;
+    }
+    let foreign = |c: char| c.is_alphabetic() && !('\u{0400}'..='\u{052f}').contains(&c);
+    if !text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c)) {
+        return text.chars().any(foreign);
+    }
+    text.split_whitespace()
+        .any(|word| word.chars().filter(|c| foreign(*c)).count() >= 2)
 }
 pub fn needs_english(text: &str) -> bool {
     !text.trim_start().starts_with('/')
