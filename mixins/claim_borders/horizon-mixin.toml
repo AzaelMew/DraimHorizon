@@ -699,3 +699,22 @@ id = "waypoint-view"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_waypoint_view"
 source = "waypoint_view.rs"
+
+[[injection]]
+id = "chat-input-layout"
+kind = "HEAD"
+target = "horizon_client::game::chat::Game<'_>::draw_chat_screen"
+helper = "chat_input_layout_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+ { name = "batch", ty = "&horizon_client::hud::HudBatch", value = "&*batch" },
+]
+[[injection]]
+id = "chat-outgoing-toggle"
+kind = "RETURN"
+target = "horizon_client::game::chat::Game<'_>::draw_chat_screen"
+helper = "chat_toggle_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]

@@ -129,3 +129,20 @@ pub(super) fn frame(game: &mut Game<'_>) {
         game.send_signed_chat(&message);
     }
 }
+
+fn toggle_rect(size:[f32;2])->[f32;4]{[2.0,size[1]-14.0,64.0,12.0]}
+pub(super) fn draw_toggle(game:&Game<'_>,batch:&mut horizon_client::hud::HudBatch){
+    if game.screen!=crate::game::Screen::Chat||!game.native_on(claims::ID){return;}
+    let rect=toggle_rect([batch.width,batch.height]);
+    crate::game::claim_borders_ui_view::button(game,batch,rect,if enabled(game){"RU → EN: вкл."}else{"RU → EN: выкл."},enabled(game),game.native_cursor());
+}
+static TOGGLE_PRESSED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub(super) fn toggle_mouse(game:&Game<'_>,screen:&crate::game::native_hooks::NativeScreenView<'_>,button:i32,pressed:bool,canceled:&mut bool)->bool{
+    if !pressed&&button==0&&TOGGLE_PRESSED.swap(false,std::sync::atomic::Ordering::Relaxed){*canceled=true;return true;}
+    if !pressed||button!=0||game.screen!=crate::game::Screen::Chat||!game.native_on(claims::ID){return false;}
+    if crate::game::claim_borders_ui_style::contains(toggle_rect([screen.rect[2],screen.rect[3]]),screen.mouse){
+        let value=!enabled(game);
+        game.native_set_setting(claims::ID,"chat_outgoing_en",if value{"true"}else{"false"});
+        TOGGLE_PRESSED.store(true,std::sync::atomic::Ordering::Relaxed);*canceled=true;true
+    }else{false}
+}

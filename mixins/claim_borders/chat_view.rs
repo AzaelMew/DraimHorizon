@@ -25,6 +25,8 @@ struct State {
     loaded: bool,
     translator: Option<Translator>,
     requested: HashSet<u64>,
+    retry: HashMap<u64,(u64,u8)>,
+    translation_failed: bool,
     heads: HashMap<String, (u128, String)>,
     hits: Vec<options::Hit>,
     hit_viewport: [f32; 2],
@@ -45,6 +47,8 @@ impl Default for State {
             loaded: false,
             translator: None,
             requested: HashSet::new(),
+            retry: HashMap::new(),
+            translation_failed: false,
             heads: HashMap::new(),
             hits: Vec::new(),
             hit_viewport: [0.0, 0.0],
@@ -127,6 +131,8 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
             if !value {
                 s.translator = None;
                 s.requested.clear();
+                s.retry.clear();
+                s.translation_failed=false;
             }
         } else {
             s.settings.modern = value;
@@ -198,6 +204,7 @@ fn capture_inner(game: &Game<'_>, text: &str, component: Option<&serde_json::Val
         }
         let retained: HashSet<_> = s.feed.entries.iter().map(|e| e.id).collect();
         s.requested.retain(|id| retained.contains(id));
+        s.retry.retain(|id,_|retained.contains(id));
     });
 }
 fn event_entry(entry: &model::Entry, p: options::Preferences) -> bool {
@@ -556,10 +563,18 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     let show_players = game.ui.chat.shows(horizon_client::chat::ChatSource::Player);
     let (entries, now, scroll) = state(|s| {
         if config.translate {
+            let now=s.started.elapsed().as_millis() as u64;
             let worker = s.translator.get_or_insert_with(Translator::default);
             while let Some((id, value)) = worker.poll() {
                 if let Some(value) = value {
                     s.feed.translate(id, value);
+                    s.translation_failed=false;
+                    s.retry.remove(&id);
+                } else {
+                    s.requested.remove(&id);
+                    let attempts=s.retry.get(&id).map_or(1,|(_,n)|n.saturating_add(1));
+                    s.retry.insert(id,(now+15_000*(1u64<<attempts.min(4)),attempts));
+                    s.translation_failed=true;
                 }
             }
             for e in s.feed.entries.iter().rev().take(64) {
@@ -567,6 +582,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                     || (e.kind == model::Kind::Death && event_entry(e, p)))
                     && e.translated.is_none()
                     && !s.requested.contains(&e.id)
+                    && s.retry.get(&e.id).is_none_or(|(at,_)|now>=*at)
                     && worker.submit(e.id, &e.original)
                 {
                     s.requested.insert(e.id);
@@ -580,7 +596,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         )
     });
     let viewport = [batch.width, batch.height];
-    let layout = options::Layout::new(p, viewport);
+    let layout = options::Layout::new(p, if focused{[viewport[0],(viewport[1]-18.0).max(60.0)]}else{viewport});
     if !entries.is_empty()
         && let Some((players, _, _)) = game.remote_tab_players()
     {
@@ -659,7 +675,8 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         let hint = if scroll > 0 {
             format!("История ↑ {scroll} · ЛКМ: оригинал / перевод")
         } else {
-            "ЛКМ: оригинал / перевод · колесо: история".into()
+            let status=state(|s|if !config.translate{"RU: выкл."}else if s.translation_failed{"RU: сервис недоступен · повтор автоматически"}else{"RU: автоперевод"});
+            format!("{status} · ЛКМ: оригинал / перевод")
         };
         let start = batch.vertices.len();
         text(game, batch, &hint, [x + 2.0, y + h + 4.0], 0xa99eff, 1.0);
