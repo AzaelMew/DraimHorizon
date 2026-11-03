@@ -15,6 +15,7 @@ struct State {
     path: PathBuf,
     book: model::Observations,
     pending: VecDeque<(claims::Claim, u64)>,
+    breaks: model::BreakEvidence,
     sent: BTreeMap<String, (u64, usize)>,
     frames: Vec<String>,
     revision: u64,
@@ -236,4 +237,31 @@ pub(super) fn frame(game: &mut Game<'_>) {
             s.last_send = time;
         });
     }
+}
+
+pub(super)fn break_attempt(game:&Game<'_>,pos:Option<[i32;3]>){
+    if !game.native_on(claims::ID)||game.remote.is_none(){return;}
+    let Some(p)=game.native_player()else{return;};
+    let Some((scope,_))=client::scope(game)else{return;};
+    let dimension=if p.dimension.contains(':'){p.dimension.into()}else{format!("minecraft:{}",p.dimension)};
+    let time=now();
+    state(|s|{
+        if s.scope!=scope{s.breaks=model::BreakEvidence::default();return;}
+        if let Some(pos)=pos{s.breaks.attempt(&dimension,pos,time);}else{s.breaks.interrupt(time);}
+    });
+}
+pub(super)fn action_bar(game:&Game<'_>,text:&str){
+    if !game.native_on(claims::ID)||game.remote.is_none(){return;}
+    let text=claims::strip_formatting(text);
+    if model::denied_owner(&text).is_none(){return;}
+    let Some(p)=game.native_player()else{return;};
+    let Some((scope,_))=client::scope(game)else{return;};
+    let dimension=if p.dimension.contains(':'){p.dimension.into()}else{format!("minecraft:{}",p.dimension)};
+    let time=now();
+    state(|s|{
+        if s.scope!=scope{s.breaks=model::BreakEvidence::default();return;}
+        let Some((claim,owner))=s.breaks.denial(&dimension,&text,time)else{return;};
+        if s.book.records.get(&claim).is_some_and(|r|r.owner.as_deref()==Some(owner.as_str())&&time.saturating_sub(r.at)<30_000){return;}
+        if let Ok(changed)=s.book.merge(model::Record{claim,owner:Some(owner),at:time,reporter:s.name.clone()},time){s.dirty|=changed;}
+    });
 }

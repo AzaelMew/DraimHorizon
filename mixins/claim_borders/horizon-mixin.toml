@@ -735,3 +735,22 @@ helper = "commerce_inventory_hook.rs"
 bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
 ]
+
+[[injection]]
+id = "claim-break-evidence"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::send"
+helper = "claim_break_send_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "packet", ty = "&horizon_protocol::packets::play::Serverbound", value = "&packet" },
+]
+[[injection]]
+id = "claim-actionbar-observation"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::handle_packet"
+helper = "claim_actionbar_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "packet", ty = "&horizon_protocol::packets::play::Clientbound", value = "&packet" },
+]

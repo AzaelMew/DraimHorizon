@@ -122,16 +122,16 @@ fn label(game:&Game<'_>,page:&scan::Page,b:&scan::Button)->String{
     match scan::role(page,b){
         Close=>"Закрыть".into(),Back=>"Назад".into(),Previous=>"Предыдущая страница".into(),Next=>"Следующая страница".into(),
         Balance=>b.name.replace("Balance:","Баланс:").replace("coins","монет"),News=>"Динамика · 24 часа".into(),
-        Help=>"Информация".into(),Mine=>"Мои объявления".into(),Mail=>"Почта".into(),ClaimAll=>"Забрать всё".into(),Claim=>"Забрать посылку".into(),
+        Help=>"Информация".into(),Mine=>"Мои объявления".into(),Mail=>"Почта".into(),ClaimAll=>"Забрать всё".into(),Claim=>format!("Получить · {}",crate::game::claim_borders_economy_view::item_label(game,&b.item)),
         Buy(n) if n>0=>format!("Купить {n}"),Sell(n)=>format!("Продать {n}"),SellAll=>"Продать всё".into(),
         Buy(_)=>format!("Купить лот · {}",b.name.split_once(" for ").map(|(_,v)|v).unwrap_or(&b.name).replace("coins","монет")),
         Bid=>b.name.replacen("Bid ","Ставка ",1).replace("coins","монет"),Chart(1)=>"График · 24 часа".into(),Chart(_)=>"График · 7 дней".into(),
-        Goods|Preview=>if page.family==scan::Kind::Auction&&!b.name.starts_with('#'){b.name.clone()}else{crate::game::claim_borders_economy_view::item_label(game,&b.item)},
+        Goods|Preview=>if page.family==scan::Kind::Auction&&!b.name.trim().is_empty()&&!b.name.starts_with('#'){b.name.clone()}else{crate::game::claim_borders_economy_view::item_label(game,&b.item)},
         Listing=>{
             let facts=scan::listing_text(b).unwrap_or_default();
             let head=facts.split('·').next().unwrap_or("").trim();
             let count=head.split_whitespace().nth(1).unwrap_or("");
-            let name=if !b.name.starts_with('#'){b.name.clone()}else{crate::game::claim_borders_economy_view::item_label(game,&b.item)};
+            let name=if !b.name.trim().is_empty()&&!b.name.starts_with('#'){b.name.clone()}else{crate::game::claim_borders_economy_view::item_label(game,&b.item)};
             format!("{name} ×{count}")
         },
         Category=>local_category(&b.name),
@@ -233,7 +233,7 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
             let query=[x+8.0,y+58.0,w-16.0,18.0];
             if !confirming{ui::button(game,batch,query,&format!("Поиск: {}{}",s.query.value,if s.focus{"│"}else{""}),s.focus,screen.mouse);s.hits.push((query,Hit::Search));}
             let cols=if w>=560.0{3}else if w>=300.0{2}else{1};let rows=(((h-140.0)/33.0).floor()as usize).max(1);let per=cols*rows;
-            let entries:Vec<_>=page.buttons.iter().filter(|b|!b.name.trim().is_empty()&&!scan::role(&page,b).service())
+            let entries:Vec<_>=page.buttons.iter().filter(|b|(!b.name.trim().is_empty()||scan::role(&page,b)!=Inspect)&&!scan::role(&page,b).service())
                 .filter(|b|crate::game::claim_borders_input::matches(&s.query.value,&format!("{} {} {}",label(game,&page,b),b.item,b.lore.join(" ")))).collect();
             let pages=entries.len().div_ceil(per).max(1);s.page=s.page.min(pages-1);let gw=(w-16.0)/cols as f32;
             for(i,b)in entries.iter().skip(s.page*per).take(per).enumerate(){goods(game,batch,s,&page,b,[x+8.0+(i%cols)as f32*gw,y+if confirming{58.0}else{82.0}+(i/cols)as f32*33.0,gw-4.0,30.0],screen.mouse);}

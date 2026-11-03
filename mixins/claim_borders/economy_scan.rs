@@ -458,6 +458,10 @@ mod tests {
             "#1165 64 Netherrack · 1 coins (0.02 each) · rdblclient · 1d 22h left"
         );
         assert_eq!(role(&p, &custom), Role::Listing);
+        let mut unnamed = custom.clone();
+        unnamed.name.clear();
+        assert_eq!(role(&p, &unnamed), Role::Listing);
+        assert_eq!(listing_text(&unnamed), listing_text(&custom));
         assert_eq!(
             role(&p, &b(11, "minecraft:chest", "Other (91 listings)")),
             Role::Category
