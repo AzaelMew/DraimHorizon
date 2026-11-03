@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800"><defs><linearGradient id="world" x2="0.8" y2="1"><stop stop-color="#203443"/><stop offset="1" stop-color="#18262d"/></linearGradient></defs><style>text{font-family:DejaVu Sans,Arial,sans-serif}</style><rect width="1200" height="800" fill="url(#world)"/>
+<rect x="-200" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="-143" y="362" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="-86" y="384" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="-29" y="406" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="28" y="428" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="85" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="142" y="362" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="199" y="384" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="256" y="406" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="313" y="428" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="370" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="427" y="362" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="484" y="384" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="541" y="406" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="598" y="428" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="655" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="712" y="362" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="769" y="384" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="826" y="406" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="883" y="428" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="940" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="997" y="362" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="1054" y="384" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="1111" y="406" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="1168" y="428" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<rect x="1225" y="340" width="120" height="370" rx="0" fill="#344b45" fill-opacity="0.2"/>
+<text x="34" y="39" fill="#e3ebf3" font-size="22">DraimHorizons</text>
+<text x="34" y="65" fill="#9aacc0" font-size="13">Единый интерфейс · схема компонентов</text>
+<rect x="30" y="92" width="714" height="452" rx="12" fill="#050b13" fill-opacity="0.2"/>
+<rect x="26" y="87" width="714" height="452" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<rect x="26" y="87" width="120" height="452" rx="10" fill="#172230" fill-opacity="0.9"/>
+<g transform="translate(43 106) scale(1.5833333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L6,1"/><path d="M6,1 L11,4"/><path d="M11,4 L6,7"/><path d="M6,7 L1,4"/><path d="M1,7 L6,10"/><path d="M6,10 L11,7"/></g>
+<text x="74" y="119" fill="#e3ebf3" font-size="15">DRAIM</text>
+<text x="44" y="141" fill="#9aacc0" font-size="12">HORIZONS</text>
+<rect x="35" y="165" width="102" height="30" rx="5" fill="#37504f" fill-opacity="0.93"/>
+<rect x="36" y="171" width="2" height="18" rx="1" fill="#a4d3c9" fill-opacity="1"/>
+<g transform="translate(44 172) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<text x="67" y="185" fill="#e3ebf3" font-size="13">Метки</text>
+<rect x="35" y="208" width="102" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(44 215) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,2 L5,2"/><path d="M5,2 L5,5"/><path d="M5,5 L2,5"/><path d="M2,5 L2,2"/><path d="M1,10 L1,7"/><path d="M1,7 L6,7"/><path d="M6,7 L6,10"/><path d="M8,3 L10,3"/><path d="M10,3 L10,6"/><path d="M8,8 L11,8"/><path d="M11,8 L11,10"/></g>
+<text x="67" y="228" fill="#e3ebf3" font-size="13">Друзья</text>
+<rect x="35" y="251" width="102" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(44 258) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,1 L6,3"/><path d="M6,3 L11,1"/><path d="M11,1 L10,8"/><path d="M10,8 L6,11"/><path d="M6,11 L2,8"/><path d="M2,8 L1,1"/><path d="M4,6 L6,8"/><path d="M6,8 L9,4"/></g>
+<text x="67" y="271" fill="#e3ebf3" font-size="13">Приваты</text>
+<rect x="35" y="294" width="102" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(44 301) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,1 L11,1"/><path d="M11,1 L11,8"/><path d="M11,8 L5,8"/><path d="M5,8 L2,11"/><path d="M2,11 L2,8"/><path d="M2,8 L1,8"/><path d="M1,8 L1,1"/><path d="M3,4 L9,4"/></g>
+<text x="67" y="314" fill="#e3ebf3" font-size="13">Чат</text>
+<rect x="35" y="337" width="102" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(44 344) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L11,4"/><path d="M1,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L11,4"/><path d="M2,5 L2,11"/><path d="M2,11 L10,11"/><path d="M10,11 L10,5"/><path d="M5,11 L5,7"/><path d="M5,7 L8,7"/><path d="M8,7 L8,11"/></g>
+<text x="67" y="357" fill="#e3ebf3" font-size="13">Торги</text>
+<text x="168" y="121" fill="#e3ebf3" font-size="20">Мои метки</text>
+<text x="168" y="145" fill="#9aacc0" font-size="12">Сохранённые места и быстрые ориентиры</text>
+<rect x="657" y="103" width="29" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(666 110) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M4,1 L8,1"/><path d="M8,1 L11,4"/><path d="M11,4 L11,8"/><path d="M11,8 L8,11"/><path d="M8,11 L4,11"/><path d="M4,11 L1,8"/><path d="M1,8 L1,4"/><path d="M1,4 L4,1"/><path d="M4,4 L8,4"/><path d="M8,4 L8,8"/><path d="M8,8 L4,8"/><path d="M4,8 L4,4"/></g>
+<text x="689" y="123" fill="#e3ebf3" font-size="13"></text>
+<rect x="694" y="103" width="29" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(703 110) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,2 L10,10"/><path d="M10,2 L2,10"/></g>
+<text x="726" y="123" fill="#e3ebf3" font-size="13"></text>
+<rect x="166" y="167" width="550" height="47" rx="7" fill="#344c4d" fill-opacity="0.87"/>
+<g transform="translate(180 182) scale(1.4166666666666667)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<text x="208" y="187" fill="#e3ebf3" font-size="14">Дом</text>
+<text x="407" y="187" fill="#9aacc0" font-size="12">Обычный мир · 128 м</text>
+<rect x="166" y="224" width="550" height="47" rx="7" fill="#253548" fill-opacity="0.87"/>
+<g transform="translate(180 239) scale(1.4166666666666667)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<text x="208" y="244" fill="#e3ebf3" font-size="14">Портал</text>
+<text x="407" y="244" fill="#9aacc0" font-size="12">Нижний мир · 640 м</text>
+<rect x="166" y="281" width="550" height="47" rx="7" fill="#253548" fill-opacity="0.87"/>
+<g transform="translate(180 296) scale(1.4166666666666667)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<text x="208" y="301" fill="#e3ebf3" font-size="14">Ферма</text>
+<text x="407" y="301" fill="#9aacc0" font-size="12">Обычный мир · 52 м</text>
+<text x="169" y="367" fill="#9aacc0" font-size="12">Имя метки</text>
+<rect x="167" y="378" width="365" height="35" rx="5" fill="#172230" fill-opacity="0.86"/>
+<text x="179" y="401" fill="#e3ebf3" font-size="14">Дом</text>
+<rect x="544" y="378" width="170" height="35" rx="5" fill="#172230" fill-opacity="0.86"/>
+<text x="556" y="401" fill="#a4d3c9" font-size="14">#A4D3C9</text>
+<rect x="168" y="429" width="169" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(177 436) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,1 L6,11"/><path d="M1,6 L11,6"/></g>
+<text x="200" y="449" fill="#e3ebf3" font-size="13">Добавить</text>
+<rect x="347" y="429" width="181" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<text x="357" y="449" fill="#e3ebf3" font-size="13">Переименовать</text>
+<rect x="538" y="429" width="176" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(547 436) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,3 L10,3"/><path d="M4,1 L8,1"/><path d="M3,4 L3,11"/><path d="M3,11 L9,11"/><path d="M9,11 L9,4"/><path d="M5,5 L5,9"/><path d="M7,5 L7,9"/></g>
+<text x="570" y="449" fill="#e3ebf3" font-size="13">Удалить</text>
+<text x="169" y="494" fill="#9aacc0" font-size="12">Цвет и название помогают быстрее узнавать места</text>
+<rect x="767" y="87" width="403" height="226" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(783 103) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,2 L4,1"/><path d="M4,1 L8,3"/><path d="M8,3 L11,2"/><path d="M11,2 L11,10"/><path d="M11,10 L8,11"/><path d="M8,11 L4,9"/><path d="M4,9 L1,10"/><path d="M1,10 L1,2"/><path d="M4,1 L4,9"/><path d="M8,3 L8,11"/></g>
+<text x="809" y="117" fill="#e3ebf3" font-size="17">Карта приватов</text>
+<rect x="783" y="132" width="370" height="128" rx="4" fill="#344c45" fill-opacity="0.8"/>
+<rect x="790" y="137" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="790" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="790" y="215" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="834" y="137" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="834" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="834" y="215" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="878" y="137" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="878" y="176" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="878" y="215" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="922" y="137" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="922" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="922" y="215" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="966" y="137" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="966" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="966" y="215" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="1010" y="137" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1010" y="176" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="1010" y="215" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1054" y="137" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="1054" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1054" y="215" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1098" y="137" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1098" y="176" width="42" height="37" rx="0" fill="#49624c" fill-opacity="0.7"/>
+<rect x="1098" y="215" width="42" height="37" rx="0" fill="#355249" fill-opacity="0.7"/>
+<rect x="875" y="174" width="88" height="41" rx="1" fill="#a4d3c9" fill-opacity="0.28"/>
+<rect x="1006" y="137" width="44" height="78" rx="1" fill="#dfa8b5" fill-opacity="0.35"/>
+<g transform="translate(924 183) scale(1.3333333333333333)" fill="none" stroke="#e1c69e" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<rect x="783" y="271" width="112" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(792 278) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,5 L6,1"/><path d="M6,1 L11,5"/><path d="M2,5 L2,11"/><path d="M2,11 L10,11"/><path d="M10,11 L10,5"/><path d="M5,11 L5,7"/><path d="M5,7 L7,7"/><path d="M7,7 L7,11"/></g>
+<text x="815" y="291" fill="#e3ebf3" font-size="13">К себе</text>
+<rect x="904" y="271" width="112" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(913 278) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,1 L11,1"/><path d="M11,1 L11,11"/><path d="M11,11 L1,11"/><path d="M1,11 L1,1"/><path d="M6,1 L6,11"/><path d="M1,6 L11,6"/></g>
+<text x="936" y="291" fill="#e3ebf3" font-size="13">Сетка</text>
+<rect x="1025" y="271" width="128" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(1034 278) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M4,1 L8,1"/><path d="M8,1 L11,4"/><path d="M11,4 L11,8"/><path d="M11,8 L8,11"/><path d="M8,11 L4,11"/><path d="M4,11 L1,8"/><path d="M1,8 L1,4"/><path d="M1,4 L4,1"/><path d="M4,4 L8,4"/><path d="M8,4 L8,8"/><path d="M8,8 L4,8"/><path d="M4,8 L4,4"/></g>
+<text x="1057" y="291" fill="#e3ebf3" font-size="13">Опции</text>
+<rect x="767" y="333" width="403" height="206" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(783 350) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L11,4"/><path d="M1,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L11,4"/><path d="M2,5 L2,11"/><path d="M2,11 L10,11"/><path d="M10,11 L10,5"/><path d="M5,11 L5,7"/><path d="M5,7 L8,7"/><path d="M8,7 L8,11"/></g>
+<text x="810" y="364" fill="#e3ebf3" font-size="17">Торги</text>
+<rect x="782" y="382" width="116" height="30" rx="5" fill="#37504f" fill-opacity="0.93"/>
+<rect x="783" y="388" width="2" height="18" rx="1" fill="#a4d3c9" fill-opacity="1"/>
+<g transform="translate(791 389) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,1 L1,11"/><path d="M1,11 L11,11"/><path d="M3,8 L6,5"/><path d="M6,5 L8,7"/><path d="M8,7 L11,2"/></g>
+<text x="814" y="402" fill="#e3ebf3" font-size="13">Обзор</text>
+<rect x="907" y="382" width="116" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(916 389) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,2 L11,2"/><path d="M11,2 L11,10"/><path d="M11,10 L1,10"/><path d="M1,10 L1,2"/><path d="M11,5 L7,5"/><path d="M7,5 L7,8"/><path d="M7,8 L11,8"/></g>
+<text x="939" y="402" fill="#e3ebf3" font-size="13">Цены</text>
+<rect x="1032" y="382" width="122" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(1041 389) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L11,4"/><path d="M1,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L11,4"/><path d="M2,5 L2,11"/><path d="M2,11 L10,11"/><path d="M10,11 L10,5"/><path d="M5,11 L5,7"/><path d="M5,7 L8,7"/><path d="M8,7 L8,11"/></g>
+<text x="1064" y="402" fill="#e3ebf3" font-size="13">Аукц.</text>
+<text x="783" y="441" fill="#9aacc0" font-size="12">Кошелёк</text>
+<text x="783" y="466" fill="#e1c69e" font-size="20">1 280 монет</text>
+<text x="964" y="441" fill="#9aacc0" font-size="12">Осталось продать серверу</text>
+<text x="964" y="466" fill="#a2d0b7" font-size="20">740 / 2 000</text>
+<text x="783" y="505" fill="#9aacc0" font-size="12">Цена за штуку · весь лот · ограничения</text>
+<rect x="26" y="562" width="290" height="188" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(42 579) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,5 L6,1"/><path d="M6,1 L11,5"/><path d="M2,5 L2,11"/><path d="M2,11 L10,11"/><path d="M10,11 L10,5"/><path d="M5,11 L5,7"/><path d="M5,7 L7,7"/><path d="M7,7 L7,11"/></g>
+<text x="68" y="593" fill="#a4d3c9" font-size="15">DraimHorizons</text>
+<g transform="translate(43 614) scale(1.0833333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,2 L11,2"/><path d="M11,2 L11,10"/><path d="M11,10 L1,10"/><path d="M1,10 L1,2"/><path d="M11,5 L7,5"/><path d="M7,5 L7,8"/><path d="M7,8 L11,8"/></g>
+<text x="65" y="626" fill="#9aacc0" font-size="11">КОШЕЛЁК</text>
+<text x="43" y="651" fill="#e1c69e" font-size="18">1 280 монет</text>
+<g transform="translate(43 672) scale(1.0833333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,9 L1,11"/><path d="M4,7 L4,11"/><path d="M7,4 L7,11"/><path d="M10,1 L10,11"/></g>
+<text x="65" y="684" fill="#a2d0b7" font-size="12">TPS ≈ 20 · Онлайн 42</text>
+<text x="43" y="715" fill="#9aacc0" font-size="12">В игре 2 ч 18 м</text>
+<rect x="337" y="562" width="377" height="83" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(351 577) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M6,11 L6,8"/><path d="M6,8 L2,4"/><path d="M2,4 L3,1"/><path d="M3,1 L9,1"/><path d="M9,1 L10,4"/><path d="M10,4 L6,8"/><path d="M5,3 L7,3"/></g>
+<text x="378" y="589" fill="#e3ebf3" font-size="13">Телепорт · Игрок · 42 с</text>
+<rect x="351" y="603" width="168" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(360 610) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,6 L4,9"/><path d="M4,9 L11,2"/></g>
+<text x="383" y="623" fill="#e3ebf3" font-size="13">Принять</text>
+<rect x="529" y="603" width="168" height="30" rx="5" fill="#29394b" fill-opacity="0.93"/>
+<g transform="translate(538 610) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,2 L10,10"/><path d="M10,2 L2,10"/></g>
+<text x="561" y="623" fill="#e3ebf3" font-size="13">Отклонить</text>
+<rect x="337" y="660" width="377" height="90" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(351 675) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,2 L5,2"/><path d="M5,2 L5,5"/><path d="M5,5 L2,5"/><path d="M2,5 L2,2"/><path d="M1,10 L1,7"/><path d="M1,7 L6,7"/><path d="M6,7 L6,10"/><path d="M8,3 L10,3"/><path d="M10,3 L10,6"/><path d="M8,8 L11,8"/><path d="M11,8 L11,10"/></g>
+<text x="378" y="688" fill="#e3ebf3" font-size="13">Игрок: Привет! Где построить дом?</text>
+<text x="352" y="720" fill="#9aacc0" font-size="12">Спокойные уведомления, без сдвига текста</text>
+<rect x="737" y="562" width="433" height="188" rx="9" fill="#1d2a3a" fill-opacity="0.88"/>
+<g transform="translate(753 579) scale(1.25)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M4,1 L8,1"/><path d="M8,1 L11,4"/><path d="M11,4 L11,8"/><path d="M11,8 L8,11"/><path d="M8,11 L4,11"/><path d="M4,11 L1,8"/><path d="M1,8 L1,4"/><path d="M1,4 L4,1"/><path d="M4,4 L8,4"/><path d="M8,4 L8,8"/><path d="M8,8 L4,8"/><path d="M4,8 L4,4"/></g>
+<text x="780" y="593" fill="#e3ebf3" font-size="16">Оформление · Ctrl+,</text>
+<text x="754" y="620" fill="#9aacc0" font-size="12">Мята  ·  Лаванда  ·  Небо</text>
+<rect x="754" y="636" width="31" height="31" rx="5" fill="#29394b" fill-opacity="0.95"/>
+<g transform="translate(762 643) scale(1.3333333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M2,1 L2,10"/><path d="M0,8 L2,10"/><path d="M2,10 L4,8"/><path d="M6,2 L11,2"/><path d="M6,5 L10,5"/><path d="M6,8 L8,8"/></g>
+<rect x="793" y="636" width="31" height="31" rx="5" fill="#29394b" fill-opacity="0.95"/>
+<g transform="translate(801 643) scale(1.3333333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,5 L1,11"/><path d="M1,11 L11,11"/><path d="M11,11 L11,5"/><path d="M6,0 L6,8"/><path d="M3,5 L6,8"/><path d="M6,8 L9,5"/></g>
+<rect x="832" y="636" width="31" height="31" rx="5" fill="#29394b" fill-opacity="0.95"/>
+<g transform="translate(840 643) scale(1.3333333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L1,11"/><path d="M1,11 L11,11"/><path d="M11,11 L11,4"/><path d="M3,5 L5,7"/><path d="M5,7 L9,2"/><path d="M4,1 L8,1"/></g>
+<rect x="871" y="636" width="31" height="31" rx="5" fill="#29394b" fill-opacity="0.95"/>
+<g transform="translate(879 643) scale(1.3333333333333333)" fill="none" stroke="#a4d3c9" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M1,4 L10,4"/><path d="M8,1 L11,4"/><path d="M11,4 L8,7"/><path d="M11,9 L2,9"/><path d="M4,6 L1,9"/><path d="M1,9 L4,12"/></g>
+<text x="922" y="656" fill="#9aacc0" font-size="12">Инвентарь и хранилище</text>
+<text x="754" y="695" fill="#e3ebf3" font-size="13">Плотность фона · анимации · контраст</text>
+<text x="754" y="724" fill="#a2d0b7" font-size="12">Хотбар и экипировка защищены</text>
+<text x="28" y="782" fill="#9aacc0" font-size="12">Схематичный пример, не снимок игры. Шрифт и масштаб определяет Horizon.</text>
+</svg>

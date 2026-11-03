@@ -100,10 +100,8 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                 0xe1e9f5,
                 false,
             );
-            for (j, accept, label) in [
-                (0, true, "Принять"),
-                (1, false, "Отклонить"),
-            ] {
+            for (j, accept, label) in [(0, true, "Принять"), (1, false, "Отклонить")]
+            {
                 let rect = [
                     x + 8.0 + j as f32 * (w - 16.0) / 2.0,
                     y + 21.0,

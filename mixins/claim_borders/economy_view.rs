@@ -183,7 +183,7 @@ fn button(
     selected: bool,
     mouse: [f32; 2],
 ) {
-    ui::button(game,batch,rect,text,selected,mouse);
+    ui::button(game, batch, rect, text, selected, mouse);
     s.hits.push((rect, hit));
 }
 fn age(at: u64, now: u64) -> String {
@@ -193,10 +193,17 @@ fn age(at: u64, now: u64) -> String {
         format!("{} с назад", now.saturating_sub(at) / 1000)
     }
 }
-fn item_label(game:&Game<'_>,id:&str)->String {
-    let (namespace,path)=id.split_once(':').unwrap_or(("minecraft",id));
-    let prefix=if game.res.items().get(id).is_some_and(|i|i.block.is_some()){"block"}else{"item"};
-    game.translate(&format!("{prefix}.{namespace}.{}",path.replace('/',".")),&path.replace('_'," "))
+fn item_label(game: &Game<'_>, id: &str) -> String {
+    let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    let prefix = if game.res.items().get(id).is_some_and(|i| i.block.is_some()) {
+        "block"
+    } else {
+        "item"
+    };
+    game.translate(
+        &format!("{prefix}.{namespace}.{}", path.replace('/', ".")),
+        &path.replace('_', " "),
+    )
 }
 fn value(v: Option<model::Coins>) -> String {
     v.map_or("—".into(), model::fmt)
@@ -613,7 +620,8 @@ pub(super) fn render(
                     book.quotes
                         .iter()
                         .filter(|(key, _)| {
-                            item_label(game, key).to_lowercase().contains(&filter) || key.contains(&filter)
+                            item_label(game, key).to_lowercase().contains(&filter)
+                                || key.contains(&filter)
                         })
                         .map(|(key, q)| {
                             (
@@ -720,7 +728,8 @@ pub(super) fn render(
                     } else {
                         s.item.as_ref() == Some(item)
                     };
-                    ui::fill(game,
+                    ui::fill(
+                        game,
                         batch,
                         [8.0, y, lw, 19.0],
                         if chosen { 0xff354e62 } else { 0xff1c2a39 },
@@ -783,7 +792,15 @@ pub(super) fn render(
                 let detail_hits = s.hits.len();
                 let mut y = 60.0;
                 if let Some(item) = selected.as_ref() {
-                    line(game, batch, rx, &mut y, rw, &item_label(game, item), 0xe4d29e);
+                    line(
+                        game,
+                        batch,
+                        rx,
+                        &mut y,
+                        rw,
+                        &item_label(game, item),
+                        0xe4d29e,
+                    );
                     if let Some(q) = book.quotes.get(item) {
                         line(
                             game,
@@ -1110,8 +1127,8 @@ pub(super) fn render(
             }
         });
     });
-    let variant=state(|s|format!("{}:{}",s.tab,s.group));
-    ui::finish(game,batch,start,"economy",&variant);
+    let variant = state(|s| format!("{}:{}", s.tab, s.group));
+    ui::finish(game, batch, start, "economy", &variant);
     batch.clip_since(start, 0.0, 0.0, w, h);
     for vertex in &mut batch.vertices[start..] {
         vertex.pos[0] += ox;
@@ -1344,7 +1361,8 @@ pub(super) fn hud(
         let x = (x + p.get("offset_x") as f32).clamp(2.0, (batch.width - width - 2.0).max(2.0));
         let y = (y + p.get("offset_y") as f32).clamp(2.0, (batch.height - height - 28.0).max(2.0));
         let start = batch.vertices.len();
-        ui::fill(game,
+        ui::fill(
+            game,
             batch,
             [x / scale, y / scale, width / scale, height / scale],
             ((p.get("opacity") as u32 * 255 / 100) << 24) | 0x101b27,
