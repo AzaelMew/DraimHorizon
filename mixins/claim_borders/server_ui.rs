@@ -271,7 +271,11 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             [x + 11.0, y + 8.0, 12.0, 12.0],
             ui::preferences(game).accent.color(),
         );
-        let title = format!("DraimHorizons · {} онлайн", players.len());
+        let title = if columns == 1 {
+            format!("Игроки · {}", players.len())
+        } else {
+            format!("DraimHorizons · {} онлайн", players.len())
+        };
         label(
             game,
             batch,
