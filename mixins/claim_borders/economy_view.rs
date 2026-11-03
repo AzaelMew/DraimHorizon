@@ -193,10 +193,10 @@ fn age(at: u64, now: u64) -> String {
         format!("{} с назад", now.saturating_sub(at) / 1000)
     }
 }
-fn item_label(id: &str) -> String {
-    id.strip_prefix("minecraft:")
-        .unwrap_or(id)
-        .replace('_', " ")
+fn item_label(game:&Game<'_>,id:&str)->String {
+    let (namespace,path)=id.split_once(':').unwrap_or(("minecraft",id));
+    let prefix=if game.res.items().get(id).is_some_and(|i|i.block.is_some()){"block"}else{"item"};
+    game.translate(&format!("{prefix}.{namespace}.{}",path.replace('/',".")),&path.replace('_'," "))
 }
 fn value(v: Option<model::Coins>) -> String {
     v.map_or("—".into(), model::fmt)
@@ -290,7 +290,7 @@ pub(super) fn render(
             false,
             screen.mouse,
         );
-        let tabs = ["Обзор", "Цены", "AH", "Профит", "План", "Опции"];
+        let tabs = ["Обзор", "Цены", "Аукц.", "Прибыль", "План", "Опции"];
         let tw = (w - 16.0) / tabs.len() as f32;
         for (i, text) in tabs.iter().enumerate() {
             button(
@@ -543,7 +543,7 @@ pub(super) fn render(
                         |(n, net)| {
                             format!(
                                 "{} ×{}: оценка +{} · повторное нажатие продаёт",
-                                item_label(&hand.item),
+                                item_label(game, &hand.item),
                                 n,
                                 model::fmt(net)
                             )
@@ -600,7 +600,7 @@ pub(super) fn render(
                     s.sort_menu,
                     screen.mouse,
                 );
-                let filter = s.search.name.to_ascii_lowercase();
+                let filter = s.search.name.to_lowercase();
                 let per = (((h - 154.0) / 20.0).floor() as usize).clamp(2, 16);
                 let opportunities = if s.tab == 3 {
                     book.opportunities(p, now, own)
@@ -613,13 +613,13 @@ pub(super) fn render(
                     book.quotes
                         .iter()
                         .filter(|(key, _)| {
-                            item_label(key).contains(&filter) || key.contains(&filter)
+                            item_label(game, key).to_lowercase().contains(&filter) || key.contains(&filter)
                         })
                         .map(|(key, q)| {
                             (
                                 key.clone(),
                                 None,
-                                item_label(key),
+                                item_label(game, key),
                                 format!("Сдать {} · Купить {}", value(q.sell), value(q.buy)),
                                 false,
                             )
@@ -630,8 +630,8 @@ pub(super) fn render(
                         .listings(book, p, now, own, true)
                         .into_iter()
                         .filter(|l| {
-                            item_label(&l.item).contains(&filter)
-                                || l.seller.to_ascii_lowercase().contains(&filter)
+                            item_label(game, &l.item).to_lowercase().contains(&filter)
+                                || l.seller.to_lowercase().contains(&filter)
                         })
                         .map(|l| {
                             let o = opportunity_by_id.get(&l.id).copied();
@@ -674,8 +674,8 @@ pub(super) fn render(
                         .listings(book, p, now, own, false)
                         .into_iter()
                         .filter(|l| {
-                            item_label(&l.item).contains(&filter)
-                                || l.seller.to_ascii_lowercase().contains(&filter)
+                            item_label(game, &l.item).to_lowercase().contains(&filter)
+                                || l.seller.to_lowercase().contains(&filter)
                         })
                         .map(|l| {
                             (
@@ -783,7 +783,7 @@ pub(super) fn render(
                 let detail_hits = s.hits.len();
                 let mut y = 60.0;
                 if let Some(item) = selected.as_ref() {
-                    line(game, batch, rx, &mut y, rw, &item_label(item), 0xe4d29e);
+                    line(game, batch, rx, &mut y, rw, &item_label(game, item), 0xe4d29e);
                     if let Some(q) = book.quotes.get(item) {
                         line(
                             game,
@@ -1328,7 +1328,7 @@ pub(super) fn hud(
             let q = book.quotes.get(&h.item);
             lines.push(format!(
                 "{} ×{} · S {}",
-                item_label(&h.item),
+                item_label(game, &h.item),
                 h.count,
                 value(q.and_then(|q| q.sell))
             ));
@@ -1372,7 +1372,7 @@ pub(super) fn container_overlay(
     if !game.native_on(claims::ID) || screen.id != "inventory" || game.ui.hide_gui {
         return;
     }
-    let Some(title) = screen.title.map(|t| t.plain().to_ascii_lowercase()) else {
+    let Some(title) = screen.title.map(|t| t.plain().to_lowercase()) else {
         return;
     };
     if !["market", "auction house"].contains(&title.as_str()) {
@@ -1439,7 +1439,7 @@ pub(super) fn container_overlay(
                     ));
                 }
             } else if let Some(q) = book.quotes.get(item) {
-                lines.push((item_label(item), 0xd7e3ec));
+                lines.push((item_label(game, item), 0xd7e3ec));
                 lines.push((format!("Купить: {} / шт.", value(q.buy)), 0xa8bdcf));
                 lines.push((
                     if q.sell.is_none() && q.buy.is_some() {

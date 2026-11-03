@@ -168,7 +168,7 @@ pub(super) fn sidebar(
         );
         ui::fill(game, batch, [left + 9.0, top + 22.0, w - 18.0, 1.0], 0x4472cbb5);
         for (i, (text, color)) in lines.iter().enumerate() {
-            let kind=if text=="КОШЕЛЁК"{Some(ui::Icon::Wallet)}else if text=="ЛИМИТ ПРОДАЖ СЕРВЕРУ"{Some(ui::Icon::Shield)}else if text=="БОГАТЕЙШИЕ ИГРОКИ"{Some(ui::Icon::Chart)}else{None};
+            let kind=if text=="КОШЕЛЁК"{Some(ui::Icon::Wallet)}else if text=="ЛИМИТ ПРОДАЖ СЕРВЕРУ"{Some(ui::Icon::Shield)}else if text=="БОГАТЕЙШИЕ ИГРОКИ"{Some(ui::Icon::Chart)}else if text.starts_with("В игре"){Some(ui::Icon::Clock)}else if text.starts_with("TPS"){Some(ui::Icon::Signal)}else{None};
             if let Some(kind)=kind{ui::icon(game,batch,kind,[left+9.0,top+29.0+i as f32*12.0,9.0,9.0],ui::preferences(game).accent.color());}
             let inset=if kind.is_some(){23.0}else{9.0};
             label(

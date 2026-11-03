@@ -275,7 +275,12 @@ fn map_marks(
                 0xff
             };
             let color = (alpha << 24) | if mob.hostile { 0xf07876 } else { 0x86ce9a };
-            ui::fill(game, batch, [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0], 0xd0101720);
+            ui::fill(
+                game,
+                batch,
+                [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0],
+                0xd0101720,
+            );
             ui::fill(game, batch, [at[0] - 1.5, at[1] - 1.5, 3.0, 3.0], color);
         }
     }
@@ -292,7 +297,8 @@ fn map_marks(
                 } else {
                     0xe9c66b
                 };
-                ui::fill(game,
+                ui::fill(
+                    game,
                     batch,
                     [
                         at[0] - size * 0.5 - 1.0,
@@ -383,7 +389,12 @@ fn map_marks(
                 0xfff0cc73,
             );
             let size = 10.0;
-            ui::fill(game, batch, [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0], 0xffe7f8ff);
+            ui::fill(
+                game,
+                batch,
+                [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0],
+                0xffe7f8ff,
+            );
             let skin = if source.player_skin.is_empty() {
                 horizon_client::tab_list::default_skin(source.player_uuid)
             } else {
@@ -533,8 +544,14 @@ fn map_frame(
         ("W", [x + 3.0, y + h / 2.0 - 4.0]),
         ("E", [x + w - 9.0, y + h / 2.0 - 4.0]),
     ] {
-        ui::fill(game, batch, [at[0] - 1.0, at[1] - 1.0, 8.0, 10.0], 0xc0101720);
-        ui::text(game,
+        ui::fill(
+            game,
+            batch,
+            [at[0] - 1.0, at[1] - 1.0, 8.0, 10.0],
+            0xc0101720,
+        );
+        ui::text(
+            game,
             batch,
             text,
             at,
@@ -555,7 +572,8 @@ fn map_frame(
             format!("{blocks:.0} м")
         };
         let label_width = (pixels + 5.0).max(game.native_text_width(&text) + 6.0);
-        ui::fill(game,
+        ui::fill(
+            game,
             batch,
             [bx - 2.0, by - 13.0, label_width + 2.0, 17.0],
             0xc0101720,
@@ -650,7 +668,7 @@ pub(super) fn render(
     if !visible() || game.native_mod_screen() != Some(claims::ID) {
         return false;
     }
-    let render_start=batch.vertices.len();
+    let render_start = batch.vertices.len();
     let size = [screen.rect[2], screen.rect[3]];
     let rect = map_rect(size);
     let p = settings(game);
@@ -879,8 +897,16 @@ pub(super) fn render(
         );
     }
     map_frame(game, batch, rect, actual, aspect, false);
-    for (_,r,caption) in buttons(size){ui::button(game,batch,r,&caption,false,screen.mouse);}
-    ui::finish(game,batch,render_start,"world-map",&format!("{}:{}",dimension,p.layer.label()));
+    for (_, r, caption) in buttons(size) {
+        ui::button(game, batch, r, &caption, false, screen.mouse);
+    }
+    ui::finish(
+        game,
+        batch,
+        render_start,
+        "world-map",
+        &format!("{}:{}", dimension, p.layer.label()),
+    );
     true
 }
 

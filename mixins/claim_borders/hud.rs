@@ -42,7 +42,8 @@ pub(super) fn draw(
             let alpha = (marker.alpha.clamp(0.15, 1.0) * 255.0) as u8;
             let x = (x - 6.0).clamp(1.0, (batch.width - 13.0).max(1.0));
             let y = (y - 6.0).clamp(1.0, (batch.height - 13.0).max(1.0));
-            ui::fill(game,
+            ui::fill(
+                game,
                 batch,
                 [x - 1.0, y - 1.0, 14.0, 14.0],
                 ((alpha as u32) << 24) | 0x77c7ef,

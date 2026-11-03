@@ -320,7 +320,7 @@ fn button(
     tip: String,
     active: bool,
 ) {
-    ui::button(game,batch,rect,text,active,screen.mouse);
+    ui::button(game, batch, rect, text, active, screen.mouse);
     s.hits.push(Hit {
         rect,
         button: action,
@@ -328,7 +328,7 @@ fn button(
     });
 }
 pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScreenView<'_>) {
-    let render_start=batch.vertices.len();
+    let render_start = batch.vertices.len();
     load_settings(game);
     let Some(l) = layout(game, screen) else {
         state(|s| {
@@ -443,7 +443,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             if let Some((text, at)) = &s.status
                 && at.elapsed() < Duration::from_secs(5)
             {
-                ui::text(game,
+                ui::text(
+                    game,
                     batch,
                     &clipped(game, text, batch.width - 12.0),
                     [
@@ -516,7 +517,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     .error
                     .as_deref()
                     .unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
-                ui::text(game,
+                ui::text(
+                    game,
                     batch,
                     &clipped(game, hint, batch.width - 8.0),
                     [4.0, batch.height - 9.0],
@@ -558,7 +560,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 .max(2.0);
             ui::fill(game, batch, [x, y, w, h], 0xf0121720);
             for (i, line) in lines.iter().enumerate() {
-                ui::text(game,
+                ui::text(
+                    game,
                     batch,
                     line,
                     [x + 4.0, y + 3.0 + i as f32 * 10.0],
@@ -568,8 +571,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
         }
     });
-    let variant=state(|s|if s.editor.is_some(){"editor"}else{"controls"});
-    ui::finish(game,batch,render_start,"inventory-tools",variant);
+    let variant = state(|s| {
+        if s.editor.is_some() {
+            "editor"
+        } else {
+            "controls"
+        }
+    });
+    ui::finish(game, batch, render_start, "inventory-tools", variant);
 }
 fn edit(s: &mut State) {
     stop(s);

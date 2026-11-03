@@ -6,9 +6,10 @@ fn claim_borders_menu_render(
     crate::game::claim_borders_ui_view::screen_begin(game);
     crate::game::claim_borders_economy_view::container_overlay(game, batch, screen);
     if !crate::game::claim_borders_economy_view::render(game, batch, screen)
-        && !crate::game::claim_borders_map_view::render(game, batch, screen) {
+        && !crate::game::claim_borders_map_view::render(game, batch, screen)
+    {
         crate::game::claim_borders_inventory_sort_view::render(game, batch, screen);
         crate::game::claim_borders_menu_view::render(game, batch, screen);
     }
-    crate::game::claim_borders_ui_view::settings_render(game,batch,screen);
+    crate::game::claim_borders_ui_view::settings_render(game, batch, screen);
 }

@@ -78,7 +78,7 @@ pub(super) fn fill(game:&Game<'_>,batch:&mut HudBatch,rect:[f32;4],argb:u32) {
         let tone=if matches!(rgb,0x354e62|0x354c62|0x45647b|0x40546a|0x465970|0x494d5d|0x34364c) {
             style::mix(style::SURFACE,p.accent.color(),0.24)
         }else if rgb==0x111520||rgb==0x101a25 {0x172230}else{style::SURFACE};
-        let alpha=((a as f32*p.alpha()).round() as u32).clamp(20,255);
+        let alpha=((a as f32*p.alpha()).round() as u32).clamp(0,255);
         if p.shadows&&rect[2]>120.0&&rect[3]>60.0 {
             rounded(game,batch,[rect[0]-2.0,rect[1]+2.0,rect[2]+4.0,rect[3]+3.0],7.0,0x1b050b13);
         }
@@ -122,8 +122,9 @@ pub(super) fn button_base(game:&Game<'_>,batch:&mut HudBatch,rect:[f32;4],label:
         (h.over,h.selected)
     });
     let danger=label.contains("Удалить")||label=="Отклонить"||label.contains("Очистить");
-    let accent=if danger{style::BAD}else{p.accent.color()};
-    let rgb=style::mix(style::SURFACE,accent,(active*0.28+hover*0.12).min(0.4));
+    let accent=if danger{style::BAD}else if matches!(label,"Принять"|"Готово"){style::GOOD}else{p.accent.color()};
+    let base=style::mix(style::SURFACE,style::RAISED,hover*0.35);
+    let rgb=style::mix(base,accent,(active*0.28+hover*0.12).min(0.4));
     let a=((p.alpha()+0.04).min(0.98)*255.0) as u32;
     rounded(game,batch,rect,4.0,(a<<24)|rgb);
     if selected {
@@ -199,7 +200,7 @@ fn act(game:&Game<'_>,id:u8) {
             6=>s.prefs=style::Preferences::default(),
             7=>{if let Some(p)=s.editor.take(){s.prefs=p;}s.hits.clear();}
             8=>{
-                if !s.writable {return;}
+                if !s.writable {s.error=Some("Оформление не сохранено: проверьте файл appearance".into());return;}
                 let dir=game.native_data_dir(claims::ID);
                 let saved=std::fs::create_dir_all(&dir).and_then(|()|{
                     let path=dir.join("appearance.tmp");std::fs::write(&path,s.prefs.encode())?;

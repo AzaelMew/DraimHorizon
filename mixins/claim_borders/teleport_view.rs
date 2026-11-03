@@ -68,12 +68,23 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
         let w = (batch.width - 16.0).clamp(220.0, 310.0);
         let x = (batch.width - w) * 0.5;
         for (i, r) in s.requests.entries.iter().take(3).enumerate() {
-            let render_start=batch.vertices.len();
+            let render_start = batch.vertices.len();
             let y = 8.0 + i as f32 * 54.0;
             let remain = 60000u64.saturating_sub(now.saturating_sub(r.at));
             ui::fill(game, batch, [x, y, w, 49.0], 0xeb182331);
-            ui::icon(game,batch,if r.trade{ui::Icon::Transfer}else{ui::Icon::Pin},[x+8.0,y+5.0,11.0,11.0],ui::preferences(game).accent.color());
-            ui::text(game,
+            ui::icon(
+                game,
+                batch,
+                if r.trade {
+                    ui::Icon::Transfer
+                } else {
+                    ui::Icon::Pin
+                },
+                [x + 8.0, y + 5.0, 11.0, 11.0],
+                ui::preferences(game).accent.color(),
+            );
+            ui::text(
+                game,
                 batch,
                 &format!(
                     "{} · {} · {}с",
@@ -89,9 +100,9 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                 0xe1e9f5,
                 false,
             );
-            for (j, accept, label, _color) in [
-                (0, true, "Принять", 0xff335e4d),
-                (1, false, "Отклонить", 0xff69404a),
+            for (j, accept, label) in [
+                (0, true, "Принять"),
+                (1, false, "Отклонить"),
             ] {
                 let rect = [
                     x + 8.0 + j as f32 * (w - 16.0) / 2.0,
@@ -99,16 +110,23 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                     (w - 20.0) / 2.0,
                     18.0,
                 ];
-                ui::button(game,batch,rect,label,false,game.native_cursor());
+                ui::button(game, batch, rect, label, false, game.native_cursor());
                 s.hits.push((rect, r.id, accept));
             }
             ui::fill(game, batch, [x + 8.0, y + 44.0, w - 16.0, 2.0], 0xff2d3949);
-            ui::fill(game,
+            ui::fill(
+                game,
                 batch,
                 [x + 8.0, y + 44.0, (w - 16.0) * remain as f32 / 60000.0, 2.0],
                 0xff87b6ea,
             );
-            ui::finish(game,batch,render_start,&format!("incoming:{}",r.id),"request");
+            ui::finish(
+                game,
+                batch,
+                render_start,
+                &format!("incoming:{}", r.id),
+                "request",
+            );
         }
     });
 }

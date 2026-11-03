@@ -318,13 +318,23 @@ fn draw_card(
         });
     let background = ((alpha * 255.0 * opacity) as u32) << 24 | 0x151a26;
     ui::fill(game, batch, rect, background);
-    ui::fill(game,
+    ui::fill(
+        game,
         batch,
         [x, y, 2.0, h],
         ((alpha * 255.0) as u32) << 24 | color,
     );
     let mut tx = x + 6.0;
-    if entry.name.is_empty(){ui::icon_tinted(game,batch,ui::Icon::Info,[tx+2.0,y+6.0,10.0,10.0],((alpha*255.0) as u32)<<24|color);tx+=17.0;}
+    if entry.name.is_empty() {
+        ui::icon_tinted(
+            game,
+            batch,
+            ui::Icon::Info,
+            [tx + 2.0, y + 6.0, 10.0, 10.0],
+            ((alpha * 255.0) as u32) << 24 | color,
+        );
+        tx += 17.0;
+    }
     if !entry.name.is_empty() {
         let (uuid, skin) =
             head.unwrap_or_else(|| (0, horizon_client::tab_list::default_skin(0).into()));
@@ -425,8 +435,12 @@ fn paint_region<'a>(
         region[1] + region[3]
     };
     for e in entries {
-        let motion=ui::preferences(game).motion;
-        let alpha=fade(e,context.now,context.focused,p.duration)*crate::game::claim_borders_ui_style::entrance(context.now.saturating_sub(e.created_at) as f32/1000.0,motion);
+        let motion = ui::preferences(game).motion;
+        let alpha = fade(e, context.now, context.focused, p.duration)
+            * crate::game::claim_borders_ui_style::entrance(
+                context.now.saturating_sub(e.created_at) as f32 / 1000.0,
+                motion,
+            );
         if alpha <= 0.0 {
             continue;
         }
@@ -488,7 +502,7 @@ fn paint_region<'a>(
             at
         };
         // Stable cards while reading/clicking; appearance uses alpha only.
-        let rect=[region[0],card_y,region[2],h];
+        let rect = [region[0], card_y, region[2], h];
         let head = state(|s| s.heads.get(&e.name).cloned());
         let start = batch.vertices.len();
         draw_card(

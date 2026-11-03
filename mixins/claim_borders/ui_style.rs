@@ -108,13 +108,13 @@ pub fn icon_for(label:&str)->Option<Icon> {
     use Icon::*;
     match label {
         "Метки"=>Some(Pin),"Пати"|"Друзья"=>Some(People),"Клеймы"|"Приваты"=>Some(Shield),
-        "Чат"=>Some(Chat),"Торги"|"AH"=>Some(Market),"Цены"=>Some(Wallet),"Обзор"|"Профит"=>Some(Chart),
-        "Опции"|"Настройки"|"E"=>Some(Settings),"X"|"Закрыть"|"Отмена [Esc]"=>Some(Close),
+        "Чат"=>Some(Chat),"Торги"|"AH"|"Аукц."=>Some(Market),"Цены"=>Some(Wallet),"Обзор"|"Профит"|"Прибыль"=>Some(Chart),
+        "Опции"|"Настройки"|"E"=>Some(Settings),"X"|"Закрыть"|"Отклонить"|"Отмена [Esc]"=>Some(Close),
         "+"=>Some(Plus),"−"|"-"=>Some(Minus),"<"|"Назад"=>Some(Back),">"=>Some(Next),
         "S"=>Some(Sort),"F"=>Some(Fill),"R"=>Some(Restock),"T"=>Some(Transfer),
         "Принять"|"Готово"=>Some(Check),"Удалить"=>Some(Trash),"Обновить"=>Some(Refresh),
         "К себе"=>Some(Home),"Сетка"=>Some(Grid),"Рельеф"=>Some(Layers),"Зоны"|"Мир"=>Some(Map),
-        _ if label.starts_with("Сохранить")=>Some(Save),_ if label.starts_with("Добавить")=>Some(Plus),
+        _ if label.starts_with("Высокий контраст")=>Some(Eye),_ if label.starts_with("Сохранить")=>Some(Save),_ if label.starts_with("Добавить")=>Some(Plus),
         _=>None,
     }
 }

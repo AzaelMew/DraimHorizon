@@ -4,7 +4,9 @@ fn claim_borders_menu_key(
     modifiers: u32,
     canceled: &mut bool,
 ) {
-    if crate::game::claim_borders_ui_view::key_event(game,key,canceled){return;}
+    if crate::game::claim_borders_ui_view::key_event(game, key, canceled) {
+        return;
+    }
     if key == "key.keyboard.escape" {
         crate::game::claim_borders_economy_client::cancel_scan();
     }

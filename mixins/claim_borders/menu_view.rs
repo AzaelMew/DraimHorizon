@@ -118,6 +118,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         ui::icon(game,batch,ui::Icon::Layers,[px+9.0,py+11.0,12.0,12.0],ui::preferences(game).accent.color());
         ui::text(game,batch,"DRAIM",[px+28.0,py+11.0],0xe3ebf3,false);
         ui::text(game,batch,"HORIZONS",[px+10.0,py+27.0],0x9aacc0,false);
+        let hint=state(|s|match s.menu.tab {
+            model::Tab::Waypoints=>"Сохранённые места и быстрые ориентиры",
+            model::Tab::Party=>"Друзья, приглашения и игроки мода",
+            model::Tab::Claims=>"Территории, цвета и память карты",
+            model::Tab::Chat=>"Внешний вид, уведомления и перевод",
+        });
+        ui::text(game,batch,&ui::clip(game,hint,pw-128.0),[px+112.0,py+34.0],0x9aacc0,false);
     }
     let variant=state(|s|format!("{:?}:{:?}:{:?}:{}",s.menu.tab,s.menu.chat_section,s.menu.claims_section,s.menu.relay_setup));
     state(|s| {
