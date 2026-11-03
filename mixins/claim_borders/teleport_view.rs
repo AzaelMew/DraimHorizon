@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Heads-up requests can be clicked only with the chat cursor open; actions drain on the game thread.
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_teleport as model};
 use horizon_client::hud::HudBatch;
@@ -67,11 +68,12 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
         let w = (batch.width - 16.0).clamp(220.0, 310.0);
         let x = (batch.width - w) * 0.5;
         for (i, r) in s.requests.entries.iter().take(3).enumerate() {
+            let render_start=batch.vertices.len();
             let y = 8.0 + i as f32 * 54.0;
             let remain = 60000u64.saturating_sub(now.saturating_sub(r.at));
-            game.native_fill(batch, [x, y, w, 49.0], 0xeb182331);
-            game.native_fill(batch, [x, y, 2.0, 49.0], 0xff87b6ea);
-            game.native_text(
+            ui::fill(game, batch, [x, y, w, 49.0], 0xeb182331);
+            ui::icon(game,batch,if r.trade{ui::Icon::Transfer}else{ui::Icon::Pin},[x+8.0,y+5.0,11.0,11.0],ui::preferences(game).accent.color());
+            ui::text(game,
                 batch,
                 &format!(
                     "{} · {} · {}с",
@@ -83,11 +85,11 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                     r.name,
                     remain.div_ceil(1000)
                 ),
-                [x + 8.0, y + 6.0],
+                [x + 26.0, y + 6.0],
                 0xe1e9f5,
                 false,
             );
-            for (j, accept, label, color) in [
+            for (j, accept, label, _color) in [
                 (0, true, "Принять", 0xff335e4d),
                 (1, false, "Отклонить", 0xff69404a),
             ] {
@@ -97,22 +99,16 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                     (w - 20.0) / 2.0,
                     18.0,
                 ];
-                game.native_fill(batch, rect, color);
-                game.native_text(
-                    batch,
-                    label,
-                    [rect[0] + 5.0, rect[1] + 5.0],
-                    0xffffff,
-                    false,
-                );
+                ui::button(game,batch,rect,label,false,game.native_cursor());
                 s.hits.push((rect, r.id, accept));
             }
-            game.native_fill(batch, [x + 8.0, y + 44.0, w - 16.0, 2.0], 0xff2d3949);
-            game.native_fill(
+            ui::fill(game, batch, [x + 8.0, y + 44.0, w - 16.0, 2.0], 0xff2d3949);
+            ui::fill(game,
                 batch,
                 [x + 8.0, y + 44.0, (w - 16.0) * remain as f32 / 60000.0, 2.0],
                 0xff87b6ea,
             );
+            ui::finish(game,batch,render_start,&format!("incoming:{}",r.id),"request");
         }
     });
 }

@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // DraimHorizons economy workspace; server transactions remain explicit local actions.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_economy as model,
@@ -170,7 +171,7 @@ pub(super) fn label(
             break;
         }
     }
-    game.native_text(batch, &shown, at, color, false);
+    ui::text(game, batch, &shown, at, color, false);
 }
 fn button(
     game: &Game<'_>,
@@ -182,25 +183,7 @@ fn button(
     selected: bool,
     mouse: [f32; 2],
 ) {
-    game.native_fill(
-        batch,
-        rect,
-        if selected {
-            0xff45647b
-        } else if contains(rect, mouse) {
-            0xff354c62
-        } else {
-            0xff263749
-        },
-    );
-    label(
-        game,
-        batch,
-        text,
-        [rect[0] + 4.0, rect[1] + 5.0],
-        rect[2] - 8.0,
-        0xe0e8f0,
-    );
+    ui::button(game,batch,rect,text,selected,mouse);
     s.hits.push((rect, hit));
 }
 fn age(at: u64, now: u64) -> String {
@@ -231,7 +214,7 @@ fn line(
     *y += 12.0;
 }
 fn spark(game: &Game<'_>, batch: &mut HudBatch, history: &[(u64, model::Coins)], rect: [f32; 4]) {
-    game.native_fill(batch, rect, 0xff101a25);
+    ui::fill(game, batch, rect, 0xff101a25);
     if history.len() < 2 {
         return;
     }
@@ -286,9 +269,9 @@ pub(super) fn render(
     state(|s| {
         s.hits.clear();
         s.viewport = [batch.width, batch.height];
-        game.native_fill(batch, [-2.0, -2.0, w + 4.0, h + 4.0], 0xaa071017);
-        game.native_fill(batch, screen.rect, 0xf0182430);
-        game.native_fill(batch, [0.0, 0.0, w, 2.0], 0xff6bbdb1);
+        ui::fill(game, batch, [-2.0, -2.0, w + 4.0, h + 4.0], 0xaa071017);
+        ui::fill(game, batch, screen.rect, 0xf0182430);
+        ui::fill(game, batch, [0.0, 0.0, w, 2.0], 0xff6bbdb1);
         label(
             game,
             batch,
@@ -737,7 +720,7 @@ pub(super) fn render(
                     } else {
                         s.item.as_ref() == Some(item)
                     };
-                    game.native_fill(
+                    ui::fill(game,
                         batch,
                         [8.0, y, lw, 19.0],
                         if chosen { 0xff354e62 } else { 0xff1c2a39 },
@@ -1127,6 +1110,8 @@ pub(super) fn render(
             }
         });
     });
+    let variant=state(|s|format!("{}:{}",s.tab,s.group));
+    ui::finish(game,batch,start,"economy",&variant);
     batch.clip_since(start, 0.0, 0.0, w, h);
     for vertex in &mut batch.vertices[start..] {
         vertex.pos[0] += ox;
@@ -1359,7 +1344,7 @@ pub(super) fn hud(
         let x = (x + p.get("offset_x") as f32).clamp(2.0, (batch.width - width - 2.0).max(2.0));
         let y = (y + p.get("offset_y") as f32).clamp(2.0, (batch.height - height - 28.0).max(2.0));
         let start = batch.vertices.len();
-        game.native_fill(
+        ui::fill(game,
             batch,
             [x / scale, y / scale, width / scale, height / scale],
             ((p.get("opacity") as u32 * 255 / 100) << 24) | 0x101b27,
@@ -1477,8 +1462,8 @@ pub(super) fn container_overlay(
             return;
         };
         let start = batch.vertices.len();
-        game.native_fill(batch, [x, y, w, h], 0xc00c1721);
-        game.native_fill(batch, [x, y, 2.0, h], 0xbb72cbb5);
+        ui::fill(game, batch, [x, y, w, h], 0xc00c1721);
+        ui::fill(game, batch, [x, y, 2.0, h], 0xbb72cbb5);
         for (i, (text, color)) in lines.iter().enumerate() {
             label(
                 game,

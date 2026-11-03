@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Native map presentation and controls. Terrain is supplied by Horizon's minimap.
 use crate::game::{Game, claim_borders as claims, claim_borders_map as model};
 use horizon_client::hud::HudBatch;
@@ -274,8 +275,8 @@ fn map_marks(
                 0xff
             };
             let color = (alpha << 24) | if mob.hostile { 0xf07876 } else { 0x86ce9a };
-            game.native_fill(batch, [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0], 0xd0101720);
-            game.native_fill(batch, [at[0] - 1.5, at[1] - 1.5, 3.0, 3.0], color);
+            ui::fill(game, batch, [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0], 0xd0101720);
+            ui::fill(game, batch, [at[0] - 1.5, at[1] - 1.5, 3.0, 3.0], color);
         }
     }
     if p.marks {
@@ -291,7 +292,7 @@ fn map_marks(
                 } else {
                     0xe9c66b
                 };
-                game.native_fill(
+                ui::fill(game,
                     batch,
                     [
                         at[0] - size * 0.5 - 1.0,
@@ -321,7 +322,7 @@ fn map_marks(
                         (rect[0] + rect[2] - width - 2.0).max(rect[0] + 2.0),
                     );
                     let y = (at[1] + size / 2.0 + 3.0).min(rect[1] + rect[3] - 12.0);
-                    game.native_fill(batch, [x, y, width, 11.0], 0xee101b28);
+                    ui::fill(game, batch, [x, y, width, 11.0], 0xee101b28);
                     label(
                         game,
                         batch,
@@ -382,7 +383,7 @@ fn map_marks(
                 0xfff0cc73,
             );
             let size = 10.0;
-            game.native_fill(batch, [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0], 0xffe7f8ff);
+            ui::fill(game, batch, [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0], 0xffe7f8ff);
             let skin = if source.player_skin.is_empty() {
                 horizon_client::tab_list::default_skin(source.player_uuid)
             } else {
@@ -463,7 +464,7 @@ fn label(game: &Game<'_>, batch: &mut HudBatch, text: &str, pos: [f32; 2], width
             break;
         }
     }
-    game.native_text(batch, &shown, pos, color, false);
+    ui::text(game, batch, &shown, pos, color, false);
 }
 #[derive(Clone, Copy)]
 enum Button {
@@ -524,7 +525,7 @@ fn map_frame(
         [x - 1.0, y, 1.0, h],
         [x + w, y, 1.0, h],
     ] {
-        game.native_fill(batch, r, 0xff6c7e91);
+        ui::fill(game, batch, r, 0xff6c7e91);
     }
     for (text, at) in [
         ("N", [x + w / 2.0 - 3.0, y + 3.0]),
@@ -532,8 +533,8 @@ fn map_frame(
         ("W", [x + 3.0, y + h / 2.0 - 4.0]),
         ("E", [x + w - 9.0, y + h / 2.0 - 4.0]),
     ] {
-        game.native_fill(batch, [at[0] - 1.0, at[1] - 1.0, 8.0, 10.0], 0xc0101720);
-        game.native_text(
+        ui::fill(game, batch, [at[0] - 1.0, at[1] - 1.0, 8.0, 10.0], 0xc0101720);
+        ui::text(game,
             batch,
             text,
             at,
@@ -554,14 +555,14 @@ fn map_frame(
             format!("{blocks:.0} м")
         };
         let label_width = (pixels + 5.0).max(game.native_text_width(&text) + 6.0);
-        game.native_fill(
+        ui::fill(game,
             batch,
             [bx - 2.0, by - 13.0, label_width + 2.0, 17.0],
             0xc0101720,
         );
-        game.native_fill(batch, [bx, by, pixels, 1.0], 0xffe3e9ed);
+        ui::fill(game, batch, [bx, by, pixels, 1.0], 0xffe3e9ed);
         for xx in [bx, bx + pixels] {
-            game.native_fill(batch, [xx, by - 2.0, 1.0, 3.0], 0xffe3e9ed);
+            ui::fill(game, batch, [xx, by - 2.0, 1.0, 3.0], 0xffe3e9ed);
         }
         label(game, batch, &text, [bx, by - 11.0], label_width, 0xd9e1e8);
     }
@@ -649,6 +650,7 @@ pub(super) fn render(
     if !visible() || game.native_mod_screen() != Some(claims::ID) {
         return false;
     }
+    let render_start=batch.vertices.len();
     let size = [screen.rect[2], screen.rect[3]];
     let rect = map_rect(size);
     let p = settings(game);
@@ -685,7 +687,7 @@ pub(super) fn render(
             s.history_warning.clone(),
         )
     });
-    game.native_fill(batch, screen.rect, 0xff101821);
+    ui::fill(game, batch, screen.rect, 0xff101821);
     label(
         game,
         batch,
@@ -710,7 +712,7 @@ pub(super) fn render(
         size[0] * 0.3 - 8.0,
         0x9fadb9,
     );
-    game.native_fill(batch, rect, 0xff18212c);
+    ui::fill(game, batch, rect, 0xff18212c);
     if image.is_some() {
         if let Some(texture) = game
             .gui
@@ -794,7 +796,7 @@ pub(super) fn render(
                     (rect[0] + rect[2] - 132.0).max(rect[0] + 2.0),
                 );
                 let y = (screen.mouse[1] - 24.0).max(rect[1] + 2.0);
-                game.native_fill(batch, [x, y, 130.0, 20.0], 0xed101821);
+                ui::fill(game, batch, [x, y, 130.0, 20.0], 0xed101821);
                 label(
                     game,
                     batch,
@@ -877,25 +879,8 @@ pub(super) fn render(
         );
     }
     map_frame(game, batch, rect, actual, aspect, false);
-    for (_, r, caption) in buttons(size) {
-        game.native_fill(
-            batch,
-            r,
-            if contains(r, screen.mouse) {
-                0xff40546a
-            } else {
-                0xff253547
-            },
-        );
-        label(
-            game,
-            batch,
-            &caption,
-            [r[0] + 4.0, r[1] + 5.0],
-            r[2] - 8.0,
-            0xe3e9ed,
-        );
-    }
+    for (_,r,caption) in buttons(size){ui::button(game,batch,r,&caption,false,screen.mouse);}
+    ui::finish(game,batch,render_start,"world-map",&format!("{}:{}",dimension,p.layer.label()));
     true
 }
 

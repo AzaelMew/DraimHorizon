@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Optional server presentation, with separately labelled money and daily sale allowance.
 use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_economy_client as data,
@@ -151,31 +152,35 @@ pub(super) fn sidebar(
         let left = x / scale;
         let top = y / scale;
         let w = width / scale;
-        game.native_fill(
+        ui::fill(game,
             batch,
             [left, top, w, height / scale],
             ((p.get("sidebar_opacity") as u32 * 255 / 100) << 24) | 0x0c1721,
         );
-        game.native_fill(batch, [left, top, 2.0, height / scale], 0xbb72cbb5);
+        ui::icon(game,batch,ui::Icon::Home,[left+9.0,top+7.0,12.0,12.0],ui::preferences(game).accent.color());
         label(
             game,
             batch,
             "DraimHorizons",
-            [left + 9.0, top + 7.0],
-            w - 18.0,
+            [left + 27.0, top + 7.0],
+            w - 36.0,
             0xa9e0d2,
         );
-        game.native_fill(batch, [left + 9.0, top + 22.0, w - 18.0, 1.0], 0x4472cbb5);
+        ui::fill(game, batch, [left + 9.0, top + 22.0, w - 18.0, 1.0], 0x4472cbb5);
         for (i, (text, color)) in lines.iter().enumerate() {
+            let kind=if text=="КОШЕЛЁК"{Some(ui::Icon::Wallet)}else if text=="ЛИМИТ ПРОДАЖ СЕРВЕРУ"{Some(ui::Icon::Shield)}else if text=="БОГАТЕЙШИЕ ИГРОКИ"{Some(ui::Icon::Chart)}else{None};
+            if let Some(kind)=kind{ui::icon(game,batch,kind,[left+9.0,top+29.0+i as f32*12.0,9.0,9.0],ui::preferences(game).accent.color());}
+            let inset=if kind.is_some(){23.0}else{9.0};
             label(
                 game,
                 batch,
                 text,
-                [left + 9.0, top + 29.0 + i as f32 * 12.0],
-                w - 18.0,
+                [left + inset, top + 29.0 + i as f32 * 12.0],
+                w - inset-9.0,
                 *color,
             );
         }
+        ui::finish(game,batch,start,"sidebar","sidebar");
         batch.scale_since(start, 0.0, 0.0, scale, scale);
     });
 }
@@ -188,6 +193,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     {
         return false;
     }
+    let render_start=batch.vertices.len();
     let mut players = crate::game::scoreboard::claim_borders_economy_sidebar::prepare_tab(game);
     let friends = crate::game::claim_borders_client::friend_ids();
     let is_friend = |id| friends.iter().any(|(uuid, _)| *uuid == id);
@@ -219,19 +225,20 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         let height = 54.0 + rows as f32 * 15.0;
         let x = (batch.width - width) / 2.0;
         let y = 10.0;
-        game.native_fill(
+        ui::fill(game,
             batch,
             [x, y, width, height],
             ((p.get("tab_opacity") as u32 * 255 / 100) << 24) | 0x0b1621,
         );
-        game.native_fill(batch, [x, y, width, 2.0], 0x9972cbb5);
+        ui::fill(game, batch, [x, y, width, 2.0], 0x9972cbb5);
+        ui::icon(game,batch,ui::Icon::People,[x+11.0,y+8.0,12.0,12.0],ui::preferences(game).accent.color());
         let title = format!("DraimHorizons · {} онлайн", players.len());
         label(
             game,
             batch,
             &title,
-            [x + 10.0, y + 9.0],
-            width - 120.0,
+            [x + 29.0, y + 9.0],
+            width - 139.0,
             0xa9e0d2,
         );
         if p.flag("tab_tps") {
@@ -272,7 +279,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             let left = x + 10.0 + col as f32 * cw;
             let top = y + 40.0 + row as f32 * 15.0;
             if row % 2 == 0 {
-                game.native_fill(batch, [left, top - 1.0, cw - 4.0, 14.0], 0x190d1c28);
+                ui::fill(game, batch, [left, top - 1.0, cw - 4.0, 14.0], 0x190d1c28);
             }
             let skin = game.face_skin(player.uuid, &player.skin);
             crate::game::claim_borders_avatar_draw::face(
@@ -283,6 +290,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 10.0,
                 0xffffffff,
             );
+            if is_friend(player.uuid){ui::icon(game,batch,ui::Icon::Check,[left+6.0,top+7.0,6.0,6.0],0xa2d0b7);}
             let ping = if player.latency < 0 {
                 "?".into()
             } else {
@@ -324,7 +332,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 },
             );
             if dw > 0.0 {
-                game.native_text(
+                ui::text(game,
                     batch,
                     &distance,
                     [left + cw - ping_width - dw - 5.0, top + 1.0],
@@ -342,7 +350,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 } else {
                     0xe39b87
                 };
-                game.native_text(
+                ui::text(game,
                     batch,
                     &ping,
                     [left + cw - ping_width, top + 1.0],
@@ -362,5 +370,6 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             );
         }
     });
+    ui::finish(game,batch,render_start,"player-tab",&PAGE.load(Ordering::Relaxed).to_string());
     true
 }

@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Native chat cards. The original signed message/history path remains untouched.
 use crate::game::claim_borders_chat_preferences as options;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
@@ -276,7 +277,7 @@ fn text(
     rgb: u32,
     alpha: f32,
 ) {
-    let [_, r, g, b] = rgb.to_be_bytes();
+    let [_, r, g, b] = ui::ink(rgb).to_be_bytes();
     batch.text_styled(
         &game.gui.atlas,
         &Text::literal(value),
@@ -310,19 +311,20 @@ fn draw_card(
     let color = priority_rule(&entry.name)
         .map(|r| r.color)
         .unwrap_or(match entry.kind {
-            model::Kind::Presence if entry.joined == Some(false) => 0xf3b777,
-            model::Kind::Presence => 0x74d9a4,
-            model::Kind::Death => 0xf17e98,
-            _ => 0xaaa2ff,
+            model::Kind::Presence if entry.joined == Some(false) => 0xe1c69e,
+            model::Kind::Presence => 0xa2d0b7,
+            model::Kind::Death => 0xdfa8b5,
+            _ => ui::preferences(game).accent.color(),
         });
     let background = ((alpha * 255.0 * opacity) as u32) << 24 | 0x151a26;
-    game.native_fill(batch, rect, background);
-    game.native_fill(
+    ui::fill(game, batch, rect, background);
+    ui::fill(game,
         batch,
         [x, y, 2.0, h],
         ((alpha * 255.0) as u32) << 24 | color,
     );
     let mut tx = x + 6.0;
+    if entry.name.is_empty(){ui::icon_tinted(game,batch,ui::Icon::Info,[tx+2.0,y+6.0,10.0,10.0],((alpha*255.0) as u32)<<24|color);tx+=17.0;}
     if !entry.name.is_empty() {
         let (uuid, skin) =
             head.unwrap_or_else(|| (0, horizon_client::tab_list::default_skin(0).into()));
@@ -423,7 +425,8 @@ fn paint_region<'a>(
         region[1] + region[3]
     };
     for e in entries {
-        let alpha = fade(e, context.now, context.focused, p.duration);
+        let motion=ui::preferences(game).motion;
+        let alpha=fade(e,context.now,context.focused,p.duration)*crate::game::claim_borders_ui_style::entrance(context.now.saturating_sub(e.created_at) as f32/1000.0,motion);
         if alpha <= 0.0 {
             continue;
         }
@@ -452,7 +455,7 @@ fn paint_region<'a>(
         } else {
             format!("{}{count}", e.body(context.translate))
         };
-        let inset = if e.name.is_empty() { 12.0 } else { 29.0 };
+        let inset = 29.0;
         let mut rows = model::wrap(&body, region[2] - inset, |s| game.native_text_width(s));
         let available = if context.layout.top {
             region[1] + region[3] - y
@@ -484,9 +487,8 @@ fn paint_region<'a>(
             y -= 4.0;
             at
         };
-        let slide =
-            (1.0 - (context.now.saturating_sub(e.created_at) as f32 / 160.0).clamp(0.0, 1.0)) * 8.0;
-        let rect = [region[0] - slide, card_y, region[2], h];
+        // Stable cards while reading/clicking; appearance uses alpha only.
+        let rect=[region[0],card_y,region[2],h];
         let head = state(|s| s.heads.get(&e.name).cloned());
         let start = batch.vertices.len();
         draw_card(

@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Screen controls and verified normal clicks. No direct slot writes, quick-moves or hotbar swaps.
 use crate::game::{
     Game, Screen, claim_borders as claims,
@@ -319,30 +320,7 @@ fn button(
     tip: String,
     active: bool,
 ) {
-    let hover = contains(rect, screen.mouse);
-    game.native_fill(
-        batch,
-        rect,
-        if active {
-            0xf0465970
-        } else if hover {
-            0xf049535d
-        } else {
-            0xd0242c35
-        },
-    );
-    game.native_fill(
-        batch,
-        [rect[0], rect[1] + rect[3] - 1.0, rect[2], 1.0],
-        0xff739eac,
-    );
-    game.native_text(
-        batch,
-        &clipped(game, text, rect[2] - 6.0),
-        [rect[0] + 3.0, rect[1] + 4.0],
-        0xe6edf3,
-        false,
-    );
+    ui::button(game,batch,rect,text,active,screen.mouse);
     s.hits.push(Hit {
         rect,
         button: action,
@@ -350,6 +328,7 @@ fn button(
     });
 }
 pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScreenView<'_>) {
+    let render_start=batch.vertices.len();
     load_settings(game);
     let Some(l) = layout(game, screen) else {
         state(|s| {
@@ -437,8 +416,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 for (i, slot) in area.slots.iter().enumerate() {
                     if p.ignored.contains(&i) {
                         let r = slot_rect(game, screen, *slot);
-                        game.native_fill(batch, r, 0x88551a25);
-                        game.native_text(batch, "×", [r[0] + 5.0, r[1] + 4.0], 0xff7979, true);
+                        ui::fill(game, batch, r, 0x88551a25);
+                        ui::text(game, batch, "×", [r[0] + 5.0, r[1] + 4.0], 0xff7979, true);
                     }
                 }
             }
@@ -451,7 +430,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 s,
                 [
                     screen.rect[0] + screen.rect[2] - 15.0,
-                    screen.rect[1] - 13.0,
+                    (screen.rect[1] - 13.0).max(2.0),
                     15.0,
                     12.0,
                 ],
@@ -464,7 +443,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             if let Some((text, at)) = &s.status
                 && at.elapsed() < Duration::from_secs(5)
             {
-                game.native_text(
+                ui::text(game,
                     batch,
                     &clipped(game, text, batch.width - 12.0),
                     [
@@ -537,7 +516,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     .error
                     .as_deref()
                     .unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
-                game.native_text(
+                ui::text(game,
                     batch,
                     &clipped(game, hint, batch.width - 8.0),
                     [4.0, batch.height - 9.0],
@@ -577,9 +556,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             let y = (screen.mouse[1] + 12.0)
                 .min(batch.height - h - 2.0)
                 .max(2.0);
-            game.native_fill(batch, [x, y, w, h], 0xf0121720);
+            ui::fill(game, batch, [x, y, w, h], 0xf0121720);
             for (i, line) in lines.iter().enumerate() {
-                game.native_text(
+                ui::text(game,
                     batch,
                     line,
                     [x + 4.0, y + 3.0 + i as f32 * 10.0],
@@ -589,6 +568,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
         }
     });
+    let variant=state(|s|if s.editor.is_some(){"editor"}else{"controls"});
+    ui::finish(game,batch,render_start,"inventory-tools",variant);
 }
 fn edit(s: &mut State) {
     stop(s);

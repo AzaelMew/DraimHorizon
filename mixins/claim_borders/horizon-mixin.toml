@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.13.0"
+version = "0.14.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -656,3 +656,15 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
 ]
+
+[[module]]
+id = "ui-style"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_ui_style"
+source = "ui_style.rs"
+
+[[module]]
+id = "ui-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_ui_view"
+source = "ui_view.rs"

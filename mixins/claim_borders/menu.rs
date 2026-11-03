@@ -468,9 +468,9 @@ impl Menu {
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
-        let panel_w = (width - 16.0).clamp(220.0, 640.0);
+        let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
-        let sidebar = if panel_w >= 380.0 { 78.0 } else { 0.0 };
+        let sidebar = if panel_w >= 380.0 { 96.0 } else { 0.0 };
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);

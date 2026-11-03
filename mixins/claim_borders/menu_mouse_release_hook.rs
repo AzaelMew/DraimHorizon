@@ -4,6 +4,7 @@ fn claim_borders_menu_mouse(
     button: i32,
     canceled: &mut bool,
 ) {
+    if crate::game::claim_borders_ui_view::mouse(game,screen,button,false,canceled){return;}
     crate::game::claim_borders_inventory_sort_view::release(button, canceled);
     if *canceled {
         return;

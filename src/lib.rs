@@ -74,3 +74,6 @@ pub use inventory_sort as claim_borders_inventory_sort;
 pub mod clickthrough;
 #[path = "../mixins/claim_borders/inventory_preferences.rs"]
 pub mod inventory_preferences;
+
+#[path = "../mixins/claim_borders/ui_style.rs"]
+pub mod ui_style;

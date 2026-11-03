@@ -4,6 +4,7 @@ fn claim_borders_menu_scroll(
     scroll: [f64; 2],
     canceled: &mut bool,
 ) {
+    if crate::game::claim_borders_ui_view::editing(){*canceled=true;return;}
     if crate::game::claim_borders_inventory_sort_view::editing() {
         *canceled = true;
         return;

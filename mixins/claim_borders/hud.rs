@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Native HUD drawing through the existing atlas, with no additional GPU pipeline.
 use crate::game::Game;
 use crate::game::claim_borders_overlay as model;
@@ -41,7 +42,7 @@ pub(super) fn draw(
             let alpha = (marker.alpha.clamp(0.15, 1.0) * 255.0) as u8;
             let x = (x - 6.0).clamp(1.0, (batch.width - 13.0).max(1.0));
             let y = (y - 6.0).clamp(1.0, (batch.height - 13.0).max(1.0));
-            game.native_fill(
+            ui::fill(game,
                 batch,
                 [x - 1.0, y - 1.0, 14.0, 14.0],
                 ((alpha as u32) << 24) | 0x77c7ef,
@@ -75,8 +76,8 @@ pub(super) fn draw(
                 let width = game.native_text_width(&text) + 8.0;
                 let left = (x + 6.0 - width / 2.0).clamp(1.0, (batch.width - width - 1.0).max(1.0));
                 let top = (y + 15.0).min(batch.height - 13.0);
-                game.native_fill(batch, [left, top, width, 12.0], 0xdd10202c);
-                game.native_text(batch, &text, [left + 4.0, top + 2.0], 0xbce8d7, false);
+                ui::fill(game, batch, [left, top, width, 12.0], 0xdd10202c);
+                ui::text(game, batch, &text, [left + 4.0, top + 2.0], 0xbce8d7, false);
             }
             continue;
         }

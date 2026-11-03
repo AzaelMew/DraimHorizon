@@ -1,3 +1,4 @@
+use crate::game::claim_borders_ui_view as ui;
 // Horizon drawing/input adapter. Mutating Game operations are drained on the client tick.
 use crate::game::native_hooks::NativeScreenView;
 use crate::game::{Game, claim_borders as claims, claim_borders_menu as model};
@@ -104,46 +105,47 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     if !owned(game) {
         return;
     }
-    game.native_fill(batch, screen.rect, 0x9c080b12);
-    let pw = (screen.rect[2] - 16.0).clamp(220.0, 640.0);
+    let render_start=batch.vertices.len();
+    ui::fill(game, batch, screen.rect, 0x9c080b12);
+    let pw = (screen.rect[2] - 16.0).clamp(220.0, 720.0);
     let ph = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
     let px = (screen.rect[2] - pw) * 0.5;
     let py = (screen.rect[3] - ph) * 0.5;
-    game.native_fill(batch, [px, py, pw, ph], 0xf0181c28);
-    game.native_fill(batch, [px, py, pw, 2.0], 0xff8b7bff);
+    ui::fill(game, batch, [px, py, pw, ph], 0xf0181c28);
+    ui::fill(game, batch, [px, py, pw, 2.0], 0xff8b7bff);
     if pw >= 380.0 {
-        game.native_fill(batch, [px, py + 2.0, 78.0, ph - 2.0], 0xff111520);
-        game.native_text(batch, "SOCIAL", [px + 10.0, py + 20.0], 0xa99eff, false);
+        ui::fill(game, batch, [px, py + 2.0, 96.0, ph - 2.0], 0xff111520);
+        ui::icon(game,batch,ui::Icon::Layers,[px+9.0,py+11.0,12.0,12.0],ui::preferences(game).accent.color());
+        ui::text(game,batch,"DRAIM",[px+28.0,py+11.0],0xe3ebf3,false);
+        ui::text(game,batch,"HORIZONS",[px+10.0,py+27.0],0x9aacc0,false);
     }
+    let variant=state(|s|format!("{:?}:{:?}:{:?}:{}",s.menu.tab,s.menu.chat_section,s.menu.claims_section,s.menu.relay_setup));
     state(|s| {
         s.height = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
         s.menu.clamp_page(&s.model, s.height);
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
         for widget in widgets {
             let [mut x, y, mut w, h] = widget.rect;
-            let hover = widget.control.is_some()
+            let _hover = widget.control.is_some()
                 && screen.mouse[0] >= x
                 && screen.mouse[0] < x + w
                 && screen.mouse[1] >= y
                 && screen.mouse[1] < y + h;
             if widget.control.is_some() {
-                let color = if widget.selected {
-                    0xff6050ae
-                } else if hover {
-                    0xff34364c
-                } else {
-                    0xff242938
-                };
-                game.native_fill(batch, widget.rect, color);
-                game.native_fill(
-                    batch,
-                    [x, y + h - 1.0, w, 1.0],
-                    if widget.selected {
-                        0xffb2a5ff
-                    } else {
-                        0xff3a4053
-                    },
-                );
+                ui::button_base(game,batch,widget.rect,&widget.text,widget.selected,screen.mouse);
+            }
+            if widget.control==Some(model::Control::Close) {
+                ui::icon(game,batch,ui::Icon::Close,[x+(w-10.0)*0.5,y+(h-10.0)*0.5,10.0,10.0],0xdfa8b5);
+                ui::gear(game,batch,[x-24.0,y,20.0,h],screen.mouse);
+                continue;
+            }
+            if widget.control.is_some()&&!matches!(widget.control,Some(model::Control::Field(_))) {
+                let caption=match widget.text.as_str(){"Пати"=>"Друзья","Клеймы"=>"Приваты",s=>s};
+                if let Some(icon)=crate::game::claim_borders_ui_style::icon_for(&widget.text)
+                    && w>=game.native_text_width(caption)+22.0 {
+                    ui::icon(game,batch,icon,[x+6.0,y+(h-10.0)*0.5,10.0,10.0],ui::preferences(game).accent.color());
+                    x+=17.0;w-=17.0;
+                }
             }
             if s.menu.tab == model::Tab::Party
                 && let Some(model::Control::Row(index)) = widget.control
@@ -202,7 +204,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     };
                     format!("{label}{shown}│{rest}")
                 } else {
-                    widget.text.clone()
+                    match widget.text.as_str() {
+                        "DRAIMHORIZONS"=>match s.menu.tab {
+                            model::Tab::Waypoints=>"Мои метки",model::Tab::Party=>"Друзья и игроки",
+                            model::Tab::Claims=>"Мои приваты",model::Tab::Chat=>"Чат и уведомления",
+                        }.into(),
+                        "Пати"=>"Друзья".into(),"Клеймы"=>"Приваты".into(),_=>widget.text.clone(),
+                    }
                 };
             let text =
                 if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
@@ -234,13 +242,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     let left = (caret_x - measure(&value[selected.start..cursor])).max(x + 4.0);
                     let right = (caret_x + measure(&value[cursor..selected.end])).min(x + w - 4.0);
                     if right > left {
-                        game.native_fill(batch, [left, y + 3.0, right - left, h - 6.0], 0x995f50b8);
+                        ui::fill(game, batch, [left, y + 3.0, right - left, h - 6.0], 0x995f50b8);
                     }
                 }
             }
-            game.native_text(batch, &text, [x + 4.0, y + (h - 8.0) * 0.5], color, true);
+            ui::text(game, batch, &text, [x + 4.0, y + (h - 8.0) * 0.5], color, true);
         }
     });
+    ui::finish(game,batch,render_start,"main-menu",&variant);
 }
 pub(super) fn mouse(
     game: &Game<'_>,
