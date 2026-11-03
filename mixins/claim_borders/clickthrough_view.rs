@@ -150,3 +150,15 @@ pub(crate) fn opened(game: &Game<'_>, packet: &horizon_protocol::packets::play::
     });
     inventory::opened(packet.container, menu, physical);
 }
+
+/// Called only at the actual entity-use path, not merely when the crosshair passes a vehicle.
+pub(crate) fn entity_use(game:&Game<'_>,hand:Hand) {
+    if hand!=Hand::Main||!game.native_on(claims::ID){return;}
+    let Some(id)=game.pick_entity_hit().flatten() else{return;};
+    let expected=game.carts.iter().find(|c|c.id as i32==id).and_then(|c|match c.kind {
+        crate::game::minecarts::CartKind::Chest=>Some("minecraft:generic_9x3"),
+        crate::game::minecarts::CartKind::Hopper=>Some("minecraft:hopper"),
+        _=>None,
+    }).or_else(||game.boats.iter().any(|b|b.id as i32==id&&b.chest).then_some("minecraft:generic_9x3"));
+    if let Some(menu)=expected {inventory::entity_use(menu);}
+}

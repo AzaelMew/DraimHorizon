@@ -228,6 +228,10 @@ pub fn traversal(indices: &[usize], columns: usize, by_columns: bool) -> Vec<usi
 pub fn next(slots: &[Option<Stack>]) -> Result<Option<Plan>, String> {
     next_sort(slots, &(0..slots.len()).collect::<Vec<_>>(), Mode::Id)
 }
+/// Logical Game slot ids; the native adapter validates every outgoing click against this set.
+pub fn safe_game_slot(i: usize) -> bool {
+    (9..36).contains(&i)||(300..354).contains(&i)||(710..725).contains(&i)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,4 +397,13 @@ mod tests {
             vec![0, 3, 1, 4, 2, 5]
         );
     }
+    #[test]
+    fn game_slot_allowlist_excludes_hotbar_equipment_and_crafting() {
+        for i in 0..9 {assert!(!safe_game_slot(i));}
+        for i in [36,100,101,200,500,501,502,503,504,700,701,354,725] {assert!(!safe_game_slot(i));}
+        assert!((9..36).all(safe_game_slot));
+        assert!((300..354).all(safe_game_slot));
+        assert!((710..725).all(safe_game_slot));
+    }
+
 }

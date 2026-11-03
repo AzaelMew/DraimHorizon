@@ -1,6 +1,15 @@
 // Geometric checks shared with native interaction. Only one attached decoration is skipped.
 pub fn supporting_frame(pos: [i32; 3], step: [i32; 3]) -> Option<[i32; 3]> {
-    if ![[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].contains(&step) {
+    if ![
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ]
+    .contains(&step)
+    {
         return None;
     }
     let mut out = pos;

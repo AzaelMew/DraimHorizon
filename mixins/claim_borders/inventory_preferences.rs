@@ -170,7 +170,10 @@ mod tests {
         let mut p = Preferences::default();
         p.defaults.ignored.insert(3);
         p.defaults.columns = true;
-        let local = Policy { ignored: BTreeSet::from([0, 26]), ..Policy::default() };
+        let local = Policy {
+            ignored: BTreeSet::from([0, 26]),
+            ..Policy::default()
+        };
         p.policies.insert("inventory/player".into(), local.clone());
         p.virtual_menus.insert("custom bag".into());
         let decoded = Preferences::decode(&p.encode()).unwrap();

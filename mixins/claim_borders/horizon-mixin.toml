@@ -636,3 +636,13 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "packet", ty = "&horizon_protocol::packets::play::OpenScreen", value = "&p" },
 ]
+
+[[injection]]
+id = "inventory-entity"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_use_entity"
+helper = "inventory_entity_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
+]
