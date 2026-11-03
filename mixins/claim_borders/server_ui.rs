@@ -101,7 +101,7 @@ fn card(
             *color,
         );
     }
-    ui::finish(game, batch, start, "sidebar-card", key);
+    ui::finish(game, batch, start, key, "sidebar-card");
     batch.scale_since(start, 0.0, 0.0, scale, scale);
 }
 pub(super) fn sidebar(

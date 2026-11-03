@@ -365,7 +365,9 @@ fn draw_card(
     } else {
         &entry.name
     };
-    if entry.kind == model::Kind::Message || compact {
+    if compact {
+        if let Some(row)=rows.first(){text(game,batch,row,[tx,y+6.0],if entry.kind==model::Kind::Death{0xdfa8b5}else{0xe7eaf2},alpha);}
+    } else if entry.kind == model::Kind::Message {
         let prefix = format!(
             "{name}{}: ",
             if entry.show_original {
@@ -451,7 +453,7 @@ fn paint_region<'a>(
         if alpha <= 0.0 {
             continue;
         }
-        let compact = e.kind != model::Kind::Message
+        let compact = e.kind == model::Kind::Death || e.kind != model::Kind::Message
             && matches!(
                 p.notifications,
                 options::NotificationStyle::Compact | options::NotificationStyle::Inline
@@ -467,7 +469,9 @@ fn paint_region<'a>(
         } else {
             &e.name
         };
-        let body = if inline {
+        let body = if compact {
+            format!("{}{count}",model::event_summary(e,context.translate))
+        } else if inline {
             format!(
                 "{label}{}: {}{count}",
                 if e.show_original { " [ориг.]" } else { "" },
@@ -477,7 +481,7 @@ fn paint_region<'a>(
             format!("{}{count}", e.body(context.translate))
         };
         let inset = 29.0;
-        let mut rows = model::wrap(&body, region[2] - inset, |s| game.native_text_width(s));
+        let mut rows = if compact{vec![model::single_line(&body,region[2]-inset,|s|game.native_text_width(s))]}else{model::wrap(&body, region[2] - inset, |s| game.native_text_width(s))};
         let available = if context.layout.top {
             region[1] + region[3] - y
         } else {
@@ -494,7 +498,7 @@ fn paint_region<'a>(
                 last.push('…');
             }
         }
-        let h = (padding + rows.len() as f32 * 10.0).max(if inline { 22.0 } else { 30.0 });
+        let h = if compact{20.0}else{(padding + rows.len() as f32 * 10.0).max(if inline { 22.0 } else { 30.0 })};
         if h > available {
             break;
         }
@@ -679,6 +683,14 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     batch.scale_since(start, 0.0, 0.0, layout.scale, layout.scale);
     let [x, y, w, h] = layout.bounds;
     batch.clip_since(start, x, y, x + w, y + h);
+    if game.screen!=Screen::Playing{
+        let mouse=game.native_cursor();
+        if let Some(id)=options::hit_at(&hits,mouse){
+            if let Some(e)=entries.iter().find(|e|e.id==id&&matches!(e.kind,model::Kind::Death|model::Kind::Presence)){
+                ui::tooltip(game,batch,&format!("{} · {}",e.name,e.body(context.translate)),mouse);
+            }
+        }
+    }
     if focused {
         let hint = if scroll > 0 {
             format!("История ↑ {scroll} · ЛКМ: оригинал / перевод")
