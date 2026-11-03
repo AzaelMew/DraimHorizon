@@ -3,8 +3,12 @@ fn claim_borders_menu_char(game: &crate::game::Game<'_>, c: char, canceled: &mut
         *canceled = true;
         return;
     }
-    if crate::game::claim_borders_waypoint_view::character(game,c,canceled){return;}
-    if crate::game::claim_borders_inventory_search_view::character(game,c,canceled){return;}
+    if crate::game::claim_borders_waypoint_view::character(game, c, canceled) {
+        return;
+    }
+    if crate::game::claim_borders_inventory_search_view::character(game, c, canceled) {
+        return;
+    }
     if crate::game::claim_borders_inventory_sort_view::editing() {
         *canceled = true;
         return;

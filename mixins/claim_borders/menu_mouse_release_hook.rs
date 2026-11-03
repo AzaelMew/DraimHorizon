@@ -7,8 +7,12 @@ fn claim_borders_menu_mouse(
     if crate::game::claim_borders_ui_view::mouse(game, screen, button, false, canceled) {
         return;
     }
-    if crate::game::claim_borders_waypoint_view::release(button,canceled){return;}
-    if crate::game::claim_borders_inventory_search_view::release(button,canceled){return;}
+    if crate::game::claim_borders_waypoint_view::release(button, canceled) {
+        return;
+    }
+    if crate::game::claim_borders_inventory_search_view::release(button, canceled) {
+        return;
+    }
     crate::game::claim_borders_inventory_sort_view::release(button, canceled);
     if *canceled {
         return;

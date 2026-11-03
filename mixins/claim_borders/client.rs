@@ -1962,25 +1962,84 @@ pub(super) fn add_map_waypoint(
         Ok(())
     })
 }
-pub(super) fn quick_waypoint(game:&mut Game<'_>){
-    if !ensure(game){return;}let Some(p)=game.native_player()else{return;};
-    let dim=p.dimension.to_owned();let pos=[p.x,p.y,p.z];
-    if game.native_mod_screen_open(claims::ID){crate::game::claim_borders_waypoint_view::open_create(dim,pos,true);}
+pub(super) fn quick_waypoint(game: &mut Game<'_>) {
+    if !ensure(game) {
+        return;
+    }
+    let Some(p) = game.native_player() else {
+        return;
+    };
+    let dim = p.dimension.to_owned();
+    let pos = [p.x, p.y, p.z];
+    if game.native_mod_screen_open(claims::ID) {
+        crate::game::claim_borders_waypoint_view::open_create(dim, pos, true);
+    }
 }
 
-pub(super) fn own_waypoints()->Vec<waypoints::Waypoint>{state(|c|c.waypoints.as_ref().map(|s|s.all(&c.scope).into_iter().cloned().collect()).unwrap_or_default())}
-pub(super) fn save_own_waypoint(id:Option<u64>,dim:&str,pos:[f64;3],name:&str,color:u32,kind:waypoints::MarkerKind)->Result<u64,String>{
-    state(|c|{
-        let mut next=c.waypoints.as_ref().ok_or("Хранилище меток недоступно")?.clone();
-        let id=match id{Some(id)=>{next.update(&c.scope,id,name,color,kind).map_err(|e|e.to_string())?;id},
-            None=>{let id=next.add(&c.scope,dim,name,pos,color).map_err(|e|e.to_string())?;next.set_kind(&c.scope,id,kind).map_err(|e|e.to_string())?;id}};
-        next.save(&c.root.join("waypoints.json")).map_err(|e|e.to_string())?;c.waypoints=Some(next);Ok(id)
+pub(super) fn own_waypoints() -> Vec<waypoints::Waypoint> {
+    state(|c| {
+        c.waypoints
+            .as_ref()
+            .map(|s| s.all(&c.scope).into_iter().cloned().collect())
+            .unwrap_or_default()
     })
 }
-pub(super) fn delete_own_waypoint(id:u64)->Result<(),String>{
-    state(|c|{let mut next=c.waypoints.as_ref().ok_or("Хранилище меток недоступно")?.clone();
-        next.remove(&c.scope,id).map_err(|e|e.to_string())?;next.save(&c.root.join("waypoints.json")).map_err(|e|e.to_string())?;c.waypoints=Some(next);Ok(())})
+pub(super) fn save_own_waypoint(
+    id: Option<u64>,
+    dim: &str,
+    pos: [f64; 3],
+    name: &str,
+    color: u32,
+    kind: waypoints::MarkerKind,
+) -> Result<u64, String> {
+    state(|c| {
+        let mut next = c
+            .waypoints
+            .as_ref()
+            .ok_or("Хранилище меток недоступно")?
+            .clone();
+        let id = match id {
+            Some(id) => {
+                next.update(&c.scope, id, name, color, kind)
+                    .map_err(|e| e.to_string())?;
+                id
+            }
+            None => {
+                let id = next
+                    .add(&c.scope, dim, name, pos, color)
+                    .map_err(|e| e.to_string())?;
+                next.set_kind(&c.scope, id, kind)
+                    .map_err(|e| e.to_string())?;
+                id
+            }
+        };
+        next.save(&c.root.join("waypoints.json"))
+            .map_err(|e| e.to_string())?;
+        c.waypoints = Some(next);
+        Ok(id)
+    })
 }
-pub(super) fn waypoint_kind(dimension:&str,position:[f64;2])->waypoints::MarkerKind{
-    own_waypoints().iter().find(|w|w.dimension==dimension&&(w.position[0]-position[0]).abs()<0.01&&(w.position[2]-position[1]).abs()<0.01).map_or(waypoints::MarkerKind::Pin,|w|w.kind)
+pub(super) fn delete_own_waypoint(id: u64) -> Result<(), String> {
+    state(|c| {
+        let mut next = c
+            .waypoints
+            .as_ref()
+            .ok_or("Хранилище меток недоступно")?
+            .clone();
+        next.remove(&c.scope, id).map_err(|e| e.to_string())?;
+        next.save(&c.root.join("waypoints.json"))
+            .map_err(|e| e.to_string())?;
+        c.waypoints = Some(next);
+        Ok(())
+    })
+}
+pub(super) fn waypoint_kind(dimension: &str, position: [f64; 2]) -> waypoints::MarkerKind {
+    own_waypoints()
+        .iter()
+        .find(|w| {
+            w.dimension == dimension
+                && (w.position[0] - position[0]).abs() < 0.01
+                && (w.position[2] - position[1]).abs() < 0.01
+        })
+        .map_or(waypoints::MarkerKind::Pin, |w| w.kind)
 }
