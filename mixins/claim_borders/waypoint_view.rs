@@ -30,11 +30,13 @@ fn world(dim:&str)->String{crate::game::claim_borders_map::dimension_label(dim)}
 fn world_order(dim:&str)->u8{match dim{"minecraft:overworld"=>0,"minecraft:the_nether"=>1,"minecraft:the_end"=>2,_=>3}}
 pub(super)fn frame(game:&mut Game<'_>){
     if !game.native_on(claims::ID){reset();return;}
-    state(|s|s.rows=client::own_waypoints());
+    let rows=client::own_waypoints();
+    state(|s|s.rows=rows);
     let (action,copy,paste)=state(|s|{let p=s.paste;s.paste=false;(s.action.take(),s.copy.take(),p)});
     if let Some(text)=copy{game.clipboard.set(&text);}
     if paste{let text=game.clipboard.get();state(|s|{if let Some(d)=s.draft.as_mut(){if d.focus{d.color.insert(&text,7);}else{d.name.insert(&text,48);}}});}
     if let Some(action)=action{
+        let deleting=matches!(&action,Action::Delete(_));
         let result=match action{
             Action::Delete(id)=>client::delete_own_waypoint(id).map(|()|"Метка удалена".to_owned()),
             Action::Save(d)=>model::parse_color(&d.color.value).map_err(|e|e.to_string()).and_then(|color|
@@ -42,7 +44,7 @@ pub(super)fn frame(game:&mut Game<'_>){
             Action::Close=>Ok(String::new()),
         };
         let close=state(|s|match result{
-            Ok(text)=>{s.error=text;if !matches!(action,Action::Delete(_)){s.draft=None;let q=s.quick;s.quick=false;q}else{false}}
+            Ok(text)=>{s.error=text;if !deleting{s.draft=None;let q=s.quick;s.quick=false;q}else{false}}
             Err(e)=>{s.error=format!("Не удалось сохранить: {e}");false}
         });
         if close{game.native_mod_screen_close(claims::ID);}
