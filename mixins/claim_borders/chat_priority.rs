@@ -18,7 +18,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             rules: BTreeMap::new(),
-            friends: false,
+            friends: true,
             tray: true,
             seconds: 60,
             rows: 3,
@@ -50,7 +50,7 @@ impl Preferences {
             .get(&name.to_ascii_lowercase())
             .cloned()
             .or_else(|| {
-                (self.friends && friend).then_some(Rule {
+                (friend).then_some(Rule {
                     color: 0x77d9b0,
                     pinned: true,
                 })
@@ -68,7 +68,7 @@ impl Preferences {
             return Err("unknown priority schema".into());
         }
         let mut p = Self {
-            friends: v["friends"].as_bool().unwrap_or(false),
+            friends: true,
             tray: v["tray"].as_bool().unwrap_or(true),
             seconds: v["seconds"].as_u64().unwrap_or(60).clamp(10, 180) as u16,
             rows: v["rows"].as_u64().unwrap_or(3).clamp(1, 6) as u8,
@@ -93,6 +93,12 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_opt_out_cannot_hide_friends() {
+        let p=Preferences::decode(r#"{"schema":1,"rules":[],"friends":false}"#).unwrap();
+        assert!(p.rule("Friend",true).unwrap().pinned);
+        assert!(p.rule("Stranger",false).is_none());
+    }
     #[test]
     fn names_match_exactly_and_settings_round_trip() {
         let mut p = Preferences::default();

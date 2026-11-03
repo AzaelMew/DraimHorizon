@@ -244,6 +244,7 @@ pub enum PartyFilter {
     #[default]
     Users,
     Invitations,
+    Important,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ChatSection {
@@ -268,6 +269,7 @@ pub enum ChatOption {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
     PriorityNext,
+    PriorityRow(usize),
     PrioritySave,
     PriorityRemove,
     PriorityPin,
@@ -454,7 +456,7 @@ impl Menu {
         (((height - 170.0) / 24.0).floor() as usize).clamp(2, 12)
     }
     fn page_size(&self, height: f32) -> usize {
-        if self.tab == Tab::Party {
+        if self.tab==Tab::Party&&self.party_filter==PartyFilter::Important {(((height-228.0)/24.0).floor() as usize).max(1)} else if self.tab == Tab::Party {
             (((height - 176.0) / 24.0).floor() as usize).clamp(1, 12)
         } else {
             Self::rows_per_page(height)
@@ -463,6 +465,7 @@ impl Menu {
     fn count(&self, model: &ViewModel) -> usize {
         match self.tab {
             Tab::Waypoints => model.waypoints.len(),
+            Tab::Party if self.party_filter==PartyFilter::Important => self.important_names(model).len(),
             Tab::Party => self.party_indices(model).len(),
             Tab::Claims | Tab::Chat => 0,
         }
@@ -1041,7 +1044,7 @@ impl Menu {
                 ],
                 vec![
                     (
-                        format!("Все друзья: {}", on(model.priority.friends)),
+                        "Друзья: всегда важные".into(),
                         Control::PriorityFriends,
                         model.priority.friends,
                     ),
@@ -1132,6 +1135,11 @@ impl Menu {
         }
         out
     }
+    fn important_names(&self,model:&ViewModel)->Vec<String>{
+        let mut names:std::collections::BTreeMap<String,String>=model.priority.rules.keys().map(|n|(n.clone(),n.clone())).collect();
+        for p in model.party.iter().filter(|p|p.friend){names.insert(p.name.to_ascii_lowercase(),p.name.clone());}
+        names.into_values().collect()
+    }
     fn party_indices(&self, model: &ViewModel) -> Vec<usize> {
         model
             .party
@@ -1141,6 +1149,7 @@ impl Menu {
                 PartyFilter::Friends => p.friend,
                 PartyFilter::Users => p.online && !p.pending,
                 PartyFilter::Invitations => p.pending,
+                PartyFilter::Important => false,
             })
             .map(|(i, _)| i)
             .collect()
@@ -1245,16 +1254,37 @@ impl Menu {
                 (PartyFilter::Friends, "Друзья"),
                 (PartyFilter::Users, "С модом"),
                 (PartyFilter::Invitations, "Приглашения"),
+                (PartyFilter::Important, "Важные"),
             ]
             .into_iter()
             .enumerate()
             {
                 out.push(widget(
-                    [x + i as f32 * w / 3.0, 94.0, w / 3.0 - 3.0, 18.0],
+                    [x + i as f32 * w / 4.0, 94.0, w / 4.0 - 3.0, 18.0],
                     title,
                     Some(Control::PartyFilter(filter)),
                     self.party_filter == filter,
                 ));
+            }
+            if self.party_filter==PartyFilter::Important {
+                let names=self.important_names(model);
+                let per=(((height-228.0)/24.0).floor() as usize).max(1);
+                let pages=names.len().div_ceil(per).max(1);let page=self.page.min(pages-1);
+                for (i,name) in names.iter().enumerate().skip(page*per).take(per) {
+                    let friend=model.party.iter().any(|p|p.friend&&p.name.eq_ignore_ascii_case(name));
+                    out.push(widget([x,118.0+(i-page*per) as f32*24.0,w,22.0],
+                        format!("{} · {}",name,if friend{"Друг · всегда важный"}else{"Важный игрок"}),
+                        Some(Control::PriorityRow(i)),self.priority_name.eq_ignore_ascii_case(name)));
+                }
+                let b=height-104.0;
+                out.push(widget([x,b,24.0,18.0],"←",Some(Control::Previous),false));
+                out.push(widget([x+28.0,b,w-56.0,18.0],format!("{} / {} · Друзья добавляются автоматически",page+1,pages),None,false));
+                out.push(widget([x+w-24.0,b,24.0,18.0],"→",Some(Control::Next),false));
+                out.push(widget([x,b+24.0,w*0.65-3.0,20.0],format!("Ник: {}",self.priority_name),Some(Control::Field(Field::PriorityName)),self.focus==Some(Field::PriorityName)));
+                out.push(widget([x+w*0.65,b+24.0,w*0.35,20.0],"Добавить / сохранить",Some(Control::PrioritySave),false));
+                out.push(widget([x,b+48.0,w*0.65-3.0,20.0],format!("Цвет: {}",self.priority_color),Some(Control::Field(Field::PriorityColor)),self.focus==Some(Field::PriorityColor)));
+                out.push(widget([x+w*0.65,b+48.0,w*0.35,20.0],"Убрать правило",Some(Control::PriorityRemove),false));
+                return out;
             }
             let indices = self.party_indices(model);
             let per = self.page_size(height);
@@ -1282,6 +1312,7 @@ impl Menu {
                         PartyFilter::Friends => "Пока нет друзей. Выбери игрока в «С модом».",
                         PartyFilter::Users => "Здесь появятся игроки вашего relay на этом сервере.",
                         PartyFilter::Invitations => "Нет входящих приглашений.",
+                        PartyFilter::Important => "Нет важных игроков.",
                     },
                     None,
                     false,
@@ -1585,6 +1616,14 @@ impl Menu {
                 Some(Action::SetChat(p.normalized()))
             }
 
+            Control::PriorityRow(i)=>{
+                if let Some(name)=self.important_names(model).get(i){
+                    self.priority_name=name.clone();self.focus=None;
+                    if let Some(r)=model.priority.rule(name,model.party.iter().any(|p|p.friend&&p.name.eq_ignore_ascii_case(name))){
+                        self.priority_color=format!("#{:06X}",r.color);self.priority_pinned=r.pinned;
+                    }
+                }None
+            }
             Control::PriorityNext => {
                 let rules = &model.priority.rules;
                 let next = rules
@@ -1635,7 +1674,7 @@ impl Menu {
                         p.rules
                             .remove(&self.priority_name.trim().to_ascii_lowercase());
                     }
-                    Control::PriorityFriends => p.friends = !p.friends,
+                    Control::PriorityFriends => p.friends = true,
                     Control::PriorityTray => p.tray = !p.tray,
                     Control::PriorityTime(dir) => {
                         p.seconds = (p.seconds as i32 + dir as i32 * 10).clamp(10, 180) as u16

@@ -25,6 +25,7 @@ struct State {
     published: Option<(String, model::View, f32)>,
     dimensions: Vec<String>,
     history_warning: Option<String>,
+    left_click: Option<(std::time::Instant, [f32; 2], String)>,
     right_click: Option<(std::time::Instant, [f32; 2], String)>,
     probes: std::collections::BTreeSet<u64>,
     points: Vec<(String, [f64; 3])>,
@@ -49,6 +50,7 @@ impl Default for State {
             published: None,
             dimensions: Vec::new(),
             history_warning: None,
+            left_click: None,
             right_click: None,
             probes: std::collections::BTreeSet::new(),
             points: Vec::new(),
@@ -92,6 +94,7 @@ pub(super) fn reset() {
     crate::game::extras::claim_borders_map_backend::flush();
     state(|s| {
         s.right_click = None;
+        s.left_click = None;
         s.probes.clear();
         s.points.clear();
         s.source = None;
@@ -339,26 +342,8 @@ fn map_marks(
                     );
                 }
             } else {
-                batch.fill_quad(
-                    &game.gui.atlas,
-                    [
-                        [at[0], at[1] - 4.0],
-                        [at[0] + 4.0, at[1]],
-                        [at[0], at[1] + 4.0],
-                        [at[0] - 4.0, at[1]],
-                    ],
-                    0xff142031,
-                );
-                batch.fill_quad(
-                    &game.gui.atlas,
-                    [
-                        [at[0], at[1] - 3.0],
-                        [at[0] + 3.0, at[1]],
-                        [at[0], at[1] + 3.0],
-                        [at[0] - 3.0, at[1]],
-                    ],
-                    0xff000000 | mark.color,
-                );
+                let kind=if mark.friend{crate::game::claim_borders_waypoints::MarkerKind::Pin}else{crate::game::claim_borders_client::waypoint_kind(dimension,mark.position)};
+                ui::icon(game,batch,crate::game::claim_borders_waypoint_view::icon(kind),[at[0]-5.0,at[1]-5.0,10.0,10.0],mark.color);
             }
             if full && p.labels {
                 label(
@@ -675,6 +660,7 @@ pub(super) fn render(
     let (source, dimension, view, image, warning) = state(|s| {
         s.rect = Some(rect);
         if let Some(drag) = &s.drag {
+            if (screen.mouse[0]-drag.mouse[0]).hypot(screen.mouse[1]-drag.mouse[1])>5.0 {s.left_click=None;}
             s.view.center = [
                 drag.center[0]
                     - f64::from(
@@ -848,7 +834,7 @@ pub(super) fn render(
                 cz.div_euclid(16)
             )
         } else {
-            "Колесо — масштаб · ЛКМ — перемещение · 2×ПКМ — метка · X — у себя".into()
+            "Тянуть ЛКМ — карта · 2×ЛКМ — удалить свою метку · 2×ПКМ — создать".into()
         };
         label(
             game,
@@ -980,15 +966,28 @@ pub(super) fn mouse(
         {
             operate(game, button);
         } else {
-            state(|s| {
-                if s.rect.is_some_and(|r| contains(r, screen.mouse)) {
-                    s.drag = Some(Drag {
-                        mouse: screen.mouse,
-                        center: s.view.center,
-                    });
-                    s.follow = false;
-                }
+            let target=state(|s| {
+                let rect=s.rect?;
+                if !contains(rect,screen.mouse){return None;}
+                let (dimension,view,aspect)=s.published.clone()?;
+                if dimension!=s.dimension{return None;}
+                let double=s.left_click.as_ref().is_some_and(|(at,old,dim)|at.elapsed().as_millis()<=400&&dim==&dimension&&(old[0]-screen.mouse[0]).hypot(old[1]-screen.mouse[1])<5.0);
+                s.left_click=Some((std::time::Instant::now(),screen.mouse,dimension.clone()));
+                s.drag=Some(Drag{mouse:screen.mouse,center:s.view.center});s.follow=false;
+                if !double{return None;}
+                s.left_click=None;s.drag=None;
+                let world=view.world_aspect([(screen.mouse[0]-rect[0])/rect[2]*128.0,(screen.mouse[1]-rect[1])/rect[3]*128.0],128.0,aspect);
+                Some((dimension,world,7.0*128.0*f64::from(view.blocks_per_pixel)/f64::from(rect[3])))
             });
+            if let Some((dim,point,radius))=target{
+                if let Some(w)=crate::game::claim_borders_client::own_waypoints().into_iter()
+                    .filter(|w|w.dimension==dim)
+                    .map(|w|{let d=(w.position[0]-point[0]).hypot(w.position[2]-point[1]);(w.id,d)})
+                    .filter(|(_,d)|*d<=radius)
+                    .min_by(|a,b|a.1.total_cmp(&b.1)){
+                    crate::game::claim_borders_waypoint_view::queue_delete(w.0);
+                }
+            }
         }
     }
     true

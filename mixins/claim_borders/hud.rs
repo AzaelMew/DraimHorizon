@@ -95,18 +95,8 @@ pub(super) fn draw(
             continue;
         };
         let [icon_x, icon_y, icon_w, icon_h] = layout.icon;
-        let cx = icon_x + icon_w * 0.5;
-        let cy = icon_y + icon_h * 0.5;
-        batch.fill_quad(
-            &game.gui.atlas,
-            [
-                [cx, cy - 3.0],
-                [cx + 3.0, cy],
-                [cx, cy + 3.0],
-                [cx - 3.0, cy],
-            ],
-            color,
-        );
+        let kind=game.native_player().map(|p|crate::game::claim_borders_client::waypoint_kind(p.dimension,[marker.position[0],marker.position[2]])).unwrap_or_default();
+        ui::icon_tinted(game,batch,crate::game::claim_borders_waypoint_view::icon(kind),[icon_x,icon_y,icon_w,icon_h],((alpha as u32)<<24)|marker.color);
         let [left, top, width, height] = layout.bounds;
         let center_x = left + width / 2.0;
         for (label, line_y, line_color) in [
