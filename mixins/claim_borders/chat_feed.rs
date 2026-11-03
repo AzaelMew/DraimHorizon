@@ -35,30 +35,77 @@ impl Entry {
     }
 }
 /// A compact event keeps its full original in Entry for the hover card.
-pub fn event_summary(entry:&Entry,translated:bool)->String{
-    let body=entry.body(translated);
-    if entry.kind!=Kind::Death{return format!("{} · {}",entry.name,body);}
-    let lower=body.to_lowercase();
-    for prefix in ["was slain by ","was killed by ","was shot by ","был убит ","была убита ","был застрелен ","была застрелена "]{
-        if lower.starts_with(prefix){
-            let who=body.get(prefix.len()..).unwrap_or("").split_whitespace().next().unwrap_or("");
-            if !who.is_empty(){return format!("{} ← {}",entry.name,who);}
+pub fn event_summary(entry: &Entry, translated: bool) -> String {
+    let body = entry.body(translated);
+    if entry.kind != Kind::Death {
+        return format!("{} · {}", entry.name, body);
+    }
+    let lower = body.to_lowercase();
+    for prefix in [
+        "was slain by ",
+        "was killed by ",
+        "was shot by ",
+        "был убит ",
+        "была убита ",
+        "был застрелен ",
+        "была застрелена ",
+    ] {
+        if lower.starts_with(prefix) {
+            let who = body
+                .get(prefix.len()..)
+                .unwrap_or("")
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
+            if !who.is_empty() {
+                return format!("{} ← {}", entry.name, who);
+            }
         }
     }
-    let reason=if lower.contains("drown")||lower.contains("утону"){"Утонул"}
-        else if lower.contains("lava")||lower.contains("лав"){"Лава"}
-        else if lower.contains("fell")||lower.contains("ground")||lower.contains("упал")||lower.contains("разбил"){"Падение"}
-        else if lower.contains("burn")||lower.contains("flame")||lower.contains("fire")||lower.contains("сгор"){"Огонь"}
-        else if lower.contains("explod")||lower.contains("blown")||lower.contains("blew up")||lower.contains("взорва"){"Взрыв"}
-        else{"Погиб"};
-    format!("{} · {reason}",entry.name)
+    let reason = if lower.contains("drown") || lower.contains("утону") {
+        "Утонул"
+    } else if lower.contains("lava") || lower.contains("лав") {
+        "Лава"
+    } else if lower.contains("fell")
+        || lower.contains("ground")
+        || lower.contains("упал")
+        || lower.contains("разбил")
+    {
+        "Падение"
+    } else if lower.contains("burn")
+        || lower.contains("flame")
+        || lower.contains("fire")
+        || lower.contains("сгор")
+    {
+        "Огонь"
+    } else if lower.contains("explod")
+        || lower.contains("blown")
+        || lower.contains("blew up")
+        || lower.contains("взорва")
+    {
+        "Взрыв"
+    } else {
+        "Погиб"
+    };
+    format!("{} · {reason}", entry.name)
 }
-pub fn single_line(text:&str,width:f32,measure:impl Fn(&str)->f32)->String{
-    let plain=text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if measure(&plain)<=width{return plain;}
-    let mut shown=String::new();
-    for c in plain.chars(){let next=format!("{shown}{c}…");if measure(&next)>width{break;}shown.push(c);}
-    if measure("…")<=width{shown.push('…');}shown
+pub fn single_line(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> String {
+    let plain = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if measure(&plain) <= width {
+        return plain;
+    }
+    let mut shown = String::new();
+    for c in plain.chars() {
+        let next = format!("{shown}{c}…");
+        if measure(&next) > width {
+            break;
+        }
+        shown.push(c);
+    }
+    if measure("…") <= width {
+        shown.push('…');
+    }
+    shown
 }
 #[derive(Default)]
 pub struct Feed {
@@ -391,12 +438,16 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 mod tests {
     use super::*;
     #[test]
-    fn compact_events_remain_one_line_and_preserve_the_original(){
-        let mut feed=Feed::default();feed.push("Alex was slain by Steve using a sword",0);
-        let e=&feed.entries[0];assert_eq!(event_summary(e,false),"Alex ← Steve");
-        let shown=single_line(&event_summary(e,false),8.0,|s|s.chars().count() as f32);
-        assert!(!shown.contains('\n'));assert!(shown.chars().count()<=8);assert!(shown.ends_with('…'));
-        assert_eq!(e.original,"was slain by Steve using a sword");
+    fn compact_events_remain_one_line_and_preserve_the_original() {
+        let mut feed = Feed::default();
+        feed.push("Alex was slain by Steve using a sword", 0);
+        let e = &feed.entries[0];
+        assert_eq!(event_summary(e, false), "Alex ← Steve");
+        let shown = single_line(&event_summary(e, false), 8.0, |s| s.chars().count() as f32);
+        assert!(!shown.contains('\n'));
+        assert!(shown.chars().count() <= 8);
+        assert!(shown.ends_with('…'));
+        assert_eq!(e.original, "was slain by Steve using a sword");
     }
     #[test]
     fn joins_are_deduplicated_but_leaves_and_rejoins_remain() {

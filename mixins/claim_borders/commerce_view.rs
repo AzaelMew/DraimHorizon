@@ -41,6 +41,8 @@ struct State {
     copy: Option<String>,
     paste: bool,
     hover: Option<usize>,
+    control_tip: Option<String>,
+    modal_scroll: usize,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
@@ -164,8 +166,16 @@ fn action_icon(role:scan::Role)->ui::Icon{
 }
 fn control(game:&Game<'_>,batch:&mut HudBatch,s:&mut State,r:[f32;4],text:&str,hit:Hit,mouse:[f32;2],icon:ui::Icon){
     ui::button_base(game,batch,r,text,false,mouse);
-    ui::icon(game,batch,icon,[r[0]+5.0,r[1]+(r[3]-10.0)*0.5,10.0,10.0],ui::preferences(game).accent.color());
-    ui::text(game,batch,&ui::clip(game,text,r[2]-24.0),[r[0]+19.0,r[1]+(r[3]-8.0)*0.5],0xe3ebf3,false);
+    let trading=matches!(icon,ui::Icon::Plus|ui::Icon::Minus);
+    let inset=if trading&&r[2]<100.0{5.0}else{19.0};
+    let color=if matches!(icon,ui::Icon::Minus){0xdfa8b5}else{ui::preferences(game).accent.color()};
+    if inset>5.0{ui::icon(game,batch,icon,[r[0]+5.0,r[1]+(r[3]-10.0)*0.5,10.0,10.0],color);}
+    if trading&&r[3]>=23.0{
+        let (qty,price)=text.split_once(" · ").unwrap_or((text,""));
+        ui::text(game,batch,&ui::clip(game,qty,r[2]-inset-5.0),[r[0]+inset,r[1]+3.0],color,false);
+        ui::text(game,batch,&ui::clip(game,price,r[2]-inset-5.0),[r[0]+inset,r[1]+14.0],0xe3ebf3,false);
+    }else{ui::text(game,batch,&ui::clip(game,text,r[2]-inset-5.0),[r[0]+inset,r[1]+(r[3]-8.0)*0.5],0xe3ebf3,false);}
+    if crate::game::claim_borders_ui_style::contains(r,mouse){s.control_tip=Some(match &hit{Hit::Page(n) if *n<0=>"Предыдущие карточки этой страницы".into(),Hit::Page(_)=>"Следующие карточки этой страницы".into(),_=>text.into()});}
     s.hits.push((r,hit));
 }
 fn goods(game:&Game<'_>,batch:&mut HudBatch,s:&mut State,page:&scan::Page,b:&scan::Button,r:[f32;4],mouse:[f32;2]){
@@ -184,8 +194,8 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
     let x=(batch.width-w)*0.5;let y=(batch.height-h)*0.5;let start=batch.vertices.len();
     game.native_fill(batch,[0.0,0.0,batch.width,batch.height],0x80111b27);
     state(|s|{
-        if s.token!=token{s.token=token.clone();s.pending=None;s.page=0;s.notice.clear();s.query=TextInput::default();s.focus=false;}
-        s.hits.clear();s.hover=None;
+        if s.token!=token{s.token=token.clone();s.pending=None;s.modal_scroll=0;s.page=0;s.notice.clear();s.query=TextInput::default();s.focus=false;}
+        s.hits.clear();s.hover=None;s.control_tip=None;
         ui::fill(game,batch,[x,y,w,h],0xee182636);
         ui::icon(game,batch,ui::Icon::Market,[x+10.0,y+10.0,13.0,13.0],ui::preferences(game).accent.color());
         let title=if page.family==scan::Kind::Market{if scan::market_detail(&page){"MARKET · Товар"}else{"MARKET · Рынок"}}else{"AH · Аукцион"};
@@ -255,21 +265,24 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&crate::game::nati
             let mut lines=vec![detail(game,&page,&p.button)];
             if transaction{if let Some(preview)=page.buttons.iter().find(|b|scan::role(&page,b)==Preview){lines.push(label(game,&page,preview));lines.push(detail(game,&page,preview));}}
             if role==Help{
-                lines=vec!["Выберите лот, затем подтвердите покупку или ставку.".into(),"Мои объявления — ваши выставленные товары.".into(),"Почта — непроданные товары и выигранные лоты.".into(),"Забрать всё — перенести доступные посылки в инвентарь.".into()];
+                lines=vec!["Выберите лот, затем подтвердите покупку или ставку.".into(),"Мои объявления — ваши выставленные товары.".into(),"Почта — непроданные товары и выигранные лоты.".into(),"Забрать всё — перенести доступные посылки в инвентарь.".into(),"/ah sell <цена> [количество] — выставить предмет из руки.".into(),"/ah auction <цена> [часы] — создать торги.".into(),"/ah claim — забрать почту.".into()];
             }else if role==ClaimAll{lines.push("Забрать все доступные посылки в инвентарь.".into());}
             else if role==SellAll{lines.push("Продать весь доступный запас этого товара.".into());}
             else{lines.extend(p.button.lore.iter().map(|l|crate::game::claim_borders_economy_view::market_lore(game,l)));}
+            lines.dedup();
             let max=(((mh-100.0)/11.0).floor()as usize).max(1);
-            for(i,l)in lines.iter().filter(|l|!l.is_empty()).take(max).enumerate(){ui::text(game,batch,&ui::clip(game,l,mw-20.0),[mx+10.0,my+45.0+i as f32*11.0],0xb6c7d9,false);}
+            let lines:Vec<_>=lines.iter().filter(|l|!l.is_empty()).flat_map(|l|crate::game::claim_borders_chat_feed::wrap(l,mw-20.0,|s|game.native_text_width(s))).take(100).collect();
+            s.modal_scroll=s.modal_scroll.min(lines.len().saturating_sub(max));
+            for(i,l)in lines.iter().skip(s.modal_scroll).take(max).enumerate(){ui::text(game,batch,&ui::clip(game,l,mw-20.0),[mx+10.0,my+45.0+i as f32*11.0],0xb6c7d9,false);}
             let cr=[mx+10.0,my+mh-28.0,(mw-26.0)*0.5,20.0];let ok=[mx+mw*0.5+3.0,my+mh-28.0,(mw-26.0)*0.5,20.0];
             ui::button(game,batch,cr,if transaction{"Отмена"}else{"Понятно"},false,screen.mouse);s.hits.push((cr,Hit::Cancel));
             if transaction{ui::button(game,batch,ok,"Подтвердить",false,screen.mouse);s.hits.push((ok,Hit::Confirm));}
-            if transaction{ui::text(game,batch,"Цена и лимиты повторно проверяются перед отправкой",[mx+10.0,my+mh-43.0],0x9aacc0,false);}
+            if transaction||lines.len()>max{ui::text(game,batch,&ui::clip(game,if lines.len()>max{"Колесо — прокрутка описания"}else{"Проверьте количество и сумму"},mw-20.0),[mx+10.0,my+mh-43.0],0x9aacc0,false);}
         }
     });
     ui::finish(game,batch,start,"commerce","live");
     let hover=state(|s|s.hover.and_then(|slot|s.icons.iter().find(|(i,_)|*i==slot).map(|(_,stack)|stack.clone())));
-    if let Some(stack)=hover{let lines=game.stack_tooltip(&stack);game.draw_tooltip_lines(batch,&lines,screen.mouse[0],screen.mouse[1]);}
+    if let Some(stack)=hover{let lines=game.stack_tooltip(&stack);game.draw_tooltip_lines(batch,&lines,screen.mouse[0],screen.mouse[1]);}else if let Some(tip)=state(|s|s.control_tip.clone()).filter(|s|!s.is_empty()){ui::tooltip(game,batch,&tip,screen.mouse);}
     true
 }
 pub(super) fn mouse(
@@ -317,6 +330,7 @@ pub(super) fn mouse(
                 if role.navigation() || (role==scan::Role::Listing&&!own_lot) {
                     s.action = Some(p)
                 } else {
+                    s.modal_scroll=0;
                     s.pending = Some(p)
                 }
             }
@@ -401,7 +415,7 @@ pub(super) fn scroll(game: &Game<'_>, amount: f64, canceled: &mut bool) -> bool 
     }
     *canceled = true;
     state(|s| {
-        if s.pending.is_none() {
+        if s.pending.is_some(){s.modal_scroll=if amount>0.0{s.modal_scroll.saturating_sub(1)}else{s.modal_scroll.saturating_add(1)};} else {
             s.page = if amount > 0.0 {
                 s.page.saturating_sub(1)
             } else {

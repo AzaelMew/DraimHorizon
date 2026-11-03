@@ -591,7 +591,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     (
                         b.slot,
                         b.item.clone(),
-                        model::listing(&scan::listing_text(b).unwrap_or_default(), &b.item, now, s.book.generation).map(|l| l.id),
+                        model::listing(
+                            &scan::listing_text(b).unwrap_or_default(),
+                            &b.item,
+                            now,
+                            s.book.generation,
+                        )
+                        .map(|l| l.id),
                     )
                 })
                 .collect();
@@ -623,7 +629,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
                             s.book.server(&b.name, now);
                         }
                     } else if b.slot < 45
-                        && let Some(l) = model::listing(&scan::listing_text(b).unwrap_or_default(), &b.item, now, s.book.generation)
+                        && let Some(l) = model::listing(
+                            &scan::listing_text(b).unwrap_or_default(),
+                            &b.item,
+                            now,
+                            s.book.generation,
+                        )
                     {
                         if s.book.listings.len() < 5000 || s.book.listings.contains_key(&l.id) {
                             if s.book.watch.len() < 64 {

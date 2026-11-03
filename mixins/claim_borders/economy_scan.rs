@@ -18,63 +18,206 @@ pub struct Page {
     pub fingerprint: u64,
     pub buttons: Vec<Button>,
 }
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum Role{Category,Goods,Listing,Preview,Back,Previous,Next,Close,Balance,News,Help,Mine,Mail,ClaimAll,Claim,Buy(u32),Sell(u32),SellAll,Chart(u8),Bid,Inspect}
-impl Role{
-    pub fn service(self)->bool{!matches!(self,Self::Category|Self::Goods|Self::Listing|Self::Preview|Self::Claim|Self::Inspect)}
-    pub fn transaction(self)->bool{matches!(self,Self::Buy(_)|Self::Sell(_)|Self::SellAll|Self::Bid|Self::Claim|Self::ClaimAll)}
-    pub fn navigation(self)->bool{matches!(self,Self::Category|Self::Goods|Self::Back|Self::Previous|Self::Next|Self::Close|Self::Mine|Self::Mail|Self::Chart(_))}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Category,
+    Goods,
+    Listing,
+    Preview,
+    Back,
+    Previous,
+    Next,
+    Close,
+    Balance,
+    News,
+    Help,
+    Mine,
+    Mail,
+    ClaimAll,
+    Claim,
+    Buy(u32),
+    Sell(u32),
+    SellAll,
+    Chart(u8),
+    Bid,
+    Inspect,
 }
-pub fn listing_text(b:&Button)->Option<String>{
-    if b.name.starts_with('#')&&b.name.split('·').count()==4{return Some(b.name.clone());}
-    let at=b.lore.iter().position(|l|l.starts_with('#'))?;
-    let first=&b.lore[at];
-    if first.split('·').count()==4{return Some(first.clone());}
-    let lines=b.lore.get(at..at+4)?;
-    let text=lines.join(" · ");
-    (text.len()<=4096).then_some(text)
-}
-pub fn market_detail(page:&Page)->bool{
-    page.family==Kind::Market&&page.buttons.iter().any(|b|[39,41].contains(&b.slot)&&matches!(b.item.as_str(),"minecraft:map"|"minecraft:filled_map")&&b.name.starts_with("Price chart"))
-}
-pub fn role(page:&Page,b:&Button)->Role{
-    use Role::*;
-    let name=b.name.as_str();
-    if b.slot==53&&b.item=="minecraft:barrier"&&matches!(name,"Close"|"Закрыть"){return Close;}
-    if b.slot==48&&b.item=="minecraft:gold_ingot"&&(name.starts_with("Balance:")||name.starts_with("Баланс:")){return Balance;}
-    if b.item=="minecraft:arrow"{
-        if b.slot==45&&matches!(name,"Back"|"Назад"){return Back;}
-        if b.slot==47&&matches!(name,"Previous page"|"Предыдущая страница"){return Previous;}
-        if b.slot==51&&matches!(name,"Next page"|"Следующая страница"){return Next;}
+impl Role {
+    pub fn service(self) -> bool {
+        !matches!(
+            self,
+            Self::Category
+                | Self::Goods
+                | Self::Listing
+                | Self::Preview
+                | Self::Claim
+                | Self::Inspect
+        )
     }
-    match page.family{
-        Kind::Market=>{
-            if b.slot==46&&b.item=="minecraft:paper"&&(name.contains("Movers over 24")||name.contains("Динамика")){return News;}
-            if market_detail(page){
-                if b.slot==13{return Preview;}
-                for (slot,n) in [(19,1),(20,16),(21,64)]{if b.slot==slot&&b.item=="minecraft:lime_concrete"&&name.starts_with(&format!("Buy {n} for ")){return Buy(n);}}
-                for (slot,n) in [(23,1),(24,16),(25,64)]{if b.slot==slot&&b.item=="minecraft:red_concrete"&&name.starts_with(&format!("Sell {n} for ")){return Sell(n);}}
-                if b.slot==31&&b.item=="minecraft:hopper"&&name.starts_with("Sell all "){return SellAll;}
-                if [39,41].contains(&b.slot)&&matches!(b.item.as_str(),"minecraft:map"|"minecraft:filled_map")&&name.starts_with("Price chart"){return Chart(if b.slot==39{1}else{7});}
-            }
-            if b.slot<45&&b.lore.iter().any(|l|l.strip_suffix(" items").is_some_and(|n|n.parse::<u32>().is_ok())){return Category;}
-            if b.slot<45&&b.lore.iter().any(|l|l.starts_with("Price: ")||l.starts_with("Цена: ")){return Goods;}
+    pub fn transaction(self) -> bool {
+        matches!(
+            self,
+            Self::Buy(_) | Self::Sell(_) | Self::SellAll | Self::Bid | Self::Claim | Self::ClaimAll
+        )
+    }
+    pub fn navigation(self) -> bool {
+        matches!(
+            self,
+            Self::Category
+                | Self::Goods
+                | Self::Back
+                | Self::Previous
+                | Self::Next
+                | Self::Close
+                | Self::Mine
+                | Self::Mail
+                | Self::Chart(_)
+        )
+    }
+}
+pub fn listing_text(b: &Button) -> Option<String> {
+    if b.name.starts_with('#') && b.name.split('·').count() == 4 {
+        return Some(b.name.clone());
+    }
+    let at = b.lore.iter().position(|l| l.starts_with('#'))?;
+    let first = &b.lore[at];
+    if first.split('·').count() == 4 {
+        return Some(first.clone());
+    }
+    let lines = b.lore.get(at..at + 4)?;
+    let text = lines.join(" · ");
+    (text.len() <= 4096).then_some(text)
+}
+pub fn market_detail(page: &Page) -> bool {
+    page.family == Kind::Market
+        && page.buttons.iter().any(|b| {
+            [39, 41].contains(&b.slot)
+                && matches!(b.item.as_str(), "minecraft:map" | "minecraft:filled_map")
+                && b.name.starts_with("Price chart")
+        })
+}
+pub fn role(page: &Page, b: &Button) -> Role {
+    use Role::*;
+    let name = b.name.as_str();
+    if b.slot == 53 && b.item == "minecraft:barrier" && matches!(name, "Close" | "Закрыть") {
+        return Close;
+    }
+    if b.slot == 48
+        && b.item == "minecraft:gold_ingot"
+        && (name.starts_with("Balance:") || name.starts_with("Баланс:"))
+    {
+        return Balance;
+    }
+    if b.item == "minecraft:arrow" {
+        if b.slot == 45 && matches!(name, "Back" | "Назад") {
+            return Back;
         }
-        Kind::Auction=>{
-            if b.slot==24&&b.item=="minecraft:red_stained_glass_pane"&&name=="Back"{return Back;}
-            if b.slot==46&&b.item=="minecraft:chest"&&name.starts_with("Your listings"){return Mine;}
-            if b.slot==50&&b.item=="minecraft:barrel"&&name.starts_with("Your mail"){return Mail;}
-            if b.slot==49&&b.item=="minecraft:book"{return Help;}
-            if b.slot==49&&b.item=="minecraft:hopper"&&name=="Claim everything"{return ClaimAll;}
-            if b.slot==20&&b.item=="minecraft:lime_concrete"{
-                if name.starts_with("Buy "){return Buy(0);}
-                if name.starts_with("Bid "){return Bid;}
+        if b.slot == 47 && matches!(name, "Previous page" | "Предыдущая страница")
+        {
+            return Previous;
+        }
+        if b.slot == 51 && matches!(name, "Next page" | "Следующая страница") {
+            return Next;
+        }
+    }
+    match page.family {
+        Kind::Market => {
+            if b.slot == 46
+                && b.item == "minecraft:paper"
+                && (name.contains("Movers over 24") || name.contains("Динамика"))
+            {
+                return News;
             }
-            if listing_text(b).is_some(){
-                return if b.slot==22&&page.buttons.iter().any(|b|b.slot==20&&b.item=="minecraft:lime_concrete"){Preview}else{Listing};
+            if market_detail(page) {
+                if b.slot == 13 {
+                    return Preview;
+                }
+                for (slot, n) in [(19, 1), (20, 16), (21, 64)] {
+                    if b.slot == slot
+                        && b.item == "minecraft:lime_concrete"
+                        && name.starts_with(&format!("Buy {n} for "))
+                    {
+                        return Buy(n);
+                    }
+                }
+                for (slot, n) in [(23, 1), (24, 16), (25, 64)] {
+                    if b.slot == slot
+                        && b.item == "minecraft:red_concrete"
+                        && name.starts_with(&format!("Sell {n} for "))
+                    {
+                        return Sell(n);
+                    }
+                }
+                if b.slot == 31 && b.item == "minecraft:hopper" && name.starts_with("Sell all ") {
+                    return SellAll;
+                }
+                if [39, 41].contains(&b.slot)
+                    && matches!(b.item.as_str(), "minecraft:map" | "minecraft:filled_map")
+                    && name.starts_with("Price chart")
+                {
+                    return Chart(if b.slot == 39 { 1 } else { 7 });
+                }
             }
-            if b.slot<45&&(name.starts_with("Claim ")||b.lore.iter().any(|l|l.starts_with("Claim "))){return Claim;}
-            if b.slot<45&&name.ends_with(" listings)"){return Category;}
+            if b.slot < 45
+                && b.lore.iter().any(|l| {
+                    l.strip_suffix(" items")
+                        .is_some_and(|n| n.parse::<u32>().is_ok())
+                })
+            {
+                return Category;
+            }
+            if b.slot < 45
+                && b.lore
+                    .iter()
+                    .any(|l| l.starts_with("Price: ") || l.starts_with("Цена: "))
+            {
+                return Goods;
+            }
+        }
+        Kind::Auction => {
+            if b.slot == 24 && b.item == "minecraft:red_stained_glass_pane" && name == "Back" {
+                return Back;
+            }
+            if b.slot == 46 && b.item == "minecraft:chest" && name.starts_with("Your listings") {
+                return Mine;
+            }
+            if b.slot == 50 && b.item == "minecraft:barrel" && name.starts_with("Your mail") {
+                return Mail;
+            }
+            if b.slot == 49 && b.item == "minecraft:book" {
+                return Help;
+            }
+            if b.slot == 49 && b.item == "minecraft:hopper" && name == "Claim everything" {
+                return ClaimAll;
+            }
+            if b.slot == 20 && b.item == "minecraft:lime_concrete" {
+                if name.starts_with("Buy ") {
+                    return Buy(0);
+                }
+                if name.starts_with("Bid ") {
+                    return Bid;
+                }
+            }
+            if listing_text(b).is_some() {
+                return if b.slot == 22
+                    && page
+                        .buttons
+                        .iter()
+                        .any(|b| b.slot == 20 && b.item == "minecraft:lime_concrete")
+                {
+                    Preview
+                } else {
+                    Listing
+                };
+            }
+            if b.slot < 45
+                && (name.starts_with("Claim ") || b.lore.iter().any(|l| l.starts_with("Claim ")))
+            {
+                return Claim;
+            }
+            if b.slot < 45 && name.ends_with(" listings)") {
+                return Category;
+            }
         }
     }
     Inspect
@@ -251,23 +394,74 @@ impl Scanner {
 mod tests {
     use super::*;
     #[test]
-    fn menu_roles_keep_services_out_of_goods_and_preserve_trade_quantities(){
-        let mut p=Page{family:Kind::Market,fingerprint:1,buttons:vec![
-            Button{slot:39,item:"minecraft:map".into(),name:"Price chart, 24 hours".into(),lore:vec![]}]};
-        let b=|slot,item:&str,name:&str|Button{slot,item:item.into(),name:name.into(),lore:vec![]};
-        assert_eq!(role(&p,&b(48,"minecraft:gold_ingot","Balance: 3,935 coins")),Role::Balance);
-        assert_eq!(role(&p,&b(20,"minecraft:lime_concrete","Buy 16 for 33 coins")),Role::Buy(16));
-        assert_eq!(role(&p,&b(24,"minecraft:red_concrete","Sell 16 for 32 coins")),Role::Sell(16));
-        assert_eq!(role(&p,&b(31,"minecraft:hopper","Sell all your Wheat")),Role::SellAll);
-        assert_eq!(role(&p,&b(19,"minecraft:stone","Buy 1 for 2")),Role::Inspect);
-        p.family=Kind::Auction;
-        assert_eq!(role(&p,&b(24,"minecraft:red_stained_glass_pane","Back")),Role::Back);
-        assert_eq!(role(&p,&b(49,"minecraft:hopper","Claim everything")),Role::ClaimAll);
-        assert!(!Role::ClaimAll.navigation());assert!(Role::ClaimAll.transaction());
-        let custom=Button{slot:0,item:"minecraft:netherrack".into(),name:"Незерак".into(),lore:vec!["#1165 64 Netherrack".into(),"1 coins (0.02 each)".into(),"rdblclient".into(),"1d 22h left".into()]};
-        assert_eq!(listing_text(&custom).unwrap(),"#1165 64 Netherrack · 1 coins (0.02 each) · rdblclient · 1d 22h left");
-        assert_eq!(role(&p,&custom),Role::Listing);
-        assert_eq!(role(&p,&b(11,"minecraft:chest","Other (91 listings)")),Role::Category);
+    fn menu_roles_keep_services_out_of_goods_and_preserve_trade_quantities() {
+        let mut p = Page {
+            family: Kind::Market,
+            fingerprint: 1,
+            buttons: vec![Button {
+                slot: 39,
+                item: "minecraft:map".into(),
+                name: "Price chart, 24 hours".into(),
+                lore: vec![],
+            }],
+        };
+        let b = |slot, item: &str, name: &str| Button {
+            slot,
+            item: item.into(),
+            name: name.into(),
+            lore: vec![],
+        };
+        assert_eq!(
+            role(&p, &b(48, "minecraft:gold_ingot", "Balance: 3,935 coins")),
+            Role::Balance
+        );
+        assert_eq!(
+            role(&p, &b(20, "minecraft:lime_concrete", "Buy 16 for 33 coins")),
+            Role::Buy(16)
+        );
+        assert_eq!(
+            role(&p, &b(24, "minecraft:red_concrete", "Sell 16 for 32 coins")),
+            Role::Sell(16)
+        );
+        assert_eq!(
+            role(&p, &b(31, "minecraft:hopper", "Sell all your Wheat")),
+            Role::SellAll
+        );
+        assert_eq!(
+            role(&p, &b(19, "minecraft:stone", "Buy 1 for 2")),
+            Role::Inspect
+        );
+        p.family = Kind::Auction;
+        assert_eq!(
+            role(&p, &b(24, "minecraft:red_stained_glass_pane", "Back")),
+            Role::Back
+        );
+        assert_eq!(
+            role(&p, &b(49, "minecraft:hopper", "Claim everything")),
+            Role::ClaimAll
+        );
+        assert!(!Role::ClaimAll.navigation());
+        assert!(Role::ClaimAll.transaction());
+        let custom = Button {
+            slot: 0,
+            item: "minecraft:netherrack".into(),
+            name: "Незерак".into(),
+            lore: vec![
+                "#1165 64 Netherrack".into(),
+                "1 coins (0.02 each)".into(),
+                "rdblclient".into(),
+                "1d 22h left".into(),
+            ],
+        };
+        assert_eq!(
+            listing_text(&custom).unwrap(),
+            "#1165 64 Netherrack · 1 coins (0.02 each) · rdblclient · 1d 22h left"
+        );
+        assert_eq!(role(&p, &custom), Role::Listing);
+        assert_eq!(
+            role(&p, &b(11, "minecraft:chest", "Other (91 listings)")),
+            Role::Category
+        );
     }
     #[test]
     fn confirmation_expires_and_rejects_changed_prices_and_windows() {
