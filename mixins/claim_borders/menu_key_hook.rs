@@ -10,7 +10,9 @@ fn claim_borders_menu_key(
     if crate::game::claim_borders_economy_view::key(game, key, modifiers, canceled) {
         return;
     }
-    if crate::game::claim_borders_inventory_sort_view::key(game,key,canceled) {return;}
+    if crate::game::claim_borders_inventory_sort_view::key(game, key, canceled) {
+        return;
+    }
     if crate::game::claim_borders_map_view::key(game, key, canceled) {
         return;
     }

@@ -5,5 +5,7 @@ fn draimhorizons_clickthrough(
     swing: &mut bool,
     canceled: &mut bool,
 ) {
-    crate::game::remote::claim_borders_clickthrough_view::remote(game,button,hand,swing,canceled);
+    crate::game::remote::claim_borders_clickthrough_view::remote(
+        game, button, hand, swing, canceled,
+    );
 }
