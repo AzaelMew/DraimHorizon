@@ -457,7 +457,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 ],
                 "E",
                 Button::Edit,
-                "Редактор сортировки [O]: слоты, кнопки, порядок, нажатие сквозь рамки/таблички."
+                "Редактор сортировки [Ctrl+O]: слоты, кнопки, порядок, нажатие сквозь рамки/таблички."
                     .into(),
                 false,
             );
@@ -847,7 +847,8 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         if key == "key.keyboard.escape" {
             stop(s);
         }
-        if key == "key.keyboard.o" && s.layout.is_some() {
+        let open_editor = key == "key.keyboard.o" && game.modifiers.control_key();
+        if open_editor && s.layout.is_some() {
             edit(s);
             *canceled = true;
             return true;
