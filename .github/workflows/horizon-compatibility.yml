@@ -7,6 +7,9 @@ on:
       - 'mixins/**'
       - 'tools/**'
       - 'compatibility.json'
+defaults:
+  run:
+    shell: bash
 permissions:
   contents: read
 concurrency:
@@ -38,27 +41,15 @@ jobs:
             target/horizon-check
           key: horizon-f42ef42-${{ runner.os }}-${{ github.run_id }}
           restore-keys: horizon-f42ef42-${{ runner.os }}-
-      - name: Prepare exact source and compatibility hashes
+      - name: Check requested source pin
         run: |
-          git init .local/horizon
-          git -C .local/horizon remote add origin https://github.com/horizon-rust/horizon.git
-          git -C .local/horizon fetch --depth 1 origin f42ef42ef6ceccb3c6a20bea2481d87949a51c81
-          git -C .local/horizon checkout --detach FETCH_HEAD
           python3 - <<'PY'
-          import hashlib,json,re
+          import json
           from pathlib import Path
-          revision="f42ef42ef6ceccb3c6a20bea2481d87949a51c81"
-          path=Path("compatibility.json")
-          compat=json.loads(path.read_text())
-          compat["horizon_revision"]=revision
-          for name in compat["source_sha256"]:
-              compat["source_sha256"][name]=hashlib.sha256((Path(".local/horizon")/name).read_bytes()).hexdigest()
-          path.write_text(json.dumps(compat,indent=2)+"\n")
-          manifest=Path("mixins/claim_borders/horizon-mixin.toml")
-          manifest.write_text(re.sub(r'horizon_revision = "[0-9a-f]+"',f'horizon_revision = "{revision}"',manifest.read_text()))
+          compat=json.loads(Path("compatibility.json").read_text())
+          assert compat["horizon_revision"]=="f42ef42ef6ceccb3c6a20bea2481d87949a51c81"
+          assert compat["horizon_revision"] in Path("mixins/claim_borders/horizon-mixin.toml").read_text()
           print("COMPATIBILITY_JSON "+json.dumps(compat,separators=(",",":")))
-          hooks=Path(".local/horizon/crates/horizon-client/src/game/native_hooks.rs").read_text()
-          print("HOOKS_API "+str(re.findall(r"NATIVE_HOOKS_API[^=]*=\\s*(\\d+)",hooks)[:1]))
           PY
       - name: Test mod runtime
         run: |
@@ -67,14 +58,31 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
       - name: Stage official mixins
+        id: official
+        continue-on-error: true
         run: python3 tools/stage.py 2>&1 | tee compatibility-stage.log
+      - name: Diagnose with the isolated builtin-attribute fix
+        if: steps.official.outcome == 'failure'
+        run: |
+          git -C .local/horizon-mixins apply "$GITHUB_WORKSPACE/tools/horizon-mixins-recursion-limit.patch"
+          cargo build --locked --manifest-path .local/horizon-mixins/Cargo.toml -p horizon-mixins-cli --target-dir target/mixins-cli
+          cli="$GITHUB_WORKSPACE/target/mixins-cli/debug/horizon-mixins"
+          original="$GITHUB_WORKSPACE/target/mixins/original/f42ef42ef6ceccb3c6a20bea2481d87949a51c81"
+          "$cli" plan --workspace "$original" --mods "$GITHUB_WORKSPACE/mixins" --out target/mixins/diagnostic-plan.json 2>&1 | tee compatibility-patched-plan.log
+          "$cli" apply --workspace "$original" --mods "$GITHUB_WORKSPACE/mixins" --out "$GITHUB_WORKSPACE/target/mixins/modded" 2>&1 | tee compatibility-patched-stage.log
       - name: Compile real Horizon client
         run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features 2>&1 | tee compatibility-client.log
       - name: Validate package
+        if: steps.official.outcome == 'success'
         run: |
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')"
           cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
+      - name: Require unpatched official-tool compatibility
+        if: success() && steps.official.outcome != 'success'
+        run: |
+          echo "Diagnostic compilation used a tool patch. Do not release until the official indexer accepts the compiler builtin recursion_limit attribute."
+          exit 1
       - name: Save build cache
         if: always()
         uses: actions/cache/save@v4
