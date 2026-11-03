@@ -88,6 +88,7 @@ struct State {
     pressed: BTreeSet<i32>,
     trusted: Option<(i32, String)>,
     entity_use: Option<(String, Instant)>,
+    block_use: Option<([i32;3], Instant)>,
     generation: u64,
     status: Option<(String, Instant)>,
 }
@@ -123,9 +124,11 @@ pub(super) fn interactions(game: &Game<'_>) -> [bool; 2] {
 }
 /// The remote OpenScreen hook supplies physical provenance before use_target is consumed.
 pub(crate) fn entity_use(menu:&str) {state(|s|s.entity_use=Some((menu.into(),Instant::now())));}
-pub(crate) fn opened(id: i32, menu: &str, physical: bool) {
+pub(crate) fn block_use(pos:[i32;3]){state(|s|s.block_use=Some((pos,Instant::now())));}
+pub(crate) fn opened(id: i32, menu: &str, physical: Option<[i32;3]>) {
     state(|s| {
         s.generation = s.generation.wrapping_add(1);
+        let physical=s.block_use.take().is_some_and(|(pos,at)|Some(pos)==physical&&at.elapsed()<Duration::from_secs(2));
         let entity=s.entity_use.take().is_some_and(|(m,at)|m==menu&&at.elapsed()<Duration::from_secs(2));
         s.trusted = (physical||entity).then(|| (id, menu.to_owned()));
         if let Some(e) = s.editor.take() {
@@ -150,6 +153,7 @@ pub(super) fn reset() {
         s.pressed.clear();
         s.trusted = None;
         s.entity_use=None;
+        s.block_use=None;
     });
 }
 fn stop(s: &mut State) {
@@ -220,7 +224,7 @@ fn layout(game: &Game<'_>, screen: &NativeScreenView<'_>) -> Option<Layout> {
     } else {
         matches!(
             game.container_kind(),
-            Some(horizon_client::block_entities::BlockEntity::Chest(_))
+            Some(horizon_client::containers::BlockEntity::Chest(_))
         ) || game.mount_active()
     };
     let trusted = trusted || kind.starts_with("horizon:mount");
@@ -524,11 +528,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         false,
                     );
                 }
-                let hint = if s.error.is_some() {
-                    "Файл настроек требует исправления"
-                } else {
-                    "ЛКМ по слоту: исключить. Хотбар защищён."
-                };
+                let hint = s.error.as_deref().unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
                 game.native_text(
                     batch,
                     &clipped(game, hint, batch.width - 8.0),

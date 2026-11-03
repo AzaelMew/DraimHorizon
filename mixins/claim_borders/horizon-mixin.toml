@@ -646,3 +646,13 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
 ]
+
+[[injection]]
+id = "inventory-block"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_use_item_on"
+helper = "inventory_block_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
+]

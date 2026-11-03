@@ -41,7 +41,7 @@ fn target(game: &Game<'_>) -> Option<Hit> {
         return None;
     }
     let [frames, signs] = inventory::interactions(game);
-    let original = game.pick()?;
+    let original = game.pick_unfiltered()?;
     let (eye, dir) = game.aim()?;
     let support = if let Some(entity) = game.pick_entity_hit() {
         let id = entity?;
@@ -140,13 +140,9 @@ pub(crate) fn opened(game: &Game<'_>, packet: &horizon_protocol::packets::play::
     let menu = remote
         .and_then(|r| r.builtin.get("minecraft:menu")?.name(packet.menu))
         .unwrap_or("");
-    let physical = remote.and_then(|r| r.use_target).is_some_and(|pos| {
-        let name = &game
-            .res
-            .facts()
-            .get(game.world.block(pos[0], pos[1], pos[2]))
-            .name;
-        crate::game::claim_borders_inventory_preferences::storage_menu(name, menu)
+    let physical=remote.and_then(|r|r.use_target).filter(|pos|{
+        let name=&game.res.facts().get(game.world.block(pos[0],pos[1],pos[2])).name;
+        crate::game::claim_borders_inventory_preferences::storage_menu(name,menu)
     });
     inventory::opened(packet.container, menu, physical);
 }
@@ -161,4 +157,8 @@ pub(crate) fn entity_use(game:&Game<'_>,hand:Hand) {
         _=>None,
     }).or_else(||game.boats.iter().any(|b|b.id as i32==id&&b.chest).then_some("minecraft:generic_9x3"));
     if let Some(menu)=expected {inventory::entity_use(menu);}
+}
+
+pub(crate) fn block_use(game:&Game<'_>,hand:Hand) {
+    if hand==Hand::Main&&game.native_on(claims::ID)&&let Some(hit)=game.pick(){inventory::block_use(hit.pos);}
 }
