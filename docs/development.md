@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.11.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.12.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -130,3 +130,8 @@ Mob radar reads interpolated loaded living entities only, excluding player/misc 
 
 
 TPS: HEAD-инъекция `remote::Game::handle_packet` наблюдает только `SetTime`, `TickingState` и `Respawn`. `server_tps.rs` хранит до 64 точек за 30 секунд, вычисляет изменение серверных тиков по монотонному времени, ограничивает значением заявленного tick rate и скрывает замер старше восьми секунд. Это оценка, зависящая от доставки пакетов, а не официальный серверный показатель. Предсказанный `native_clock` и FPS не используются.
+
+
+## Удалённая проверка Horizon f42ef42
+
+При недоступном executor используйте `.github/workflows/horizon-compatibility.yml` на ветке `feature/horizon-f42ef42`: он проверяет именно закоммиченные source/tool pins и компилирует реальный клиент. Подробности исправления индексатора и неизменяемые SHA — в [horizon-f42ef42.md](horizon-f42ef42.md). Локальных патчей инструмента в финальном пути нет; прежняя политика обычного release CI сохранена.

@@ -1,21 +1,20 @@
-# Horizon f42ef42 migration (in progress)
+# Horizon f42ef42 compatibility and remote builds
 
-Requested source: `f42ef42ef6ceccb3c6a20bea2481d87949a51c81`.
-The source hashes in compatibility.json were recomputed on a GitHub runner from that exact commit.
-Observed native hooks API: 359. The mod uses an exact revision pin.
+Horizon: `f42ef42ef6ceccb3c6a20bea2481d87949a51c81` (observed native hooks API 359).
+horizon-mixins: `10fdf8bda39d1e336c0f13f802db1041fbe41abf`.
 
-The task's managed executor cannot start because its GitHub binding reports `github_connector_not_configured`, while the GitHub app itself can read and write this repository. An isolated workflow on `feature/horizon-f42ef42` provides a working build runner without a new chat or changing release CI policy.
+The task executor reports `github_connector_not_configured` even though the GitHub app can read/write the repository.
+An isolated workflow on `feature/horizon-f42ef42` now supplies a working build runner in the same conversation.
+The normal release workflow's choice to skip native compilation is preserved; the compatibility workflow performs it explicitly before release.
 
-## Current official-tool blocker
+## Required indexer correction
 
-The pinned horizon-mixins indexer rejects Horizon's new crate-level `#![recursion_limit = "256"]` as an unexpanded attribute macro:
-`E_UNSUPPORTED_MACRO: target module has an unexpanded attribute macro` at the chat hook.
-This is a Rust compiler builtin; it does not expand or replace source items.
-The current horizon-mixins main (`ddd9700b21997c95d95ac6ee5ecafe3830cf622a`) still has the same builtin-attribute allowlist.
+Horizon f42ef42 adds `#![recursion_limit = "256"]` to its client library.
+The previous mixin tool incorrectly treated this Rust compiler builtin as an unexpanded attribute macro and rejected all hooks below it with `E_UNSUPPORTED_MACRO`.
+The pinned public [horizon-mixins PR #25](https://github.com/horizon-rust/horizon-mixins/pull/25) distinguishes compiler builtins and known tool attributes from expanding macros, with unit/integration coverage.
+Its immutable head is readable and fetchable from the canonical tool repository; it is not yet merged upstream.
 
-`tools/horizon-mixins-recursion-limit.patch` is a minimal **diagnostic-only** allowlist correction for the pinned tool.
-The workflow first runs the unmodified official tool and preserves its actual failure.
-Only then may it apply the explicit patch in the runner's disposable tool checkout to expose subsequent Rust compatibility errors.
-Horizon source is never rewritten or stripped of attributes.
-The final job remains failed if a tool patch was required, and no release package is validated or published on that path.
-Do not release or merge the migration until unpatched launcher-compatible staging and native compilation pass.
+The final check uses that exact tool commit with no local patches or rewritten Horizon sources.
+Runtime tests, strict clippy, tool regression tests, official plan/apply, real native-client compilation and package validation must all pass.
+Caches only speed up recompilation; a failed command propagates through every log pipeline.
+The managed executor itself has not been repaired; GitHub Actions is the verified alternative build route.

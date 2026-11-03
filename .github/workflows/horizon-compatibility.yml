@@ -58,31 +58,19 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
       - name: Stage official mixins
-        id: official
-        continue-on-error: true
         run: python3 tools/stage.py 2>&1 | tee compatibility-stage.log
-      - name: Diagnose with the isolated builtin-attribute fix
-        if: steps.official.outcome == 'failure'
+      - name: Test the pinned indexer correction
         run: |
-          git -C .local/horizon-mixins apply "$GITHUB_WORKSPACE/tools/horizon-mixins-recursion-limit.patch"
-          cargo build --locked --manifest-path .local/horizon-mixins/Cargo.toml -p horizon-mixins-cli --target-dir target/mixins-cli
-          cli="$GITHUB_WORKSPACE/target/mixins-cli/debug/horizon-mixins"
-          original="$GITHUB_WORKSPACE/target/mixins/original/f42ef42ef6ceccb3c6a20bea2481d87949a51c81"
-          "$cli" plan --workspace "$original" --mods "$GITHUB_WORKSPACE/mixins" --out target/mixins/diagnostic-plan.json 2>&1 | tee compatibility-patched-plan.log
-          "$cli" apply --workspace "$original" --mods "$GITHUB_WORKSPACE/mixins" --out "$GITHUB_WORKSPACE/target/mixins/modded" 2>&1 | tee compatibility-patched-stage.log
+          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-core
+          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-cli --test integration crate_level_built_in_attributes_do_not_make_the_root_a_macro_module
+          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-cli --test integration known_tool_attributes_pass_and_other_two_segment_attributes_still_fail
       - name: Compile real Horizon client
         run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features 2>&1 | tee compatibility-client.log
       - name: Validate package
-        if: steps.official.outcome == 'success'
         run: |
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')"
           cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
-      - name: Require unpatched official-tool compatibility
-        if: success() && steps.official.outcome != 'success'
-        run: |
-          echo "Diagnostic compilation used a tool patch. Do not release until the official indexer accepts the compiler builtin recursion_limit attribute."
-          exit 1
       - name: Save build cache
         if: always()
         uses: actions/cache/save@v4

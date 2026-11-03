@@ -6,8 +6,8 @@
   },
   "horizon": {
     "repository": "https://github.com/horizon-rust/horizon.git",
-    "revision": "c9d474dd9116e84c243f8992d75c11314df56f06",
-    "native_hooks_api": 80
+    "revision": "f42ef42ef6ceccb3c6a20bea2481d87949a51c81",
+    "native_hooks_api": 359
   },
   "token_optimizer": {
     "repository": "https://github.com/alexgreensh/token-optimizer.git",
