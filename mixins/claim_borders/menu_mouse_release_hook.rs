@@ -4,6 +4,8 @@ fn claim_borders_menu_mouse(
     button: i32,
     canceled: &mut bool,
 ) {
+    crate::game::claim_borders_inventory_sort_view::release(button,canceled);
+    if *canceled {return;}
     if crate::game::claim_borders_economy_view::mouse(game, screen, button, false, canceled) {
         return;
     }

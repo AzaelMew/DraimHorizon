@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.12.0"
+version = "0.13.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -584,4 +584,55 @@ helper = "server_tps_hook.rs"
 bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "packet", ty = "&horizon_protocol::packets::play::Clientbound", value = "&packet" },
+]
+
+[[module]]
+id = "inventory-preferences"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_inventory_preferences"
+source = "inventory_preferences.rs"
+
+[[module]]
+id = "clickthrough-model"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_clickthrough"
+source = "clickthrough.rs"
+
+[[module]]
+id = "clickthrough-view"
+file = "crates/horizon-client/src/game/remote.rs"
+name = "claim_borders_clickthrough_view"
+source = "clickthrough_view.rs"
+
+[[injection]]
+id = "clickthrough-remote"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_interaction_key"
+helper = "clickthrough_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+ { name = "button", ty = "i32", value = "button" },
+ { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
+ { name = "swing", ty = "&mut bool", value = "&mut *swing_hand" },
+ { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
+
+[[injection]]
+id = "clickthrough-local"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::Game<'_>::use_item_as_player"
+helper = "clickthrough_local_hook.rs"
+bindings = [
+ { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "inventory-open"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_open_screen"
+helper = "inventory_open_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "packet", ty = "&horizon_protocol::packets::play::OpenScreen", value = "&p" },
 ]

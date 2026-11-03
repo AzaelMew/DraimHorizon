@@ -68,3 +68,9 @@ pub mod claim_observations;
 
 #[path = "../mixins/claim_borders/server_tps.rs"]
 pub mod server_tps;
+
+pub use inventory_sort as claim_borders_inventory_sort;
+#[path = "../mixins/claim_borders/inventory_preferences.rs"]
+pub mod inventory_preferences;
+#[path = "../mixins/claim_borders/clickthrough.rs"]
+pub mod clickthrough;
