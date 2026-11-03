@@ -102,7 +102,7 @@ fn clipped_tail(game: &Game<'_>, text: &str, width: f32) -> String {
     "…".into()
 }
 pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScreenView<'_>) {
-    if !owned(game) {
+    if !owned(game)||crate::game::claim_borders_waypoint_view::quick() {
         return;
     }
     let render_start = batch.vertices.len();
@@ -164,6 +164,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         s.menu.clamp_page(&s.model, s.height);
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
         for widget in widgets {
+            if s.menu.tab==model::Tab::Waypoints
+                &&widget.text!="DRAIMHORIZONS"
+                &&!matches!(widget.control,Some(model::Control::Tab(_)|model::Control::Economy|model::Control::Close)){continue;}
+
             let [mut x, y, mut w, h] = widget.rect;
             let _hover = widget.control.is_some()
                 && screen.mouse[0] >= x
@@ -331,6 +335,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             );
         }
     });
+    crate::game::claim_borders_waypoint_view::render_list(game,batch,screen);
     ui::finish(game, batch, render_start, "main-menu", &variant);
 }
 pub(super) fn mouse(
@@ -427,3 +432,5 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) {
         s.menu.character(c);
     });
 }
+
+pub(super) fn waypoints_tab()->bool{state(|s|s.menu.tab==model::Tab::Waypoints)}

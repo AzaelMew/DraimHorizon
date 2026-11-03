@@ -37,7 +37,7 @@ pub(super)fn render(game:&Game<'_>,batch:&mut HudBatch,screen:&NativeScreenView<
     if !eligible(game){return;}let Some(rect)=input::search_rect(screen.rect,[batch.width,batch.height])else{return;};
     state(|s|{
         s.rect=Some(rect);ui::button_base(game,batch,rect,"inventory-search",s.focus,screen.mouse);
-        ui::icon(game,batch,ui::Icon::Eye,[rect[0]+5.,rect[1]+4.,9.,9.],ui::preferences(game).accent.color());
+        ui::icon(game,batch,ui::Icon::Search,[rect[0]+5.,rect[1]+4.,9.,9.],ui::preferences(game).accent.color());
         let has=!s.text.value.is_empty();let clear=if has{17.0}else{0.0};
         let count=if rect[2]>=150.&&has{format!("{} / {}",s.found,s.total)}else{String::new()};
         let extra=if count.is_empty(){0.0}else{game.native_text_width(&count)+6.};

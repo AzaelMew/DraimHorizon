@@ -12,5 +12,6 @@ fn claim_borders_menu_render(
         crate::game::claim_borders_inventory_sort_view::render(game, batch, screen);
         crate::game::claim_borders_menu_view::render(game, batch, screen);
     }
+    crate::game::claim_borders_waypoint_view::render_popup(game,batch,screen);
     crate::game::claim_borders_ui_view::settings_render(game, batch, screen);
 }

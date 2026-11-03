@@ -693,3 +693,9 @@ bindings = [
  { name = "y", ty = "f32", value = "y" },
  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
 ]
+
+[[module]]
+id = "waypoint-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_waypoint_view"
+source = "waypoint_view.rs"
