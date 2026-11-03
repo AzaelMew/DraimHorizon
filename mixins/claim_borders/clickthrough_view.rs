@@ -140,25 +140,50 @@ pub(crate) fn opened(game: &Game<'_>, packet: &horizon_protocol::packets::play::
     let menu = remote
         .and_then(|r| r.builtin.get("minecraft:menu")?.name(packet.menu))
         .unwrap_or("");
-    let physical=remote.and_then(|r|r.use_target).filter(|pos|{
-        let name=&game.res.facts().get(game.world.block(pos[0],pos[1],pos[2])).name;
-        crate::game::claim_borders_inventory_preferences::storage_menu(name,menu)
+    let physical = remote.and_then(|r| r.use_target).filter(|pos| {
+        let name = &game
+            .res
+            .facts()
+            .get(game.world.block(pos[0], pos[1], pos[2]))
+            .name;
+        crate::game::claim_borders_inventory_preferences::storage_menu(name, menu)
     });
     inventory::opened(packet.container, menu, physical);
 }
 
 /// Called only at the actual entity-use path, not merely when the crosshair passes a vehicle.
-pub(crate) fn entity_use(game:&Game<'_>,hand:Hand) {
-    if hand!=Hand::Main||!game.native_on(claims::ID){return;}
-    let Some(id)=game.pick_entity_hit().flatten() else{return;};
-    let expected=game.carts.iter().find(|c|c.id as i32==id).and_then(|c|match c.kind {
-        crate::game::minecarts::CartKind::Chest=>Some("minecraft:generic_9x3"),
-        crate::game::minecarts::CartKind::Hopper=>Some("minecraft:hopper"),
-        _=>None,
-    }).or_else(||game.boats.iter().any(|b|b.id as i32==id&&b.chest).then_some("minecraft:generic_9x3"));
-    if let Some(menu)=expected {inventory::entity_use(menu);}
+pub(crate) fn entity_use(game: &Game<'_>, hand: Hand) {
+    if hand != Hand::Main || !game.native_on(claims::ID) {
+        return;
+    }
+    let Some(id) = game.pick_entity_hit().flatten() else {
+        return;
+    };
+    let expected = game
+        .carts
+        .iter()
+        .find(|c| c.id as i32 == id)
+        .and_then(|c| match c.kind {
+            crate::game::minecarts::CartKind::Chest => Some("minecraft:generic_9x3"),
+            crate::game::minecarts::CartKind::Hopper => Some("minecraft:hopper"),
+            _ => None,
+        })
+        .or_else(|| {
+            game.boats
+                .iter()
+                .any(|b| b.id as i32 == id && b.chest)
+                .then_some("minecraft:generic_9x3")
+        });
+    if let Some(menu) = expected {
+        inventory::entity_use(menu);
+    }
 }
 
-pub(crate) fn block_use(game:&Game<'_>,hand:Hand) {
-    if hand==Hand::Main&&game.native_on(claims::ID)&&let Some(hit)=game.pick(){inventory::block_use(hit.pos);}
+pub(crate) fn block_use(game: &Game<'_>, hand: Hand) {
+    if hand == Hand::Main
+        && game.native_on(claims::ID)
+        && let Some(hit) = game.pick()
+    {
+        inventory::block_use(hit.pos);
+    }
 }

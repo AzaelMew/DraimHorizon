@@ -88,7 +88,7 @@ struct State {
     pressed: BTreeSet<i32>,
     trusted: Option<(i32, String)>,
     entity_use: Option<(String, Instant)>,
-    block_use: Option<([i32;3], Instant)>,
+    block_use: Option<([i32; 3], Instant)>,
     generation: u64,
     status: Option<(String, Instant)>,
 }
@@ -112,8 +112,8 @@ fn load_settings(game: &Game<'_>) {
                 }
                 Err(e) => s.error = Some(format!("Настройки повреждены: {e}")),
             },
-            Err(e) if e.kind()==std::io::ErrorKind::NotFound => s.writable = true,
-            Err(e) => s.error=Some(format!("Не удалось прочитать настройки: {e}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => s.writable = true,
+            Err(e) => s.error = Some(format!("Не удалось прочитать настройки: {e}")),
         }
         s.loaded = true;
     });
@@ -123,14 +123,23 @@ pub(super) fn interactions(game: &Game<'_>) -> [bool; 2] {
     state(|s| [s.preferences.frames, s.preferences.signs])
 }
 /// The remote OpenScreen hook supplies physical provenance before use_target is consumed.
-pub(crate) fn entity_use(menu:&str) {state(|s|s.entity_use=Some((menu.into(),Instant::now())));}
-pub(crate) fn block_use(pos:[i32;3]){state(|s|s.block_use=Some((pos,Instant::now())));}
-pub(crate) fn opened(id: i32, menu: &str, physical: Option<[i32;3]>) {
+pub(crate) fn entity_use(menu: &str) {
+    state(|s| s.entity_use = Some((menu.into(), Instant::now())));
+}
+pub(crate) fn block_use(pos: [i32; 3]) {
+    state(|s| s.block_use = Some((pos, Instant::now())));
+}
+pub(crate) fn opened(id: i32, menu: &str, physical: Option<[i32; 3]>) {
     state(|s| {
         s.generation = s.generation.wrapping_add(1);
-        let physical=s.block_use.take().is_some_and(|(pos,at)|Some(pos)==physical&&at.elapsed()<Duration::from_secs(2));
-        let entity=s.entity_use.take().is_some_and(|(m,at)|m==menu&&at.elapsed()<Duration::from_secs(2));
-        s.trusted = (physical||entity).then(|| (id, menu.to_owned()));
+        let physical = s.block_use.take().is_some_and(|(pos, at)| {
+            Some(pos) == physical && at.elapsed() < Duration::from_secs(2)
+        });
+        let entity = s
+            .entity_use
+            .take()
+            .is_some_and(|(m, at)| m == menu && at.elapsed() < Duration::from_secs(2));
+        s.trusted = (physical || entity).then(|| (id, menu.to_owned()));
         if let Some(e) = s.editor.take() {
             s.preferences = e.before;
         }
@@ -152,8 +161,8 @@ pub(super) fn reset() {
         s.layout = None;
         s.pressed.clear();
         s.trusted = None;
-        s.entity_use=None;
-        s.block_use=None;
+        s.entity_use = None;
+        s.block_use = None;
     });
 }
 fn stop(s: &mut State) {
@@ -528,7 +537,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         false,
                     );
                 }
-                let hint = s.error.as_deref().unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
+                let hint = s
+                    .error
+                    .as_deref()
+                    .unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
                 game.native_text(
                     batch,
                     &clipped(game, hint, batch.width - 8.0),
@@ -669,18 +681,21 @@ fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bo
         }
         Button::Done => {
             if s.writable {
-                let dir=game.native_data_dir(claims::ID);
-                let saved=std::fs::create_dir_all(&dir).and_then(|()|{
-                    let temp=dir.join("inventory_tools.tmp");
-                    std::fs::write(&temp,s.preferences.encode())?;
-                    std::fs::rename(temp,dir.join("inventory_tools"))
+                let dir = game.native_data_dir(claims::ID);
+                let saved = std::fs::create_dir_all(&dir).and_then(|()| {
+                    let temp = dir.join("inventory_tools.tmp");
+                    std::fs::write(&temp, s.preferences.encode())?;
+                    std::fs::rename(temp, dir.join("inventory_tools"))
                 });
                 match saved {
-                    Ok(())=>{s.editor=None;s.error=None;}
-                    Err(e)=>s.error=Some(format!("Не удалось сохранить: {e}")),
+                    Ok(()) => {
+                        s.editor = None;
+                        s.error = None;
+                    }
+                    Err(e) => s.error = Some(format!("Не удалось сохранить: {e}")),
                 }
             } else {
-                s.error=Some("Настройки не сохранены: проверь файл inventory_tools".into());
+                s.error = Some("Настройки не сохранены: проверь файл inventory_tools".into());
             }
         }
         Button::Collapse => s.editor.as_mut().unwrap().collapsed = !collapsed,
