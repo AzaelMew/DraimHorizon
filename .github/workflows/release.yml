@@ -112,4 +112,4 @@ jobs:
             fi
             sleep 20
           done
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizons ${version} — Horizon f42ef42" --notes-file docs/release-notes.md
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizons ${version} — Horizon Nightly 2026-11-04 · 67dad0d" --notes-file docs/release-notes.md

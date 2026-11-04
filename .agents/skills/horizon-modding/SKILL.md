@@ -15,7 +15,7 @@ Read `.ecc/upstream-lock.json` and `docs/development.md` first. The current pinn
 6. Use ECC Rust and verification skills as needed. Test behavior and meaningful failures; build and check the actual artifact when tooling and owned game resources are available. State any missing prerequisites.
 
 Primary references:
-- https://github.com/horizon-rust/horizon/blob/f42ef42ef6ceccb3c6a20bea2481d87949a51c81/docs/mods.md
-- https://github.com/horizon-rust/horizon/blob/f42ef42ef6ceccb3c6a20bea2481d87949a51c81/docs/native-mods.md
+- https://github.com/horizon-rust/horizon/blob/67dad0d1a5adca139b426c8114e74a33b376ba64/docs/mods.md
+- https://github.com/horizon-rust/horizon/blob/67dad0d1a5adca139b426c8114e74a33b376ba64/docs/native-mods.md
 - https://github.com/horizon-rust/horizon-native-mod-template
 - https://github.com/horizon-rust/horizon-mixins
