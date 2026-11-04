@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.14.0.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.15.2.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -112,7 +112,6 @@ Outgoing chat: `outgoing.rs` orders up to eight pending entries, splits English 
 
 Mob radar reads interpolated loaded living entities only, excluding player/misc types; positions are bounded to 512 nearest marks and never persisted. Colours describe entity categories, not current aggression. Existing source pins and relay service protocol remain compatible.
 
-
 ## Экономика и интерфейс сервера (0.10.0)
 
 `economy.rs` хранит котировки в сотых долях монеты и строит условные оценки без сетевых действий. Лоты используют полную цену объявления; остаток лота не получает выдуманную стоимость. Дневной денежный лимит применяется к выручке до удержаний. TAXES полностью удалены из расчётов, UI и настроек; старые значения в кеше игнорируются. Комиссия выставления AH имеет отдельное состояние «неизвестна».
@@ -130,7 +129,6 @@ Mob radar reads interpolated loaded living entities only, excluding player/misc 
 
 
 TPS: HEAD-инъекция `remote::Game::handle_packet` наблюдает только `SetTime`, `TickingState` и `Respawn`. `server_tps.rs` хранит до 64 точек за 30 секунд, вычисляет изменение серверных тиков по монотонному времени, ограничивает значением заявленного tick rate и скрывает замер старше восьми секунд. Это оценка, зависящая от доставки пакетов, а не официальный серверный показатель. Предсказанный `native_clock` и FPS не используются.
-
 
 ## Удалённая проверка Horizon f42ef42
 
@@ -151,3 +149,7 @@ Click-through использует `native_interaction_key` на удалённ�
 Наведение/выбор используют экспоненциальное сглаживание с 75 мс, открытие — cubic ease-out 160 мс. После отрисовки изменяется только альфа новых вершин, координаты и hit regions сохраняются. Счётчики времени и игровые данные обновляются отдельно от декоративных эффектов. Кеши анимаций ограничены 2048 элементами наведения и 128 сценами. Настройки `appearance` в штатной папке данных `claim_borders` пишутся через временный файл; ошибка схемы/чтения не разрешает перезаписать исходный файл.
 
 Общий модальный редактор получает ввод раньше остальных адаптеров; парный release перехватывается даже после закрытия редактора на press. Escape отменяет предпросмотр, Tab/Shift+Tab обходят девять элементов, Enter/Space активируют выбор. Ctrl+, не забирает обычные буквы из текстовых полей. Тесты проверяют частотно-независимое сглаживание, выключенные эффекты, альфу, границы маленьких кнопок, сетку иконок и сохранение настроек. Интерактивно проверить наведение, фокус, длинные подписи, шрифты ресурспаков, малый/большой GUI scale и сочетание двух редакторов.
+
+## Horizon Nightly 2026-11-04
+
+Текущий целевой nightly — `67dad0d1a5adca139b426c8114e74a33b376ba64`, horizon-mixins — `e8cd0aa38cffef49cb2e088ef716baa107148c02` (штатный pin лаунчера). Проверка `horizon-compatibility.yml` сверяет этот pin и компилирует настоящий клиент. Подробности — в [horizon-nightly-2026-11-04.md](horizon-nightly-2026-11-04.md); раздел f42ef42 выше сохранён как история предыдущего обновления.
