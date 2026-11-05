@@ -80,3 +80,6 @@ pub mod ui_style;
 
 #[path = "../mixins/claim_borders/input.rs"]
 pub mod input;
+
+#[path = "../mixins/claim_borders/seed_map.rs"]
+pub mod seed_map;

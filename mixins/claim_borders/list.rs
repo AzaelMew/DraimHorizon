@@ -17,13 +17,13 @@ fn claim_borders_list(mods: &mut Vec<crate::game::native_hooks::NativeMod>) {
             ],
             [
                 "map".into(),
-                "Карта приватов".into(),
-                "key.keyboard.j".into(),
+                "Seed Map · три измерения".into(),
+                "key.keyboard.m".into(),
             ],
             [
                 "menu".into(),
                 "DraimHorizons: открыть меню".into(),
-                "key.keyboard.m".into(),
+                "key.keyboard.j".into(),
             ],
             [
                 "zoom".into(),

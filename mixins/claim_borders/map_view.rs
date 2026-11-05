@@ -29,6 +29,7 @@ struct State {
     right_click: Option<(std::time::Instant, [f32; 2], String)>,
     probes: std::collections::BTreeSet<u64>,
     points: Vec<(String, [f64; 3])>,
+    seed_patch: Option<horizon_client::font::Patch>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -54,6 +55,7 @@ impl Default for State {
             right_click: None,
             probes: std::collections::BTreeSet::new(),
             points: Vec::new(),
+            seed_patch: None,
         }
     }
 }
@@ -91,6 +93,7 @@ pub(super) fn configure(game: &Game<'_>, preferences: model::Preferences) {
     });
 }
 pub(super) fn reset() {
+    crate::game::claim_borders_seed_view::reset();
     crate::game::extras::claim_borders_map_backend::flush();
     state(|s| {
         s.right_click = None;
@@ -131,6 +134,7 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
     });
 }
 pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, return_menu: bool) {
+    crate::game::claim_borders_seed_view::open(&source, &focus);
     state(|s| {
         s.dimension = source.dimension.clone();
         s.view = model::View {
@@ -204,6 +208,7 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
         return None;
     }
     let p = settings(game);
+    let seed_active = crate::game::claim_borders_seed_view::active();
     state(|s| {
         let source = s.source.clone()?;
         Some(Request {
@@ -228,7 +233,7 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
             } else {
                 1.0
             },
-            draw: s.open || (p.minimap && !game.ui.hide_gui),
+            draw: (s.open && !seed_active) || (!s.open && p.minimap && !game.ui.hide_gui),
         })
     })
 }
@@ -241,7 +246,7 @@ pub(in crate::game) fn history_status(dimensions: Vec<String>, warning: Option<S
         s.history_warning = warning;
     });
 }
-fn map_marks(
+pub(super) fn map_marks(
     game: &Game<'_>,
     batch: &mut HudBatch,
     source: &model::Snapshot,
@@ -493,7 +498,14 @@ pub(super) fn hud(
         );
     }
 }
-fn label(game: &Game<'_>, batch: &mut HudBatch, text: &str, pos: [f32; 2], width: f32, color: u32) {
+pub(super) fn label(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    text: &str,
+    pos: [f32; 2],
+    width: f32,
+    color: u32,
+) {
     let mut shown = String::new();
     for c in text.chars() {
         shown.push(c);
@@ -513,6 +525,7 @@ enum Button {
     Death,
     Fit,
     Dimension,
+    Seed,
     Grid,
     Settings,
     Layer,
@@ -527,7 +540,7 @@ fn map_rect(size: [f32; 2]) -> [f32; 4] {
     ]
 }
 fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
-    let width = (size[0] - 12.0) / 10.0;
+    let width = (size[0] - 12.0) / 11.0;
     [
         (Button::ZoomOut, "−"),
         (Button::ZoomIn, "+"),
@@ -535,6 +548,7 @@ fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
         (Button::Death, "Смерть"),
         (Button::Fit, "Зоны"),
         (Button::Dimension, "Мир"),
+        (Button::Seed, "Seed Map"),
         (Button::Layer, "Рельеф"),
         (Button::Grid, "Сетка"),
         (Button::Settings, "Опции"),
@@ -551,7 +565,7 @@ fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
     })
     .collect()
 }
-fn map_frame(
+pub(super) fn map_frame(
     game: &Game<'_>,
     batch: &mut HudBatch,
     rect: [f32; 4],
@@ -616,6 +630,12 @@ fn map_frame(
     }
 }
 fn operate(game: &Game<'_>, button: Button) {
+    if matches!(button, Button::Seed) {
+        if let Some(source) = seed_source() {
+            crate::game::claim_borders_seed_view::open(&source, &None);
+        }
+        return;
+    }
     if matches!(button, Button::Layer) {
         let mut p = settings(game);
         p.layer = p.layer.next();
@@ -706,6 +726,9 @@ pub(super) fn render(
 ) -> bool {
     if !visible() || game.native_mod_screen() != Some(claims::ID) {
         return false;
+    }
+    if crate::game::claim_borders_seed_view::render(game, batch, screen) {
+        return true;
     }
     let render_start = batch.vertices.len();
     let size = [screen.rect[2], screen.rect[3]];
@@ -983,6 +1006,9 @@ pub(super) fn mouse(
         return false;
     }
     *canceled = true;
+    if crate::game::claim_borders_seed_view::mouse(game, screen, button, pressed) {
+        return true;
+    }
     if !pressed {
         state(|s| s.drag = None);
         return true;
@@ -1103,6 +1129,9 @@ pub(super) fn scroll(
         return false;
     }
     *canceled = true;
+    if crate::game::claim_borders_seed_view::scroll(screen, amount) {
+        return true;
+    }
     state(|s| {
         if let Some(rect) = s.rect
             && contains(rect, screen.mouse)
@@ -1130,8 +1159,19 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         return false;
     }
     *canceled = true;
+    if crate::game::claim_borders_seed_view::key(game, key) {
+        return true;
+    }
+    if key == game.native_mod_key(claims::ID, "map", "key.keyboard.m") {
+        operate(game, Button::Back);
+        return true;
+    }
+    if key == game.native_mod_key(claims::ID, "menu", "key.keyboard.j") {
+        operate(game, Button::Settings);
+        return true;
+    }
     match key {
-        "key.keyboard.escape" | "key.keyboard.j" => operate(game, Button::Back),
+        "key.keyboard.escape" => operate(game, Button::Back),
         "key.keyboard.g" => operate(game, Button::Grid),
         "key.keyboard.home" => operate(game, Button::Center),
         "key.keyboard.equal" => operate(game, Button::ZoomIn),
@@ -1139,4 +1179,33 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         _ => {}
     }
     true
+}
+
+pub(super) fn seed_source() -> Option<model::Snapshot> {
+    state(|s| s.source.clone())
+}
+pub(super) fn seed_point(dimension: String, position: [f64; 3]) {
+    state(|s| s.points.push((dimension, position)));
+}
+pub(super) fn seed_close(game: &Game<'_>) {
+    crate::game::claim_borders_seed_view::reset();
+    operate(game, Button::Back);
+}
+pub(super) fn seed_settings(game: &Game<'_>) {
+    crate::game::claim_borders_seed_view::reset();
+    operate(game, Button::Settings);
+}
+pub(super) fn seed_patch(game: &Game<'_>, rect: horizon_client::hud::Rect, rgba: Vec<u8>) {
+    state(|s| {
+        s.seed_patch = Some(horizon_client::font::Patch {
+            x: (rect.u0 * game.gui.atlas.width as f32).round() as u32,
+            y: (rect.v0 * game.gui.atlas.height as f32).round() as u32,
+            width: 256,
+            height: 256,
+            rgba,
+        })
+    });
+}
+pub(super) fn take_seed_patch() -> Option<horizon_client::font::Patch> {
+    state(|s| s.seed_patch.take())
 }

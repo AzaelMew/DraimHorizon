@@ -61,6 +61,9 @@ pub(in crate::game) fn flush() {
     }
 }
 pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
+    if let Some(patch) = view::take_seed_patch() {
+        game.map_patches.push(patch);
+    }
     let Some(request) = view::request(game) else {
         return false;
     };

@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.17.0"
+version = "0.18.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -792,3 +792,21 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "packet", ty = "&horizon_protocol::packets::play::Clientbound", value = "&packet" },
 ]
+
+[[module]]
+id = "seed-map"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_seed_map"
+source = "seed_map.rs"
+
+[[module]]
+id = "seed-worker"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_seed_worker"
+source = "seed_worker.rs"
+
+[[module]]
+id = "seed-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_seed_view"
+source = "seed_view.rs"
