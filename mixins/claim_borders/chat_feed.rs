@@ -10,9 +10,84 @@ pub enum Kind {
     Death,
     System,
 }
+/// Only recognized server-origin auction receipts are promoted to the important tray.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuctionNotice {
+    Listed,
+    Sold,
+}
+impl AuctionNotice {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Listed => "Аукцион · лот выставлен",
+            Self::Sold => "Аукцион · ваш лот продан",
+        }
+    }
+    pub fn color(self) -> u32 {
+        match self {
+            Self::Listed => 0xf1ca75,
+            Self::Sold => 0x77e3ac,
+        }
+    }
+}
+fn auction_notice(line: &str) -> Option<AuctionNotice> {
+    fn listing_id(s: &str) -> bool {
+        !s.is_empty() && s.len() <= 20 && s.bytes().all(|c| c.is_ascii_digit())
+    }
+    fn goods(s: &str) -> bool {
+        s.split_once(' ').is_some_and(|(n, item)| {
+            n.parse::<u32>().is_ok_and(|n| n > 0) && !item.trim().is_empty()
+        })
+    }
+    fn coins(s: &str) -> bool {
+        s.strip_suffix(" coins")
+            .and_then(super::claim_borders_economy::money)
+            .is_some()
+    }
+    if line.len() > 2048 {
+        return None;
+    }
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("Listed #") {
+        let (id, rest) = rest.split_once(": ")?;
+        let (item, rest) = rest.rsplit_once(" for ")?;
+        let (price, rest) = rest.split_once(" (")?;
+        let (each, hours) = rest.split_once(" each), ")?;
+        return (listing_id(id)
+            && goods(item)
+            && coins(price)
+            && super::claim_borders_economy::money(each).is_some()
+            && hours.strip_suffix("h.").is_some_and(listing_id))
+        .then_some(AuctionNotice::Listed);
+    }
+    if let Some(rest) = line.strip_prefix("Auction #") {
+        if let Some((id, rest)) = rest.split_once(": ") {
+            let (item, rest) = rest.rsplit_once(" from ")?;
+            let (price, hours) = rest.split_once(", ends in ")?;
+            return (listing_id(id)
+                && goods(item)
+                && coins(price)
+                && hours.strip_suffix("h.").is_some_and(listing_id))
+            .then_some(AuctionNotice::Listed);
+        }
+        let (id, rest) = rest.split_once(" (")?;
+        let (item, rest) = rest.rsplit_once(") sold to ")?;
+        let (buyer, price) = rest.split_once(" for ")?;
+        return (listing_id(id)
+            && goods(item)
+            && player_name(buyer)
+            && price.strip_suffix('.').is_some_and(coins))
+        .then_some(AuctionNotice::Sold);
+    }
+    let (buyer, rest) = line.split_once(" bought your ")?;
+    let (item, price) = rest.rsplit_once(" for ")?;
+    (player_name(buyer) && goods(item) && price.strip_suffix('.').is_some_and(coins))
+        .then_some(AuctionNotice::Sold)
+}
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: u64,
+    pub auction: Option<AuctionNotice>,
     pub kind: Kind,
     pub name: String,
     pub original: String,
@@ -37,6 +112,9 @@ impl Entry {
 /// A compact event keeps its full original in Entry for the hover card.
 pub fn event_summary(entry: &Entry, translated: bool) -> String {
     let body = entry.body(translated);
+    if let Some(notice) = entry.auction {
+        return format!("{} · {body}", notice.label());
+    }
     if entry.kind != Kind::Death {
         return format!("{} · {}", entry.name, body);
     }
@@ -306,7 +384,7 @@ impl Feed {
         )
     }
     pub fn push_with(&mut self, line: &str, now: u64, preferences: Preferences) -> Option<u64> {
-        self.push_decoded(line, now, preferences, None)
+        self.push_decoded(line, now, preferences, None, None)
     }
     pub fn push_component(
         &mut self,
@@ -315,7 +393,13 @@ impl Feed {
         now: u64,
         preferences: Preferences,
     ) -> Option<u64> {
-        self.push_decoded(line, now, preferences, semantic_event(component, line))
+        self.push_decoded(
+            line,
+            now,
+            preferences,
+            semantic_event(component, line),
+            auction_notice(line),
+        )
     }
     fn push_decoded(
         &mut self,
@@ -323,6 +407,7 @@ impl Feed {
         now: u64,
         preferences: Preferences,
         event: Option<(Kind, String, String, Option<bool>)>,
+        auction: Option<AuctionNotice>,
     ) -> Option<u64> {
         if line.trim().is_empty() {
             return None;
@@ -357,6 +442,7 @@ impl Feed {
                 })
                 .find(|(_, e)| {
                     e.kind == kind
+                        && e.auction == auction
                         && e.name == name
                         && e.comparison == comparison
                         && now >= e.at
@@ -375,6 +461,7 @@ impl Feed {
         self.next = self.next.saturating_add(1);
         self.entries.push_back(Entry {
             id: self.next,
+            auction,
             kind,
             name,
             original: body,
@@ -388,7 +475,13 @@ impl Feed {
             raw: bounded,
         });
         if self.entries.len() > 200 {
-            self.entries.pop_front();
+            // Keep recent auction receipts while ordinary chat scrolls past them.
+            let index = self
+                .entries
+                .iter()
+                .position(|e| e.auction.is_none() || now.saturating_sub(e.at) >= 180_000)
+                .unwrap_or(0);
+            self.entries.remove(index);
         }
         Some(self.next)
     }
@@ -437,6 +530,70 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auction_receipts_require_server_origin_and_exact_grammar() {
+        let p = Preferences::default();
+        let samples = [
+            (
+                "Listed #12: 64 diamond for 1,000 coins (15.62 each), 48h.",
+                AuctionNotice::Listed,
+            ),
+            (
+                "Auction #3: 1 diamond_sword from 100 coins, ends in 2h.",
+                AuctionNotice::Listed,
+            ),
+            (
+                "Steve bought your 10 diamond for 1,000 coins.",
+                AuctionNotice::Sold,
+            ),
+            (
+                "Auction #1 (3 emerald) sold to Steve for 400 coins.",
+                AuctionNotice::Sold,
+            ),
+        ];
+        let mut f = Feed::default();
+        for (line, kind) in samples {
+            f.push_with(line, 0, p); // local/player text cannot promote a receipt
+            assert_eq!(f.entries.back().unwrap().auction, None);
+            f.push_component(line, &serde_json::json!({"text":line}), 1, p);
+            let entry = f.entries.back().unwrap();
+            assert_eq!(entry.auction, Some(kind));
+            assert_eq!(entry.original, line);
+            assert_eq!(entry.repetitions, 1); // never merge an untrusted copy
+        }
+        for line in [
+            "<Steve> Alex bought your 10 diamond for 1,000 coins.",
+            "Steve: Listed #12: 64 diamond for 1,000 coins (15.62 each), 48h.",
+            "Steve bought your diamonds for hello coins.",
+            "Auction #x (3 emerald) sold to Steve for 400 coins.",
+            "Bought 3 emerald from Steve for 400 coins.",
+            "Auction #1 (3 emerald) sold to Steve for 400 coins. extra",
+        ] {
+            assert_eq!(auction_notice(line), None, "{line}");
+        }
+    }
+    #[test]
+    fn chat_flood_preserves_recent_auction_receipts_with_bounded_history() {
+        let mut f = Feed::default();
+        let p = Preferences {
+            repeats: RepeatMode::Off,
+            ..Preferences::default()
+        };
+        let line = "Steve bought your 10 diamond for 1,000 coins.";
+        f.push_component(line, &serde_json::json!({"text":line}), 0, p);
+        for i in 1..500 {
+            f.push_with(&format!("<Alex> message {i}"), i, p);
+        }
+        assert_eq!(f.entries.len(), 200);
+        assert!(
+            f.entries
+                .iter()
+                .any(|e| e.auction == Some(AuctionNotice::Sold))
+        );
+        f.push_with("<Alex> later", 180_001, p);
+        assert!(!f.entries.iter().any(|e| e.auction.is_some()));
+    }
+
     #[test]
     fn compact_events_remain_one_line_and_preserve_the_original() {
         let mut feed = Feed::default();

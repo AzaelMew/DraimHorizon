@@ -38,7 +38,7 @@ cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/
   --locked -p horizon-client --bin horizon-client --no-default-features
 python3 tools/package.py
 cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check \
-  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.15.2.hnmod --json
+  --locked -p cargo-horizon-mod -- check target/draimhorizons-0.16.0.hnmod --json
 ```
 
 Последняя команда принимает путь относительно текущей рабочей директории. Она выполняет те же проверки архива, что реестр Horizon. Полная игровая сборка и интерактивный тест требуют дополнительных зависимостей, GPU и собственных подготовленных ресурсов Minecraft. Отсутствие игровых ресурсов не блокирует `cargo check` и упаковку исходного `.hnmod`.
@@ -153,3 +153,12 @@ Click-through использует `native_interaction_key` на удалённ�
 ## Horizon Nightly 2026-11-04
 
 Текущий целевой nightly — `67dad0d1a5adca139b426c8114e74a33b376ba64`, horizon-mixins — `e8cd0aa38cffef49cb2e088ef716baa107148c02` (штатный pin лаунчера). Проверка `horizon-compatibility.yml` сверяет этот pin и компилирует настоящий клиент. Подробности — в [horizon-nightly-2026-11-04.md](horizon-nightly-2026-11-04.md); раздел f42ef42 выше сохранён как история предыдущего обновления.
+
+
+## Аукцион и Horizon Nightly 2026-11-05 (0.16.0)
+
+Текущий source pin — `f319701e8c9ab657ff562250b3ba07b2d654e3bc`, native hooks API 409. Инструмент остаётся на штатном pin лаунчера `e8cd0aa38cffef49cb2e088ef716baa107148c02`. Предыдущие разделы nightly сохранены как история; `compatibility.json` определяет текущую цель.
+
+`economy::Preferences` хранит независимые `custom_auction` / `custom_market`; старые настройки получают включённые значения по умолчанию. F8 обрабатывается до проверки активности кастомного UI, чтобы возвращать его из стандартного вида. Переключение отменяет подготовленное действие и подтверждение.
+
+`chat_feed::AuctionNotice` распознаёт подтверждения из `horizon-mods/native/smp/mixins/smp/smp_auction.rs`. Только серверный `push_component` может создать важное уведомление; player/local push не повышает приоритет. Дедупликация различает доверенные уведомления и обычный текст. История ограничена 200 записями; недавние уведомления сохраняются до 180 секунд при вытеснении обычных строк. Время показа блока задаётся существующей настройкой важных сообщений (10–180 секунд).

@@ -29,7 +29,6 @@ enum Hit {
 struct State {
     icons: Vec<(usize, horizon_client::items::ItemStack)>,
     token: String,
-    hidden: String,
     query: TextInput,
     focus: bool,
     page: usize,
@@ -57,9 +56,24 @@ pub(super) fn reset() {
 pub(super) fn active(game: &Game<'_>) -> bool {
     live(game).is_some()
 }
+fn view_key(kind: scan::Kind) -> &'static str {
+    match kind {
+        scan::Kind::Auction => "custom_auction",
+        scan::Kind::Market => "custom_market",
+    }
+}
+fn toggle_view(game: &Game<'_>, kind: scan::Kind) {
+    data::configure(game, view_key(kind), 1);
+    state(|s| {
+        s.pending = None;
+        s.action = None;
+        s.focus = false;
+        s.hits.clear();
+    });
+}
 fn live(game: &Game<'_>) -> Option<(scan::Page, String)> {
     let page = data::server_page(game)?;
-    if state(|s| s.hidden == page.1) {
+    if !data::read(|_, prefs, _, _| prefs.flag(view_key(page.0.family))) {
         None
     } else {
         Some(page)
@@ -112,7 +126,6 @@ pub(super) fn frame(game: &mut Game<'_>) {
             s.pending = None;
             s.focus = false;
             s.hits.clear();
-            s.hidden.clear();
         });
     }
 }
@@ -748,7 +761,7 @@ pub(super) fn render(
             game,
             batch,
             raw,
-            "Стандартный вид · F8",
+            "Стандартный вид · F8 (сохранить)",
             false,
             screen.mouse,
         );
@@ -914,10 +927,10 @@ pub(super) fn mouse(
     if !pressed {
         return true;
     }
-    state(|s| {
+    let standard = state(|s| {
         s.pressed.insert(button);
         if button != 0 {
-            return;
+            return false;
         }
         let hit = s
             .hits
@@ -958,16 +971,24 @@ pub(super) fn mouse(
                 }
             }
             Some(Hit::Search) => s.focus = true,
-            Some(Hit::Standard) => {
-                s.hidden = token;
-                s.pending = None;
-            }
+            Some(Hit::Standard) => return true,
             _ => {}
         }
+        false
     });
+    if standard {
+        toggle_view(game, page.family);
+    }
     true
 }
 pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
+    if key == "key.keyboard.f8" && game.native_on(claims::ID) {
+        if let Some((page, _)) = data::server_page(game) {
+            toggle_view(game, page.family);
+            *canceled = true;
+            return true;
+        }
+    }
     if live(game).is_none() {
         return false;
     }
@@ -983,10 +1004,6 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
     }
     *canceled = true;
     state(|s| {
-        if key == "key.keyboard.f8" {
-            s.hidden = s.token.clone();
-            return;
-        }
         if game.modifiers.control_key() && key == "key.keyboard.f" {
             s.focus = true;
             return;

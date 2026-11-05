@@ -74,6 +74,24 @@ pub struct Setting {
 }
 pub const SETTINGS: &[Setting] = &[
     Setting {
+        key: "custom_auction",
+        label: "Свой вид аукциона · F8",
+        group: 0,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+    },
+    Setting {
+        key: "custom_market",
+        label: "Свой вид Market · F8",
+        group: 0,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+    },
+    Setting {
         key: "sidebar_tps",
         label: "TPS в sidebar",
         group: 5,
@@ -1185,6 +1203,22 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn standard_auction_view_survives_reload_and_keeps_market_independent() {
+        let mut p = Preferences::decode(r#"{"schema":1,"values":{}}"#).unwrap();
+        assert!(p.flag("custom_auction") && p.flag("custom_market"));
+        p.adjust("custom_auction", 1);
+        let mut reloaded = Preferences::decode(&p.encode()).unwrap();
+        assert!(!reloaded.flag("custom_auction"));
+        assert!(reloaded.flag("custom_market"));
+        reloaded.adjust("custom_auction", 1);
+        assert!(
+            Preferences::decode(&reloaded.encode())
+                .unwrap()
+                .flag("custom_auction")
+        );
+    }
+
     #[test]
     fn actual_market_lore_prices_limits_volume_and_movers() {
         let mut b = Book::default();

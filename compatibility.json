@@ -1,18 +1,18 @@
 {
   "horizon_repository": "https://github.com/horizon-rust/horizon",
-  "horizon_revision": "67dad0d1a5adca139b426c8114e74a33b376ba64",
+  "horizon_revision": "f319701e8c9ab657ff562250b3ba07b2d654e3bc",
   "horizon_mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
   "horizon_mixins_revision": "e8cd0aa38cffef49cb2e088ef716baa107148c02",
   "mixin_schema": 6,
   "source_sha256": {
-    "crates/horizon-client/src/game.rs": "8085faedc8c060110cae5f7c993126d6864f76fbb1c35be95c153f4700187a16",
-    "crates/horizon-client/src/game/native_hooks.rs": "ebdacd725862572d04f595f0b8020f33f18f1d1785beaade306ca6c01d90b53b",
-    "crates/horizon-client/src/game/remote.rs": "a98ac406ea0718e5f20895c0732bce9bc2c5b3a48722f8b176cb25cae9ac1788",
+    "crates/horizon-client/src/game.rs": "9298b83b426fe9bb44dc0f7f31ddc9b284016a6842520cdba518e55389fbad6e",
+    "crates/horizon-client/src/game/native_hooks.rs": "968156c94e6dd2cabd494c26fb3018c38c4ce53a73327768d7a32d4395ebe090",
+    "crates/horizon-client/src/game/remote.rs": "e135ef6564d991b2a25ade19df2bfdcca3123dec6f1222e2722751f21f5be5b4",
     "crates/horizon-client/src/game/debug_renderers.rs": "2092f8993b2c52c1a9aaf9bad43304231a87ead5cf749f259c363e097ac0fa4d",
-    "crates/horizon-client/src/game/chat.rs": "61020cb0b8de1a63c302991886c8224518474ce31d6f7c3a4be21f9256e56960",
-    "crates/horizon-client/src/game/extras.rs": "6c8ee9ed190222cc8755fce7e52a2bb5a8e63fa180b23d846eb8c81cd38785a8",
+    "crates/horizon-client/src/game/chat.rs": "90d3dfe79bf30d177ac71680339639da709c899f74656ff23ee22d1a750fbd99",
+    "crates/horizon-client/src/game/extras.rs": "36e16316172b8ea56f46228764210196dde4050ed2794ee9ebca07a84721ec82",
     "crates/horizon-client-render/src/minimap.rs": "7b45a9f4eb2bb35be4b5444f04bfb2be4c0f0e607a7fce6e2b513be51e691ae8",
-    "crates/horizon-client-render/src/hud.rs": "d3970bbdbd522f41a856ee8b30305b85dd8c758b3cf380a664bf120d29c62140",
-    "crates/horizon-client/src/game/scoreboard.rs": "35f646e90b232fcffeeead47b7690617737b470b811562342484d21293c3c8db"
+    "crates/horizon-client-render/src/hud.rs": "07c0766c9f7f6b7a6ddb5b16ce57958fd8d861c236c518cf95b8426f1d0fce22",
+    "crates/horizon-client/src/game/scoreboard.rs": "5eb71f181cf482eebb32e06a23b23eff11f3bced71ac8cdfd02ab409f7785d78"
   }
 }
