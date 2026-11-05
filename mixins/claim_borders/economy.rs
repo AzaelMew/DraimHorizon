@@ -563,6 +563,14 @@ pub struct Listing {
     pub expires: u64,
     pub generation: u64,
 }
+impl Listing {
+    pub fn within_unit_price(&self, cap: Coins) -> bool {
+        !self.bid
+            && self.count > 0
+            && cap > 0
+            && i128::from(self.cost) <= i128::from(cap) * i128::from(self.count)
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub struct Rules {
     pub fee_bp: Option<u32>,
@@ -588,6 +596,7 @@ pub struct Book {
     pub coin_cap: Option<Coins>,
     pub item_cap: Option<u32>,
     pub watch: BTreeSet<String>,
+    pub auction_watch: BTreeMap<String, Coins>,
     pub trades: Vec<Trade>,
     pub inventory: BTreeMap<String, u32>,
     pub day: u64,
@@ -722,6 +731,19 @@ fn duration(raw: &str) -> Option<u64> {
     (digits.is_empty() && total > 0 && total <= 30 * 86400000).then_some(total)
 }
 impl Book {
+    pub fn set_auction_watch(&mut self, item: &str, cap: Coins) -> bool {
+        let Some(item) = id(item) else { return false };
+        if cap == 0 {
+            self.auction_watch.remove(&item);
+        } else if (1..=MAX).contains(&cap)
+            && (self.auction_watch.len() < 64 || self.auction_watch.contains_key(&item))
+        {
+            self.auction_watch.insert(item, cap);
+        } else {
+            return false;
+        }
+        true
+    }
     pub fn roll_day(&mut self, now: u64) {
         let day = now / 86400000;
         if self.day != day {
@@ -1115,7 +1137,7 @@ impl Book {
         }
     }
     pub fn encode(&self, scope: &str) -> String {
-        json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
+        json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"auction_watch":self.auction_watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
     }
     pub fn decode(raw: &str, scope: &str) -> Result<Self, String> {
         if raw.len() > 4 * 1024 * 1024 {
@@ -1169,6 +1191,13 @@ impl Book {
             book.watch
                 .extend(w.iter().take(64).filter_map(|v| v.as_str().and_then(id)));
         }
+        if let Some(rows) = v["auction_watch"].as_object() {
+            for (item, cap) in rows.iter().take(64) {
+                if let Some(cap) = cap.as_i64().filter(|cap| *cap > 0) {
+                    book.set_auction_watch(item, cap);
+                }
+            }
+        }
         book.rules.fee_bp = v["rules"][2]
             .as_u64()
             .and_then(|n| u32::try_from(n).ok())
@@ -1203,6 +1232,22 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auction_favorites_persist_and_compare_exact_unit_prices() {
+        let mut book = Book::default();
+        assert!(book.set_auction_watch("minecraft:diamond", 250));
+        let mut listing =
+            listing("#42 4 Diamond · 10 coins · Alex · 1h left", "diamond", 0, 0).unwrap();
+        assert!(listing.within_unit_price(250));
+        assert!(!listing.within_unit_price(249));
+        listing.bid = true;
+        assert!(!listing.within_unit_price(250));
+        let mut restored = Book::decode(&book.encode("server-a"), "server-a").unwrap();
+        assert_eq!(restored.auction_watch["minecraft:diamond"], 250);
+        assert!(Book::decode(&book.encode("server-a"), "server-b").is_err());
+        assert!(restored.set_auction_watch("diamond", 0));
+        assert!(restored.auction_watch.is_empty());
+    }
     #[test]
     fn standard_auction_view_survives_reload_and_keeps_market_independent() {
         let mut p = Preferences::decode(r#"{"schema":1,"values":{}}"#).unwrap();

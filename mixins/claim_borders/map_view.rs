@@ -367,6 +367,39 @@ fn map_marks(
             }
         }
     }
+    if let Some((_, [x, _, z])) = game
+        .level
+        .last_death
+        .as_ref()
+        .filter(|(dim, _)| dim == dimension)
+    {
+        let at = xy([f64::from(*x) + 0.5, f64::from(*z) + 0.5]);
+        if contains(rect, at) {
+            ui::fill(
+                game,
+                batch,
+                [at[0] - 6.0, at[1] - 6.0, 12.0, 12.0],
+                0xef351b27,
+            );
+            ui::icon(
+                game,
+                batch,
+                ui::Icon::Close,
+                [at[0] - 5.0, at[1] - 5.0, 10.0, 10.0],
+                0xff879b,
+            );
+            if full && p.labels {
+                label(
+                    game,
+                    batch,
+                    "Последняя смерть",
+                    [at[0] + 8.0, at[1] - 4.0],
+                    105.0,
+                    0xff879b,
+                );
+            }
+        }
+    }
     if source.dimension == dimension {
         let at = xy([source.player[0], source.player[2]]);
         if contains(rect, at) {
@@ -477,6 +510,7 @@ enum Button {
     ZoomIn,
     ZoomOut,
     Center,
+    Death,
     Fit,
     Dimension,
     Grid,
@@ -493,11 +527,12 @@ fn map_rect(size: [f32; 2]) -> [f32; 4] {
     ]
 }
 fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
-    let width = (size[0] - 12.0) / 9.0;
+    let width = (size[0] - 12.0) / 10.0;
     [
         (Button::ZoomOut, "−"),
         (Button::ZoomIn, "+"),
         (Button::Center, "К себе"),
+        (Button::Death, "Смерть"),
         (Button::Fit, "Зоны"),
         (Button::Dimension, "Мир"),
         (Button::Layer, "Рельеф"),
@@ -611,6 +646,14 @@ fn operate(game: &Game<'_>, button: Button) {
                 s.view.center = [source.player[0], source.player[2]];
             }
         }
+        Button::Death => {
+            if let Some((dim, [x, _, z])) = &game.level.last_death {
+                s.dimension.clone_from(dim);
+                s.view.center = [f64::from(*x) + 0.5, f64::from(*z) + 0.5];
+                s.follow = false;
+                s.drag = None;
+            }
+        }
         Button::Fit => {
             if let Some(source) = &s.source {
                 let cells: Vec<_> = source
@@ -636,6 +679,7 @@ fn operate(game: &Game<'_>, button: Button) {
                     source.cells.iter().map(|c| c.dimension.clone()).collect();
                 dimensions.extend(source.marks.iter().map(|m| m.dimension.clone()));
                 dimensions.extend(s.dimensions.iter().cloned());
+                dimensions.extend(game.level.last_death.iter().map(|(dim, _)| dim.clone()));
                 dimensions.insert(source.dimension.clone());
                 let dimensions: Vec<_> = dimensions.into_iter().collect();
                 let current = dimensions
@@ -844,6 +888,20 @@ pub(super) fn render(
                 world[1].floor(),
                 cx.div_euclid(16),
                 cz.div_euclid(16)
+            )
+        } else if let Some((dim, [x, y, z])) = &game.level.last_death {
+            let distance = if dim == &source.dimension {
+                let meters = crate::game::claim_borders_waypoints::distance(
+                    source.player,
+                    [f64::from(*x) + 0.5, f64::from(*y), f64::from(*z) + 0.5],
+                );
+                meters.map_or(String::new(), |m| format!(" · {m:.0} м"))
+            } else {
+                String::new()
+            };
+            format!(
+                "Последняя смерть · {} · {x} {y} {z}{distance}",
+                model::dimension_label(dim)
             )
         } else {
             "Тянуть ЛКМ — карта · 2×ЛКМ — удалить свою метку · 2×ПКМ — создать".into()

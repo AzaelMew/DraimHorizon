@@ -6,5 +6,7 @@ fn claim_borders_commands(commands: &mut Vec<&'static str>) {
         "friend",
         "wp",
         "waypoint",
+        "r",
+        "reply",
     ]);
 }

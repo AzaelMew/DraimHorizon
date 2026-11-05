@@ -1,7 +1,7 @@
 // Presentation of the live server menu. Transactions are revalidated against the current window.
 use crate::game::{
-    Game, Screen, claim_borders as claims, claim_borders_economy_client as data,
-    claim_borders_economy_scan as scan,
+    Game, Screen, claim_borders as claims, claim_borders_economy as economy,
+    claim_borders_economy_client as data, claim_borders_economy_scan as scan,
     claim_borders_input::{Edit, TextInput},
     claim_borders_ui_view as ui,
 };
@@ -30,6 +30,7 @@ struct State {
     icons: Vec<(usize, horizon_client::items::ItemStack)>,
     token: String,
     query: TextInput,
+    watch_edit: Option<(String, TextInput)>,
     focus: bool,
     page: usize,
     hits: Vec<([f32; 4], Hit)>,
@@ -68,6 +69,7 @@ fn toggle_view(game: &Game<'_>, kind: scan::Kind) {
         s.pending = None;
         s.action = None;
         s.focus = false;
+        s.watch_edit = None;
         s.hits.clear();
     });
 }
@@ -106,8 +108,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if paste {
         let v = game.clipboard.get();
         state(|s| {
-            s.query.insert(&v, 64);
-            s.page = 0;
+            if let Some((_, edit)) = &mut s.watch_edit {
+                edit.insert(&v, 20);
+            } else {
+                s.query.insert(&v, 64);
+                s.page = 0;
+            }
         });
     }
     if let Some(p) = action {
@@ -334,8 +340,19 @@ fn goods(
     r: [f32; 4],
     mouse: [f32; 2],
 ) {
-    let title = label(game, page, b);
-    ui::button_base(game, batch, r, &title, false, mouse);
+    let listing = fixed_listing(page, b);
+    let cap = listing
+        .as_ref()
+        .and_then(|l| data::read(|book, _, _, _| book.auction_watch.get(&l.item).copied()));
+    let deal = listing
+        .as_ref()
+        .zip(cap)
+        .is_some_and(|(l, cap)| l.within_unit_price(cap));
+    let mut title = label(game, page, b);
+    if cap.is_some() {
+        title.insert_str(0, "* ");
+    }
+    ui::button_base(game, batch, r, &title, deal, mouse);
     if let Some((_, stack)) = s.icons.iter().find(|(slot, _)| *slot == b.slot) {
         game.draw_item(batch, stack, r[0] + 5.0, r[1] + 7.0);
     }
@@ -344,7 +361,7 @@ fn goods(
         batch,
         &ui::clip(game, &title, r[2] - 32.0),
         [r[0] + 26.0, r[1] + 5.0],
-        0xe3ebf3,
+        if deal { 0x87e4af } else { 0xe3ebf3 },
         false,
     );
     ui::text(
@@ -359,6 +376,13 @@ fn goods(
         s.hover = Some(b.slot);
     }
     s.hits.push((r, Hit::Server(b.clone())));
+}
+fn fixed_listing(page: &scan::Page, b: &scan::Button) -> Option<economy::Listing> {
+    if page.family != scan::Kind::Auction || scan::role(page, b) != scan::Role::Listing {
+        return None;
+    }
+    let listing = economy::listing(&scan::listing_text(b)?, &b.item, data::now(), 0)?;
+    (!listing.bid).then_some(listing)
 }
 pub(super) fn render(
     game: &Game<'_>,
@@ -384,6 +408,7 @@ pub(super) fn render(
             s.notice.clear();
             s.query = TextInput::default();
             s.focus = false;
+            s.watch_edit = None;
         }
         s.hits.clear();
         s.hover = None;
@@ -581,12 +606,21 @@ pub(super) fn render(
                     .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
             let query = [x + 8.0, y + 58.0, w - 16.0, 18.0];
             if !confirming {
+                let caption = if let Some((item, edit)) = &s.watch_edit {
+                    format!(
+                        "{} · монет/шт. ≤ {}│",
+                        item.rsplit(':').next().unwrap_or(item),
+                        edit.value
+                    )
+                } else {
+                    format!("Поиск: {}{}", s.query.value, if s.focus { "│" } else { "" })
+                };
                 ui::button(
                     game,
                     batch,
                     query,
-                    &format!("Поиск: {}{}", s.query.value, if s.focus { "│" } else { "" }),
-                    s.focus,
+                    &caption,
+                    s.focus || s.watch_edit.is_some(),
                     screen.mouse,
                 );
                 s.hits.push((query, Hit::Search));
@@ -745,10 +779,14 @@ pub(super) fn render(
             batch,
             &ui::clip(
                 game,
-                if s.notice.is_empty() {
-                    &status
-                } else {
+                if !s.notice.is_empty() {
                     &s.notice
+                } else if s.watch_edit.is_some() {
+                    "Enter — сохранить · 0 — убрать · Esc — отменить"
+                } else if page.family == scan::Kind::Auction {
+                    "ПКМ по лоту — задать порог избранного"
+                } else {
+                    &status
                 },
                 w - 16.0,
             ),
@@ -929,7 +967,7 @@ pub(super) fn mouse(
     }
     let standard = state(|s| {
         s.pressed.insert(button);
-        if button != 0 {
+        if s.token != token || s.watch_edit.is_some() {
             return false;
         }
         let hit = s
@@ -938,6 +976,24 @@ pub(super) fn mouse(
             .rev()
             .find(|(r, _)| crate::game::claim_borders_ui_style::contains(*r, screen.mouse))
             .map(|(_, h)| h.clone());
+        if button == 1
+            && s.pending.is_none()
+            && let Some(Hit::Server(b)) = &hit
+            && page.buttons.contains(b)
+            && let Some(listing) = fixed_listing(&page, b)
+        {
+            let cap = data::read(|book, _, _, _| book.auction_watch.get(&listing.item).copied());
+            s.watch_edit = Some((
+                listing.item,
+                TextInput::new(cap.map(economy::fmt).unwrap_or_default()),
+            ));
+            s.focus = false;
+            s.notice.clear();
+            return false;
+        }
+        if button != 0 {
+            return false;
+        }
         s.focus = false;
         match hit {
             Some(Hit::Server(b)) => {
@@ -992,6 +1048,46 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
     if live(game).is_none() {
         return false;
     }
+    if state(|s| s.watch_edit.is_some()) {
+        *canceled = true;
+        state(|s| {
+            let Some((item, edit)) = s.watch_edit.as_mut() else {
+                return;
+            };
+            match key {
+                "key.keyboard.escape" => {
+                    s.watch_edit = None;
+                    s.notice.clear();
+                }
+                "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
+                    if let Some(cap) = economy::money(&edit.value) {
+                        s.notice = if data::auction_watch(item, cap) {
+                            s.watch_edit = None;
+                            if cap == 0 {
+                                "Удалено из избранного".into()
+                            } else {
+                                format!("Порог сохранён: {} монет/шт.", economy::fmt(cap))
+                            }
+                        } else {
+                            "Не удалось сохранить порог · лимит 64 позиции".into()
+                        };
+                    } else {
+                        s.notice = "Введите цену, например 12.50".into();
+                    }
+                }
+                _ => match edit.key(
+                    key,
+                    game.modifiers.control_key(),
+                    game.modifiers.shift_key(),
+                ) {
+                    Edit::Copy(t) => s.copy = Some(t),
+                    Edit::Paste => s.paste = true,
+                    _ => {}
+                },
+            }
+        });
+        return true;
+    }
     if key == "key.keyboard.escape" {
         if state(|s| s.pending.take().is_some() || std::mem::take(&mut s.focus)) {
             *canceled = true;
@@ -1030,7 +1126,10 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) -> bool {
     *canceled = true;
     if !game.modifiers.control_key() {
         state(|s| {
-            if s.focus {
+            if let Some((_, edit)) = &mut s.watch_edit {
+                edit.insert(&c.to_string(), 20);
+                s.notice.clear();
+            } else if s.focus {
                 s.query.insert(&c.to_string(), 64);
                 s.page = 0;
             }

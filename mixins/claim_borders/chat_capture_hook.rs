@@ -15,9 +15,14 @@ fn horizon_chat_capture(
             return core::ops::ControlFlow::Break(false);
         }
         if source == horizon_client::chat::ChatSource::Server
-            && crate::game::claim_borders_teleport::parse(&text).is_some()
+            && let Some((_, accept, _)) = crate::game::claim_borders_teleport::parse(&text)
         {
             crate::game::claim_borders_teleport_view::capture(&text);
+            if accept.starts_with("trade ") {
+                crate::game::claim_borders_chat_view::capture_content(game, content, source);
+            }
+        } else if matches!(trust, crate::game::remote::ChatTrust::Error) {
+            crate::game::claim_borders_chat_view::capture(game, &text);
         } else {
             crate::game::claim_borders_chat_view::capture_content(game, content, source);
         }

@@ -109,6 +109,15 @@ pub fn now() -> u64 {
 pub(super) fn read<T>(f: impl FnOnce(&model::Book, &model::Preferences, &Status, &str) -> T) -> T {
     state(|s| f(&s.book, &s.pref, &s.status, &s.own))
 }
+pub(super) fn auction_watch(item: &str, cap: model::Coins) -> bool {
+    state(|s| {
+        if s.scope.is_empty() || !s.writable || !s.book.set_auction_watch(item, cap) {
+            return false;
+        }
+        s.dirty = true;
+        true
+    })
+}
 pub(super) fn reset() {
     flush();
     state(|s| *s = State::default());

@@ -12,6 +12,12 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
     if *ran {
         return;
     }
+    let (verb, body) = command.split_once(' ').unwrap_or((command, ""));
+    if matches!(verb, "r" | "reply") {
+        *ran = true;
+        crate::game::claim_borders_chat_view::reply(game, body.trim());
+        return;
+    }
     if crate::game::claim_borders_client::command(game, command) {
         *ran = true;
         return;

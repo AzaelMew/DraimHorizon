@@ -25,6 +25,11 @@ fn claim_borders_list(mods: &mut Vec<crate::game::native_hooks::NativeMod>) {
                 "DraimHorizons: открыть меню".into(),
                 "key.keyboard.m".into(),
             ],
+            [
+                "zoom".into(),
+                "DraimHorizons: зум камеры".into(),
+                crate::game::claim_borders_camera_zoom::DEFAULT_KEY.into(),
+            ],
         ],
     });
 }

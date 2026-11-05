@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.16.0"
+version = "0.17.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -12,6 +12,33 @@ id = "runtime"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders"
 source = "runtime.rs"
+
+[[module]]
+id = "camera-zoom"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_camera_zoom"
+source = "camera_zoom.rs"
+
+[[injection]]
+id = "camera-zoom-fov"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_zoom"
+helper = "camera_zoom_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "self" },
+  { name = "zoom", ty = "&mut Option<crate::game::native_hooks::NativeZoom>", value = "&mut *zoom" },
+]
+
+[[injection]]
+id = "camera-zoom-scroll"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_mouse_scrolling"
+helper = "camera_zoom_scroll_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "accumulated", ty = "[i32; 2]", value = "accumulated" },
+  { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
 
 [[injection]]
 id = "chat"
@@ -316,6 +343,17 @@ id = "chat-preferences"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_chat_preferences"
 source = "chat_preferences.rs"
+
+[[injection]]
+id = "chat-nickname-completion"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::chat::Game<'_>::chat_key_code"
+helper = "chat_completion_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "winit::keyboard::KeyCode", value = "key" },
+]
 
 [[module]]
 id = "claim-map"

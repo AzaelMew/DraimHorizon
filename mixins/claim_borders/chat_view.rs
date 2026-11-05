@@ -8,6 +8,7 @@ use horizon_client::{
     text::Text,
 };
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     sync::{Mutex, OnceLock},
     time::Instant,
@@ -20,6 +21,9 @@ pub(super) struct Settings {
 }
 struct State {
     feed: model::Feed,
+    tabs: model::Tabs,
+    tab_hits: Vec<([f32; 4], model::Channel)>,
+    completion: model::NickCompletion,
     started: Instant,
     settings: Settings,
     loaded: bool,
@@ -38,6 +42,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             feed: model::Feed::default(),
+            tabs: model::Tabs::default(),
+            tab_hits: Vec::new(),
+            completion: model::NickCompletion::default(),
             started: Instant::now(),
             settings: Settings {
                 modern: true,
@@ -142,6 +149,9 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
 pub(super) fn reset() {
     state(|s| {
         s.feed.clear();
+        s.tabs = model::Tabs::default();
+        s.tab_hits.clear();
+        s.completion = model::NickCompletion::default();
         s.hits.clear();
         s.bounds = None;
         s.requested.clear();
@@ -154,17 +164,35 @@ pub(super) fn capture_content(
     text: &horizon_client::text::Text,
     source: horizon_client::chat::ChatSource,
 ) {
-    let semantic = if source == horizon_client::chat::ChatSource::Server {
-        Some(text.component())
-    } else {
-        None
+    use horizon_client::chat::ChatSource;
+    let component = match source {
+        ChatSource::Server => Some((text.component(), true)),
+        ChatSource::Player
+            if text.translation_key().is_some_and(|key| {
+                matches!(
+                    key,
+                    "commands.message.display.incoming" | "commands.message.display.outgoing"
+                )
+            }) =>
+        {
+            Some((text.component(), false))
+        }
+        _ => None,
     };
-    capture_inner(game, &text.plain(), semantic.as_ref());
+    capture_inner(game, &text.plain(), component.as_ref(), false);
 }
 pub(super) fn capture(game: &Game<'_>, text: &str) {
-    capture_inner(game, text, None);
+    capture_inner(game, text, None, false);
 }
-fn capture_inner(game: &Game<'_>, text: &str, component: Option<&serde_json::Value>) {
+pub(super) fn capture_local(game: &Game<'_>, text: &str) {
+    capture_inner(game, text, None, true);
+}
+fn capture_inner(
+    game: &Game<'_>,
+    text: &str,
+    component: Option<&(serde_json::Value, bool)>,
+    local: bool,
+) {
     if !game.native_on(claims::ID) {
         return;
     }
@@ -177,16 +205,28 @@ fn capture_inner(game: &Game<'_>, text: &str, component: Option<&serde_json::Val
                 .entries
                 .iter()
                 .rev()
-                .filter(|e| main_entry(e, preferences))
+                .filter(|e| main_entry(e, preferences) && s.tabs.selected.shows(e))
                 .nth(s.feed.scroll)
                 .map(|e| e.id)
         } else {
             None
         };
-        if let Some(component) = component {
-            s.feed.push_component(text, component, now, preferences);
-        } else {
-            s.feed.push_with(text, now, preferences);
+        let added = match component {
+            Some((component, true)) => s.feed.push_component(text, component, now, preferences),
+            Some((component, false)) => {
+                s.feed
+                    .push_player_component(text, component, now, preferences)
+            }
+            None if local => s.feed.push_local(text, now, preferences),
+            None => s.feed.push_with(text, now, preferences),
+        };
+        if added.is_some()
+            && let Some(entry) = s.feed.entries.back()
+            && entry.kind != model::Kind::Whisper(model::Whisper::Outgoing)
+            && (entry.channel != model::Channel::Whisper
+                || game.ui.chat.shows(horizon_client::chat::ChatSource::Player))
+        {
+            s.tabs.record(entry.channel);
         }
         if let Some(anchor) = anchor {
             if let Some(position) = s
@@ -194,7 +234,7 @@ fn capture_inner(game: &Game<'_>, text: &str, component: Option<&serde_json::Val
                 .entries
                 .iter()
                 .rev()
-                .filter(|e| main_entry(e, preferences))
+                .filter(|e| main_entry(e, preferences) && s.tabs.selected.shows(e))
                 .position(|e| e.id == anchor)
             {
                 if position > 0 {
@@ -216,8 +256,81 @@ fn event_entry(entry: &model::Entry, p: options::Preferences) -> bool {
         }
 }
 fn main_entry(entry: &model::Entry, p: options::Preferences) -> bool {
-    matches!(entry.kind, model::Kind::Message | model::Kind::System)
+    entry.kind.is_chat()
+        || entry.kind == model::Kind::System
         || (p.notifications == options::NotificationStyle::Inline && event_entry(entry, p))
+}
+pub(super) fn reply(game: &mut Game<'_>, body: &str) {
+    if body.is_empty() {
+        game.native_chat("Использование /r <текст> или /reply <текст>");
+        return;
+    }
+    let Some(name) =
+        state(|s| s.feed.last_whisper_sender.clone()).filter(|_| game.remote.is_some())
+    else {
+        game.native_chat("В этом подключении ещё не было входящих ЛС.");
+        return;
+    };
+    let message = format!("/msg {name} {body}");
+    if message.encode_utf16().count() > 256 {
+        game.native_chat("Слишком длинное личное сообщение.");
+        return;
+    }
+    game.send_chat(&message);
+}
+pub(super) fn complete_nickname(game: &mut Game<'_>, key: winit::keyboard::KeyCode) -> bool {
+    use horizon_client::{chat::Commands, screen_draw::Measure};
+    use winit::keyboard::KeyCode;
+
+    if key != KeyCode::Tab {
+        if !matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
+            state(|s| s.completion = model::NickCompletion::default());
+        }
+        return false;
+    }
+    if !game.native_on(claims::ID) || !game.chat_abilities().send_commands || game.pvp.chat_search {
+        return false;
+    }
+    let reverse = game.has_shift_down();
+    let Some(screen) = game.ui.chat_screen.as_ref() else {
+        return false;
+    };
+    let input = &screen.input;
+    if !input.value.starts_with('/')
+        || input.cursor != input.value.chars().count()
+        || input.highlight != input.cursor
+        || (screen.suggestions_visible() && !state(|s| s.completion.active(&input.value)))
+    {
+        return false;
+    }
+    let Some(names) = game.remote_online_names() else {
+        return false;
+    };
+    let Some(completed) = state(|s| s.completion.complete(&input.value, &names, reverse)) else {
+        return false;
+    };
+    if completed.len() > input.max_length {
+        return false;
+    }
+    let commands = Commands {
+        dispatcher: super::chat::chat_tree(&game.remote),
+        registries: &game.ui.registries,
+    };
+    if let Some(screen) = game.ui.chat_screen.as_mut() {
+        screen.suggest_command(&Measure(&game.gui.atlas.font), &commands, &completed);
+    }
+    true
+}
+fn label(entry: &model::Entry) -> Cow<'_, str> {
+    if let Some(notice) = entry.auction {
+        notice.label().into()
+    } else if let model::Kind::Whisper(direction) = entry.kind {
+        format!("{} {}", direction.label(), entry.name).into()
+    } else if entry.name.is_empty() {
+        "Система".into()
+    } else {
+        entry.name.as_str().into()
+    }
 }
 fn in_chat_area(game: &Game<'_>, point: [f32; 2], viewport: [f32; 2]) -> bool {
     if game.screen != Screen::Chat || !game.native_on(claims::ID) || !settings(game).modern {
@@ -241,7 +354,7 @@ pub(super) fn scroll(
             .feed
             .entries
             .iter()
-            .filter(|e| main_entry(e, s.settings.preferences))
+            .filter(|e| main_entry(e, s.settings.preferences) && s.tabs.selected.shows(e))
             .count();
         if amount > 0.0 {
             s.feed.scroll = (s.feed.scroll + 3).min(count.saturating_sub(1));
@@ -269,7 +382,15 @@ pub(super) fn mouse(
     }
     if button == 0 && area {
         state(|s| {
-            if let Some(id) = options::hit_at(&s.hits, screen.mouse) {
+            if let Some((_, tab)) = s
+                .tab_hits
+                .iter()
+                .find(|(r, _)| options::contains(*r, screen.mouse))
+            {
+                s.tabs.selected = *tab;
+                s.feed.scroll = 0;
+                s.hits.clear();
+            } else if let Some(id) = options::hit_at(&s.hits, screen.mouse) {
                 s.feed.toggle_original(id);
             }
         });
@@ -318,6 +439,7 @@ fn draw_card(
     let color = entry
         .auction
         .map(|n| n.color())
+        .or_else(|| matches!(entry.kind, model::Kind::Whisper(_)).then_some(0xd1a7ff))
         .or_else(|| priority_rule(&entry.name).map(|r| r.color))
         .unwrap_or(match entry.kind {
             model::Kind::Presence if entry.joined == Some(false) => 0xe1c69e,
@@ -362,13 +484,7 @@ fn draw_card(
         horizon_client::hud_layout::paint(batch, &game.gui.atlas, &face);
         tx += 17.0;
     }
-    let name = if let Some(notice) = entry.auction {
-        notice.label()
-    } else if entry.name.is_empty() {
-        "Система"
-    } else {
-        &entry.name
-    };
+    let name = label(entry);
     if compact {
         if let Some(row) = rows.first() {
             text(
@@ -384,7 +500,7 @@ fn draw_card(
                 alpha,
             );
         }
-    } else if entry.kind == model::Kind::Message {
+    } else if entry.kind.is_chat() {
         let prefix = format!(
             "{name}{}: ",
             if entry.show_original {
@@ -412,7 +528,7 @@ fn draw_card(
             }
         }
     } else {
-        text(game, batch, name, [tx, y + 4.0], color, alpha);
+        text(game, batch, &name, [tx, y + 4.0], color, alpha);
         if entry.show_original {
             text(
                 game,
@@ -472,25 +588,21 @@ fn paint_region<'a>(
         }
         let compact = e.auction.is_none()
             && (e.kind == model::Kind::Death
-                || e.kind != model::Kind::Message
+                || !e.kind.is_chat()
                     && matches!(
                         p.notifications,
                         options::NotificationStyle::Compact | options::NotificationStyle::Inline
                     ));
-        let inline = e.kind == model::Kind::Message || compact;
+        let inline = e.kind.is_chat() || compact;
         let count = if e.repetitions > 1 {
             format!(" ×{}", e.repetitions)
         } else {
             String::new()
         };
-        let label = if e.name.is_empty() {
-            "Система"
-        } else {
-            &e.name
-        };
         let body = if compact {
             format!("{}{count}", model::event_summary(e, context.translate))
         } else if inline {
+            let label = label(e);
             format!(
                 "{label}{}: {}{count}",
                 if e.show_original { " [ориг.]" } else { "" },
@@ -594,7 +706,10 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     let priority = priority_settings(game);
     let p = config.preferences;
     let show_players = game.ui.chat.shows(horizon_client::chat::ChatSource::Player);
-    let (entries, now, scroll) = state(|s| {
+    let (entries, now, scroll, channel, unread) = state(|s| {
+        if focused && s.feed.scroll == 0 {
+            s.tabs.read();
+        }
         if config.translate {
             let now = s.started.elapsed().as_millis() as u64;
             let worker = s.translator.get_or_insert_with(Translator::default);
@@ -613,6 +728,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             }
             for e in s.feed.entries.iter().rev().take(64) {
                 if (e.kind == model::Kind::Message
+                    || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
                     || (e.kind == model::Kind::Death && event_entry(e, p)))
                     && e.translated.is_none()
                     && !s.requested.contains(&e.id)
@@ -627,6 +743,12 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             s.feed.entries.iter().cloned().collect::<Vec<_>>(),
             s.started.elapsed().as_millis() as u64,
             s.feed.scroll,
+            if focused {
+                s.tabs.selected
+            } else {
+                model::Channel::All
+            },
+            model::Channel::TABS.map(|tab| s.tabs.unread(tab)),
         )
     });
     let viewport = [batch.width, batch.height];
@@ -663,10 +785,28 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     let main = entries
         .iter()
         .rev()
-        .filter(|e| main_entry(e, p) && (show_players || e.kind != model::Kind::Message))
+        .filter(|e| main_entry(e, p) && channel.shows(e) && (show_players || !e.kind.is_chat()))
         .skip(if focused { scroll } else { 0 });
     let mut region = layout.main;
-    if priority.tray {
+    let mut tab_hits = Vec::new();
+    if focused && region[3] >= 34.0 {
+        let width = region[2] / 4.0;
+        let mouse = game.native_cursor().map(|n| n / layout.scale);
+        for (i, tab) in model::Channel::TABS.into_iter().enumerate() {
+            let label = ["Все", "ЛС", "Пати", "Торги"][i];
+            let caption = match unread[i] {
+                0 => label.to_owned(),
+                1..=99 => format!("{label} {}", unread[i]),
+                _ => format!("{label} 99+"),
+            };
+            let r = [region[0] + i as f32 * width, region[1], width - 1.0, 14.0];
+            ui::button(game, batch, r, &caption, tab == channel, mouse);
+            tab_hits.push((layout.screen(r), tab));
+        }
+        region[1] += 16.0;
+        region[3] -= 16.0;
+    }
+    if priority.tray && channel == model::Channel::All {
         let mut names = HashSet::new();
         let mut pinned: Vec<_> = entries
             .iter()
@@ -702,7 +842,9 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         }
     }
     paint_region(game, batch, main, region, context, &mut hits);
-    if let Some(region) = layout.events {
+    if channel == model::Channel::All
+        && let Some(region) = layout.events
+    {
         paint_region(
             game,
             batch,
@@ -751,6 +893,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     }
     state(|s| {
         s.hits = hits;
+        s.tab_hits = tab_hits;
         s.hit_viewport = viewport;
         s.bounds = Some(layout.bounds);
     });

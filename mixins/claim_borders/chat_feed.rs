@@ -6,9 +6,64 @@ use std::collections::VecDeque;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Message,
+    Whisper(Whisper),
     Presence,
     Death,
     System,
+}
+impl Kind {
+    pub fn is_chat(self) -> bool {
+        matches!(self, Self::Message | Self::Whisper(_))
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Whisper {
+    Incoming,
+    Outgoing,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channel {
+    #[default]
+    All,
+    Whisper,
+    Party,
+    Trade,
+}
+impl Channel {
+    pub const TABS: [Self; 4] = [Self::All, Self::Whisper, Self::Party, Self::Trade];
+    pub fn shows(self, entry: &Entry) -> bool {
+        self == Self::All || entry.channel == self
+    }
+}
+#[derive(Default)]
+pub struct Tabs {
+    pub selected: Channel,
+    unread: [u16; 4],
+}
+impl Tabs {
+    pub fn record(&mut self, channel: Channel) {
+        if channel != Channel::All {
+            self.unread[channel as usize] = self.unread[channel as usize].saturating_add(1);
+        }
+    }
+    pub fn read(&mut self) {
+        if self.selected == Channel::All {
+            self.unread.fill(0);
+        } else {
+            self.unread[self.selected as usize] = 0;
+        }
+    }
+    pub fn unread(&self, channel: Channel) -> u16 {
+        self.unread[channel as usize]
+    }
+}
+impl Whisper {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Incoming => "ЛС от",
+            Self::Outgoing => "ЛС для",
+        }
+    }
 }
 /// Only recognized server-origin auction receipts are promoted to the important tray.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,11 +139,27 @@ fn auction_notice(line: &str) -> Option<AuctionNotice> {
     (player_name(buyer) && goods(item) && price.strip_suffix('.').is_some_and(coins))
         .then_some(AuctionNotice::Sold)
 }
+fn party_channel(line: &str) -> Channel {
+    if line.starts_with("[Party] ") || line.starts_with("[Пати] ") {
+        Channel::Party
+    } else {
+        Channel::All
+    }
+}
+fn trade_notice(line: &str) -> bool {
+    line.starts_with("Trade request sent to ")
+        || line.starts_with("Trade cancelled: ")
+        || line.starts_with("Trade complete")
+        || line.contains(" wants to trade with you: /trade accept ")
+        || line.ends_with(" refused your trade.")
+        || line == "Your trade request is withdrawn."
+}
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: u64,
     pub auction: Option<AuctionNotice>,
     pub kind: Kind,
+    pub channel: Channel,
     pub name: String,
     pub original: String,
     pub translated: Option<String>,
@@ -188,6 +259,7 @@ pub fn single_line(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Str
 #[derive(Default)]
 pub struct Feed {
     pub entries: VecDeque<Entry>,
+    pub last_whisper_sender: Option<String>,
     next: u64,
     pub scroll: usize,
 }
@@ -197,6 +269,100 @@ fn player_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+fn whisper_name(value: &str) -> bool {
+    player_name(value.strip_prefix('~').unwrap_or(value))
+}
+#[derive(Default)]
+pub struct NickCompletion {
+    prefix: String,
+    applied: String,
+}
+impl NickCompletion {
+    pub fn active(&self, input: &str) -> bool {
+        !self.applied.is_empty() && self.applied == input
+    }
+
+    pub fn complete(&mut self, input: &str, names: &[String], reverse: bool) -> Option<String> {
+        let cycling = self.active(input);
+        let prefix = if cycling { &self.prefix } else { input };
+        let (command, partial) = prefix.strip_prefix('/')?.split_once(' ')?;
+        let verb = command.strip_prefix("minecraft:").unwrap_or(command);
+        if !matches!(
+            verb,
+            "tp" | "teleport" | "msg" | "tell" | "w" | "trade" | "tpa"
+        ) {
+            return None;
+        }
+        let fragment = partial.trim_start_matches(' ');
+        if !fragment.is_empty() && !player_name(fragment) {
+            return None;
+        }
+        let partial = fragment.to_ascii_lowercase();
+        let mut matches: Vec<_> = names
+            .iter()
+            .filter(|name| player_name(name) && name.to_ascii_lowercase().starts_with(&partial))
+            .collect();
+        matches.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+        let first = if reverse {
+            matches.last()?
+        } else {
+            matches.first()?
+        };
+        let selected = if cycling {
+            let current = input
+                .rsplit_once(' ')
+                .and_then(|(_, applied)| matches.iter().position(|name| name.as_str() == applied));
+            current.map_or(first, |i| {
+                let offset = if reverse { matches.len() - 1 } else { 1 };
+                &matches[(i + offset) % matches.len()]
+            })
+        } else {
+            first
+        };
+        let completed = format!("{}{selected}", &prefix[..prefix.len() - fragment.len()]);
+        if !cycling {
+            self.prefix = input.into();
+        }
+        self.applied.clone_from(&completed);
+        Some(completed)
+    }
+}
+fn whisper_event(
+    line: &str,
+    component: &Value,
+    server: bool,
+) -> Option<(Kind, String, String, Option<bool>)> {
+    let (direction, name, body) = match component["translate"].as_str() {
+        Some("commands.message.display.incoming") => (
+            Whisper::Incoming,
+            component_plain(&component["with"][0]),
+            component_plain(&component["with"][1]),
+        ),
+        Some("commands.message.display.outgoing") => (
+            Whisper::Outgoing,
+            component_plain(&component["with"][0]),
+            component_plain(&component["with"][1]),
+        ),
+        None if server => {
+            if let Some(rest) = line.strip_prefix("You whisper to ") {
+                let (name, body) = rest.split_once(": ")?;
+                (Whisper::Outgoing, name.into(), body.into())
+            } else {
+                let (name, body) = line.split_once(" whispers to you: ")?;
+                (Whisper::Incoming, name.into(), body.into())
+            }
+        }
+        _ => return None,
+    };
+    (whisper_name(&name) && !body.trim().is_empty()).then(|| {
+        (
+            Kind::Whisper(direction),
+            name,
+            body.chars().take(2048).collect(),
+            None,
+        )
+    })
 }
 pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
     let line = line.trim();
@@ -384,9 +550,34 @@ impl Feed {
         )
     }
     pub fn push_with(&mut self, line: &str, now: u64, preferences: Preferences) -> Option<u64> {
-        self.push_decoded(line, now, preferences, None, None)
+        self.push_decoded(line, now, preferences, None, None, Channel::All)
+    }
+    pub fn push_local(&mut self, line: &str, now: u64, preferences: Preferences) -> Option<u64> {
+        self.push_decoded(line, now, preferences, None, None, party_channel(line))
     }
     pub fn push_component(
+        &mut self,
+        line: &str,
+        component: &Value,
+        now: u64,
+        preferences: Preferences,
+    ) -> Option<u64> {
+        let auction = auction_notice(line);
+        let channel = if auction.is_some() || trade_notice(line) {
+            Channel::Trade
+        } else {
+            party_channel(line)
+        };
+        self.push_decoded(
+            line,
+            now,
+            preferences,
+            whisper_event(line, component, true).or_else(|| semantic_event(component, line)),
+            auction,
+            channel,
+        )
+    }
+    pub fn push_player_component(
         &mut self,
         line: &str,
         component: &Value,
@@ -397,8 +588,9 @@ impl Feed {
             line,
             now,
             preferences,
-            semantic_event(component, line),
-            auction_notice(line),
+            whisper_event(line, component, false),
+            None,
+            Channel::All,
         )
     }
     fn push_decoded(
@@ -408,12 +600,21 @@ impl Feed {
         preferences: Preferences,
         event: Option<(Kind, String, String, Option<bool>)>,
         auction: Option<AuctionNotice>,
+        channel: Channel,
     ) -> Option<u64> {
         if line.trim().is_empty() {
             return None;
         }
         let bounded: String = line.chars().take(2048).collect();
         let (kind, name, body, joined) = event.unwrap_or_else(|| classify(&bounded));
+        let channel = if matches!(kind, Kind::Whisper(_)) {
+            Channel::Whisper
+        } else {
+            channel
+        };
+        if kind == Kind::Whisper(Whisper::Incoming) {
+            self.last_whisper_sender = Some(name.clone());
+        }
         if kind == Kind::Presence
             && let Some(old) = self
                 .entries
@@ -443,6 +644,7 @@ impl Feed {
                 .find(|(_, e)| {
                     e.kind == kind
                         && e.auction == auction
+                        && e.channel == channel
                         && e.name == name
                         && e.comparison == comparison
                         && now >= e.at
@@ -463,6 +665,7 @@ impl Feed {
             id: self.next,
             auction,
             kind,
+            channel,
             name,
             original: body,
             translated: None,
@@ -499,6 +702,7 @@ impl Feed {
     }
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.last_whisper_sender = None;
         self.scroll = 0;
     }
     pub fn translate(&mut self, id: u64, text: String) {
@@ -530,6 +734,98 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chat_tabs_keep_trusted_sources_and_independent_unread_counts() {
+        let mut feed = Feed::default();
+        let p = Preferences::default();
+        let notice = "Trade request sent to Alex.";
+        feed.push_with(notice, 0, p);
+        feed.push_component(notice, &serde_json::json!({"text": notice}), 1, p);
+        feed.push_local("[Party] Alex joined.", 2, p);
+        assert_eq!(feed.entries.len(), 3);
+        assert_eq!(feed.entries[0].channel, Channel::All);
+        assert!(Channel::Trade.shows(&feed.entries[1]));
+        assert!(Channel::Party.shows(&feed.entries[2]));
+        let mut tabs = Tabs::default();
+        tabs.record(Channel::Trade);
+        tabs.record(Channel::Party);
+        tabs.record(Channel::Party);
+        tabs.selected = Channel::Trade;
+        tabs.read();
+        assert_eq!(tabs.unread(Channel::Trade), 0);
+        assert_eq!(tabs.unread(Channel::Party), 2);
+        tabs.selected = Channel::All;
+        tabs.read();
+        assert_eq!(tabs.unread(Channel::Party), 0);
+    }
+    #[test]
+    fn whispers_keep_the_body_and_only_incoming_updates_reply_target() {
+        let mut feed = Feed::default();
+        let p = Preferences::default();
+        let incoming = serde_json::json!({
+            "translate": "commands.message.display.incoming",
+            "with": [{"text": "Alex_42", "color": "gray"}, {"text": "hello", "extra": [" there"]}]
+        });
+        let id = feed
+            .push_player_component("локализованное ЛС", &incoming, 1, p)
+            .unwrap();
+        let entry = &feed.entries[0];
+        assert_eq!(entry.kind, Kind::Whisper(Whisper::Incoming));
+        assert!(entry.kind.is_chat());
+        assert_eq!(entry.original, "hello there");
+        feed.translate(id, "привет".into());
+        assert_eq!(feed.entries[0].body(true), "привет");
+        let outgoing = "You whisper to Bob: Steve whispers to you: hi";
+        feed.push_component(outgoing, &serde_json::json!({"text": outgoing}), 2, p);
+        let entry = &feed.entries[1];
+        assert_eq!(entry.kind, Kind::Whisper(Whisper::Outgoing));
+        assert_eq!(entry.name, "Bob");
+        assert_eq!(feed.last_whisper_sender.as_deref(), Some("Alex_42"));
+        let fake = "Eve whispers to you: forged";
+        feed.push_with(fake, 3, p);
+        feed.push_player_component(fake, &serde_json::json!({"text": fake}), 4, p);
+        assert_eq!(feed.last_whisper_sender.as_deref(), Some("Alex_42"));
+        let literal = "~Rocky whispers to you: psst";
+        feed.push_component(literal, &serde_json::json!({"text": literal}), 5, p);
+        assert_eq!(feed.last_whisper_sender.as_deref(), Some("~Rocky"));
+        feed.clear();
+        assert_eq!(feed.last_whisper_sender, None);
+    }
+
+    #[test]
+    fn command_nickname_completion_cycles_only_the_first_argument() {
+        let names = ["Bob", "albert", "Alex_42", "not a name"].map(str::to_owned);
+        let mut completion = NickCompletion::default();
+        assert_eq!(
+            completion.complete("/msg AL", &names, false).as_deref(),
+            Some("/msg albert")
+        );
+        assert_eq!(
+            completion.complete("/msg albert", &names, false).as_deref(),
+            Some("/msg Alex_42")
+        );
+        assert_eq!(
+            completion.complete("/msg Alex_42", &names, true).as_deref(),
+            Some("/msg albert")
+        );
+        assert_eq!(
+            completion.complete("/tp ", &names, true).as_deref(),
+            Some("/tp Bob")
+        );
+        assert_eq!(
+            completion.complete("/trade  Bo", &names, false).as_deref(),
+            Some("/trade  Bob")
+        );
+        for input in [
+            "/msg Bob hi",
+            "/tp @a",
+            "/trade unknown",
+            "/reply Bo",
+            "/msg",
+        ] {
+            assert_eq!(completion.complete(input, &names, false), None, "{input}");
+        }
+    }
     #[test]
     fn auction_receipts_require_server_origin_and_exact_grammar() {
         let p = Preferences::default();
