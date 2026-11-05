@@ -239,7 +239,7 @@ fn request(game: &mut Game<'_>, command: String, quiet: bool) {
     game.send_unattended_command(&command);
     state(|s| s.issuing = false);
 }
-fn configure(game: &Game<'_>, key: &str, dir: i64) {
+pub(super) fn configure(game: &Game<'_>, key: &str, dir: i64) {
     let raw = state(|s| {
         s.pref.adjust(key, dir);
         s.pref.encode()

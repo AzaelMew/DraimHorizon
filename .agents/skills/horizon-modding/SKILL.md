@@ -10,12 +10,12 @@ Read `.ecc/upstream-lock.json` and `docs/development.md` first. The current pinn
 1. Establish the requested behavior, client/server scope and target Horizon version. Use data-driven content for blocks, items, recipes and assets when sufficient; choose native Rust only when code is needed. A mod can require both components.
 2. Read upstream `docs/mods.md`, `docs/native-mods.md`, and the relevant implementation at the selected revision. For native work also inspect the official horizon-native-mod-template and horizon-mixins sources before creating a bundle.
 3. Content: `horizon-mod.toml`, API `0.2`, `registries` capability, namespace-scoped `assets/` and `data/`; `cargo horizon-mod new` creates content templates only. Unknown manifest fields are rejected.
-4. Native: source bundle with `horizon-mixin.toml` and Rust helpers. Distribution `.hnmod` has `horizon-native.json`. Check exact hook signatures and required minimum API in source. At the current pinned reference, `NATIVE_HOOKS_API` is 359; this is an observation, not a requirement for every mod. Stable-hook-only bundles may declare a minimum hooks API; arbitrary source mixins need exact revision compatibility.
+4. Native: source bundle with `horizon-mixin.toml` and Rust helpers. Distribution `.hnmod` has `horizon-native.json`. Check exact hook signatures and required minimum API in source. At the current pinned reference, `NATIVE_HOOKS_API` is 409; this is an observation, not a requirement for every mod. Stable-hook-only bundles may declare a minimum hooks API; arbitrary source mixins need exact revision compatibility.
 5. Keep server authority, world save consistency, mod namespaces and compatibility in view. Do not distribute Mojang code or assets.
 6. Use ECC Rust and verification skills as needed. Test behavior and meaningful failures; build and check the actual artifact when tooling and owned game resources are available. State any missing prerequisites.
 
 Primary references:
-- https://github.com/horizon-rust/horizon/blob/67dad0d1a5adca139b426c8114e74a33b376ba64/docs/mods.md
-- https://github.com/horizon-rust/horizon/blob/67dad0d1a5adca139b426c8114e74a33b376ba64/docs/native-mods.md
+- https://github.com/horizon-rust/horizon/blob/f319701e8c9ab657ff562250b3ba07b2d654e3bc/docs/mods.md
+- https://github.com/horizon-rust/horizon/blob/f319701e8c9ab657ff562250b3ba07b2d654e3bc/docs/native-mods.md
 - https://github.com/horizon-rust/horizon-native-mod-template
 - https://github.com/horizon-rust/horizon-mixins

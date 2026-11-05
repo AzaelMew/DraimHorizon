@@ -315,8 +315,10 @@ fn draw_card(
     opacity: f32,
 ) {
     let [x, y, w, h] = rect;
-    let color = priority_rule(&entry.name)
-        .map(|r| r.color)
+    let color = entry
+        .auction
+        .map(|n| n.color())
+        .or_else(|| priority_rule(&entry.name).map(|r| r.color))
         .unwrap_or(match entry.kind {
             model::Kind::Presence if entry.joined == Some(false) => 0xe1c69e,
             model::Kind::Presence => 0xa2d0b7,
@@ -360,7 +362,9 @@ fn draw_card(
         horizon_client::hud_layout::paint(batch, &game.gui.atlas, &face);
         tx += 17.0;
     }
-    let name = if entry.name.is_empty() {
+    let name = if let Some(notice) = entry.auction {
+        notice.label()
+    } else if entry.name.is_empty() {
         "Система"
     } else {
         &entry.name
@@ -466,12 +470,13 @@ fn paint_region<'a>(
         if alpha <= 0.0 {
             continue;
         }
-        let compact = e.kind == model::Kind::Death
-            || e.kind != model::Kind::Message
-                && matches!(
-                    p.notifications,
-                    options::NotificationStyle::Compact | options::NotificationStyle::Inline
-                );
+        let compact = e.auction.is_none()
+            && (e.kind == model::Kind::Death
+                || e.kind != model::Kind::Message
+                    && matches!(
+                        p.notifications,
+                        options::NotificationStyle::Compact | options::NotificationStyle::Inline
+                    ));
         let inline = e.kind == model::Kind::Message || compact;
         let count = if e.repetitions > 1 {
             format!(" ×{}", e.repetitions)
@@ -661,21 +666,24 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         .filter(|e| main_entry(e, p) && (show_players || e.kind != model::Kind::Message))
         .skip(if focused { scroll } else { 0 });
     let mut region = layout.main;
-    if priority.tray && show_players {
+    if priority.tray {
         let mut names = HashSet::new();
-        let pinned: Vec<_> = entries
+        let mut pinned: Vec<_> = entries
             .iter()
             .rev()
             .filter(|e| {
-                e.kind == model::Kind::Message
-                    && now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
-                    && priority_rule(&e.name).is_some_and(|r| r.pinned)
-                    && names.insert(e.name.to_ascii_lowercase())
+                now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
+                    && (e.auction.is_some()
+                        || (show_players
+                            && e.kind == model::Kind::Message
+                            && priority_rule(&e.name).is_some_and(|r| r.pinned)
+                            && names.insert(e.name.to_ascii_lowercase())))
             })
-            .take(priority.rows as usize)
             .collect();
+        pinned.sort_by_key(|e| e.auction.is_none());
+        pinned.truncate(priority.rows as usize);
         if !pinned.is_empty() {
-            let height = (pinned.len() as f32 * 34.0).min(region[3] * 0.45);
+            let height = (pinned.len() as f32 * 42.0).min(region[3] * 0.45);
             let pin = [region[0], region[1], region[2], height];
             let mut pinned_context = context;
             pinned_context.layout.top = true;

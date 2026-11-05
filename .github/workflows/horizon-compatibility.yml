@@ -1,4 +1,4 @@
-name: Validate Horizon Nightly 2026-11-04 client
+name: Validate Horizon Nightly 2026-11-05 client
 on:
   push:
     branches: [main]
@@ -46,15 +46,15 @@ jobs:
             ~/.cargo/git
             target/mixins-cli
             target/horizon-check
-          key: horizon-nightly-67dad0d-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: horizon-nightly-67dad0d-${{ runner.os }}-
+          key: horizon-nightly-f319701-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: horizon-nightly-f319701-${{ runner.os }}-
       - name: Check requested source pin
         run: |
           python3 - <<'PY'
           import json
           from pathlib import Path
           compat=json.loads(Path("compatibility.json").read_text())
-          assert compat["horizon_revision"]=="67dad0d1a5adca139b426c8114e74a33b376ba64"
+          assert compat["horizon_revision"]=="f319701e8c9ab657ff562250b3ba07b2d654e3bc"
           assert compat["horizon_mixins_revision"]=="e8cd0aa38cffef49cb2e088ef716baa107148c02"
           assert compat["horizon_revision"] in Path("mixins/claim_borders/horizon-mixin.toml").read_text()
           print("COMPATIBILITY_JSON "+json.dumps(compat,separators=(",",":")))
@@ -91,12 +91,12 @@ jobs:
             ~/.cargo/git
             target/mixins-cli
             target/horizon-check
-          key: horizon-nightly-67dad0d-${{ runner.os }}-${{ github.run_id }}
+          key: horizon-nightly-f319701-${{ runner.os }}-${{ github.run_id }}
       - name: Preserve diagnostic outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: horizon-nightly-67dad0d-check
+          name: horizon-nightly-f319701-check
           path: |
             compatibility.json
             compatibility-*.log
