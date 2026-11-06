@@ -1236,6 +1236,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     pending: false,
                     friend: true,
                     online: present,
+                    server_online: false,
                     blocked: changed,
                     local_only: false,
                     outgoing: false,
@@ -1259,6 +1260,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         .peers
                         .iter()
                         .any(|peer| peer.uuid == f.uuid && peer.code == code),
+                    server_online: false,
                     blocked: false,
                     local_only: false,
                     outgoing: false,
@@ -1288,6 +1290,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 pending: false,
                 friend: false,
                 online: true,
+                server_online: false,
                 blocked,
                 local_only: false,
                 outgoing: c
@@ -1303,6 +1306,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         }
         menu::append_important_rows(&mut rows, &priority, &tab);
         for row in &mut rows {
+            row.server_online = tab
+                .iter()
+                .any(|(id, name)| *id == row.uuid && name.eq_ignore_ascii_case(&row.name));
             if row.outgoing {
                 row.detail = "Приглашение отправлено".into();
             }
@@ -1422,6 +1428,29 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             c.controls.extend(frames);
             Ok(Vec::new())
         }),
+        Action::PlayerRequest { kind, uuid, name } => {
+            let own = game
+                .remote
+                .as_ref()
+                .ok_or("Запрос доступен только на сервере")?
+                .profile();
+            let command = kind.resolve(uuid, &name, own, &online(game))?;
+            if !game.chat_abilities().send_commands {
+                return Err("Отправка команд отключена в настройках чата".into());
+            }
+            game.native_send_chat(&command)
+                .map_err(|e| format!("Не удалось отправить запрос: {e}"))?;
+            game.native_mod_screen_close(claims::ID);
+            menu_view::reset();
+            game.native_chat(&format!(
+                "[Друзья] {} для {name} отправлен.",
+                match kind {
+                    menu::PlayerRequest::Teleport => "Запрос телепортации",
+                    menu::PlayerRequest::Trade => "Запрос обмена",
+                }
+            ));
+            Ok(Vec::new())
+        }
         Action::Invite { code } => party_command(game, &["invite", &code]),
         Action::Accept { code } => party_command(game, &["accept", &code]),
         Action::RemoveFriend { name } => party_command(game, &["remove", &name]),

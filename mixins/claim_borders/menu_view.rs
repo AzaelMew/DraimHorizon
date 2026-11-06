@@ -106,6 +106,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         return;
     }
     let render_start = batch.vertices.len();
+    let mut request_tip = None;
     ui::fill(game, batch, screen.rect, 0x9c080b12);
     let pw = (screen.rect[2] - 16.0).clamp(220.0, 720.0);
     let ph = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
@@ -176,11 +177,29 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
 
             let [mut x, y, mut w, h] = widget.rect;
-            let _hover = widget.control.is_some()
+            let hover = widget.control.is_some()
                 && screen.mouse[0] >= x
                 && screen.mouse[0] < x + w
                 && screen.mouse[1] >= y
                 && screen.mouse[1] < y + h;
+            if hover && let Some(model::Control::PlayerRequest(kind)) = widget.control {
+                request_tip = Some(match s.menu.selected.and_then(|i| s.model.party.get(i)) {
+                    None => "Выберите игрока, затем отправьте запрос".into(),
+                    Some(row) if !row.server_online => {
+                        format!("{} не в сети на этом сервере", row.name)
+                    }
+                    Some(row) => match kind.command(&row.name) {
+                        Ok(command) => format!(
+                            "{command} — {}",
+                            match kind {
+                                model::PlayerRequest::Teleport => "запросить телепортацию к игроку",
+                                model::PlayerRequest::Trade => "предложить обмен игроку",
+                            }
+                        ),
+                        Err(error) => error,
+                    },
+                });
+            }
             if widget.control.is_some() {
                 ui::button_base(
                     game,
@@ -355,6 +374,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         }
     });
     crate::game::claim_borders_waypoint_view::render_list(game, batch, screen);
+    if let Some(tip) = request_tip {
+        ui::tooltip(game, batch, &tip, screen.mouse);
+    }
     ui::finish(game, batch, render_start, "main-menu", &variant);
 }
 pub(super) fn mouse(

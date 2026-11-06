@@ -15,6 +15,7 @@ pub struct PartyRow {
     pub uuid: u128,
     pub friend: bool,
     pub online: bool,
+    pub server_online: bool,
     pub blocked: bool,
     pub local_only: bool,
     pub outgoing: bool,
@@ -45,6 +46,7 @@ pub fn append_important_rows(
             }
             .into(),
             online: live.is_some(),
+            server_online: live.is_some(),
             blocked: true,
             local_only: true,
             ..PartyRow::default()
@@ -132,6 +134,50 @@ pub struct ViewModel {
     pub map_preferences: map::Preferences,
     pub claim_rows: Vec<ClaimRow>,
 }
+/// Requests are plain server commands; neither action accepts a request or a trade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayerRequest {
+    Teleport,
+    Trade,
+}
+impl PlayerRequest {
+    pub fn command(self, name: &str) -> Result<String, String> {
+        if name.is_empty()
+            || name.len() > 16
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return Err("Недопустимый ник игрока".into());
+        }
+        match self {
+            Self::Teleport => Ok(format!("/tpa {name}")),
+            Self::Trade
+                if ["accept", "deny", "cancel", "money"]
+                    .iter()
+                    .any(|verb| name.eq_ignore_ascii_case(verb)) =>
+            {
+                Err("Ник совпадает с подкомандой /trade; быстрый запрос недоступен".into())
+            }
+            Self::Trade => Ok(format!("/trade {name}")),
+        }
+    }
+    /// Resolve the same player again immediately before sending, using the current server roster.
+    pub fn resolve(
+        self,
+        uuid: u128,
+        name: &str,
+        own: u128,
+        online: &[(u128, String)],
+    ) -> Result<String, String> {
+        if uuid == own {
+            return Err("Нельзя отправить запрос самому себе".into());
+        }
+        let (_, current) = online
+            .iter()
+            .find(|(id, current)| *id == uuid && current.eq_ignore_ascii_case(name))
+            .ok_or("Игрок уже вышел с сервера или сменил ник")?;
+        self.command(current)
+    }
+}
 #[derive(Clone, PartialEq)]
 pub enum Action {
     AddWaypoint {
@@ -159,6 +205,11 @@ pub enum Action {
         code: String,
     },
     RemoveFriend {
+        name: String,
+    },
+    PlayerRequest {
+        kind: PlayerRequest,
+        uuid: u128,
         name: String,
     },
     RefreshClaims,
@@ -194,6 +245,12 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::PlayerRequest { kind, uuid, name } => f
+                .debug_struct("PlayerRequest")
+                .field("kind", kind)
+                .field("uuid", uuid)
+                .field("name", name)
+                .finish(),
             Self::Decline { uuid } => f.debug_tuple("Decline").field(uuid).finish(),
             Self::ToggleAutoRelay => f.write_str("ToggleAutoRelay"),
             Self::OpenMap => f.write_str("OpenMap"),
@@ -302,6 +359,7 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    PlayerRequest(PlayerRequest),
     PriorityNext,
     PriorityRow(usize),
     PrioritySave,
@@ -1539,27 +1597,64 @@ impl Menu {
                 false,
             ));
             let selected = self.selected.and_then(|i| model.party.get(i));
+            let compact = w < 400.0;
             let (primary, title) = match selected {
-                Some(p) if p.local_only => (None, "Отметка чата · без взаимной дружбы"),
-                Some(p) if p.pending => (Some(Control::Accept), "Принять приглашение"),
-                Some(p) if p.friend => (Some(Control::Remove), "Удалить друга"),
-                _ => (Some(Control::Invite), "Пригласить игрока"),
+                Some(p) if p.local_only => (
+                    None,
+                    if compact {
+                        "Отметка"
+                    } else {
+                        "Отметка чата"
+                    },
+                ),
+                Some(p) if p.pending => (
+                    Some(Control::Accept),
+                    if compact {
+                        "Принять"
+                    } else {
+                        "Принять друга"
+                    },
+                ),
+                Some(p) if p.friend => (
+                    Some(Control::Remove),
+                    if compact {
+                        "Друг −"
+                    } else {
+                        "Удалить друга"
+                    },
+                ),
+                _ => (
+                    Some(Control::Invite),
+                    if compact {
+                        "+ Друг"
+                    } else {
+                        "Добавить друга"
+                    },
+                ),
             };
             out.push(widget(
-                [x, height - 38.0, w * 0.62 - 3.0, 18.0],
+                [x + w * 0.44, height - 38.0, w * 0.29 - 3.0, 18.0],
                 title,
                 primary,
                 false,
             ));
             out.push(widget(
-                [x + w * 0.62, height - 38.0, w * 0.38, 18.0],
+                [x + w * 0.73, height - 38.0, w * 0.27, 18.0],
                 if selected.is_some_and(|p| p.pending) {
                     "Отклонить"
                 } else {
                     if model.auto_trust {
-                        "Авто trust: вкл"
+                        if compact {
+                            "Trust +"
+                        } else {
+                            "Авто trust: вкл"
+                        }
                     } else {
-                        "Авто trust: выкл"
+                        if compact {
+                            "Trust −"
+                        } else {
+                            "Авто trust: выкл"
+                        }
                     }
                 },
                 Some(if selected.is_some_and(|p| p.pending) {
@@ -1569,6 +1664,27 @@ impl Menu {
                 }),
                 false,
             ));
+            for (i, (kind, label)) in [
+                (
+                    PlayerRequest::Teleport,
+                    if compact { "ТП" } else { "Запрос ТП" },
+                ),
+                (PlayerRequest::Trade, "Обмен"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let enabled = selected
+                    .is_some_and(|row| row.server_online && kind.command(&row.name).is_ok());
+                let mut button = widget(
+                    [x + i as f32 * w * 0.22, height - 38.0, w * 0.22 - 3.0, 18.0],
+                    label,
+                    Some(Control::PlayerRequest(kind)),
+                    false,
+                );
+                button.muted = !enabled;
+                out.push(button);
+            }
         }
         if !self.relay_setup {
             out.push(widget(
@@ -1986,6 +2102,25 @@ impl Menu {
                     }
                 })
             }
+            Control::PlayerRequest(kind) => {
+                let Some(row) = self.selected.and_then(|i| model.party.get(i)) else {
+                    self.notice = "Сначала выберите игрока".into();
+                    return None;
+                };
+                if !row.server_online {
+                    self.notice = "Игрок не в сети на этом сервере".into();
+                    return None;
+                }
+                if let Err(error) = kind.command(&row.name) {
+                    self.notice = error;
+                    return None;
+                }
+                Some(Action::PlayerRequest {
+                    kind,
+                    uuid: row.uuid,
+                    name: row.name.clone(),
+                })
+            }
             Control::Invite | Control::Accept => {
                 let Some(row) = self.selected.and_then(|i| model.party.get(i)) else {
                     self.notice = "Выбери игрока из списка".into();
@@ -2279,6 +2414,128 @@ fn on(value: bool) -> &'static str {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quick_requests_use_server_presence_and_require_an_explicit_button() {
+        let mut model = ViewModel {
+            party: vec![PartyRow {
+                uuid: 42,
+                name: "Alex".into(),
+                friend: true,
+                server_online: true,
+                online: false,
+                ..PartyRow::default()
+            }],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Friends,
+            ..Menu::default()
+        };
+        let tp = Control::PlayerRequest(PlayerRequest::Teleport);
+        let trade = Control::PlayerRequest(PlayerRequest::Trade);
+        assert_eq!(menu.activate(&model, 400.0, tp), None);
+        assert_eq!(menu.activate(&model, 400.0, Control::Row(0)), None);
+        assert_eq!(
+            menu.activate(&model, 400.0, tp),
+            Some(Action::PlayerRequest {
+                kind: PlayerRequest::Teleport,
+                uuid: 42,
+                name: "Alex".into()
+            })
+        );
+        // A local chat priority can use server commands without relay trust.
+        model.party[0].friend = false;
+        model.party[0].local_only = true;
+        model.party[0].blocked = true;
+        assert!(matches!(
+            menu.activate(&model, 400.0, trade),
+            Some(Action::PlayerRequest {
+                kind: PlayerRequest::Trade,
+                ..
+            })
+        ));
+        model.party[0].server_online = false;
+        assert_eq!(menu.activate(&model, 400.0, tp), None);
+        assert_eq!(menu.activate(&model, 400.0, trade), None);
+    }
+    #[test]
+    fn quick_requests_validate_current_identity_and_never_run_trade_subcommands() {
+        let online = vec![(42, "Alex".into())];
+        assert_eq!(
+            PlayerRequest::Teleport
+                .resolve(42, "alex", 1, &online)
+                .unwrap(),
+            "/tpa Alex"
+        );
+        assert_eq!(
+            PlayerRequest::Trade
+                .resolve(42, "Alex", 1, &online)
+                .unwrap(),
+            "/trade Alex"
+        );
+        assert!(
+            PlayerRequest::Trade
+                .resolve(99, "Alex", 1, &online)
+                .is_err()
+        );
+        assert!(
+            PlayerRequest::Trade
+                .resolve(42, "OldName", 1, &online)
+                .is_err()
+        );
+        assert!(
+            PlayerRequest::Teleport
+                .resolve(42, "Alex", 42, &online)
+                .is_err()
+        );
+        assert!(PlayerRequest::Teleport.resolve(42, "Alex", 1, &[]).is_err());
+        for name in [
+            "",
+            "Alex Other",
+            "@a",
+            "Alex\n/op",
+            "Привет",
+            "12345678901234567",
+        ] {
+            assert!(PlayerRequest::Teleport.command(name).is_err());
+            assert!(PlayerRequest::Trade.command(name).is_err());
+        }
+        for name in ["accept", "deny", "cancel", "money"] {
+            assert!(PlayerRequest::Trade.command(name).is_err());
+        }
+    }
+    #[test]
+    fn quick_request_buttons_fit_with_existing_party_controls() {
+        let model = ViewModel::default();
+        let menu = Menu {
+            tab: Tab::Party,
+            ..Menu::default()
+        };
+        for width in [240.0, 400.0, 800.0] {
+            for height in [216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, width, height);
+                let mut footer: Vec<_> = rows
+                    .iter()
+                    .filter(|w| {
+                        matches!(
+                            w.control,
+                            Some(
+                                Control::PlayerRequest(_)
+                                    | Control::Invite
+                                    | Control::ToggleAutoTrust
+                            )
+                        )
+                    })
+                    .collect();
+                assert_eq!(footer.len(), 4);
+                footer.sort_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
+                for pair in footer.windows(2) {
+                    assert!(pair[0].rect[0] + pair[0].rect[2] <= pair[1].rect[0]);
+                }
+            }
+        }
+    }
     #[test]
     fn important_people_are_visible_in_friends_without_granting_friend_rights() {
         let mut model = ViewModel {
