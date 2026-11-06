@@ -30,7 +30,7 @@ struct State {
     archive_saved: Instant,
     tabs: model::Tabs,
     tab_hits: Vec<([f32; 4], model::Channel)>,
-    completion: model::NickCompletion,
+    nickname_query: Option<(String, usize, usize, Vec<String>)>,
     started: Instant,
     settings: Settings,
     loaded: bool,
@@ -57,7 +57,7 @@ impl Default for State {
             archive_saved: Instant::now(),
             tabs: model::Tabs::default(),
             tab_hits: Vec::new(),
-            completion: model::NickCompletion::default(),
+            nickname_query: None,
             started: Instant::now(),
             settings: Settings {
                 modern: true,
@@ -278,7 +278,7 @@ pub(super) fn reset() {
         s.feed.clear();
         s.tabs = model::Tabs::default();
         s.tab_hits.clear();
-        s.completion = model::NickCompletion::default();
+        s.nickname_query = None;
         s.hits.clear();
         s.bounds = None;
         s.requested.clear();
@@ -408,48 +408,48 @@ pub(super) fn reply(game: &mut Game<'_>, body: &str) {
     }
     game.send_chat(&message);
 }
-pub(super) fn complete_nickname(game: &mut Game<'_>, key: winit::keyboard::KeyCode) -> bool {
-    use horizon_client::{chat::Commands, screen_draw::Measure};
-    use winit::keyboard::KeyCode;
-
-    if key != KeyCode::Tab {
-        if !matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
-            state(|s| s.completion = model::NickCompletion::default());
-        }
-        return false;
-    }
-    if !game.native_on(claims::ID) || !game.chat_abilities().send_commands || game.pvp.chat_search {
-        return false;
-    }
-    let reverse = game.has_shift_down();
-    let Some(screen) = game.ui.chat_screen.as_ref() else {
-        return false;
-    };
-    let input = &screen.input;
-    if !input.value.starts_with('/')
-        || input.cursor != input.value.chars().count()
-        || input.highlight != input.cursor
-        || (screen.suggestions_visible() && !state(|s| s.completion.active(&input.value)))
+pub(super) fn prepare_nickname_list(game: &mut Game<'_>, force: bool) {
+    use horizon_client::screen_draw::Measure;
+    if !game.native_on(claims::ID)
+        || game.screen != Screen::Chat
+        || !game.chat_abilities().send_commands
+        || game.pvp.chat_search
     {
-        return false;
+        return;
     }
     let Some(names) = game.remote_online_names() else {
-        return false;
+        return;
     };
-    let Some(completed) = state(|s| s.completion.complete(&input.value, &names, reverse)) else {
-        return false;
+    let Some(screen) = game.ui.chat_screen.as_ref() else {
+        return;
     };
-    if completed.len() > input.max_length {
-        return false;
+    let input = &screen.input;
+    let query = (input.value.clone(), input.cursor, input.highlight, names);
+    let changed = state(|s| {
+        let changed = s.nickname_query.as_ref() != Some(&query);
+        s.nickname_query = Some(query.clone());
+        changed
+    });
+    if (!changed && !force)
+        || input.cursor != input.value.chars().count()
+        || input.highlight != input.cursor
+        || screen.suggestions_visible()
+    {
+        return;
     }
-    let commands = Commands {
-        dispatcher: super::chat::chat_tree(&game.remote),
-        registries: &game.ui.registries,
+    let Some((start, names)) = model::nickname_suggestions(&query.0, &query.3) else {
+        return;
     };
     if let Some(screen) = game.ui.chat_screen.as_mut() {
-        screen.suggest_command(&Measure(&game.gui.atlas.font), &commands, &completed);
+        screen.draimhorizons_nickname_list(&Measure(&game.gui.atlas.font), start, names, force);
     }
-    true
+}
+pub(super) fn complete_nickname(game: &mut Game<'_>, key: winit::keyboard::KeyCode) -> bool {
+    if key == winit::keyboard::KeyCode::Tab {
+        prepare_nickname_list(game, true);
+    }
+    // Let the native list handle Tab/Shift+Tab, arrows, clicks and Escape.
+    false
 }
 fn label(entry: &model::Entry) -> Cow<'_, str> {
     if let Some(notice) = entry.auction {

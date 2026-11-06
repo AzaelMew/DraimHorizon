@@ -351,40 +351,6 @@ pub(super) fn render(
                     ),
                     0x94b5ca,
                 );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "Лимит продаж: осталось {} из {} монет",
-                        value(book.coin_left.map(|(v, _)| v)),
-                        value(book.coin_cap)
-                    ),
-                    0xe7ce95,
-                );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    "Это максимум выручки от продаж серверу до полуночи UTC.",
-                    0x8fa9bb,
-                );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &format!(
-                        "Лимит каждого товара: до {} шт. в сутки",
-                        book.item_cap.map_or("?".into(), |v| v.to_string())
-                    ),
-                    0x94b5ca,
-                );
                 if !book.movers.is_empty() {
                     line(
                         game,
@@ -438,7 +404,7 @@ pub(super) fn render(
                         &mut y,
                         width,
                         &format!(
-                            "По лимитам сейчас можно продать {} из {} шт. · подробнее в Прибыль",
+                            "Сейчас можно продать {} из {} шт. · подробнее в Прибыль",
                             o.quantity, o.listing.count
                         ),
                         0x94b5ca,
@@ -491,7 +457,7 @@ pub(super) fn render(
                 }
                 if let Some(hand) = &status.sale {
                     let text = data::sale_estimate(book, p, hand, now).map_or(
-                        "Нет свежей цены/лимита для подтверждения".into(),
+                        "Нет свежей цены для подтверждения".into(),
                         |(n, net)| {
                             format!(
                                 "{} ×{}: оценка +{} · повторное нажатие продаёт",
@@ -849,7 +815,7 @@ pub(super) fn render(
                                     rx,
                                     &mut y,
                                     rw,
-                                    &format!("Выручка по лимитам: {} монет", model::fmt(o.gross)),
+                                    &format!("Ожидаемая выручка: {} монет", model::fmt(o.gross)),
                                     0xcbd7e2,
                                 );
                                 line(
@@ -859,7 +825,7 @@ pub(super) fn render(
                                     &mut y,
                                     rw,
                                     &if o.quantity == 0 {
-                                        "Сейчас продажа недоступна: лимиты / ограничения".into()
+                                        "Сейчас продажа недоступна: проверьте ограничения".into()
                                     } else {
                                         format!("Прибыль сейчас: {} монет", model::delta(o.profit))
                                     },
@@ -1265,12 +1231,6 @@ pub(super) fn hud(
         if p.flag("hud_balance") {
             lines.push(format!("Баланс: {}", value(book.balance.map(|(n, _)| n))));
         }
-        if p.flag("hud_limits") {
-            lines.push(format!(
-                "Лимит продаж: осталось {} монет",
-                value(book.coin_left.map(|(n, _)| n))
-            ));
-        }
         if p.flag("hud_hand")
             && let Some(h) = &status.hand
         {
@@ -1341,24 +1301,14 @@ pub(super) fn container_overlay(
             return;
         }
         let now = data::now();
-        let mut lines = vec![
-            (
-                if title == "market" {
-                    "MARKET".into()
-                } else {
-                    "АУКЦИОН".into()
-                },
-                0x9edccb,
-            ),
-            (
-                format!(
-                    "Лимит: {} / {} монет",
-                    value(book.coin_left.map(|(v, _)| v)),
-                    value(book.coin_cap)
-                ),
-                0xd9c68f,
-            ),
-        ];
+        let mut lines = vec![(
+            if title == "market" {
+                "MARKET".into()
+            } else {
+                "АУКЦИОН".into()
+            },
+            0x9edccb,
+        )];
         if let Some((_, item, lot)) =
             slot.and_then(|slot| status.menu_slots.iter().find(|(s, _, _)| *s == slot))
         {
@@ -1374,7 +1324,7 @@ pub(super) fn container_overlay(
                             0xdfa68d
                         },
                     ));
-                    lines.push((format!("По лимитам сейчас: {} шт.", o.quantity), 0xa8bdcf));
+                    lines.push((format!("Доступно к продаже: {} шт.", o.quantity), 0xa8bdcf));
                     if !o.ready {
                         lines.push(("Проверьте цену и ограничения".into(), 0xd7bd87));
                     }

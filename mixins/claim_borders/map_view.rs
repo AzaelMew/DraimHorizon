@@ -281,6 +281,12 @@ pub(super) fn map_marks(
         .collect();
     marks.sort_by_key(|m| (m.player.is_some(), m.friend));
     if p.mobs > 0 && source.dimension == dimension {
+        let entities: std::collections::BTreeMap<_, _> = game
+            .mobs
+            .iter()
+            .filter(|m| !m.removed)
+            .map(|m| (m.id, m))
+            .collect();
         for mob in source
             .mobs
             .iter()
@@ -295,14 +301,16 @@ pub(super) fn map_marks(
             } else {
                 0xff
             };
-            mob_head(
-                game,
-                batch,
-                &mob.type_id,
-                at,
-                if full { 10.0 } else { 7.0 },
-                alpha,
-            );
+            if let Some(entity) = entities.get(&mob.entity) {
+                crate::game::claim_borders_mob_heads::draw(
+                    game,
+                    batch,
+                    entity,
+                    at,
+                    if full { 12.0 } else { 9.0 },
+                    alpha,
+                );
+            }
         }
     }
     if p.marks {
@@ -505,6 +513,15 @@ pub(super) fn hud(
                 source.player[0].floor(),
                 source.player[2].floor()
             ),
+            [x, y],
+            p.size as f32,
+            0xe0e7f0,
+        );
+        let (x, y) = corners.place(corner(p.corner), p.size as f32, 11.0);
+        label(
+            game,
+            batch,
+            &format!("Y {:.0}", source.player[1].floor()),
             [x, y],
             p.size as f32,
             0xe0e7f0,
@@ -1176,56 +1193,6 @@ fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse:
         false,
         mouse,
     );
-}
-// Original small face glyphs: ears, muzzle and eyes remain legible on the minimap.
-fn mob_head(
-    game: &Game<'_>,
-    batch: &mut HudBatch,
-    id: &str,
-    center: [f32; 2],
-    size: f32,
-    alpha: u32,
-) {
-    let id = id.strip_prefix("minecraft:").unwrap_or(id);
-    let (skin, eye, muzzle) = match id {
-        "creeper" => (0x6eae49, 0x18241a, 0x243323),
-        "zombie" | "husk" | "drowned" | "zombie_villager" => (0x63936d, 0x1c3022, 0x445d42),
-        "skeleton" | "stray" | "bogged" | "wither_skeleton" => (0xbcbcac, 0x25272a, 0x797b72),
-        "enderman" | "ender_dragon" => (0x27212f, 0xd183dd, 0x443552),
-        "pig" | "piglin" | "zombified_piglin" => (0xe7a2a6, 0x292633, 0xc9788c),
-        "cow" | "horse" | "donkey" | "llama" | "mooshroom" => (0x82614d, 0x211e22, 0xb5a392),
-        "sheep" | "polar_bear" | "iron_golem" => (0xe6e1d2, 0x2b2a2b, 0xb9a89f),
-        "wolf" | "cat" | "rabbit" | "goat" => (0xa8acaa, 0x2a2c28, 0xe3ccc2),
-        "fox" | "blaze" | "magma_cube" => (0xce813d, 0x30291f, 0xecd9b3),
-        "villager" | "wandering_trader" | "witch" => (0xaf8c72, 0x345b37, 0x825b49),
-        "spider" | "cave_spider" => (0x413934, 0xd54643, 0x28262b),
-        "slime" => (0x78be65, 0x355631, 0x578c48),
-        "chicken" => (0xe2e1d8, 0x26252a, 0xe4b352),
-        "shulker" => (0xa87ba8, 0x302131, 0xd3b38d),
-        _ => (0x8daba5, 0x263439, 0xbbc9b4),
-    };
-    let unit = size / 8.0;
-    let left = center[0] - size / 2.0;
-    let top = center[1] - size / 2.0;
-    let mut pixel = |x: f32, y: f32, w: f32, h: f32, color: u32| {
-        ui::fill(
-            game,
-            batch,
-            [left + x * unit, top + y * unit, w * unit, h * unit],
-            (alpha << 24) | color,
-        )
-    };
-    pixel(1.0, 1.0, 6.0, 6.0, skin);
-    pixel(1.0, 0.0, 2.0, 2.0, skin);
-    pixel(5.0, 0.0, 2.0, 2.0, skin);
-    pixel(2.0, 3.0, 1.0, 1.0, eye);
-    pixel(5.0, 3.0, 1.0, 1.0, eye);
-    pixel(3.0, 5.0, 2.0, 2.0, muzzle);
-    if id == "creeper" {
-        pixel(3.0, 4.0, 2.0, 2.0, eye);
-        pixel(2.0, 5.0, 1.0, 2.0, eye);
-        pixel(5.0, 5.0, 1.0, 2.0, eye);
-    }
 }
 pub(super) fn mouse(
     game: &Game<'_>,

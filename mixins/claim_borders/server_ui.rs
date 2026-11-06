@@ -161,23 +161,6 @@ pub(super) fn sidebar(
             "performance",
         );
         let mut economy = vec![(format!("Баланс  {} монет", money(book.balance)), 0xf0d68a)];
-        if p.flag("enabled") && p.flag("sidebar_limits") {
-            economy.push(("Продажа серверу · осталось".into(), 0x9aacc0));
-            economy.push((
-                match (book.coin_left, book.coin_cap) {
-                    (Some(left), Some(cap)) => format!(
-                        "{} / {} монет",
-                        money(Some(left)),
-                        crate::game::claim_borders_economy::fmt(cap)
-                    ),
-                    _ => "Сервер не сообщил дневной лимит".into(),
-                },
-                0xc3dfd3,
-            ));
-            if book.coin_left.is_some_and(|(n, _)| n == 0) {
-                economy.push(("Сброс лимита · 00:00 UTC".into(), 0xd0a778));
-            }
-        }
         let richest: Vec<_> = status
             .sidebar
             .iter()

@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.22.0"
+version = "0.22.1"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -840,3 +840,25 @@ id = "chat-archive"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_chat_archive"
 source = "chat_archive.rs"
+
+[[injection]]
+id = "inventory-tools-below-items"
+kind = "HEAD"
+target = "horizon_client::game::Game<'_>::draw_carried"
+helper = "inventory_tools_draw_hook.rs"
+bindings = [
+ { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+ { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]
+
+[[module]]
+id = "chat-nickname-list"
+file = "crates/horizon-client-render/src/chat.rs"
+name = "draimhorizons_nickname_list"
+source = "chat_nickname_list.rs"
+
+[[module]]
+id = "mob-heads"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_mob_heads"
+source = "mob_heads.rs"

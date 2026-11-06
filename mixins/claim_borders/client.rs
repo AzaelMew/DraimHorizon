@@ -490,6 +490,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                         let hostile = map::mob_group(&m.kind.id, &m.kind.category)?;
                         let pos = m.previous.lerp(m.position, game.clock.fraction());
                         Some(map::MobMark {
+                            entity: m.id,
                             type_id: m.kind.id.clone(),
                             position: [pos.x, pos.y, pos.z],
                             hostile,

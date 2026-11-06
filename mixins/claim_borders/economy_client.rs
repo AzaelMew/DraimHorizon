@@ -45,7 +45,7 @@ struct State {
     last_frame: u64,
     last_command: u64,
     last_poll: BTreeMap<String, u64>,
-    last_finance: [u64; 2],
+    last_finance: u64,
     queue: VecDeque<String>,
     issuing: bool,
     query_at: u64,
@@ -77,7 +77,7 @@ impl Default for State {
             last_frame: 0,
             last_command: 0,
             last_poll: BTreeMap::new(),
-            last_finance: [0; 2],
+            last_finance: 0,
             queue: VecDeque::new(),
             issuing: false,
             query_at: 0,
@@ -244,10 +244,7 @@ fn request(game: &mut Game<'_>, command: String, quiet: bool) {
         s.query_at = now;
         s.replies.begin(&command, now, quiet);
         if command == "bal" {
-            s.last_finance[0] = now;
-        }
-        if command.starts_with("worth ") {
-            s.last_finance[1] = now;
+            s.last_finance = now;
         }
         if let Some(item) = command.strip_prefix("worth ").and_then(model::id) {
             s.last_poll.insert(item, now);
@@ -269,7 +266,6 @@ fn actions(game: &mut Game<'_>) {
         match action {
             Action::Refresh(item) => state(|s| {
                 queue(s, "bal".into());
-                queue(s, "worth cobblestone".into());
                 let missing: Vec<_> = s
                     .book
                     .listings
@@ -339,7 +335,8 @@ fn actions(game: &mut Game<'_>) {
                 state(|s| {
                     s.status.sale = held.filter(|h| h.plain);
                     s.status.message = if s.status.sale.is_some() {
-                        "Проверьте предмет, количество и лимиты; отправка только после подтверждения".into()
+                        "Проверьте предмет, количество и цену; отправка только после подтверждения"
+                            .into()
                     } else {
                         "Market принимает только обычный предмет без данных и повреждений".into()
                     };
@@ -368,8 +365,7 @@ fn actions(game: &mut Game<'_>) {
                     request(game, "sell hand".into(), false);
                 } else {
                     view::notice(
-                        "Предмет, цена или лимиты изменились: обновите данные и повторите проверку"
-                            .into(),
+                        "Предмет или цена изменились: обновите данные и повторите проверку".into(),
                     );
                 }
             }
@@ -751,15 +747,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
         if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
             return None;
         }
-        // Scoreboard must refresh even when the trading window has never opened.
-        if s.pref.flag("auto_poll") && s.pref.flag("custom_sidebar") {
-            for (index, command) in ["bal", "worth cobblestone"].into_iter().enumerate() {
-                if s.last_finance[index] == 0 || now.saturating_sub(s.last_finance[index]) >= 60_000
-                {
-                    s.last_finance[index] = now;
-                    return Some(command.into());
-                }
-            }
+        // Scoreboard balance updates independently of the trading window.
+        if s.pref.flag("auto_poll")
+            && s.pref.flag("custom_sidebar")
+            && (s.last_finance == 0 || now.saturating_sub(s.last_finance) >= 60_000)
+        {
+            s.last_finance = now;
+            return Some("bal".into());
         }
         if !ui_visible && page.is_none() {
             s.queue.clear();

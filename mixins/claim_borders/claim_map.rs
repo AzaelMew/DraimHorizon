@@ -207,10 +207,62 @@ pub struct Mark {
 }
 #[derive(Clone, Debug)]
 pub struct MobMark {
+    pub entity: u32,
     pub position: [f64; 3],
     pub label: String,
     pub type_id: String,
     pub hostile: bool,
+}
+#[derive(Clone, Debug)]
+pub struct HeadFace {
+    pub position: [[f32; 3]; 4],
+    pub uv: [[f32; 2]; 4],
+}
+#[derive(Clone, Debug)]
+pub struct HeadQuad {
+    pub position: [[f32; 2]; 4],
+    pub uv: [[f32; 2]; 4],
+}
+// Orthographic front view of the real baked head, preserving its silhouette and UVs.
+pub fn project_head(mut faces: Vec<HeadFace>) -> Vec<HeadQuad> {
+    faces.retain(|f| {
+        f.position
+            .iter()
+            .flatten()
+            .chain(f.uv.iter().flatten())
+            .all(|v| v.is_finite())
+    });
+    let mut min = [f32::INFINITY; 2];
+    let mut max = [f32::NEG_INFINITY; 2];
+    for face in &faces {
+        for point in face.position {
+            for i in 0..2 {
+                min[i] = min[i].min(point[i]);
+                max[i] = max[i].max(point[i]);
+            }
+        }
+    }
+    let extent = (max[0] - min[0]).max(max[1] - min[1]);
+    if !extent.is_finite() || extent <= f32::EPSILON {
+        return Vec::new();
+    }
+    faces.sort_by(|a, b| {
+        b.position
+            .iter()
+            .map(|p| p[2])
+            .sum::<f32>()
+            .total_cmp(&a.position.iter().map(|p| p[2]).sum::<f32>())
+    });
+    let center = [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5];
+    faces
+        .into_iter()
+        .map(|face| HeadQuad {
+            position: face
+                .position
+                .map(|p| [(p[0] - center[0]) / extent, (p[1] - center[1]) / extent]),
+            uv: face.uv,
+        })
+        .collect()
 }
 // Stable indices are persisted; append new types without reordering existing entries.
 pub const MOB_TYPES: &[&str] = &[
@@ -824,5 +876,48 @@ mod mob_filter_tests {
         assert!(p.mob_visible("minecraft:skeleton", true));
         p.mobs = 0;
         assert!(!p.mob_visible("minecraft:skeleton", true));
+    }
+}
+
+#[cfg(test)]
+mod real_head_tests {
+    use super::*;
+    #[test]
+    fn projection_preserves_texture_orientation_and_draws_muzzle_last() {
+        let uv = [[0.1, 0.2], [0.3, 0.2], [0.3, 0.4], [0.1, 0.4]];
+        let head = HeadFace {
+            position: [
+                [-4.0, -8.0, 0.0],
+                [4.0, -8.0, 0.0],
+                [4.0, 0.0, 0.0],
+                [-4.0, 0.0, 0.0],
+            ],
+            uv,
+        };
+        let nose = HeadFace {
+            position: [
+                [-2.0, -4.0, -2.0],
+                [2.0, -4.0, -2.0],
+                [2.0, -1.0, -2.0],
+                [-2.0, -1.0, -2.0],
+            ],
+            uv,
+        };
+        let projected = project_head(vec![nose, head]);
+        assert_eq!(projected.len(), 2);
+        assert_eq!(
+            projected[0].position,
+            [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+        );
+        assert_eq!(projected[0].uv, uv);
+        assert_eq!(projected[1].position[0], [-0.25, 0.0]);
+        assert!(project_head(Vec::new()).is_empty());
+        assert!(
+            project_head(vec![HeadFace {
+                position: [[f32::NAN, 0.0, 0.0]; 4],
+                uv
+            }])
+            .is_empty()
+        );
     }
 }
