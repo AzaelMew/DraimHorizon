@@ -13,6 +13,7 @@
     "crates/horizon-client/src/game/extras.rs": "36e16316172b8ea56f46228764210196dde4050ed2794ee9ebca07a84721ec82",
     "crates/horizon-client-render/src/minimap.rs": "7b45a9f4eb2bb35be4b5444f04bfb2be4c0f0e607a7fce6e2b513be51e691ae8",
     "crates/horizon-client-render/src/hud.rs": "07c0766c9f7f6b7a6ddb5b16ce57958fd8d861c236c518cf95b8426f1d0fce22",
-    "crates/horizon-client/src/game/scoreboard.rs": "5eb71f181cf482eebb32e06a23b23eff11f3bced71ac8cdfd02ab409f7785d78"
+    "crates/horizon-client/src/game/scoreboard.rs": "5eb71f181cf482eebb32e06a23b23eff11f3bced71ac8cdfd02ab409f7785d78",
+    "crates/horizon-client-render/src/chat.rs": "c30cfd2305fea50a31b68c74a3d5662afd0cd8ea3c185dc836c74d4d7147762a"
   }
 }

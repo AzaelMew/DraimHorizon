@@ -15,4 +15,5 @@ fn claim_borders_chat_input_layout(
         screen.input.x = 70;
         screen.input.width = (batch.width as i32 - 74).max(32);
     }
+    crate::game::claim_borders_chat_view::prepare_nickname_list(game, false);
 }

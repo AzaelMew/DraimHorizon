@@ -765,21 +765,14 @@ pub(super) fn render(
                 }
             }
         }
-        let status = data::read(|book, _, status, _| {
+        let status = data::read(|_, _, status, _| {
             if status.scanning {
                 format!(
                     "Синхронизация · {} страниц · нажатие остановит обход",
                     status.pages
                 )
             } else {
-                format!(
-                    "Лимит продаж серверу: {} / {} монет",
-                    book.coin_left.map_or("—".into(), |(v, _)| {
-                        crate::game::claim_borders_economy::fmt(v)
-                    }),
-                    book.coin_cap
-                        .map_or("—".into(), crate::game::claim_borders_economy::fmt)
-                )
+                "Цены обновляются по данным сервера".into()
             }
         });
         ui::text(

@@ -175,15 +175,6 @@ pub const SETTINGS: &[Setting] = &[
         default: 1,
     },
     Setting {
-        key: "sidebar_limits",
-        label: "Лимиты в sidebar",
-        group: 5,
-        min: 0,
-        max: 1,
-        step: 1,
-        default: 1,
-    },
-    Setting {
         key: "custom_tab",
         label: "Свой Tab",
         group: 6,
@@ -267,15 +258,6 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "hud_balance",
         label: "HUD: баланс",
-        group: 0,
-        min: 0,
-        max: 1,
-        step: 1,
-        default: 1,
-    },
-    Setting {
-        key: "hud_limits",
-        label: "HUD: остаток лимита",
         group: 0,
         min: 0,
         max: 1,
@@ -383,7 +365,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "quote_ttl",
-        label: "Свежесть цен / лимитов, с",
+        label: "Свежесть цен, с",
         group: 2,
         min: 30,
         max: 600,
@@ -1010,28 +992,6 @@ impl Book {
             notes.push("Лот нужно перепроверить".into());
         }
         let mut n = l.count;
-        if let Some((left, at)) = self.coin_left {
-            if left == 0 {
-                notes.push("Дневной лимит монет исчерпан".into());
-            }
-            n = n.min(u32::try_from(left / price).unwrap_or(u32::MAX));
-            if !fresh(at, now, p.get("quote_ttl")) {
-                notes.push("Обнови денежный лимит".into());
-            }
-        } else {
-            notes.push("Неизвестен денежный лимит".into());
-        }
-        if let Some((left, at)) = q.left {
-            if left == 0 {
-                notes.push("Дневной лимит предмета исчерпан".into());
-            }
-            n = n.min(left);
-            if !fresh(at, now, p.get("quote_ttl")) {
-                notes.push("Обнови лимит предмета".into());
-            }
-        } else {
-            notes.push("Неизвестен остаток по предмету".into());
-        }
         let back = if q.blocked_until > now { q.blocked } else { 0 };
         let have = self.inventory.get(&l.item).copied().unwrap_or(0);
         n = n.min(have.saturating_add(l.count).saturating_sub(back));
@@ -1107,20 +1067,12 @@ impl Book {
     ) -> Option<(u32, Coins)> {
         let q = self.quotes.get(item)?;
         let price = q.sell.filter(|v| *v > 0)?;
-        let (coins, ct) = self.coin_left?;
-        let (left, lt) = q.left?;
-        if !fresh(q.at, now, p.get("quote_ttl"))
-            || !fresh(ct, now, p.get("quote_ttl"))
-            || !fresh(lt, now, p.get("quote_ttl"))
-        {
+        if !fresh(q.at, now, p.get("quote_ttl")) {
             return None;
         }
         let blocked = if q.blocked_until > now { q.blocked } else { 0 };
         let inventory = self.inventory.get(item).copied().unwrap_or(0);
-        let quantity = count
-            .min(left)
-            .min(u32::try_from(coins / price).unwrap_or(u32::MAX))
-            .min(inventory.min(count).saturating_sub(blocked));
+        let quantity = count.min(inventory.min(count).saturating_sub(blocked));
         if quantity == 0 {
             return None;
         }
@@ -1358,16 +1310,18 @@ mod tests {
         assert_eq!(book.resale(7000, 10000, &p), Some((100, 2900)));
     }
     #[test]
-    fn partial_sale_still_pays_for_entire_lot_and_caps_use_gross() {
+    fn removed_daily_caps_do_not_reduce_lots_or_block_hand_sales() {
         let (mut book, p, l) = sample();
-        book.coin_left = Some((4000, NOW));
-        let o = book.opportunity(&l, &p, NOW, "me").unwrap();
-        assert_eq!((o.quantity, o.profit), (10, -3000));
-        assert!(!o.ready);
         book.coin_left = Some((0, NOW));
+        book.quotes.get_mut(&l.item).unwrap().left = Some((0, NOW));
         let o = book.opportunity(&l, &p, NOW, "me").unwrap();
-        assert_eq!((o.quantity, o.profit), (0, -7000));
-        assert!(!o.ready);
+        assert_eq!((o.quantity, o.profit), (22, 1800));
+        assert!(o.ready);
+        book.coin_left = None;
+        book.quotes.get_mut(&l.item).unwrap().left = None;
+        assert!(book.opportunity(&l, &p, NOW, "me").unwrap().ready);
+        book.inventory.insert(l.item.clone(), 22);
+        assert_eq!(book.hand_sale(&l.item, 22, &p, NOW), Some((22, 8800)));
     }
     #[test]
     fn bids_own_expired_and_uncertain_data_are_not_buy_signals() {
@@ -1378,7 +1332,7 @@ mod tests {
         assert!(book.opportunity(&l, &p, NOW, "WINMASTT").is_none());
         assert!(book.opportunity(&l, &p, l.expires, "me").is_none());
         book.coin_left = None;
-        assert!(!book.opportunity(&l, &p, NOW, "me").unwrap().ready);
+        assert!(book.opportunity(&l, &p, NOW, "me").unwrap().ready);
         book.coin_left = Some((200000, NOW));
         assert!(!book.opportunity(&l, &p, NOW + 3600000, "me").unwrap().ready);
         assert!(
@@ -1389,7 +1343,7 @@ mod tests {
         );
     }
     #[test]
-    fn hand_sale_respects_recent_market_purchases_and_fresh_limits() {
+    fn hand_sale_respects_recent_market_purchases_and_fresh_prices() {
         let (mut book, p, l) = sample();
         book.inventory.insert(l.item.clone(), 30);
         let q = book.quotes.get_mut(&l.item).unwrap();
@@ -1397,7 +1351,8 @@ mod tests {
         q.blocked_until = NOW + 10000;
         assert_eq!(book.hand_sale(&l.item, 22, &p, NOW), Some((2, 800)));
         book.coin_left = Some((0, NOW));
-        assert!(book.hand_sale(&l.item, 22, &p, NOW).is_none());
+        assert_eq!(book.hand_sale(&l.item, 22, &p, NOW), Some((2, 800)));
+        assert!(book.hand_sale(&l.item, 22, &p, NOW + 3_600_000).is_none());
     }
     #[test]
     fn cached_prices_do_not_restore_wallet_limits_or_auction_listings() {
@@ -1470,7 +1425,7 @@ mod live_server_tests {
         assert_eq!(b.quotes["minecraft:carrot"].sell, Some(199));
     }
     #[test]
-    fn full_lot_profit_remains_visible_when_daily_allowance_is_exhausted() {
+    fn obsolete_daily_allowance_never_blocks_profit_estimates() {
         let now = 100000;
         let mut b = Book::default();
         b.server("leather: 3.01 coins each, to buy or sell.", now);
@@ -1486,8 +1441,8 @@ mod live_server_tests {
             .opportunity(&l, &Preferences::default(), now, "me")
             .unwrap();
         assert!(o.full_profit > 0);
-        assert_eq!(o.quantity, 0);
-        assert_eq!(o.profit, -10000);
+        assert_eq!(o.quantity, 64);
+        assert!(o.profit > 0);
         assert!(!o.ready);
     }
     #[test]

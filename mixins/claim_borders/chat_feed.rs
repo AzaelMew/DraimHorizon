@@ -277,60 +277,28 @@ fn player_name(value: &str) -> bool {
 fn whisper_name(value: &str) -> bool {
     player_name(value.strip_prefix('~').unwrap_or(value))
 }
-#[derive(Default)]
-pub struct NickCompletion {
-    prefix: String,
-    applied: String,
-}
-impl NickCompletion {
-    pub fn active(&self, input: &str) -> bool {
-        !self.applied.is_empty() && self.applied == input
+pub fn nickname_suggestions(input: &str, names: &[String]) -> Option<(usize, Vec<String>)> {
+    let (command, partial) = input.strip_prefix('/')?.split_once(' ')?;
+    let verb = command.strip_prefix("minecraft:").unwrap_or(command);
+    if !matches!(
+        verb,
+        "tp" | "teleport" | "msg" | "tell" | "w" | "trade" | "tpa" | "pay"
+    ) {
+        return None;
     }
-
-    pub fn complete(&mut self, input: &str, names: &[String], reverse: bool) -> Option<String> {
-        let cycling = self.active(input);
-        let prefix = if cycling { &self.prefix } else { input };
-        let (command, partial) = prefix.strip_prefix('/')?.split_once(' ')?;
-        let verb = command.strip_prefix("minecraft:").unwrap_or(command);
-        if !matches!(
-            verb,
-            "tp" | "teleport" | "msg" | "tell" | "w" | "trade" | "tpa"
-        ) {
-            return None;
-        }
-        let fragment = partial.trim_start_matches(' ');
-        if !fragment.is_empty() && !player_name(fragment) {
-            return None;
-        }
-        let partial = fragment.to_ascii_lowercase();
-        let mut matches: Vec<_> = names
-            .iter()
-            .filter(|name| player_name(name) && name.to_ascii_lowercase().starts_with(&partial))
-            .collect();
-        matches.sort_unstable_by_key(|name| name.to_ascii_lowercase());
-        let first = if reverse {
-            matches.last()?
-        } else {
-            matches.first()?
-        };
-        let selected = if cycling {
-            let current = input
-                .rsplit_once(' ')
-                .and_then(|(_, applied)| matches.iter().position(|name| name.as_str() == applied));
-            current.map_or(first, |i| {
-                let offset = if reverse { matches.len() - 1 } else { 1 };
-                &matches[(i + offset) % matches.len()]
-            })
-        } else {
-            first
-        };
-        let completed = format!("{}{selected}", &prefix[..prefix.len() - fragment.len()]);
-        if !cycling {
-            self.prefix = input.into();
-        }
-        self.applied.clone_from(&completed);
-        Some(completed)
+    let fragment = partial.trim_start_matches(' ');
+    if !fragment.is_empty() && !player_name(fragment) {
+        return None;
     }
+    let needle = fragment.to_ascii_lowercase();
+    let mut matches: Vec<_> = names
+        .iter()
+        .filter(|name| player_name(name) && name.to_ascii_lowercase().starts_with(&needle))
+        .cloned()
+        .collect();
+    matches.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+    matches.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    Some((input.len() - fragment.len(), matches))
 }
 fn whisper_event(
     line: &str,
@@ -962,38 +930,38 @@ mod tests {
     }
 
     #[test]
-    fn command_nickname_completion_cycles_only_the_first_argument() {
-        let names = ["Bob", "albert", "Alex_42", "not a name"].map(str::to_owned);
-        let mut completion = NickCompletion::default();
+    fn nickname_list_includes_pay_and_preserves_the_amount_argument() {
+        let names = ["Bob", "albert", "Alex_42", "not a name", "albert"].map(str::to_owned);
+        for command in ["pay", "msg", "tpa", "trade", "minecraft:pay"] {
+            let input = format!("/{command} AL");
+            let (start, matches) = nickname_suggestions(&input, &names).unwrap();
+            assert_eq!(&input[start..], "AL");
+            assert_eq!(matches, ["albert", "Alex_42"]);
+        }
         assert_eq!(
-            completion.complete("/msg AL", &names, false).as_deref(),
-            Some("/msg albert")
+            nickname_suggestions("/pay ", &names).unwrap().1,
+            ["albert", "Alex_42", "Bob"]
         );
         assert_eq!(
-            completion.complete("/msg albert", &names, false).as_deref(),
-            Some("/msg Alex_42")
-        );
-        assert_eq!(
-            completion.complete("/msg Alex_42", &names, true).as_deref(),
-            Some("/msg albert")
-        );
-        assert_eq!(
-            completion.complete("/tp ", &names, true).as_deref(),
-            Some("/tp Bob")
-        );
-        assert_eq!(
-            completion.complete("/trade  Bo", &names, false).as_deref(),
-            Some("/trade  Bob")
+            nickname_suggestions("/pay  Bo", &names).unwrap(),
+            (6, vec!["Bob".into()])
         );
         for input in [
-            "/msg Bob hi",
-            "/tp @a",
-            "/trade unknown",
+            "/pay Bob 100",
+            "/pay Bob ",
+            "/pay @a",
+            "/pay",
             "/reply Bo",
-            "/msg",
+            "/msg Bob hi",
         ] {
-            assert_eq!(completion.complete(input, &names, false), None, "{input}");
+            assert_eq!(nickname_suggestions(input, &names), None, "{input}");
         }
+        assert!(
+            nickname_suggestions("/pay no_match", &names)
+                .unwrap()
+                .1
+                .is_empty()
+        );
     }
     #[test]
     fn auction_receipts_require_server_origin_and_exact_grammar() {
