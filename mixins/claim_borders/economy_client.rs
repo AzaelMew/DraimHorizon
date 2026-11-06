@@ -45,6 +45,7 @@ struct State {
     last_frame: u64,
     last_command: u64,
     last_poll: BTreeMap<String, u64>,
+    last_finance: [u64; 2],
     queue: VecDeque<String>,
     issuing: bool,
     query_at: u64,
@@ -76,6 +77,7 @@ impl Default for State {
             last_frame: 0,
             last_command: 0,
             last_poll: BTreeMap::new(),
+            last_finance: [0; 2],
             queue: VecDeque::new(),
             issuing: false,
             query_at: 0,
@@ -241,6 +243,12 @@ fn request(game: &mut Game<'_>, command: String, quiet: bool) {
         s.last_command = now;
         s.query_at = now;
         s.replies.begin(&command, now, quiet);
+        if command == "bal" {
+            s.last_finance[0] = now;
+        }
+        if command.starts_with("worth ") {
+            s.last_finance[1] = now;
+        }
         if let Some(item) = command.strip_prefix("worth ").and_then(model::id) {
             s.last_poll.insert(item, now);
         }
@@ -259,17 +267,9 @@ fn actions(game: &mut Game<'_>) {
     use view::Action;
     for action in view::actions() {
         match action {
-            Action::Setting(key, dir) => configure(game, key, dir),
-            Action::Defaults => {
-                state(|s| s.pref = model::Preferences::default());
-                game.native_set_setting(
-                    claims::ID,
-                    "economy",
-                    &model::Preferences::default().encode(),
-                );
-            }
             Action::Refresh(item) => state(|s| {
                 queue(s, "bal".into());
+                queue(s, "worth cobblestone".into());
                 let missing: Vec<_> = s
                     .book
                     .listings
@@ -750,6 +750,16 @@ pub(super) fn frame(game: &mut Game<'_>) {
     let read_command = state(|s| {
         if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
             return None;
+        }
+        // Scoreboard must refresh even when the trading window has never opened.
+        if s.pref.flag("auto_poll") && s.pref.flag("custom_sidebar") {
+            for (index, command) in ["bal", "worth cobblestone"].into_iter().enumerate() {
+                if s.last_finance[index] == 0 || now.saturating_sub(s.last_finance[index]) >= 60_000
+                {
+                    s.last_finance[index] = now;
+                    return Some(command.into());
+                }
+            }
         }
         if !ui_visible && page.is_none() {
             s.queue.clear();

@@ -482,6 +482,7 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Пати" | "Друзья" => Some(People),
         "Клеймы" | "Приваты" => Some(Shield),
         "Чат" => Some(Chat),
+        "Эксперименты" => Some(Star),
         "Торги" | "AH" | "Аукц." => Some(Market),
         "Цены" => Some(Wallet),
         "Обзор" | "Профит" | "Прибыль" => Some(Chart),

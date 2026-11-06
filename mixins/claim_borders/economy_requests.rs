@@ -30,6 +30,9 @@ impl Replies {
             if !quiet {
                 return false;
             }
+            if command == "worth" {
+                return text.starts_with("Selling today: ");
+            }
             if let Some(expected) = command.strip_prefix("worth ") {
                 if let Some(item) = &item {
                     return model::id(expected).as_ref() == Some(item);
@@ -58,6 +61,9 @@ mod tests {
     #[test]
     fn quiet_quotes_and_rejections_never_hide_player_actions_or_manual_queries() {
         let mut r = Replies::default();
+        r.begin("worth", 99, true);
+        assert!(r.quiet("Selling today: 50 coins left of your 100 coins", 100));
+        assert!(!r.quiet("Balance: 50 coins", 100));
         r.begin("worth leather", 100, true);
         assert!(r.quiet("leather: 3.01 coins each, to buy or sell.", 101));
         assert!(!r.quiet("Sold 1 leather for 3 coins.", 101));

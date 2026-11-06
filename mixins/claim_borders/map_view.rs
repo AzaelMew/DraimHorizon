@@ -15,6 +15,8 @@ struct State {
     loaded: bool,
     source: Option<model::Snapshot>,
     open: bool,
+    mob_filter: bool,
+    mob_page: usize,
     return_menu: bool,
     close_request: bool,
     dimension: String,
@@ -39,6 +41,8 @@ impl Default for State {
             loaded: false,
             source: None,
             open: false,
+            mob_filter: false,
+            mob_page: 0,
             return_menu: true,
             close_request: false,
             dimension: String::new(),
@@ -127,6 +131,7 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
         }
         if s.open && game.native_mod_screen() != Some(claims::ID) {
             s.open = false;
+            s.mob_filter = false;
             s.drag = None;
         }
         if s.follow {
@@ -276,7 +281,11 @@ pub(super) fn map_marks(
         .collect();
     marks.sort_by_key(|m| (m.player.is_some(), m.friend));
     if p.mobs > 0 && source.dimension == dimension {
-        for mob in source.mobs.iter().filter(|m| p.mobs != 2 || m.hostile) {
+        for mob in source
+            .mobs
+            .iter()
+            .filter(|m| p.mob_visible(&m.type_id, m.hostile))
+        {
             let at = xy([mob.position[0], mob.position[2]]);
             if !contains(rect, at) {
                 continue;
@@ -286,14 +295,14 @@ pub(super) fn map_marks(
             } else {
                 0xff
             };
-            let color = (alpha << 24) | if mob.hostile { 0xf07876 } else { 0x86ce9a };
-            ui::fill(
+            mob_head(
                 game,
                 batch,
-                [at[0] - 2.5, at[1] - 2.5, 5.0, 5.0],
-                0xd0101720,
+                &mob.type_id,
+                at,
+                if full { 10.0 } else { 7.0 },
+                alpha,
             );
-            ui::fill(game, batch, [at[0] - 1.5, at[1] - 1.5, 3.0, 3.0], color);
         }
     }
     if p.marks {
@@ -532,6 +541,7 @@ enum Button {
     Seed,
     Grid,
     Settings,
+    Mobs,
     Layer,
     Back,
 }
@@ -547,6 +557,7 @@ fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
         (Button::Fit, "Зоны"),
         (Button::Layer, "Рельеф"),
         (Button::Grid, "Сетка"),
+        (Button::Mobs, "Фильтр мобов"),
         (Button::Settings, "Настройки"),
     ]
     .into_iter()
@@ -676,15 +687,24 @@ fn operate(game: &Game<'_>, button: Button) {
         configure(game, p);
         return;
     }
+    if matches!(button, Button::Mobs) {
+        state(|s| {
+            s.mob_filter = !s.mob_filter;
+            s.drag = None;
+        });
+        return;
+    }
     if matches!(button, Button::Settings) {
         state(|s| {
             s.open = false;
+            s.mob_filter = false;
             s.drag = None;
         });
         crate::game::claim_borders_menu_view::claims_settings();
         return;
     }
     state(|s| match button {
+        Button::Mobs => {}
         Button::ZoomIn => s.view.zoom_at([64.0, 64.0], 128.0, 0.5),
         Button::ZoomOut => s.view.zoom_at([64.0, 64.0], 128.0, 2.0),
         Button::Center => {
@@ -730,6 +750,7 @@ fn operate(game: &Game<'_>, button: Button) {
         Button::Back => {
             s.published = None;
             s.open = false;
+            s.mob_filter = false;
             s.drag = None;
             s.close_request = !s.return_menu;
         }
@@ -890,7 +911,7 @@ pub(super) fn render(
             if let Some(mob) = source
                 .mobs
                 .iter()
-                .filter(|m| p.mobs != 2 || m.hostile)
+                .filter(|m| p.mob_visible(&m.type_id, m.hostile))
                 .find(|m| {
                     let xy = actual.pixel_aspect([m.position[0], m.position[2]], 128.0, aspect);
                     let at = [
@@ -1032,6 +1053,7 @@ pub(super) fn render(
                     Button::Layer => ui::Icon::Layers,
                     Button::Grid => ui::Icon::Grid,
                     Button::Settings => ui::Icon::Settings,
+                    Button::Mobs => ui::Icon::People,
                     _ => ui::Icon::Close,
                 };
                 let caption = if matches!(button, Button::Layer) {
@@ -1052,6 +1074,7 @@ pub(super) fn render(
             }
         }
     }
+    draw_mob_filter(game, batch, size, screen.mouse);
     ui::finish(
         game,
         batch,
@@ -1068,6 +1091,142 @@ fn contains(rect: [f32; 4], point: [f32; 2]) -> bool {
         && point[0] < rect[0] + rect[2]
         && point[1] < rect[1] + rect[3]
 }
+fn mob_filter_rect(size: [f32; 2]) -> [f32; 4] {
+    [
+        size[0] - (size[0] - 16.0).min(230.0) - 8.0,
+        34.0,
+        (size[0] - 16.0).min(230.0),
+        (size[1] - 72.0).max(60.0),
+    ]
+}
+fn mob_filter_rows(size: [f32; 2]) -> usize {
+    ((mob_filter_rect(size)[3] - 66.0) / 20.0).max(1.0) as usize
+}
+fn mob_filter_hits(game: &Game<'_>, size: [f32; 2]) -> Vec<([f32; 4], usize, String)> {
+    let r = mob_filter_rect(size);
+    let per = mob_filter_rows(size);
+    let page = state(|s| s.mob_page.min(model::MOB_TYPES.len().div_ceil(per) - 1));
+    model::MOB_TYPES
+        .iter()
+        .enumerate()
+        .skip(page * per)
+        .take(per)
+        .enumerate()
+        .map(|(slot, (index, id))| {
+            (
+                [
+                    r[0] + 6.0,
+                    r[1] + 28.0 + slot as f32 * 20.0,
+                    r[2] - 12.0,
+                    18.0,
+                ],
+                index,
+                game.translate(&format!("entity.minecraft.{id}"), &id.replace('_', " ")),
+            )
+        })
+        .collect()
+}
+fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse: [f32; 2]) {
+    if !state(|s| s.mob_filter) {
+        return;
+    }
+    let r = mob_filter_rect(size);
+    let p = settings(game);
+    ui::fill(game, batch, r, 0xf21a2330);
+    let mode = ["Выключены", "Все категории", "Только враждебные"][p.mobs as usize];
+    ui::button(
+        game,
+        batch,
+        [r[0] + 6.0, r[1] + 4.0, r[2] - 12.0, 20.0],
+        mode,
+        false,
+        mouse,
+    );
+    for (rect, index, name) in mob_filter_hits(game, size) {
+        ui::button(
+            game,
+            batch,
+            rect,
+            &format!("{} {}", if p.mob_selected(index) { "✓" } else { "–" }, name),
+            p.mob_selected(index),
+            mouse,
+        );
+    }
+    ui::button(
+        game,
+        batch,
+        [r[0] + 6.0, r[1] + r[3] - 24.0, 28.0, 18.0],
+        "←",
+        false,
+        mouse,
+    );
+    ui::button(
+        game,
+        batch,
+        [r[0] + 38.0, r[1] + r[3] - 24.0, r[2] - 76.0, 18.0],
+        "Выбрать все",
+        false,
+        mouse,
+    );
+    ui::button(
+        game,
+        batch,
+        [r[0] + r[2] - 34.0, r[1] + r[3] - 24.0, 28.0, 18.0],
+        "→",
+        false,
+        mouse,
+    );
+}
+// Original small face glyphs: ears, muzzle and eyes remain legible on the minimap.
+fn mob_head(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    id: &str,
+    center: [f32; 2],
+    size: f32,
+    alpha: u32,
+) {
+    let id = id.strip_prefix("minecraft:").unwrap_or(id);
+    let (skin, eye, muzzle) = match id {
+        "creeper" => (0x6eae49, 0x18241a, 0x243323),
+        "zombie" | "husk" | "drowned" | "zombie_villager" => (0x63936d, 0x1c3022, 0x445d42),
+        "skeleton" | "stray" | "bogged" | "wither_skeleton" => (0xbcbcac, 0x25272a, 0x797b72),
+        "enderman" | "ender_dragon" => (0x27212f, 0xd183dd, 0x443552),
+        "pig" | "piglin" | "zombified_piglin" => (0xe7a2a6, 0x292633, 0xc9788c),
+        "cow" | "horse" | "donkey" | "llama" | "mooshroom" => (0x82614d, 0x211e22, 0xb5a392),
+        "sheep" | "polar_bear" | "iron_golem" => (0xe6e1d2, 0x2b2a2b, 0xb9a89f),
+        "wolf" | "cat" | "rabbit" | "goat" => (0xa8acaa, 0x2a2c28, 0xe3ccc2),
+        "fox" | "blaze" | "magma_cube" => (0xce813d, 0x30291f, 0xecd9b3),
+        "villager" | "wandering_trader" | "witch" => (0xaf8c72, 0x345b37, 0x825b49),
+        "spider" | "cave_spider" => (0x413934, 0xd54643, 0x28262b),
+        "slime" => (0x78be65, 0x355631, 0x578c48),
+        "chicken" => (0xe2e1d8, 0x26252a, 0xe4b352),
+        "shulker" => (0xa87ba8, 0x302131, 0xd3b38d),
+        _ => (0x8daba5, 0x263439, 0xbbc9b4),
+    };
+    let unit = size / 8.0;
+    let left = center[0] - size / 2.0;
+    let top = center[1] - size / 2.0;
+    let mut pixel = |x: f32, y: f32, w: f32, h: f32, color: u32| {
+        ui::fill(
+            game,
+            batch,
+            [left + x * unit, top + y * unit, w * unit, h * unit],
+            (alpha << 24) | color,
+        )
+    };
+    pixel(1.0, 1.0, 6.0, 6.0, skin);
+    pixel(1.0, 0.0, 2.0, 2.0, skin);
+    pixel(5.0, 0.0, 2.0, 2.0, skin);
+    pixel(2.0, 3.0, 1.0, 1.0, eye);
+    pixel(5.0, 3.0, 1.0, 1.0, eye);
+    pixel(3.0, 5.0, 2.0, 2.0, muzzle);
+    if id == "creeper" {
+        pixel(3.0, 4.0, 2.0, 2.0, eye);
+        pixel(2.0, 5.0, 1.0, 2.0, eye);
+        pixel(5.0, 5.0, 1.0, 2.0, eye);
+    }
+}
 pub(super) fn mouse(
     game: &Game<'_>,
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
@@ -1079,6 +1238,37 @@ pub(super) fn mouse(
         return false;
     }
     *canceled = true;
+    let size = [screen.rect[2], screen.rect[3]];
+    if state(|s| s.mob_filter) && !crate::game::claim_borders_seed_view::active() {
+        let r = mob_filter_rect(size);
+        if contains(r, screen.mouse) {
+            if pressed && button == 0 {
+                let mut p = settings(game);
+                if screen.mouse[1] < r[1] + 26.0 {
+                    p.mobs = (p.mobs + 1) % 3;
+                } else if screen.mouse[1] >= r[1] + r[3] - 26.0 {
+                    if screen.mouse[0] < r[0] + 36.0 {
+                        state(|s| s.mob_page = s.mob_page.saturating_sub(1));
+                    } else if screen.mouse[0] > r[0] + r[2] - 36.0 {
+                        state(|s| {
+                            s.mob_page = (s.mob_page + 1)
+                                .min(model::MOB_TYPES.len().div_ceil(mob_filter_rows(size)) - 1)
+                        });
+                    } else {
+                        p.mob_hidden = [0; 2];
+                        p.mobs = 1;
+                    }
+                } else if let Some((_, index, _)) = mob_filter_hits(game, size)
+                    .into_iter()
+                    .find(|(r, _, _)| contains(*r, screen.mouse))
+                {
+                    p.toggle_mob(index);
+                }
+                configure(game, p);
+            }
+            return true;
+        }
+    }
     if crate::game::claim_borders_seed_view::mouse(game, screen, button, pressed) {
         return true;
     }
@@ -1209,6 +1399,18 @@ pub(super) fn scroll(
         return false;
     }
     *canceled = true;
+    let size = [screen.rect[2], screen.rect[3]];
+    if state(|s| s.mob_filter) && contains(mob_filter_rect(size), screen.mouse) {
+        if amount.is_finite() && amount != 0.0 {
+            state(|s| {
+                s.mob_page = s
+                    .mob_page
+                    .saturating_add_signed(if amount > 0.0 { -1 } else { 1 })
+                    .min(model::MOB_TYPES.len().div_ceil(mob_filter_rows(size)) - 1)
+            });
+        }
+        return true;
+    }
     if crate::game::claim_borders_seed_view::scroll(game, screen, amount) {
         return true;
     }
@@ -1239,6 +1441,10 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         return false;
     }
     *canceled = true;
+    if key == "key.keyboard.escape" && state(|s| s.mob_filter) {
+        state(|s| s.mob_filter = false);
+        return true;
+    }
     if crate::game::claim_borders_seed_view::key(game, key) {
         return true;
     }

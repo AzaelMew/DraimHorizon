@@ -14,8 +14,6 @@ use std::{
 };
 #[derive(Clone)]
 pub enum Action {
-    Setting(&'static str, i64),
-    Defaults,
     Refresh(Option<String>),
     Worth(String),
     Watch(String),
@@ -40,18 +38,14 @@ enum Hit {
     Target,
     Row(String, Option<u64>),
     Page(i32),
-    Group(u8),
-    Adjust(&'static str, i64),
     Run(Action),
 }
 struct State {
     open: bool,
     tab: u8,
-    sort: [Sort; 6],
+    sort: [Sort; 5],
     sort_menu: bool,
     page: usize,
-    group: u8,
-    settings_page: usize,
     item: Option<String>,
     listing: Option<u64>,
     search: edit::Menu,
@@ -76,18 +70,9 @@ impl Default for State {
         Self {
             open: false,
             tab: 0,
-            sort: [
-                Sort::Name,
-                Sort::Name,
-                Sort::Unit,
-                Sort::Profit,
-                Sort::Unit,
-                Sort::Name,
-            ],
+            sort: [Sort::Name, Sort::Name, Sort::Unit, Sort::Profit, Sort::Unit],
             sort_menu: false,
             page: 0,
-            group: 0,
-            settings_page: 0,
             item: None,
             listing: None,
             search: editor(),
@@ -322,7 +307,7 @@ pub(super) fn render(
             false,
             screen.mouse,
         );
-        let tabs = ["Обзор", "Цены", "Аукц.", "Прибыль", "План", "Опции"];
+        let tabs = ["Обзор", "Цены", "Аукцион", "Прибыль", "План"];
         let tw = (w - 16.0) / tabs.len() as f32;
         for (i, text) in tabs.iter().enumerate() {
             button(
@@ -337,110 +322,19 @@ pub(super) fn render(
             );
         }
         data::read(|book, p, status, own| {
-            if s.tab == 5 {
-                let groups = ["Модули", "HUD", "Сбор", "Расчёт", "Сборы", "Sidebar", "Tab"];
-                let gw = (w - 16.0) / groups.len() as f32;
-                for (i, g) in groups.iter().enumerate() {
-                    button(
-                        game,
-                        batch,
-                        s,
-                        [8.0 + i as f32 * gw, 56.0, gw - 2.0, 18.0],
-                        g,
-                        Hit::Group(i as u8),
-                        s.group == i as u8,
-                        screen.mouse,
-                    );
-                }
-                let settings: Vec<_> = model::SETTINGS
-                    .iter()
-                    .filter(|v| v.group == s.group)
-                    .collect();
-                let per = (((h - 130.0) / 24.0).floor() as usize).clamp(2, 12);
-                let pages = settings.len().div_ceil(per).max(1);
-                s.settings_page = s.settings_page.min(pages - 1);
-                for (i, setting) in settings
-                    .iter()
-                    .skip(s.settings_page * per)
-                    .take(per)
-                    .enumerate()
-                {
-                    let y = 82.0 + i as f32 * 24.0;
-                    let number = p.get(setting.key);
-                    let text = if setting.max == 1 {
-                        format!(
-                            "{}: {}",
-                            setting.label,
-                            if number != 0 { "вкл." } else { "выкл." }
-                        )
-                    } else {
-                        format!("{}: {number}", setting.label)
-                    };
-                    label(game, batch, &text, [12.0, y + 5.0], w - 88.0, 0xd3dee8);
-                    button(
-                        game,
-                        batch,
-                        s,
-                        [w - 68.0, y, 26.0, 18.0],
-                        "−",
-                        Hit::Adjust(setting.key, -1),
-                        false,
-                        screen.mouse,
-                    );
-                    button(
-                        game,
-                        batch,
-                        s,
-                        [w - 38.0, y, 26.0, 18.0],
-                        "+",
-                        Hit::Adjust(setting.key, 1),
-                        false,
-                        screen.mouse,
-                    );
-                }
-                button(
-                    game,
-                    batch,
-                    s,
-                    [8.0, h - 48.0, 35.0, 18.0],
-                    "←",
-                    Hit::Page(-1),
-                    false,
-                    screen.mouse,
-                );
-                label(
-                    game,
-                    batch,
-                    &format!("{} / {pages}", s.settings_page + 1),
-                    [50.0, h - 43.0],
-                    90.0,
-                    0xd1dce7,
-                );
-                button(
-                    game,
-                    batch,
-                    s,
-                    [112.0, h - 48.0, 35.0, 18.0],
-                    "→",
-                    Hit::Page(1),
-                    false,
-                    screen.mouse,
-                );
-                button(
-                    game,
-                    batch,
-                    s,
-                    [w - 160.0, h - 48.0, 150.0, 18.0],
-                    "Сброс опций экономики",
-                    Hit::Run(Action::Defaults),
-                    false,
-                    screen.mouse,
-                );
-            } else if s.tab == 0 {
+            if s.tab == 0 {
                 let width = w - 24.0;
                 let x = 12.0;
                 let mut y = 66.0;
-                line(game, batch, x, &mut y, width, "Рынок и аукцион", 0xe1eaf1);
+                line(
+                    game,
+                    batch,
+                    x,
+                    &mut y,
+                    width,
+                    &format!("Баланс: {} монет", value(book.balance.map(|(v, _)| v))),
+                    0xe7ce95,
+                );
                 line(
                     game,
                     batch,
@@ -544,7 +438,7 @@ pub(super) fn render(
                         &mut y,
                         width,
                         &format!(
-                            "По лимитам сейчас можно продать {} из {} шт. · подробнее в Профит",
+                            "По лимитам сейчас можно продать {} из {} шт. · подробнее в Прибыль",
                             o.quantity, o.listing.count
                         ),
                         0x94b5ca,
@@ -565,7 +459,7 @@ pub(super) fn render(
                         x,
                         &mut y,
                         width,
-                        "В Профит видны расчёты и причины, мешающие продаже.",
+                        "В Прибыль видны расчёты и причины, мешающие продаже.",
                         0x94b5ca,
                     );
                 }
@@ -1023,7 +917,7 @@ pub(super) fn render(
                                         rx,
                                         &mut y,
                                         rw,
-                                        "Уточните комиссии в Опции → Сборы",
+                                        "Комиссии: Настройки → Торги",
                                         0xe4c18b,
                                     );
                                 }
@@ -1178,7 +1072,7 @@ pub(super) fn render(
             }
         });
     });
-    let variant = state(|s| format!("{}:{}", s.tab, s.group));
+    let variant = state(|s| s.tab.to_string());
     ui::finish(game, batch, start, "economy", &variant);
     batch.clip_since(start, 0.0, 0.0, w, h);
     for vertex in &mut batch.vertices[start..] {
@@ -1248,17 +1142,8 @@ pub(super) fn mouse(
                 s.token = s.token.wrapping_add(1);
             }
             Some(Hit::Page(dir)) => {
-                if s.tab == 5 {
-                    s.settings_page = s.settings_page.saturating_add_signed(dir as isize);
-                } else {
-                    s.page = s.page.saturating_add_signed(dir as isize);
-                }
+                s.page = s.page.saturating_add_signed(dir as isize);
             }
-            Some(Hit::Group(g)) => {
-                s.group = g;
-                s.settings_page = 0;
-            }
-            Some(Hit::Adjust(key, dir)) => add(s, Action::Setting(key, dir)),
             Some(Hit::Run(a)) => add(s, a),
             None => s.focus = 0,
         }
@@ -1344,11 +1229,7 @@ pub(super) fn scroll(delta: f64, canceled: &mut bool) -> bool {
     *canceled = true;
     state(|s| {
         let d = if delta > 0.0 { -1 } else { 1 };
-        if s.tab == 5 {
-            s.settings_page = s.settings_page.saturating_add_signed(d);
-        } else {
-            s.page = s.page.saturating_add_signed(d);
-        }
+        s.page = s.page.saturating_add_signed(d);
     });
     true
 }

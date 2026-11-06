@@ -490,6 +490,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                         let hostile = map::mob_group(&m.kind.id, &m.kind.category)?;
                         let pos = m.previous.lerp(m.position, game.clock.fraction());
                         Some(map::MobMark {
+                            type_id: m.kind.id.clone(),
                             position: [pos.x, pos.y, pos.z],
                             hostile,
                             label: m
@@ -1163,6 +1164,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     "другой мир".into()
                 }
             ),
+            owner: c.owner,
+            foreign: c.foreign,
             dimension: c.dimension,
             x: c.x,
             z: c.z,
@@ -1218,8 +1221,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     .any(|peer| peer.uuid == friend.uuid && peer.code != code);
                 let detail = if changed {
                     "Ключ изменился — добавьте заново".into()
-                } else if let Some(s) = live.iter().find(|s| s.uuid == friend.uuid) {
-                    format!("Друг · {:.0}% HP", s.health_percent)
+                } else if live.iter().any(|s| s.uuid == friend.uuid) {
+                    "Друг · в сети".into()
                 } else if present {
                     "Друг · синхронизация…".into()
                 } else {
@@ -1364,6 +1367,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             experimental_status: crate::game::claim_borders_ore_view::status(),
             map_preferences,
             claim_rows,
+            economy_preferences: crate::game::claim_borders_economy_client::read(|_, p, _, _| {
+                p.clone()
+            }),
         }
     })
 }
@@ -1506,6 +1512,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetChat(preferences) => {
             crate::game::claim_borders_chat_view::configure(game, preferences);
+            Ok(Vec::new())
+        }
+        Action::Appearance => {
+            crate::game::claim_borders_ui_view::open_settings(game);
+            Ok(Vec::new())
+        }
+        Action::EconomySetting(key, dir) => {
+            crate::game::claim_borders_economy_client::configure(game, key, dir);
             Ok(Vec::new())
         }
         Action::OpenEconomy => {
