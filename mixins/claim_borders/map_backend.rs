@@ -98,22 +98,9 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
             p.position.y + f64::from(p.dimensions.eye_height)
         })
         .floor() as i32;
-    let covered = game.world.light(
-        request.source.player[0].floor() as i32,
-        head,
-        request.source.player[2].floor() as i32,
-    ) >> 4
-        == 0;
-    let scan_layer = match request.preferences.layer {
-        model::Layer::Surface => Layer::Surface,
-        model::Layer::Cave => Layer::Below(head),
-        model::Layer::Auto => {
-            if covered || game.dim == Dim::Nether {
-                Layer::Below(head)
-            } else {
-                Layer::Surface
-            }
-        }
+    let scan_layer = match request.preferences.layer.scan_ceiling(head) {
+        None => Layer::Surface,
+        Some(ceiling) => Layer::Below(ceiling),
     };
     let layer_id = match scan_layer {
         Layer::Surface => i32::MAX,
@@ -212,11 +199,7 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
     }
     let context = history::Context {
         dimension: request.dimension.clone(),
-        layer: if request.dimension == request.source.dimension {
-            layer_id
-        } else {
-            i32::MAX
-        },
+        layer: layer_id,
         ..live_context
     };
     cache.context = Some(context.clone());
@@ -290,7 +273,8 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 shading: request.preferences.shading,
             },
             full: request.full,
-            browse_saved_layer: request.dimension != request.source.dimension,
+            browse_saved_layer: request.preferences.layer == model::Layer::Cave
+                && request.dimension != request.source.dimension,
         });
     }
     true

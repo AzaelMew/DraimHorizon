@@ -3,22 +3,30 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layer {
-    #[default]
+    // Legacy value 0 is retained for old settings, but no longer auto-selects caves.
     Auto,
+    #[default]
     Surface,
     Cave,
 }
 impl Layer {
     pub fn next(self) -> Self {
         match self {
-            Self::Auto => Self::Surface,
+            Self::Auto | Self::Cave => Self::Surface,
             Self::Surface => Self::Cave,
-            Self::Cave => Self::Auto,
+        }
+    }
+    /// A surface scan never depends on player Y. Explicit caves share one canonical
+    /// ceiling per saved 16-block band, so single-block movement cannot invalidate tiles.
+    pub fn scan_ceiling(self, head: i32) -> Option<i32> {
+        match self {
+            Self::Auto | Self::Surface => None,
+            Self::Cave => Some(head.div_euclid(16) * 16 + 15),
         }
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Auto => "Авто",
+            Self::Auto => "Поверхность",
             Self::Surface => "Поверхность",
             Self::Cave => "Пещеры",
         }
@@ -82,7 +90,7 @@ impl Default for Preferences {
             zoom: 2.0,
             grid: false,
             coordinates: true,
-            layer: Layer::Auto,
+            layer: Layer::Surface,
             marks: true,
             own: true,
             friends: true,
@@ -101,6 +109,9 @@ impl Default for Preferences {
 }
 impl Preferences {
     pub fn normalized(mut self) -> Self {
+        if self.layer == Layer::Auto {
+            self.layer = Layer::Surface;
+        }
         self.corner %= 4;
         self.profile %= 8;
         self.mobs %= 3;
@@ -145,7 +156,7 @@ impl Preferences {
             layer: match v["layer"].as_u64() {
                 Some(1) => Layer::Surface,
                 Some(2) => Layer::Cave,
-                _ => Layer::Auto,
+                _ => Layer::Surface,
             },
             marks: flag("marks", true),
             own: flag("own", true),
@@ -449,6 +460,44 @@ pub fn paint_aspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn surface_maps_and_legacy_auto_settings_are_independent_of_player_height() {
+        assert_eq!(Preferences::default().layer, Layer::Surface);
+        for raw in [
+            r#"{"schema":1}"#,
+            r#"{"schema":1,"layer":0}"#,
+            r#"{"schema":1,"layer":1}"#,
+        ] {
+            let p = Preferences::decode(raw).unwrap();
+            assert_eq!(p.layer, Layer::Surface);
+            for head in -64..=320 {
+                assert_eq!(p.layer.scan_ceiling(head), None);
+            }
+        }
+        assert_eq!(
+            Preferences {
+                layer: Layer::Auto,
+                ..Preferences::default()
+            }
+            .normalized()
+            .layer,
+            Layer::Surface
+        );
+        assert_eq!(Layer::Auto.scan_ceiling(12), None);
+        assert_eq!(Layer::Surface.next(), Layer::Cave);
+        assert_eq!(Layer::Cave.next(), Layer::Surface);
+    }
+    #[test]
+    fn explicit_cave_scans_are_stable_within_positive_and_negative_height_bands() {
+        let p = Preferences::decode(r#"{"schema":1,"layer":2}"#).unwrap();
+        assert_eq!(p.layer, Layer::Cave);
+        assert_eq!(Preferences::decode(&p.encode()).unwrap().layer, Layer::Cave);
+        for band in -4..20 {
+            for head in band * 16..band * 16 + 16 {
+                assert_eq!(p.layer.scan_ceiling(head), Some(band * 16 + 15));
+            }
+        }
+    }
     #[test]
     fn radar_includes_living_categories_and_excludes_players_and_items() {
         assert_eq!(mob_group("minecraft:zombie", "monster"), Some(true));

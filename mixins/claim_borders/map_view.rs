@@ -1034,13 +1034,19 @@ pub(super) fn render(
                     Button::Settings => ui::Icon::Settings,
                     _ => ui::Icon::Close,
                 };
+                let caption = if matches!(button, Button::Layer) {
+                    format!("Рельеф: {}", p.layer.label())
+                } else {
+                    caption
+                };
                 tool(
                     game,
                     batch,
                     r,
                     &caption,
                     icon,
-                    matches!(button, Button::Grid) && p.grid,
+                    (matches!(button, Button::Grid) && p.grid)
+                        || (matches!(button, Button::Layer) && p.layer == model::Layer::Cave),
                     screen.mouse,
                 );
             }

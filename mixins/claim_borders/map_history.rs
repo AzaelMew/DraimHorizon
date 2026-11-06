@@ -349,7 +349,7 @@ impl Store {
         dims.into_iter().collect()
     }
     pub fn saved_context(&mut self, c: &Context) -> Context {
-        if !c.persistent {
+        if !c.persistent || c.layer == i32::MAX {
             return c.clone();
         }
         if let Ok(id) = self.catalog(c)
@@ -361,6 +361,7 @@ impl Store {
             v.context.scope == c.scope
                 && v.context.dimension == c.dimension
                 && v.context.persistent
+                && v.context.layer != i32::MAX
                 && !v.regions.is_empty()
         }) {
             return found.context.clone();
@@ -374,6 +375,7 @@ impl Store {
                     && v[0].as_str() == Some(c.scope.as_str())
                     && v[1].as_str() == Some(c.dimension.as_str())
                     && let Some(layer) = v[2].as_i64().and_then(|n| i32::try_from(n).ok())
+                    && layer != i32::MAX
                 {
                     return Context { layer, ..c.clone() };
                 }
@@ -875,7 +877,7 @@ mod tests {
         assert!(Region::decode(&duplicate, (-1, 2)).is_err());
     }
     #[test]
-    fn browsing_saved_dimension_finds_its_cave_layer_after_restart() {
+    fn saved_surface_never_falls_back_to_caves_after_restart() {
         let dir = Dir::new();
         let c = Context {
             dimension: "custom:moon".into(),
@@ -887,11 +889,19 @@ mod tests {
         store.flush().unwrap();
         drop(store);
         let mut store = Store::new(dir.0.clone(), palette());
-        let wanted = Context {
+        let surface = Context {
             layer: i32::MAX,
             ..c.clone()
         };
+        assert_eq!(store.saved_context(&surface), surface);
+        let wanted = Context {
+            layer: 6,
+            ..c.clone()
+        };
         assert_eq!(store.saved_context(&wanted), c);
+        assert_eq!(store.saved_context(&surface), surface);
+        // A cached cave must not become a surface after the first lookup either.
+        assert_eq!(store.saved_context(&surface), surface);
         assert!(store.dimensions(&c.scope).contains(&"custom:moon".into()));
     }
 }
