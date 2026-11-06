@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.18.0"
+version = "0.19.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -810,3 +810,9 @@ id = "seed-view"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_seed_view"
 source = "seed_view.rs"
+
+[[module]]
+id = "terrain-colors"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_terrain_colors"
+source = "terrain_colors.rs"

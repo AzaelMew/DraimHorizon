@@ -18,6 +18,7 @@ struct Cache {
     worker: Option<worker::Handle>,
     seen: BTreeMap<(i32, i32), u64>,
     context: Option<history::Context>,
+    texture_generation: u64,
 }
 fn state() -> &'static Mutex<Cache> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
@@ -31,6 +32,7 @@ fn state() -> &'static Mutex<Cache> {
             worker: None,
             seen: BTreeMap::new(),
             context: None,
+            texture_generation: 0,
         })
     })
 }
@@ -80,6 +82,14 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 return false;
             }
         }
+    }
+    let texture_palette = crate::game::claim_borders_terrain_colors::palette(game);
+    if let Some((generation, _)) = &texture_palette
+        && *generation != cache.texture_generation
+    {
+        cache.texture_generation = *generation;
+        cache.seen.clear();
+        cache.captured_at = Instant::now() - Duration::from_secs(86400);
     }
     let head = game
         .player
@@ -157,6 +167,7 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 (
                     at,
                     history::Tile {
+                        rgb: [0; 256],
                         color: *c,
                         height: *h,
                         depth: *d,
@@ -164,10 +175,24 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 )
             })
             .collect();
-        for (at, tile) in tiles {
+        let mut captured = 0;
+        for (at, mut tile) in tiles {
             let stamp = tile.fingerprint();
             if cache.seen.get(&at) == Some(&stamp) {
                 continue;
+            }
+            if captured >= 16 {
+                accepted = false;
+                continue;
+            }
+            captured += 1;
+            if let Some((_, palette)) = &texture_palette {
+                tile.rgb = crate::game::claim_borders_terrain_colors::tile(
+                    game,
+                    at,
+                    &tile.height,
+                    palette,
+                );
             }
             if cache.worker.as_ref().unwrap().tile(&live_context, at, tile) {
                 cache.seen.insert(at, stamp);

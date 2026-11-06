@@ -20,6 +20,7 @@ fn claim_borders_menu_char(game: &crate::game::Game<'_>, c: char, canceled: &mut
         return;
     }
     if crate::game::claim_borders_map_view::visible() {
+        crate::game::claim_borders_seed_view::character(c);
         *canceled = true;
         return;
     }

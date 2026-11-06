@@ -275,6 +275,7 @@ mod tests {
             Tile {
                 color: [1; 256],
                 height: [64; 256],
+                rgb: [0; 256],
                 depth: [0; 256]
             }
         ));

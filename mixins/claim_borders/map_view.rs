@@ -23,6 +23,7 @@ struct State {
     drag: Option<Drag>,
     rect: Option<[f32; 4]>,
     published: Option<(String, model::View, f32)>,
+    displayed: Option<(String, model::View, f32)>,
     dimensions: Vec<String>,
     history_warning: Option<String>,
     left_click: Option<(std::time::Instant, [f32; 2], String)>,
@@ -49,6 +50,7 @@ impl Default for State {
             drag: None,
             rect: None,
             published: None,
+            displayed: None,
             dimensions: Vec::new(),
             history_warning: None,
             left_click: None,
@@ -104,6 +106,7 @@ pub(super) fn reset() {
         s.dimensions.clear();
         s.history_warning = None;
         s.open = false;
+        s.displayed = None;
         s.drag = None;
         s.rect = None;
         s.published = None;
@@ -149,6 +152,7 @@ pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, r
         }
         s.source = Some(source);
         s.published = None;
+        s.displayed = None;
         s.open = true;
         s.return_menu = return_menu;
         s.drag = None;
@@ -524,7 +528,7 @@ enum Button {
     Center,
     Death,
     Fit,
-    Dimension,
+    Dimension(usize),
     Seed,
     Grid,
     Settings,
@@ -532,38 +536,64 @@ enum Button {
     Back,
 }
 fn map_rect(size: [f32; 2]) -> [f32; 4] {
-    [
-        6.0,
-        30.0,
-        (size[0] - 12.0).max(100.0),
-        (size[1] - 88.0).max(80.0),
-    ]
+    crate::game::claim_borders_seed_map::map_rect(size)
 }
 fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
-    let width = (size[0] - 12.0) / 11.0;
-    [
-        (Button::ZoomOut, "−"),
+    let mut out: Vec<_> = [
         (Button::ZoomIn, "+"),
+        (Button::ZoomOut, "−"),
         (Button::Center, "К себе"),
         (Button::Death, "Смерть"),
         (Button::Fit, "Зоны"),
-        (Button::Dimension, "Мир"),
-        (Button::Seed, "Seed Map"),
         (Button::Layer, "Рельеф"),
         (Button::Grid, "Сетка"),
-        (Button::Settings, "Опции"),
-        (Button::Back, "Закрыть"),
+        (Button::Settings, "Настройки"),
     ]
     .into_iter()
     .enumerate()
-    .map(|(i, (b, text))| {
+    .map(|(i, (button, label))| {
         (
-            b,
-            [6.0 + i as f32 * width, size[1] - 24.0, width - 2.0, 18.0],
-            text.into(),
+            button,
+            crate::game::claim_borders_seed_map::tool_rect(size, i),
+            label.into(),
         )
     })
-    .collect()
+    .collect();
+    out.push((Button::Seed, [128.0, 4.0, 80.0, 22.0], "Seed Map".into()));
+    out.push((
+        Button::Back,
+        [size[0] - 28.0, 4.0, 22.0, 22.0],
+        "Закрыть".into(),
+    ));
+    for (i, label) in ["Обычный мир", "Незер", "Край"].into_iter().enumerate() {
+        out.push((
+            Button::Dimension(i),
+            crate::game::claim_borders_seed_map::dimension_rect(size, i),
+            label.into(),
+        ));
+    }
+    out
+}
+pub(super) fn tool(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    caption: &str,
+    icon: ui::Icon,
+    selected: bool,
+    mouse: [f32; 2],
+) {
+    ui::button_base(game, batch, rect, caption, selected, mouse);
+    ui::icon(
+        game,
+        batch,
+        icon,
+        [rect[0] + 5.0, rect[1] + 5.0, rect[2] - 10.0, rect[3] - 10.0],
+        if selected { 0x88d9bd } else { 0xd2dce4 },
+    );
+    if contains(rect, mouse) {
+        ui::tooltip(game, batch, caption, mouse);
+    }
 }
 pub(super) fn map_frame(
     game: &Game<'_>,
@@ -631,9 +661,7 @@ pub(super) fn map_frame(
 }
 fn operate(game: &Game<'_>, button: Button) {
     if matches!(button, Button::Seed) {
-        if let Some(source) = seed_source() {
-            crate::game::claim_borders_seed_view::open(&source, &None);
-        }
+        crate::game::claim_borders_seed_view::show();
         return;
     }
     if matches!(button, Button::Layer) {
@@ -693,22 +721,11 @@ fn operate(game: &Game<'_>, button: Button) {
                 }
             }
         }
-        Button::Dimension => {
-            if let Some(source) = &s.source {
-                let mut dimensions: BTreeSet<_> =
-                    source.cells.iter().map(|c| c.dimension.clone()).collect();
-                dimensions.extend(source.marks.iter().map(|m| m.dimension.clone()));
-                dimensions.extend(s.dimensions.iter().cloned());
-                dimensions.extend(game.level.last_death.iter().map(|(dim, _)| dim.clone()));
-                dimensions.insert(source.dimension.clone());
-                let dimensions: Vec<_> = dimensions.into_iter().collect();
-                let current = dimensions
-                    .iter()
-                    .position(|d| d == &s.dimension)
-                    .unwrap_or(0);
-                s.dimension = dimensions[(current + 1) % dimensions.len()].clone();
-                s.follow = false;
-            }
+        Button::Dimension(i) => {
+            s.dimension = crate::game::claim_borders_seed_map::DIMENSIONS[i].into();
+            s.follow = false;
+            s.drag = None;
+            s.published = None;
         }
         Button::Back => {
             s.published = None;
@@ -762,6 +779,9 @@ pub(super) fn render(
             .as_ref()
             .filter(|(dim, _, _)| dim == &s.dimension)
             .cloned();
+        s.displayed = image
+            .as_ref()
+            .map(|_| (s.dimension.clone(), s.view, rect[2] / rect[3]));
         (
             s.source.clone(),
             s.dimension.clone(),
@@ -771,32 +791,8 @@ pub(super) fn render(
         )
     });
     ui::fill(game, batch, screen.rect, 0xff101821);
-    label(
-        game,
-        batch,
-        &format!("КАРТА МИРА · {}", model::dimension_label(&dimension)),
-        [8.0, 10.0],
-        size[0] * 0.7,
-        0xe3e9ed,
-    );
-    label(
-        game,
-        batch,
-        &format!(
-            "{} · {}",
-            p.layer.label(),
-            if p.remember {
-                "Сохранение вкл."
-            } else {
-                "Без записи"
-            }
-        ),
-        [size[0] * 0.7, 10.0],
-        size[0] * 0.3 - 8.0,
-        0x9fadb9,
-    );
     ui::fill(game, batch, rect, 0xff18212c);
-    if image.is_some() {
+    if let Some((_, old, old_aspect)) = &image {
         if let Some(texture) = game
             .gui
             .atlas
@@ -804,7 +800,31 @@ pub(super) fn render(
             .get("claim_borders/world_map")
             .copied()
         {
-            batch.rect_uv(rect[0], rect[1], rect[2], rect[3], texture, u32::MAX);
+            let aspect = rect[2] / rect[3];
+            let corners = [[0.0, 0.0], [128.0, 128.0]].map(|xy| {
+                let world = old.world_aspect(xy, 128.0, *old_aspect);
+                let at = view.pixel_aspect(world, 128.0, aspect);
+                [
+                    rect[0] + at[0] / 128.0 * rect[2],
+                    rect[1] + at[1] / 128.0 * rect[3],
+                ]
+            });
+            let first = batch.vertices.len();
+            batch.rect_uv(
+                corners[0][0],
+                corners[0][1],
+                corners[1][0] - corners[0][0],
+                corners[1][1] - corners[0][1],
+                texture,
+                u32::MAX,
+            );
+            batch.clip_since(
+                first,
+                rect[0],
+                rect[1],
+                rect[0] + rect[2],
+                rect[1] + rect[3],
+            );
         }
     } else {
         label(
@@ -816,7 +836,13 @@ pub(super) fn render(
             0x9fadb9,
         );
     }
-    let (actual, aspect) = image.map_or((view, rect[2] / rect[3]), |(_, v, a)| (v, a));
+    ui::fill(
+        game,
+        batch,
+        [0.0, size[1] - 32.0, size[0], 32.0],
+        0xf0151e27,
+    );
+    let (actual, aspect) = (view, rect[2] / rect[3]);
     if let Some(source) = source {
         map_marks(
             game, batch, &source, &dimension, actual, rect, p, true, aspect,
@@ -933,7 +959,7 @@ pub(super) fn render(
             game,
             batch,
             &text,
-            [8.0, size[1] - 52.0],
+            [8.0, size[1] - 25.0],
             size[0] - 16.0,
             0xc7d3df,
         );
@@ -966,7 +992,7 @@ pub(super) fn render(
             game,
             batch,
             &info,
-            [8.0, size[1] - 40.0],
+            [8.0, size[1] - 12.0],
             size[0] - 16.0,
             if warning.is_some() {
                 0xe7ad75
@@ -976,8 +1002,49 @@ pub(super) fn render(
         );
     }
     map_frame(game, batch, rect, actual, aspect, false);
-    for (_, r, caption) in buttons(size) {
-        ui::button(game, batch, r, &caption, false, screen.mouse);
+    ui::fill(game, batch, [0.0, 0.0, size[0], rect[1]], 0xf0151e27);
+    ui::button(
+        game,
+        batch,
+        [6.0, 4.0, 118.0, 22.0],
+        "Исследованная",
+        true,
+        screen.mouse,
+    );
+    for (button, r, caption) in buttons(size) {
+        match button {
+            Button::Dimension(i) => ui::button(
+                game,
+                batch,
+                r,
+                &caption,
+                dimension == crate::game::claim_borders_seed_map::DIMENSIONS[i],
+                screen.mouse,
+            ),
+            Button::Seed => ui::button(game, batch, r, &caption, false, screen.mouse),
+            _ => {
+                let icon = match button {
+                    Button::ZoomIn => ui::Icon::Plus,
+                    Button::ZoomOut => ui::Icon::Minus,
+                    Button::Center => ui::Icon::Home,
+                    Button::Death => ui::Icon::Close,
+                    Button::Fit => ui::Icon::Shield,
+                    Button::Layer => ui::Icon::Layers,
+                    Button::Grid => ui::Icon::Grid,
+                    Button::Settings => ui::Icon::Settings,
+                    _ => ui::Icon::Close,
+                };
+                tool(
+                    game,
+                    batch,
+                    r,
+                    &caption,
+                    icon,
+                    matches!(button, Button::Grid) && p.grid,
+                    screen.mouse,
+                );
+            }
+        }
     }
     ui::finish(
         game,
@@ -1013,13 +1080,20 @@ pub(super) fn mouse(
         state(|s| s.drag = None);
         return true;
     }
+    if button == 1
+        && buttons([screen.rect[2], screen.rect[3]])
+            .iter()
+            .any(|(_, r, _)| contains(*r, screen.mouse))
+    {
+        return true;
+    }
     if button == 1 {
         let point = state(|s| {
             let rect = s.rect?;
             if !contains(rect, screen.mouse) {
                 return None;
             }
-            let (dimension, view, aspect) = s.published.clone()?;
+            let (dimension, view, aspect) = s.displayed.clone()?;
             if dimension != s.dimension {
                 return None;
             }
@@ -1067,7 +1141,7 @@ pub(super) fn mouse(
                 if !contains(rect, screen.mouse) {
                     return None;
                 }
-                let (dimension, view, aspect) = s.published.clone()?;
+                let (dimension, view, aspect) = s.displayed.clone()?;
                 if dimension != s.dimension {
                     return None;
                 }
@@ -1129,7 +1203,7 @@ pub(super) fn scroll(
         return false;
     }
     *canceled = true;
-    if crate::game::claim_borders_seed_view::scroll(screen, amount) {
+    if crate::game::claim_borders_seed_view::scroll(game, screen, amount) {
         return true;
     }
     state(|s| {

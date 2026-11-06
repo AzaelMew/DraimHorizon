@@ -1,10 +1,10 @@
-// Three independent map viewports and a scrollable, persistent layer sidebar.
+// Fullscreen seed atlas with dimension tabs, searchable icon filters and native item markers.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_map as map, claim_borders_map_view as terrain,
     claim_borders_seed_map as model, claim_borders_seed_worker as worker,
     claim_borders_ui_view as ui,
 };
-use horizon_client::hud::HudBatch;
+use horizon_client::{hud::HudBatch, items::ItemStack};
 use std::sync::{Mutex, OnceLock};
 struct State {
     active: bool,
@@ -12,21 +12,26 @@ struct State {
     preferences: model::Preferences,
     views: [map::View; 3],
     selected: usize,
-    drag: Option<(usize, [f32; 2], [f64; 2])>,
-    rects: [[f32; 4]; 3],
+    drag: Option<([f32; 2], [f64; 2])>,
+    rect: [f32; 4],
     size: [f32; 2],
-    offset: usize,
     scope: String,
     worker: Option<worker::Handle>,
     requested: Option<worker::Query>,
     image: Option<worker::Image>,
     error: Option<String>,
+    filters: bool,
+    group: Option<model::Group>,
+    search: String,
+    search_focus: bool,
+    offset: usize,
+    biome_tab: bool,
     right_click: Option<(std::time::Instant, usize, [f32; 2])>,
 }
 impl Default for State {
     fn default() -> Self {
         Self {
-            active: true,
+            active: false,
             loaded: false,
             preferences: model::Preferences::default(),
             views: [map::View {
@@ -35,14 +40,19 @@ impl Default for State {
             }; 3],
             selected: 0,
             drag: None,
-            rects: [[0.0; 4]; 3],
+            rect: [0.0; 4],
             size: [0.0; 2],
-            offset: 0,
             scope: String::new(),
             worker: None,
             requested: None,
             image: None,
             error: None,
+            filters: false,
+            group: None,
+            search: String::new(),
+            search_focus: false,
+            offset: 0,
+            biome_tab: false,
             right_click: None,
         }
     }
@@ -62,18 +72,22 @@ pub(super) fn reset() {
         if let Some(w) = &s.worker {
             w.cancel();
         }
+        s.active = false;
         s.image = None;
         s.requested = None;
         s.drag = None;
         s.right_click = None;
         s.scope.clear();
+        s.search_focus = false;
     });
 }
-pub(super) fn open(source: &map::Snapshot, focus: &Option<(String, i32, i32)>) {
+/// Opening M always prepares the seed atlas in the background, with explored terrain selected.
+pub(super) fn open(source: &map::Snapshot, _focus: &Option<(String, i32, i32)>) {
     state(|s| {
-        s.active = focus.is_none();
+        s.active = false;
         s.drag = None;
         s.right_click = None;
+        s.search_focus = false;
         let nether = source.dimension == model::DIMENSIONS[1];
         s.views = std::array::from_fn(|i| {
             let factor = if nether && i == 0 {
@@ -83,12 +97,12 @@ pub(super) fn open(source: &map::Snapshot, focus: &Option<(String, i32, i32)>) {
             } else {
                 1.0
             };
-            let mut view = map::View {
+            let mut v = map::View {
                 center: [source.player[0] * factor, source.player[2] * factor],
                 blocks_per_pixel: 16.0,
             };
-            view.constrain();
-            view
+            v.constrain();
+            v
         });
         s.selected = model::DIMENSIONS
             .iter()
@@ -96,96 +110,292 @@ pub(super) fn open(source: &map::Snapshot, focus: &Option<(String, i32, i32)>) {
             .unwrap_or(0);
     });
 }
-fn text(
-    game: &Game<'_>,
-    batch: &mut HudBatch,
-    caption: &str,
-    pos: [f32; 2],
-    width: f32,
-    color: u32,
-) {
-    terrain::label(game, batch, caption, pos, width, color);
+pub(super) fn show() {
+    state(|s| {
+        s.active = true;
+        s.requested = None;
+        s.drag = None;
+    });
 }
-fn sidebar(size: [f32; 2]) -> [f32; 4] {
-    [size[0] - 126.0, 53.0, 120.0, (size[1] - 91.0).max(1.0)]
+fn text(game: &Game<'_>, batch: &mut HudBatch, value: &str, pos: [f32; 2], width: f32, color: u32) {
+    terrain::label(game, batch, value, pos, width, color);
 }
-fn controls(size: [f32; 2]) -> Vec<([f32; 4], &'static str)> {
-    [
-        "−",
-        "+",
-        "К себе",
-        "Исследованная",
-        "Настройки J",
-        "Закрыть M",
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(i, t)| {
-        (
-            [
-                6.0 + i as f32 * ((size[0] - 12.0) / 6.0),
-                size[1] - 23.0,
-                (size[0] - 12.0) / 6.0 - 3.0,
-                17.0,
-            ],
-            t,
-        )
-    })
-    .collect()
+fn save(game: &Game<'_>, s: &State) {
+    game.native_set_setting(claims::ID, "seed_map", &s.preferences.encode());
 }
-fn rows(s: &State) -> Vec<([f32; 4], usize, String)> {
-    let r = sidebar(s.size);
-    let count = ((r[3] - 4.0) / 16.0).max(0.0) as usize;
-    let mut captions = vec![
-        format!(
-            "{} Биомы · Y64",
-            if s.preferences.biomes { "☑" } else { "☐" }
-        ),
-        format!(
-            "Биом: {}",
-            s.preferences
-                .biome
-                .as_deref()
-                .unwrap_or("Все")
-                .strip_prefix("minecraft:")
-                .unwrap_or(s.preferences.biome.as_deref().unwrap_or("Все"))
-        ),
-        format!("{} Claims", if s.preferences.claims { "☑" } else { "☐" }),
-        if s.preferences.structures == 0 {
-            "☐ Все структуры".into()
-        } else {
-            "☑ Все структуры".into()
-        },
+fn filter_rect(size: [f32; 2]) -> [f32; 4] {
+    model::filter_rect(size)
+}
+fn search_rect(s: &State) -> [f32; 4] {
+    let r = filter_rect(s.size);
+    [r[0] + 8.0, r[1] + 30.0, r[2] - 16.0, 20.0]
+}
+#[derive(Clone, Copy)]
+enum Control {
+    Explored,
+    World(usize),
+    Zoom(f32),
+    Center,
+    Filters,
+    Settings,
+    Close,
+    Claims,
+}
+fn controls(size: [f32; 2]) -> Vec<(Control, [f32; 4], &'static str)> {
+    let mut out = vec![
+        (Control::Explored, [6.0, 4.0, 118.0, 22.0], "Исследованная"),
+        (Control::Close, [size[0] - 28.0, 4.0, 22.0, 22.0], "Закрыть"),
+        (Control::Zoom(0.5), [8.0, 42.0, 24.0, 24.0], "+"),
+        (Control::Zoom(2.0), [8.0, 70.0, 24.0, 24.0], "−"),
+        (Control::Center, [8.0, 106.0, 24.0, 24.0], "К себе"),
+        (Control::Filters, [8.0, 134.0, 24.0, 24.0], "Фильтры"),
+        (Control::Claims, [8.0, 162.0, 24.0, 24.0], "Claims"),
+        (Control::Settings, [8.0, 190.0, 24.0, 24.0], "Настройки"),
     ];
-    captions.extend(
-        model::STRUCTURES
-            .iter()
-            .enumerate()
-            .map(|(i, (_, name, _))| {
-                format!(
-                    "{} {name}",
-                    if s.preferences.structures & (1 << i) != 0 {
-                        "☑"
-                    } else {
-                        "☐"
-                    }
-                )
-            }),
-    );
-    captions
-        .into_iter()
-        .enumerate()
-        .skip(s.offset)
-        .take(count)
-        .enumerate()
-        .map(|(row, (id, t))| {
-            (
-                [r[0] + 2.0, r[1] + 2.0 + row as f32 * 16.0, r[2] - 4.0, 15.0],
-                id,
-                t,
-            )
+    for (i, label) in ["Обычный мир", "Незер", "Край"].into_iter().enumerate() {
+        out.push((Control::World(i), model::dimension_rect(size, i), label));
+    }
+    let mut index = 0;
+    for (_, r, _) in &mut out {
+        if r[0] == 8.0 {
+            *r = model::tool_rect(size, index);
+            index += 1;
+        }
+    }
+    out
+}
+fn item_icon(game: &Game<'_>, batch: &mut HudBatch, id: &str, at: [f32; 2]) {
+    if game.res.items().get(id).is_some() {
+        game.draw_item(batch, &ItemStack::new(id, 1), at[0], at[1]);
+    } else {
+        ui::icon(
+            game,
+            batch,
+            ui::Icon::Map,
+            [at[0], at[1], 16.0, 16.0],
+            0xe6e9ed,
+        );
+    }
+}
+fn biome_label(game: &Game<'_>, id: &str) -> String {
+    let path = id.strip_prefix("minecraft:").unwrap_or(id);
+    game.translate(&format!("biome.minecraft.{path}"), &path.replace('_', " "))
+}
+fn biome_indices(game: &Game<'_>, s: &State) -> Vec<String> {
+    let q = s.search.to_lowercase();
+    s.image
+        .as_ref()
+        .map(|im| {
+            im.catalog
+                .iter()
+                .filter(|id| {
+                    model::biome_dimension(id) == s.selected
+                        && (q.is_empty()
+                            || id.contains(&q)
+                            || biome_label(game, id).to_lowercase().contains(&q))
+                })
+                .cloned()
+                .collect()
         })
-        .collect()
+        .unwrap_or_default()
+}
+fn chip_rect(s: &State, n: usize) -> [f32; 4] {
+    model::filter_chip_rect(s.size, n)
+}
+fn chip_rows(s: &State) -> usize {
+    model::filter_rows(s.size)
+}
+fn bulk_rect(s: &State) -> [f32; 4] {
+    let r = filter_rect(s.size);
+    [r[0] + r[2] - 68.0, r[1] + r[3] - 24.0, 60.0, 18.0]
+}
+fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
+    let r = filter_rect(s.size);
+    let mut tooltip = None;
+    ui::rounded(game, batch, r, 6.0, 0xf019222b);
+    ui::button(
+        game,
+        batch,
+        [r[0] + 8.0, r[1] + 6.0, (r[2] - 44.0) / 2.0, 19.0],
+        "Структуры",
+        !s.biome_tab,
+        mouse,
+    );
+    ui::button(
+        game,
+        batch,
+        [
+            r[0] + 12.0 + (r[2] - 44.0) / 2.0,
+            r[1] + 6.0,
+            (r[2] - 44.0) / 2.0,
+            19.0,
+        ],
+        "Биомы",
+        s.biome_tab,
+        mouse,
+    );
+    terrain::tool(
+        game,
+        batch,
+        [r[0] + r[2] - 26.0, r[1] + 6.0, 18.0, 19.0],
+        "Закрыть фильтры",
+        ui::Icon::Close,
+        false,
+        mouse,
+    );
+    let search = search_rect(s);
+    ui::button_base(game, batch, search, "Поиск фильтров", s.search_focus, mouse);
+    ui::icon(
+        game,
+        batch,
+        ui::Icon::Search,
+        [search[0] + 4.0, search[1] + 4.0, 12.0, 12.0],
+        0x99aebf,
+    );
+    text(
+        game,
+        batch,
+        if s.search.is_empty() {
+            "Поиск…"
+        } else {
+            &s.search
+        },
+        [search[0] + 20.0, search[1] + 6.0],
+        search[2] - 24.0,
+        0xc7d7df,
+    );
+    if s.biome_tab {
+        ui::button(
+            game,
+            batch,
+            [r[0] + 8.0, r[1] + 56.0, 80.0, 22.0],
+            "Все биомы",
+            s.preferences.biome.is_none(),
+            mouse,
+        );
+        ui::button(
+            game,
+            batch,
+            [r[0] + 92.0, r[1] + 56.0, r[2] - 100.0, 22.0],
+            "Цвета биомов",
+            s.preferences.biomes,
+            mouse,
+        );
+        for (n, id) in biome_indices(game, s)
+            .into_iter()
+            .skip(s.offset * 4)
+            .take(chip_rows(s) * 4)
+            .enumerate()
+        {
+            let c = chip_rect(s, n);
+            let title = biome_label(game, &id);
+            ui::button_base(
+                game,
+                batch,
+                c,
+                &title,
+                s.preferences.biome.as_ref() == Some(&id),
+                mouse,
+            );
+            item_icon(
+                game,
+                batch,
+                "minecraft:grass_block",
+                [c[0] + c[2] / 2.0 - 8.0, c[1] + 4.0],
+            );
+            text(
+                game,
+                batch,
+                &title,
+                [c[0] + 3.0, c[1] + 27.0],
+                c[2] - 6.0,
+                model::biome_color(&id),
+            );
+            if model::contains(c, mouse) {
+                tooltip = Some(title);
+            }
+        }
+    } else {
+        let groups: Vec<_> = std::iter::once(None)
+            .chain(
+                model::GROUPS
+                    .into_iter()
+                    .filter(|g| g.dimension() == s.selected)
+                    .map(Some),
+            )
+            .collect();
+        let w = (r[2] - 16.0) / groups.len() as f32;
+        for (i, g) in groups.into_iter().enumerate() {
+            ui::button(
+                game,
+                batch,
+                [r[0] + 8.0 + i as f32 * w, r[1] + 56.0, w - 2.0, 22.0],
+                g.map_or("Все", model::Group::label),
+                s.group == g,
+                mouse,
+            );
+        }
+        for (n, i) in model::filter_indices(s.selected, s.group, &s.search)
+            .into_iter()
+            .skip(s.offset * 4)
+            .take(chip_rows(s) * 4)
+            .enumerate()
+        {
+            let c = chip_rect(s, n);
+            let def = &model::STRUCTURES[i];
+            let on = s.preferences.shows(def.id);
+            ui::button_base(game, batch, c, def.label, on, mouse);
+            item_icon(game, batch, def.item, [c[0] + c[2] / 2.0 - 8.0, c[1] + 4.0]);
+            text(
+                game,
+                batch,
+                def.label,
+                [c[0] + 3.0, c[1] + 27.0],
+                c[2] - 6.0,
+                if on { def.color } else { 0x687887 },
+            );
+            if model::contains(c, mouse) {
+                tooltip = Some(format!(
+                    "{} · {}",
+                    def.label,
+                    if on {
+                        "показано"
+                    } else {
+                        "скрыто"
+                    }
+                ));
+            }
+        }
+    }
+    text(
+        game,
+        batch,
+        "Колесо — прокрутка",
+        [r[0] + 8.0, r[1] + r[3] - 13.0],
+        r[2] - 84.0,
+        0x7f94a4,
+    );
+    if !s.biome_tab {
+        let indices = model::filter_indices(s.selected, s.group, &s.search);
+        let all = indices
+            .iter()
+            .all(|&i| s.preferences.shows(model::STRUCTURES[i].id));
+        ui::button(
+            game,
+            batch,
+            bulk_rect(s),
+            if all {
+                "Скрыть"
+            } else {
+                "Показать"
+            },
+            false,
+            mouse,
+        );
+    }
+    if let Some(value) = tooltip {
+        ui::tooltip(game, batch, &value, mouse);
+    }
 }
 pub(super) fn render(
     game: &Game<'_>,
@@ -201,15 +411,22 @@ pub(super) fn render(
     let p = terrain::settings(game);
     state(|s| {
         if !s.loaded {
-            s.preferences = game
+            if let Some(stored) = game
                 .native_setting(claims::ID, "seed_map")
-                .and_then(|raw| model::Preferences::decode(&raw).ok())
-                .unwrap_or_default();
+                .and_then(|v| model::Preferences::decode(&v).ok())
+            {
+                s.preferences = stored;
+                s.selected = s.preferences.dimension;
+            } else {
+                s.preferences.dimension = s.selected;
+            }
             s.loaded = true;
         }
         s.size = [screen.rect[2], screen.rect[3]];
-        s.rects = model::panel_rects(s.size);
-        if source.scope != s.scope {
+        s.rect = model::map_rect(s.size);
+        let r = s.rect;
+        let aspect = r[2] / r[3];
+        if s.scope != source.scope {
             if let Some(w) = &s.worker {
                 w.cancel();
             }
@@ -218,13 +435,13 @@ pub(super) fn render(
             s.scope = source.scope.clone();
             s.error = None;
         }
-        if let Some((i, mouse, center)) = s.drag {
-            let scale = f64::from(128.0 * s.views[i].blocks_per_pixel / s.rects[i][3]);
-            s.views[i].center = [
+        if let Some((mouse, center)) = s.drag {
+            let scale = f64::from(128.0 * s.views[s.selected].blocks_per_pixel / r[3]);
+            s.views[s.selected].center = [
                 center[0] - f64::from(screen.mouse[0] - mouse[0]) * scale,
                 center[1] - f64::from(screen.mouse[1] - mouse[1]) * scale,
             ];
-            s.views[i].constrain();
+            s.views[s.selected].constrain();
         }
         if s.worker.is_none() && s.error.is_none() {
             match worker::Handle::spawn(
@@ -235,10 +452,13 @@ pub(super) fn render(
                 Err(e) => s.error = Some(e),
             }
         }
+        let view = s.views[s.selected];
+        let dim = model::DIMENSIONS[s.selected];
         let query = worker::Query {
             scope: source.scope.clone(),
-            views: s.views,
-            aspects: s.rects.map(|r| r[2] / r[3]),
+            view,
+            aspect,
+            dimension: s.selected,
             preferences: s.preferences.clone(),
         };
         if s.requested.as_ref() != Some(&query) {
@@ -250,103 +470,46 @@ pub(super) fn render(
         if let Some(image) = s.worker.as_ref().and_then(worker::Handle::take) {
             if image.query == query {
                 s.error = image.error.clone();
-                if image.error.is_none() {
-                    if let Some(rect) = game
+                if let Some(panel) = &image.panel {
+                    if let Some(uv) = game
                         .gui
                         .atlas
                         .sprites
                         .get("claim_borders/seed_map")
                         .copied()
                     {
-                        let mut pixels = vec![0; 256 * 256 * 4];
-                        for (i, panel) in image.panels.iter().enumerate() {
-                            for y in 0..worker::SIDE {
-                                let dest = (((i / 2) * 128 + y) * 256 + (i % 2) * 128) * 4;
-                                pixels[dest..dest + 128 * 4]
-                                    .copy_from_slice(&panel.pixels[y * 128 * 4..(y + 1) * 128 * 4]);
-                            }
-                        }
-                        // Patch queue is drained after native rendering on this same game thread.
-                        terrain::seed_patch(game, rect, pixels);
+                        terrain::seed_patch(game, uv, panel.pixels.clone());
                     }
                 }
                 s.image = Some(image);
             }
         }
         let start = batch.vertices.len();
-        ui::fill(game, batch, screen.rect, 0xff101720);
-        text(
-            game,
-            batch,
-            "DRAIMHORIZON / SEED MAP",
-            [8.0, 8.0],
-            s.size[0] * 0.5,
-            0xe7edf4,
-        );
-        text(
-            game,
-            batch,
-            &format!("Java 26.3 · {}", model::SEED),
-            [s.size[0] * 0.5, 8.0],
-            s.size[0] * 0.5 - 6.0,
-            0x93b6c5,
-        );
-        text(
-            game,
-            batch,
-            "ЛКМ — перемещение · колесо — масштаб · 2×ПКМ — метка (Y64) · фильтры справа ↕",
-            [8.0, 23.0],
-            s.size[0] - 16.0,
-            0x8397aa,
-        );
-        let mut footer = if s.error.is_some() {
-            format!(
-                "Seed Map недоступна: {} · доступна исследованная карта",
-                s.error.as_deref().unwrap_or_default()
-            )
+        ui::fill(game, batch, screen.rect, 0xff131b24);
+        ui::fill(game, batch, r, 0xff1b2531);
+        let mut info = if let Some(e) = &s.error {
+            format!("Seed Map: {e}")
         } else if s.image.as_ref().is_none_or(|im| im.query != query) {
-            "Расчёт карты…".into()
+            "Расчёт… · прогноз vanilla Java 26.3".into()
         } else {
-            "Прогноз vanilla · серверные datapack и старые чанки могут отличаться".into()
+            format!("Сид {} · Биомы Y64 · Java 26.3", model::SEED)
         };
-        for i in 0..3 {
-            let r = s.rects[i];
-            let dim = model::DIMENSIONS[i];
-            let view = s.views[i];
-            let aspect = r[2] / r[3];
-            text(
-                game,
-                batch,
-                map::dimension_label(dim),
-                [r[0] + 3.0, r[1] - 13.0],
-                r[2],
-                if s.selected == i { 0x7ddbc1 } else { 0xb6c5d3 },
-            );
-            ui::fill(game, batch, r, 0xff1b2531);
-            let displayed = s
-                .image
-                .as_ref()
-                .filter(|im| im.error.is_none() && im.query.preferences == s.preferences);
-            if let Some(image) = displayed {
-                if let Some(mut uv) = game
+        let covered = s.filters && model::contains(filter_rect(s.size), screen.mouse);
+        if let Some(im) = s.image.as_ref().filter(|im| {
+            im.query.dimension == s.selected && im.query.preferences.same_biomes(&s.preferences)
+        }) {
+            if let Some(panel) = &im.panel {
+                if let Some(uv) = game
                     .gui
                     .atlas
                     .sprites
                     .get("claim_borders/seed_map")
                     .copied()
                 {
-                    let du = (uv.u1 - uv.u0) / 2.0;
-                    let dv = (uv.v1 - uv.v0) / 2.0;
-                    uv.u0 += (i % 2) as f32 * du;
-                    uv.u1 = uv.u0 + du;
-                    uv.v0 += (i / 2) as f32 * dv;
-                    uv.v1 = uv.v0 + dv;
-                    let old_view = image.query.views[i];
-                    let old_aspect = image.query.aspects[i];
                     let corners = [[0.0, 0.0], [128.0, 128.0]].map(|xy| {
-                        let world = old_view.world_aspect(xy, 128.0, old_aspect);
-                        let xy = view.pixel_aspect(world, 128.0, aspect);
-                        [r[0] + xy[0] / 128.0 * r[2], r[1] + xy[1] / 128.0 * r[3]]
+                        let world = im.query.view.world_aspect(xy, 128.0, im.query.aspect);
+                        let at = view.pixel_aspect(world, 128.0, aspect);
+                        [r[0] + at[0] / 128.0 * r[2], r[1] + at[1] / 128.0 * r[3]]
                     });
                     let first = batch.vertices.len();
                     batch.rect_uv(
@@ -359,132 +522,184 @@ pub(super) fn render(
                     );
                     batch.clip_since(first, r[0], r[1], r[0] + r[2], r[1] + r[3]);
                 }
-                if image.panels[i].limited {
+                if s.preferences.claims {
+                    draw_claims(game, batch, &source, dim, view, r, p);
+                }
+                let mut clusters = std::collections::BTreeMap::<
+                    (i32, i32),
+                    (usize, [f32; 2], &worker::Mark),
+                >::new();
+                for mark in panel.marks.iter().filter(|m| s.preferences.shows(&m.id)) {
+                    let at = view.pixel_aspect(mark.position, 128.0, aspect);
+                    let at = [r[0] + at[0] / 128.0 * r[2], r[1] + at[1] / 128.0 * r[3]];
+                    if model::contains(r, at) {
+                        let key = ((at[0] / 22.0).floor() as i32, (at[1] / 22.0).floor() as i32);
+                        clusters
+                            .entry(key)
+                            .and_modify(|v| v.0 += 1)
+                            .or_insert((1, at, mark));
+                    }
+                }
+                let first = batch.vertices.len();
+                for (_, (count, at, mark)) in clusters {
+                    let Some(i) = model::structure_index(&mark.id) else {
+                        continue;
+                    };
+                    let def = &model::STRUCTURES[i];
+                    ui::rounded(
+                        game,
+                        batch,
+                        [at[0] - 11.0, at[1] - 11.0, 22.0, 22.0],
+                        8.0,
+                        0xdd000000 | def.color,
+                    );
+                    ui::rounded(
+                        game,
+                        batch,
+                        [at[0] - 10.0, at[1] - 10.0, 20.0, 20.0],
+                        7.0,
+                        0xee101923,
+                    );
+                    item_icon(game, batch, def.item, [at[0] - 8.0, at[1] - 8.0]);
+                    if count > 1 {
+                        text(
+                            game,
+                            batch,
+                            &count.to_string(),
+                            [at[0] + 6.0, at[1] - 12.0],
+                            22.0,
+                            0xffe6a6,
+                        );
+                    }
+                    if !covered
+                        && (screen.mouse[0] - at[0]).abs() < 11.0
+                        && (screen.mouse[1] - at[1]).abs() < 11.0
+                    {
+                        info = format!(
+                            "{} · X {:.0} Z {:.0}{}",
+                            def.label,
+                            mark.position[0],
+                            mark.position[1],
+                            if count > 1 {
+                                format!(" · ещё {}: приблизьте", count - 1)
+                            } else {
+                                String::new()
+                            }
+                        );
+                    }
+                }
+                batch.clip_since(first, r[0], r[1], r[0] + r[2], r[1] + r[3]);
+                if !covered
+                    && model::contains(r, screen.mouse)
+                    && im.query.view == view
+                    && im.query.aspect == aspect
+                {
+                    let at = model::world(view, r, screen.mouse);
+                    let x = (((screen.mouse[0] - r[0]) / r[2] * worker::SIDE as f32) as usize)
+                        .min(worker::SIDE - 1);
+                    let y = (((screen.mouse[1] - r[1]) / r[3] * worker::SIDE as f32) as usize)
+                        .min(worker::SIDE - 1);
+                    if !panel.marks.iter().any(|m| {
+                        let xy = view.pixel_aspect(m.position, 128.0, aspect);
+                        ((xy[0] / 128.0 * r[2] + r[0]) - screen.mouse[0]).abs() < 11.0
+                            && ((xy[1] / 128.0 * r[3] + r[1]) - screen.mouse[1]).abs() < 11.0
+                    }) {
+                        info = format!(
+                            "{} · X {:.0} Z {:.0} · {}",
+                            map::dimension_label(dim),
+                            at[0].floor(),
+                            at[1].floor(),
+                            biome_label(game, &panel.biomes[y * worker::SIDE + x])
+                        );
+                    }
+                }
+                if panel.limited {
                     text(
                         game,
                         batch,
-                        "Структуры: приблизьте",
-                        [r[0] + 3.0, r[1] + 14.0],
-                        r[2] - 6.0,
+                        "Для полного поиска структур приблизьте карту",
+                        [44.0, r[1] + 7.0],
+                        r[2] - 60.0,
                         0xf1c77c,
                     );
                 }
-                let marks_start = batch.vertices.len();
-                for mark in &image.panels[i].marks {
-                    let at = view.pixel_aspect(mark.position, 128.0, aspect);
-                    let at = [r[0] + at[0] / 128.0 * r[2], r[1] + at[1] / 128.0 * r[3]];
-                    if !model::contains(r, at) {
-                        continue;
-                    }
-                    let index = model::structure_index(&mark.id).unwrap_or(0);
-                    ui::fill(
-                        game,
-                        batch,
-                        [at[0] - 3.0, at[1] - 3.0, 6.0, 6.0],
-                        0xff111923,
-                    );
-                    ui::fill(
-                        game,
-                        batch,
-                        [at[0] - 2.0, at[1] - 2.0, 4.0, 4.0],
-                        0xff000000 | model::STRUCTURES[index].2,
-                    );
-                    if (screen.mouse[0] - at[0]).abs() < 5.0
-                        && (screen.mouse[1] - at[1]).abs() < 5.0
-                    {
-                        footer = format!(
-                            "{} · {} · X {:.0} Z {:.0}",
-                            model::STRUCTURES[index].1,
-                            map::dimension_label(dim),
-                            mark.position[0],
-                            mark.position[1]
-                        );
-                    }
-                }
-                batch.clip_since(marks_start, r[0], r[1], r[0] + r[2], r[1] + r[3]);
-                if model::contains(r, screen.mouse)
-                    && image.query.views[i] == view
-                    && image.query.aspects[i] == aspect
-                {
-                    let at = model::world(view, r, screen.mouse);
-                    let x = (((screen.mouse[0] - r[0]) / r[2] * 128.0) as usize).min(127);
-                    let y = (((screen.mouse[1] - r[1]) / r[3] * 128.0) as usize).min(127);
-                    let biome = &image.panels[i].biomes[y * 128 + x];
-                    text(
-                        game,
-                        batch,
-                        &format!("X {:.0} Z {:.0}", at[0].floor(), at[1].floor()),
-                        [r[0] + 4.0, r[1] + r[3] - 25.0],
-                        r[2] - 8.0,
-                        0xffffff,
-                    );
-                    if !image.panels[i].marks.iter().any(|m| {
-                        let xy = view.pixel_aspect(m.position, 128.0, aspect);
-                        ((xy[0] - (screen.mouse[0] - r[0]) / r[2] * 128.0) * r[2] / 128.0).abs()
-                            < 5.0
-                            && ((xy[1] - (screen.mouse[1] - r[1]) / r[3] * 128.0) * r[3] / 128.0)
-                                .abs()
-                                < 5.0
-                    }) {
-                        footer = format!(
-                            "{} · Y64 · {biome} · X {:.0} Z {:.0}",
-                            map::dimension_label(dim),
-                            at[0].floor(),
-                            at[1].floor()
-                        );
-                    }
-                }
-            } else {
-                text(
-                    game,
-                    batch,
-                    "Расчёт…",
-                    [r[0] + 8.0, r[1] + 8.0],
-                    r[2] - 16.0,
-                    0x8fa6b9,
-                );
             }
-            if s.preferences.claims {
-                draw_claims(game, batch, &source, dim, view, r, p);
-            }
-            terrain::map_marks(game, batch, &source, dim, view, r, p, true, aspect);
-            terrain::map_frame(game, batch, r, view, aspect, false);
+        } else {
+            text(
+                game,
+                batch,
+                "Подготовка карты сида…",
+                [44.0, r[1] + 8.0],
+                r[2] - 60.0,
+                0x9cb0bf,
+            );
         }
-        let side = sidebar(s.size);
-        ui::fill(game, batch, side, 0xff192330);
-        text(
+        terrain::map_marks(game, batch, &source, dim, view, r, p, true, aspect);
+        terrain::map_frame(game, batch, r, view, aspect, false);
+        ui::fill(game, batch, [0.0, 0.0, s.size[0], r[1]], 0xf0151e27);
+        ui::fill(
             game,
             batch,
-            "СЛОИ / ФИЛЬТРЫ",
-            [side[0] + 3.0, side[1] - 13.0],
-            side[2],
-            0xb6c5d3,
+            [0.0, s.size[1] - 32.0, s.size[0], 32.0],
+            0xee151e27,
         );
-        for (rect, _, caption) in rows(s) {
-            ui::button(game, batch, rect, &caption, false, screen.mouse);
+        ui::button(
+            game,
+            batch,
+            [128.0, 4.0, 80.0, 22.0],
+            "Seed Map",
+            true,
+            screen.mouse,
+        );
+        for (control, rect, label) in controls(s.size) {
+            match control {
+                Control::World(i) => {
+                    ui::button(game, batch, rect, label, s.selected == i, screen.mouse)
+                }
+                Control::Explored => ui::button(game, batch, rect, label, false, screen.mouse),
+                _ => {
+                    let icon = match control {
+                        Control::Zoom(v) if v < 1.0 => ui::Icon::Plus,
+                        Control::Zoom(_) => ui::Icon::Minus,
+                        Control::Center => ui::Icon::Home,
+                        Control::Filters => ui::Icon::Layers,
+                        Control::Claims => ui::Icon::Shield,
+                        Control::Settings => ui::Icon::Settings,
+                        _ => ui::Icon::Close,
+                    };
+                    terrain::tool(
+                        game,
+                        batch,
+                        rect,
+                        label,
+                        icon,
+                        matches!(control, Control::Filters) && s.filters
+                            || matches!(control, Control::Claims) && s.preferences.claims,
+                        screen.mouse,
+                    );
+                }
+            }
         }
         text(
             game,
             batch,
-            &footer,
-            [8.0, s.size[1] - 35.0],
+            &info,
+            [8.0, s.size[1] - 25.0],
             s.size[0] - 16.0,
-            if s.error.is_some() {
-                0xf1b07e
-            } else {
-                0x93a8ba
-            },
+            0xb9cbd6,
         );
-        for (rect, caption) in controls(s.size) {
-            ui::button(game, batch, rect, caption, false, screen.mouse);
-        }
-        ui::finish(
+        text(
             game,
             batch,
-            start,
-            "seed-map",
-            &format!("{}:{}", model::SEED, s.selected),
+            "ЛКМ: двигать · колесо: масштаб · 2×ПКМ: метка Y64 · F: фильтры",
+            [8.0, s.size[1] - 12.0],
+            s.size[0] - 16.0,
+            0x758d9f,
         );
+        if s.filters {
+            filters(game, batch, s, screen.mouse);
+        }
+        ui::finish(game, batch, start, "seed-map", dim);
     });
     true
 }
@@ -534,6 +749,58 @@ fn draw_claims(
     }
     batch.clip_since(start, r[0], r[1], r[0] + r[2], r[1] + r[3]);
 }
+fn act(game: &Game<'_>, control: Control) {
+    match control {
+        Control::Explored => state(|s| {
+            s.active = false;
+            s.drag = None;
+            s.search_focus = false;
+            if let Some(w) = &s.worker {
+                w.cancel();
+            }
+        }),
+        Control::Close => terrain::seed_close(game),
+        Control::Settings => terrain::seed_settings(game),
+        Control::Center => {
+            if let Some(source) = terrain::seed_source() {
+                let selected = state(|s| s.selected);
+                open(&source, &None);
+                state(|s| {
+                    s.active = true;
+                    s.selected = selected;
+                });
+            }
+        }
+        Control::Zoom(factor) => {
+            state(|s| s.views[s.selected].zoom_at([64.0, 64.0], 128.0, factor))
+        }
+        Control::World(i) => state(|s| {
+            s.selected = i;
+            s.preferences.dimension = i;
+            if s.preferences
+                .biome
+                .as_ref()
+                .is_some_and(|b| model::biome_dimension(b) != i)
+            {
+                s.preferences.biome = None;
+            }
+            s.drag = None;
+            s.group = None;
+            s.offset = 0;
+            s.right_click = None;
+            save(game, s);
+        }),
+        Control::Filters => state(|s| {
+            s.filters = !s.filters;
+            s.search_focus = false;
+            s.drag = None;
+        }),
+        Control::Claims => state(|s| {
+            s.preferences.claims = !s.preferences.claims;
+            save(game, s);
+        }),
+    }
+}
 pub(super) fn mouse(
     game: &Game<'_>,
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
@@ -543,118 +810,150 @@ pub(super) fn mouse(
     if !active() {
         return false;
     }
+    if !pressed {
+        state(|s| s.drag = None);
+        return true;
+    }
     let mut control = None;
     let mut point = None;
     state(|s| {
-        if !pressed {
-            s.drag = None;
+        if s.filters && model::contains(filter_rect(s.size), screen.mouse) {
+            if button != 0 {
+                return;
+            }
+            let r = filter_rect(s.size);
+            if !s.biome_tab && model::contains(bulk_rect(s), screen.mouse) {
+                let indices = model::filter_indices(s.selected, s.group, &s.search);
+                let all = indices
+                    .iter()
+                    .all(|&i| s.preferences.shows(model::STRUCTURES[i].id));
+                for i in indices {
+                    if all {
+                        s.preferences.structures &= !(1u64 << i);
+                    } else {
+                        s.preferences.structures |= 1u64 << i;
+                    }
+                }
+                save(game, s);
+                return;
+            }
+            s.search_focus = model::contains(search_rect(s), screen.mouse);
+            if s.search_focus {
+                return;
+            }
+            if screen.mouse[1] < r[1] + 29.0 {
+                if screen.mouse[0] >= r[0] + r[2] - 26.0 {
+                    s.filters = false;
+                    return;
+                }
+                s.biome_tab = screen.mouse[0] >= r[0] + 12.0 + (r[2] - 44.0) / 2.0;
+                s.offset = 0;
+                return;
+            }
+            if model::contains([r[0] + 8.0, r[1] + 56.0, r[2] - 16.0, 22.0], screen.mouse) {
+                if s.biome_tab {
+                    if screen.mouse[0] < r[0] + 90.0 {
+                        s.preferences.biome = None;
+                    } else {
+                        s.preferences.biomes = !s.preferences.biomes;
+                    }
+                    save(game, s);
+                } else {
+                    let groups: Vec<_> = std::iter::once(None)
+                        .chain(
+                            model::GROUPS
+                                .into_iter()
+                                .filter(|g| g.dimension() == s.selected)
+                                .map(Some),
+                        )
+                        .collect();
+                    let i = ((screen.mouse[0] - r[0] - 8.0) / ((r[2] - 16.0) / groups.len() as f32))
+                        as usize;
+                    s.group = groups.get(i).copied().flatten();
+                    s.offset = 0;
+                }
+                return;
+            }
+            if s.biome_tab {
+                for (n, id) in biome_indices(game, s)
+                    .into_iter()
+                    .skip(s.offset * 4)
+                    .take(chip_rows(s) * 4)
+                    .enumerate()
+                {
+                    if model::contains(chip_rect(s, n), screen.mouse) {
+                        s.preferences.biome = if s.preferences.biome.as_ref() == Some(&id) {
+                            None
+                        } else {
+                            Some(id)
+                        };
+                        save(game, s);
+                        break;
+                    }
+                }
+            } else {
+                for (n, i) in model::filter_indices(s.selected, s.group, &s.search)
+                    .into_iter()
+                    .skip(s.offset * 4)
+                    .take(chip_rows(s) * 4)
+                    .enumerate()
+                {
+                    if model::contains(chip_rect(s, n), screen.mouse) {
+                        s.preferences.toggle(i);
+                        save(game, s);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        s.search_focus = false;
+        if button == 0 {
+            if let Some((c, _, _)) = controls(s.size)
+                .into_iter()
+                .find(|(_, r, _)| model::contains(*r, screen.mouse))
+            {
+                control = Some(c);
+                return;
+            }
+        }
+        if !model::contains(s.rect, screen.mouse) {
             return;
         }
         if button == 0 {
-            if let Some((i, _)) = controls(s.size)
-                .iter()
-                .enumerate()
-                .find(|(_, (r, _))| model::contains(*r, screen.mouse))
-            {
-                control = Some(i);
-                return;
-            }
-            if let Some((_, id, _)) = rows(s)
-                .into_iter()
-                .find(|(r, _, _)| model::contains(*r, screen.mouse))
-            {
-                match id {
-                    0 => s.preferences.biomes = !s.preferences.biomes,
-                    1 => {
-                        let catalog = s
-                            .image
-                            .as_ref()
-                            .map(|im| im.catalog.as_slice())
-                            .unwrap_or(&[]);
-                        s.preferences.biome = match s
-                            .preferences
-                            .biome
-                            .as_ref()
-                            .and_then(|b| catalog.iter().position(|v| v == b))
-                        {
-                            Some(i) => catalog.get(i + 1).cloned(),
-                            None => catalog.first().cloned(),
-                        };
-                    }
-                    2 => s.preferences.claims = !s.preferences.claims,
-                    3 => {
-                        s.preferences.structures = if s.preferences.structures == 0 {
-                            model::Preferences::default().structures
-                        } else {
-                            0
-                        }
-                    }
-                    _ => s.preferences.structures ^= 1 << (id - 4),
-                }
-                game.native_set_setting(claims::ID, "seed_map", &s.preferences.encode());
-                return;
-            }
+            s.drag = Some((screen.mouse, s.views[s.selected].center));
         }
-        if let Some(i) = s
-            .rects
-            .iter()
-            .position(|r| model::contains(*r, screen.mouse))
-        {
-            s.selected = i;
-            if button == 0 {
-                s.drag = Some((i, screen.mouse, s.views[i].center));
-            }
-            if button == 1 {
-                let double = s.right_click.as_ref().is_some_and(|(t, old, at)| {
-                    t.elapsed().as_millis() <= 400
-                        && *old == i
-                        && (at[0] - screen.mouse[0]).hypot(at[1] - screen.mouse[1]) < 5.0
-                });
-                s.right_click = Some((std::time::Instant::now(), i, screen.mouse));
-                if double
-                    && s.image
-                        .as_ref()
-                        .is_some_and(|im| im.error.is_none() && im.query.views[i] == s.views[i])
-                {
-                    let at = model::world(s.views[i], s.rects[i], screen.mouse);
-                    point = Some((model::DIMENSIONS[i].to_string(), [at[0], 64.0, at[1]]));
-                    s.right_click = None;
-                }
+        if button == 1 {
+            let double = s.right_click.as_ref().is_some_and(|(t, i, p)| {
+                t.elapsed().as_millis() <= 400
+                    && *i == s.selected
+                    && (p[0] - screen.mouse[0]).hypot(p[1] - screen.mouse[1]) < 5.0
+            });
+            s.right_click = Some((std::time::Instant::now(), s.selected, screen.mouse));
+            if double
+                && s.image
+                    .as_ref()
+                    .is_some_and(|im| im.query.dimension == s.selected && im.panel.is_some())
+            {
+                let at = model::world(s.views[s.selected], s.rect, screen.mouse);
+                point = Some((
+                    model::DIMENSIONS[s.selected].to_string(),
+                    [at[0], 64.0, at[1]],
+                ));
+                s.right_click = None;
             }
         }
     });
+    if let Some(c) = control {
+        act(game, c);
+    }
     if let Some((dim, at)) = point {
         terrain::seed_point(dim, at);
     }
-    if let Some(control) = control {
-        match control {
-            0 => zoom(2.0),
-            1 => zoom(0.5),
-            2 => {
-                if let Some(source) = terrain::seed_source() {
-                    open(&source, &None);
-                }
-            }
-            3 => state(|s| {
-                s.active = false;
-                s.drag = None;
-                if let Some(w) = &s.worker {
-                    w.cancel();
-                }
-            }),
-            4 => terrain::seed_settings(game),
-            5 => terrain::seed_close(game),
-            _ => {}
-        }
-    }
     true
 }
-fn zoom(factor: f32) {
-    state(|s| {
-        s.views[s.selected].zoom_at([64.0, 64.0], 128.0, factor);
-    });
-}
 pub(super) fn scroll(
+    game: &Game<'_>,
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
     amount: f64,
 ) -> bool {
@@ -662,57 +961,92 @@ pub(super) fn scroll(
         return false;
     }
     state(|s| {
-        if model::contains(sidebar(s.size), screen.mouse) {
-            let visible = ((sidebar(s.size)[3] - 4.0) / 16.0).max(0.0) as usize;
-            let max = (model::STRUCTURES.len() + 4).saturating_sub(visible);
-            s.offset = if amount > 0.0 {
-                s.offset.saturating_sub(1)
-            } else {
-                s.offset.saturating_add(1).min(max)
-            };
-            return;
-        }
         if amount == 0.0 {
             return;
         }
-        if let Some(i) = s
-            .rects
-            .iter()
-            .position(|r| model::contains(*r, screen.mouse))
-        {
-            let before = model::world(s.views[i], s.rects[i], screen.mouse);
-            s.views[i].blocks_per_pixel = (s.views[i].blocks_per_pixel
-                * if amount > 0.0 { 0.5 } else { 2.0 })
-            .clamp(0.25, 524288.0);
-            let after = model::world(s.views[i], s.rects[i], screen.mouse);
+        if s.filters && model::contains(filter_rect(s.size), screen.mouse) {
+            let count = if s.biome_tab {
+                biome_indices(game, s).len()
+            } else {
+                model::filter_indices(s.selected, s.group, &s.search).len()
+            };
+            let max = count.div_ceil(4).saturating_sub(chip_rows(s));
+            s.offset = if amount > 0.0 {
+                s.offset.saturating_sub(1)
+            } else {
+                (s.offset + 1).min(max)
+            };
+            return;
+        }
+        if model::contains(s.rect, screen.mouse) {
+            let view = &mut s.views[s.selected];
+            let before = model::world(*view, s.rect, screen.mouse);
+            view.blocks_per_pixel = (view.blocks_per_pixel * if amount > 0.0 { 0.5 } else { 2.0 })
+                .clamp(0.25, 524288.0);
+            let after = model::world(*view, s.rect, screen.mouse);
             for n in 0..2 {
-                s.views[i].center[n] += before[n] - after[n];
+                view.center[n] += before[n] - after[n];
             }
-            s.views[i].constrain();
-            s.selected = i;
+            view.constrain();
         }
     });
     true
+}
+pub(super) fn character(c: char) -> bool {
+    state(|s| {
+        if !s.active || !s.search_focus {
+            return false;
+        }
+        if !c.is_control() && s.search.chars().count() < 64 {
+            s.search.push(c);
+            s.offset = 0;
+        }
+        true
+    })
 }
 pub(super) fn key(game: &Game<'_>, key: &str) -> bool {
     if !active() {
         return false;
     }
-    if key == game.native_mod_key(claims::ID, "map", "key.keyboard.m")
-        || key == "key.keyboard.escape"
-    {
+    if state(|s| {
+        if s.search_focus {
+            match key {
+                "key.keyboard.escape" | "key.keyboard.enter" => s.search_focus = false,
+                "key.keyboard.backspace" => {
+                    s.search.pop();
+                    s.offset = 0;
+                }
+                _ => {}
+            }
+            true
+        } else {
+            false
+        }
+    }) {
+        return true;
+    }
+    if key == game.native_mod_key(claims::ID, "map", "key.keyboard.m") {
+        terrain::seed_close(game);
+    } else if key == "key.keyboard.escape" {
+        if state(|s| {
+            if s.filters {
+                s.filters = false;
+                true
+            } else {
+                false
+            }
+        }) {
+            return true;
+        }
         terrain::seed_close(game);
     } else if key == game.native_mod_key(claims::ID, "menu", "key.keyboard.j") {
         terrain::seed_settings(game);
     } else {
         match key {
-            "key.keyboard.equal" => zoom(0.5),
-            "key.keyboard.minus" => zoom(2.0),
-            "key.keyboard.home" => {
-                if let Some(source) = terrain::seed_source() {
-                    open(&source, &None);
-                }
-            }
+            "key.keyboard.equal" => act(game, Control::Zoom(0.5)),
+            "key.keyboard.minus" => act(game, Control::Zoom(2.0)),
+            "key.keyboard.home" => act(game, Control::Center),
+            "key.keyboard.f" => act(game, Control::Filters),
             _ => {}
         }
     }

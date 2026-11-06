@@ -7,8 +7,9 @@ use std::{
 };
 const SIDE: i32 = 16;
 const REGION: i32 = SIDE * 16;
-const MAX_BYTES: u64 = 280_000;
-const MAGIC: &[u8; 8] = b"DHMAP01\0";
+const MAX_BYTES: u64 = 550_000;
+const MAGIC: &[u8; 8] = b"DHMAP02\0";
+const LEGACY_MAGIC: &[u8; 8] = b"DHMAP01\0";
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Context {
     pub scope: String,
@@ -34,6 +35,8 @@ pub struct Tile {
     pub color: [u8; 256],
     pub height: [i16; 256],
     pub depth: [u8; 256],
+    // ARGB top-texture colour with biome tint; zero means a legacy palette-only column.
+    pub rgb: [u32; 256],
 }
 impl Tile {
     pub fn fingerprint(&self) -> u64 {
@@ -42,17 +45,21 @@ impl Tile {
             .copied()
             .chain(self.height.iter().flat_map(|h| h.to_le_bytes()))
             .chain(self.depth.iter().copied())
+            .chain(self.rgb.iter().flat_map(|c| c.to_le_bytes()))
             .fold(0xcbf29ce484222325, |h, b| {
                 (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
             })
     }
     fn bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1024);
+        let mut out = Vec::with_capacity(2048);
         out.extend(self.color);
         for h in self.height {
             out.extend(h.to_le_bytes());
         }
         out.extend(self.depth);
+        for color in self.rgb {
+            out.extend(color.to_le_bytes());
+        }
         out
     }
     fn decode(data: &[u8]) -> Self {
@@ -60,12 +67,18 @@ impl Tile {
             color: [0; 256],
             height: [0; 256],
             depth: [0; 256],
+            rgb: [0; 256],
         };
         t.color.copy_from_slice(&data[..256]);
         for (i, h) in t.height.iter_mut().enumerate() {
             *h = i16::from_le_bytes([data[256 + i * 2], data[257 + i * 2]]);
         }
         t.depth.copy_from_slice(&data[768..1024]);
+        if data.len() == 2048 {
+            for (i, c) in t.rgb.iter_mut().enumerate() {
+                *c = u32::from_le_bytes(data[1024 + i * 4..1028 + i * 4].try_into().unwrap());
+            }
+        }
         t
     }
 }
@@ -99,15 +112,23 @@ impl Region {
         out
     }
     fn decode(bytes: &[u8], at: (i32, i32)) -> Result<Self, String> {
-        if bytes.len() < 1058 || bytes.len() as u64 > MAX_BYTES || &bytes[..8] != MAGIC {
+        if bytes.len() < 1058
+            || bytes.len() as u64 > MAX_BYTES
+            || (&bytes[..8] != MAGIC && &bytes[..8] != LEGACY_MAGIC)
+        {
             return Err("invalid map region header".into());
         }
+        let entry_size = if &bytes[..8] == LEGACY_MAGIC {
+            1026
+        } else {
+            2050
+        };
         let rx = i32::from_le_bytes(bytes[8..12].try_into().unwrap());
         let rz = i32::from_le_bytes(bytes[12..16].try_into().unwrap());
         let count = u16::from_le_bytes(bytes[1048..1050].try_into().unwrap()) as usize;
         if (rx, rz) != at
             || count > 256
-            || bytes.len() != 1058 + count * 1026
+            || bytes.len() != 1058 + count * entry_size
             || hash(&bytes[..bytes.len() - 8])
                 != u64::from_le_bytes(bytes[bytes.len() - 8..].try_into().unwrap())
         {
@@ -117,7 +138,7 @@ impl Region {
             summary: bytes[16..1040].to_vec(),
             ..Self::default()
         };
-        for entry in bytes[1050..bytes.len() - 8].as_chunks::<1026>().0.iter() {
+        for entry in bytes[1050..bytes.len() - 8].chunks_exact(entry_size) {
             let id = u16::from_le_bytes([entry[0], entry[1]]);
             if id >= 256 || region.tiles.insert(id, Tile::decode(&entry[2..])).is_some() {
                 return Err("duplicate map chunk".into());
@@ -125,12 +146,12 @@ impl Region {
         }
         Ok(region)
     }
-    fn column(&self, x: i32, z: i32) -> Option<(u8, i16, u8)> {
+    fn column(&self, x: i32, z: i32) -> Option<(u8, i16, u8, u32)> {
         let id =
             ((z.div_euclid(16).rem_euclid(SIDE)) * SIDE + x.div_euclid(16).rem_euclid(SIDE)) as u16;
         let t = self.tiles.get(&id)?;
         let i = (z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize;
-        Some((t.color[i], t.height[i], t.depth[i]))
+        Some((t.color[i], t.height[i], t.depth[i], t.rgb[i]))
     }
 }
 struct Catalog {
@@ -243,10 +264,11 @@ impl Store {
         }
         let mut rgb = [0u32; 3];
         let mut n = 0;
-        for color in tile.color {
+        for (i, color) in tile.color.iter().copied().enumerate() {
             if let Some(&col) = self.palette.get(usize::from(color & 0x7f))
                 && color & 0x7f != 0
             {
+                let col = if tile.rgb[i] != 0 { tile.rgb[i] } else { col };
                 for (i, shift) in [16, 8, 0].iter().enumerate() {
                     rgb[i] += col >> shift & 255;
                 }
@@ -435,7 +457,7 @@ impl Store {
                     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
                     let mut prefix = [0; 1048];
                     file.read_exact(&mut prefix).map_err(|e| e.to_string())?;
-                    if &prefix[..8] != MAGIC
+                    if (&prefix[..8] != MAGIC && &prefix[..8] != LEGACY_MAGIC)
                         || hash(&prefix[16..1040])
                             != u64::from_le_bytes(prefix[1040..1048].try_into().unwrap())
                     {
@@ -519,12 +541,12 @@ pub struct Render {
     pub shading: bool,
 }
 fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[u8; 4]> {
-    let (c, h, d) = r.column(x, z)?;
+    let (c, h, d, rgb) = r.column(x, z)?;
     let id = usize::from(c & 0x7f);
     if id == 0 {
         return None;
     }
-    let color = *palette.get(id)?;
+    let color = if rgb != 0 { rgb } else { *palette.get(id)? };
     let mut brightness = 1.0f32;
     if shading {
         let north = if z.rem_euclid(REGION) > 0 {
@@ -538,9 +560,9 @@ fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[
             h
         };
         brightness = (1.0
-            + f32::from(h.saturating_sub(north).clamp(-12, 12)) * 0.035
-            + f32::from(h.saturating_sub(west).clamp(-12, 12)) * 0.02)
-            .clamp(0.65, 1.2);
+            + f32::from(h.saturating_sub(north).clamp(-12, 12)) * 0.065
+            + f32::from(h.saturating_sub(west).clamp(-12, 12)) * 0.045)
+            .clamp(0.42, 1.2);
         if id == 12 {
             brightness *= 1.0 - (f32::from(d) / 64.0).min(0.32);
         }
@@ -615,7 +637,48 @@ mod tests {
             color: [c; 256],
             height: [h; 256],
             depth: [0; 256],
+            rgb: [0; 256],
         }
+    }
+    #[test]
+    fn texture_colours_survive_disk_roundtrip_and_override_the_map_palette() {
+        let dir = Dir::new();
+        let c = context();
+        let mut t = tile(1, 64);
+        t.rgb = [0xff345678; 256];
+        let mut changed = t.clone();
+        changed.rgb[0] = 0xffabcdef;
+        assert_ne!(t.fingerprint(), changed.fingerprint());
+        let mut store = Store::new(dir.0.clone(), palette());
+        store.insert(&c, (0, 0), t).unwrap();
+        store.flush().unwrap();
+        drop(store);
+        let mut restored = Store::new(dir.0.clone(), palette());
+        assert_eq!(
+            center_pixel(&restored.compose(&c, &view([8.0, 8.0])).unwrap(), 128),
+            [0x34, 0x56, 0x78, 255]
+        );
+    }
+    #[test]
+    fn reads_v1_palette_regions_and_writes_v2_without_losing_chunks() {
+        let mut region = Region {
+            summary: vec![0; 1024],
+            ..Region::default()
+        };
+        region.tiles.insert(0, tile(1, 64));
+        let mut old = region.encode((-1, 2))[..1050].to_vec();
+        old[..8].copy_from_slice(LEGACY_MAGIC);
+        old.extend(0u16.to_le_bytes());
+        old.extend(&tile(1, 64).bytes()[..1024]);
+        let sum = hash(&old);
+        old.extend(sum.to_le_bytes());
+        let loaded = Region::decode(&old, (-1, 2)).unwrap();
+        assert_eq!(loaded.tiles.len(), 1);
+        assert_eq!(loaded.tiles[&0].rgb, [0; 256]);
+        let encoded = loaded.encode((-1, 2));
+        assert_eq!(&encoded[..8], MAGIC);
+        assert!(Region::decode(&encoded, (-1, 2)).is_ok());
+        assert!(Region::decode(&old, (0, 2)).is_err());
     }
     fn palette() -> Vec<u32> {
         vec![0, 0x669944, 0x735533]
