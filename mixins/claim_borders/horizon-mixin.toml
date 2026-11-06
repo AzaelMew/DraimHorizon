@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.19.0"
+version = "0.20.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -816,3 +816,27 @@ id = "terrain-colors"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_terrain_colors"
 source = "terrain_colors.rs"
+
+[[module]]
+id = "experimental"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_experimental"
+source = "experimental.rs"
+
+[[module]]
+id = "ore-worker"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_ore_worker"
+source = "ore_worker.rs"
+
+[[module]]
+id = "ore-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_ore_view"
+source = "ore_view.rs"
+
+[[module]]
+id = "chat-archive"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_chat_archive"
+source = "chat_archive.rs"

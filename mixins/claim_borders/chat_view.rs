@@ -1,5 +1,6 @@
 use crate::game::claim_borders_ui_view as ui;
 // Native chat cards. The original signed message/history path remains untouched.
+use crate::game::claim_borders_chat_archive as archive;
 use crate::game::claim_borders_chat_preferences as options;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
 use claim_borders_relay_client::translation::Translator;
@@ -21,6 +22,12 @@ pub(super) struct Settings {
 }
 struct State {
     feed: model::Feed,
+    archive: Option<archive::Worker>,
+    archive_scope: Option<String>,
+    archive_generation: u64,
+    archive_loading: bool,
+    archive_snapshot: Option<serde_json::Value>,
+    archive_saved: Instant,
     tabs: model::Tabs,
     tab_hits: Vec<([f32; 4], model::Channel)>,
     completion: model::NickCompletion,
@@ -42,6 +49,12 @@ impl Default for State {
     fn default() -> Self {
         Self {
             feed: model::Feed::default(),
+            archive: None,
+            archive_scope: None,
+            archive_generation: 0,
+            archive_loading: false,
+            archive_snapshot: None,
+            archive_saved: Instant::now(),
             tabs: model::Tabs::default(),
             tab_hits: Vec::new(),
             completion: model::NickCompletion::default(),
@@ -146,8 +159,122 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
         }
     });
 }
+fn archive_scope(game: &Game<'_>) -> Option<String> {
+    if let Some(remote) = &game.remote {
+        return Some(format!(
+            "server:{}#{:032x}",
+            remote.session.address.to_ascii_lowercase(),
+            remote.profile()
+        ));
+    }
+    game.native_player()?;
+    let uuid = game.level.player_uuid?;
+    (!game.world_root.as_os_str().is_empty())
+        .then(|| format!("world:{}#{uuid:?}", game.world_root.to_string_lossy()))
+}
+fn poll_archive(s: &mut State) {
+    while let Some(result) = s.archive.as_ref().and_then(archive::Worker::poll) {
+        if s.archive_scope.as_deref() != Some(&result.scope)
+            || s.archive_generation != result.generation
+        {
+            continue;
+        }
+        s.archive_loading = false;
+        match result
+            .entries
+            .and_then(|v| s.feed.restore(&v, s.settings.preferences))
+        {
+            Ok(()) => {}
+            Err(error) => eprintln!("[Horizon] {error}"),
+        }
+    }
+}
+fn save_archive(s: &mut State, wait: bool) {
+    if s.archive_loading {
+        return;
+    }
+    let Some(scope) = s.archive_scope.clone() else {
+        return;
+    };
+    let Some(worker) = &s.archive else {
+        return;
+    };
+    s.archive_saved = Instant::now();
+    if worker.failed() {
+        s.archive_snapshot = None;
+    }
+    let snapshot = s.feed.archive();
+    if s.archive_snapshot.as_ref() != Some(&snapshot) && worker.save(scope, snapshot.clone(), wait)
+    {
+        s.archive_snapshot = Some(snapshot);
+        s.archive_saved = Instant::now();
+    }
+}
+fn finish_archive(s: &mut State) {
+    poll_archive(s);
+    if s.archive_loading {
+        if let (Some(worker), Some(scope)) = (&s.archive, &s.archive_scope)
+            && !worker.merge(scope.clone(), s.feed.archive())
+        {
+            eprintln!("[Horizon] Cannot queue pending chat history merge");
+        }
+        return;
+    }
+    save_archive(s, true);
+}
+/// Called on every native frame, also when the modern UI/translation is disabled.
+pub(super) fn frame(game: &Game<'_>) {
+    if !game.native_on(claims::ID) {
+        if state(|s| s.archive_scope.is_some()) {
+            reset();
+        }
+        return;
+    }
+    let current = archive_scope(game);
+    let changed = state(|s| s.archive_scope != current);
+    if changed {
+        reset();
+        let _ = settings(game);
+        state(|s| {
+            if s.archive.is_none() {
+                match Game::native_config_dir().and_then(|root| {
+                    archive::Worker::new(root.join("claim_borders").join("chat-history"))
+                }) {
+                    Ok(worker) => s.archive = Some(worker),
+                    Err(_) => eprintln!("[Horizon] Cannot initialize local chat history"),
+                }
+            }
+            s.archive_generation = s.archive_generation.wrapping_add(1);
+            s.archive_scope = current;
+            if let (Some(worker), Some(scope)) = (&s.archive, &s.archive_scope) {
+                s.archive_loading = worker.load(scope.clone(), s.archive_generation);
+            }
+        });
+    }
+    state(|s| {
+        poll_archive(s);
+        if s.archive_saved.elapsed().as_secs() >= 2 {
+            save_archive(s, false);
+        }
+    });
+}
+/// Drain queued writes before the client's normal exit.
+pub(super) fn flush() {
+    state(|s| {
+        finish_archive(s);
+        if let Some(worker) = &s.archive
+            && !worker.flush()
+        {
+            eprintln!("[Horizon] Chat archive flush did not complete successfully");
+        }
+    });
+}
 pub(super) fn reset() {
     state(|s| {
+        finish_archive(s);
+        s.archive_scope = None;
+        s.archive_snapshot = None;
+        s.archive_loading = false;
         s.feed.clear();
         s.tabs = model::Tabs::default();
         s.tab_hits.clear();
@@ -157,6 +284,8 @@ pub(super) fn reset() {
         s.requested.clear();
         s.heads.clear();
         s.translator = None;
+        s.retry.clear();
+        s.translation_failed = false;
     });
 }
 pub(super) fn capture_content(
@@ -197,6 +326,7 @@ fn capture_inner(
         return;
     }
     let _ = settings(game);
+    frame(game);
     state(|s| {
         let now = s.started.elapsed().as_millis() as u64;
         let preferences = s.settings.preferences;
@@ -418,6 +548,9 @@ fn text(
 fn fade(entry: &model::Entry, now: u64, focused: bool, duration: u16) -> f32 {
     if focused {
         return 1.0;
+    }
+    if entry.archived {
+        return 0.0;
     }
     let age = now.saturating_sub(entry.at) as f32;
     let life = f32::from(duration) * 1000.0;
@@ -727,9 +860,10 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 }
             }
             for e in s.feed.entries.iter().rev().take(64) {
-                if (e.kind == model::Kind::Message
-                    || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
-                    || (e.kind == model::Kind::Death && event_entry(e, p)))
+                if !e.archived
+                    && (e.kind == model::Kind::Message
+                        || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
+                        || (e.kind == model::Kind::Death && event_entry(e, p)))
                     && e.translated.is_none()
                     && !s.requested.contains(&e.id)
                     && s.retry.get(&e.id).is_none_or(|(at, _)| now >= *at)
@@ -812,7 +946,8 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             .iter()
             .rev()
             .filter(|e| {
-                now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
+                !e.archived
+                    && now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
                     && (e.auction.is_some()
                         || (show_players
                             && e.kind == model::Kind::Message

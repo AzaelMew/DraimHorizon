@@ -3,6 +3,8 @@ use super::claim_borders_chat_preferences::{Preferences, RepeatMode};
 use serde_json::Value;
 use std::collections::VecDeque;
 
+pub const MAX_ENTRIES: usize = 500;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Message,
@@ -157,6 +159,8 @@ fn trade_notice(line: &str) -> bool {
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: u64,
+    /// Restored entries are visible only while reading history.
+    pub archived: bool,
     pub auction: Option<AuctionNotice>,
     pub kind: Kind,
     pub channel: Channel,
@@ -620,7 +624,7 @@ impl Feed {
                 .entries
                 .iter_mut()
                 .rev()
-                .find(|e| e.kind == kind && e.name == name)
+                .find(|e| !e.archived && e.kind == kind && e.name == name)
             && old.joined == joined
             && now.saturating_sub(old.at) < 5000
         {
@@ -642,7 +646,8 @@ impl Feed {
                     50
                 })
                 .find(|(_, e)| {
-                    e.kind == kind
+                    !e.archived
+                        && e.kind == kind
                         && e.auction == auction
                         && e.channel == channel
                         && e.name == name
@@ -663,6 +668,7 @@ impl Feed {
         self.next = self.next.saturating_add(1);
         self.entries.push_back(Entry {
             id: self.next,
+            archived: false,
             auction,
             kind,
             channel,
@@ -677,16 +683,113 @@ impl Feed {
             comparison,
             raw: bounded,
         });
-        if self.entries.len() > 200 {
+        if self.entries.len() > MAX_ENTRIES {
             // Keep recent auction receipts while ordinary chat scrolls past them.
             let index = self
                 .entries
                 .iter()
-                .position(|e| e.auction.is_none() || now.saturating_sub(e.at) >= 180_000)
+                .position(|e| {
+                    e.archived || e.auction.is_none() || now.saturating_sub(e.at) >= 180_000
+                })
                 .unwrap_or(0);
             self.entries.remove(index);
         }
         Some(self.next)
+    }
+    /// The archive contains display data only; runtime IDs and reply targets are session-local.
+    pub fn archive(&self) -> Value {
+        Value::Array(self.entries.iter().map(|e| serde_json::json!({
+            "kind": match e.kind { Kind::Message => "message", Kind::Whisper(Whisper::Incoming) => "incoming", Kind::Whisper(Whisper::Outgoing) => "outgoing", Kind::Presence => "presence", Kind::Death => "death", Kind::System => "system" },
+            "channel": e.channel as u8,
+            "auction": e.auction.map(|a| match a { AuctionNotice::Listed => "listed", AuctionNotice::Sold => "sold" }),
+            "name": e.name, "original": e.original, "translated": e.translated,
+            "joined": e.joined, "repetitions": e.repetitions,
+            "show_original": e.show_original, "raw": e.raw,
+        })).collect())
+    }
+    /// Merge late disk reads before live messages, without recording unread/reply state.
+    pub fn restore(&mut self, value: &Value, preferences: Preferences) -> Result<(), String> {
+        let rows = value.as_array().ok_or("Invalid chat entries")?;
+        if rows.len() > MAX_ENTRIES {
+            return Err("Too many archived chat entries".into());
+        }
+        let mut restored = VecDeque::new();
+        let mut next = self.next;
+        for row in rows {
+            let string = |key: &str, max: usize| -> Result<String, String> {
+                let s = row[key]
+                    .as_str()
+                    .ok_or_else(|| format!("Invalid chat {key}"))?;
+                if s.chars().count() > max {
+                    return Err(format!("Oversized chat {key}"));
+                }
+                Ok(s.to_owned())
+            };
+            let kind = match row["kind"].as_str() {
+                Some("message") => Kind::Message,
+                Some("incoming") => Kind::Whisper(Whisper::Incoming),
+                Some("outgoing") => Kind::Whisper(Whisper::Outgoing),
+                Some("presence") => Kind::Presence,
+                Some("death") => Kind::Death,
+                Some("system") => Kind::System,
+                _ => return Err("Invalid archived chat kind".into()),
+            };
+            let channel = match row["channel"].as_u64() {
+                Some(0) => Channel::All,
+                Some(1) => Channel::Whisper,
+                Some(2) => Channel::Party,
+                Some(3) => Channel::Trade,
+                _ => return Err("Invalid chat channel".into()),
+            };
+            let auction = match row["auction"].as_str() {
+                Some("listed") => Some(AuctionNotice::Listed),
+                Some("sold") => Some(AuctionNotice::Sold),
+                None if row["auction"].is_null() => None,
+                _ => return Err("Invalid auction notice".into()),
+            };
+            let translated = if row["translated"].is_null() {
+                None
+            } else {
+                Some(string("translated", 2048)?)
+            };
+            let joined = if row["joined"].is_null() {
+                None
+            } else {
+                Some(row["joined"].as_bool().ok_or("Invalid presence")?)
+            };
+            let raw = string("raw", 2048)?;
+            next = next.checked_add(1).ok_or("Chat ID overflow")?;
+            restored.push_back(Entry {
+                id: next,
+                archived: true,
+                auction,
+                kind,
+                channel,
+                name: string("name", 256)?,
+                original: string("original", 2048)?,
+                translated,
+                at: 0,
+                created_at: 0,
+                joined,
+                repetitions: row["repetitions"]
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .filter(|n| *n > 0)
+                    .ok_or("Invalid repetitions")?,
+                show_original: row["show_original"]
+                    .as_bool()
+                    .ok_or("Invalid original toggle")?,
+                comparison: comparison_key(&raw, preferences.ignore_prefix),
+                raw,
+            });
+        }
+        self.next = next;
+        restored.append(&mut self.entries);
+        while restored.len() > MAX_ENTRIES {
+            restored.pop_front();
+        }
+        self.entries = restored;
+        Ok(())
     }
     pub fn reconfigure(&mut self, preferences: Preferences) {
         for entry in &mut self.entries {
@@ -734,6 +837,72 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn archived_auction_receipts_cannot_evict_new_live_chat() {
+        let p = Preferences::default();
+        let mut source = Feed::default();
+        source.push_with("<Alex> old", 1, p);
+        let mut row = source.archive()[0].clone();
+        row["auction"] = serde_json::json!("sold");
+        let mut restored = Feed::default();
+        restored
+            .restore(&Value::Array(vec![row; MAX_ENTRIES]), p)
+            .unwrap();
+        let live_id = restored.push_with("<Bob> fresh", 10, p).unwrap();
+        assert_eq!(restored.entries.len(), MAX_ENTRIES);
+        assert_eq!(restored.entries.back().unwrap().id, live_id);
+        assert!(!restored.entries.back().unwrap().archived);
+    }
+    #[test]
+    fn archive_merge_keeps_live_ids_and_reply_target_without_repeat_coalescing() {
+        let p = Preferences::default();
+        let mut old = Feed::default();
+        let id = old.push_with("<Alex> hello", 1, p).unwrap();
+        old.translate(id, "привет".into());
+        old.toggle_original(id);
+        old.push_component("", &serde_json::json!({}), 2, p);
+        let incoming = serde_json::json!({"translate": "commands.message.display.incoming", "with": ["OldSender", "secret"]});
+        old.push_player_component("old whisper", &incoming, 3, p);
+        let mut live = Feed::default();
+        let live_id = live.push_with("<Bob> live", 2, p).unwrap();
+        live.restore(&old.archive(), p).unwrap();
+        assert_eq!(live.entries.len(), 3);
+        assert!(live.last_whisper_sender.is_none());
+        assert_eq!(live.entries.back().unwrap().id, live_id);
+        assert!(!live.entries.back().unwrap().archived);
+        assert!(live.entries[0].archived && live.entries[0].show_original);
+        assert_eq!(live.entries[0].translated.as_deref(), Some("привет"));
+        let fresh = live.push_with("<Alex> hello", 4, p).unwrap();
+        assert_ne!(fresh, live.entries[0].id);
+        assert_eq!(live.entries.len(), 4);
+        assert_eq!(live.entries.back().unwrap().repetitions, 1);
+        assert!(!live.entries.back().unwrap().archived);
+        let incoming = serde_json::json!({"translate": "commands.message.display.incoming", "with": ["NewSender", "live secret"]});
+        live.push_player_component("new whisper", &incoming, 5, p);
+        assert_eq!(live.last_whisper_sender.as_deref(), Some("NewSender"));
+    }
+    #[test]
+    fn invalid_archive_does_not_partially_replace_live_feed() {
+        let mut feed = Feed::default();
+        let p = Preferences::default();
+        feed.push_with("<Alex> live", 1, p);
+        let mut bad = feed.archive();
+        bad.as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"kind": "invalid"}));
+        assert!(feed.restore(&bad, p).is_err());
+        assert_eq!(feed.entries.len(), 1);
+        assert!(!feed.entries[0].archived);
+        let mut oversized = feed.archive();
+        oversized[0]["original"] = serde_json::json!("x".repeat(2049));
+        assert!(feed.restore(&oversized, p).is_err());
+        assert_eq!(feed.entries[0].original, "live");
+        let row = feed.archive()[0].clone();
+        assert!(
+            feed.restore(&Value::Array(vec![row; MAX_ENTRIES + 1]), p)
+                .is_err()
+        );
+    }
     #[test]
     fn chat_tabs_keep_trusted_sources_and_independent_unread_counts() {
         let mut feed = Feed::default();
@@ -877,10 +1046,10 @@ mod tests {
         };
         let line = "Steve bought your 10 diamond for 1,000 coins.";
         f.push_component(line, &serde_json::json!({"text":line}), 0, p);
-        for i in 1..500 {
+        for i in 1..1000 {
             f.push_with(&format!("<Alex> message {i}"), i, p);
         }
-        assert_eq!(f.entries.len(), 200);
+        assert_eq!(f.entries.len(), MAX_ENTRIES);
         assert!(
             f.entries
                 .iter()

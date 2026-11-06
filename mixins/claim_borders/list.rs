@@ -6,6 +6,11 @@ fn claim_borders_list(mods: &mut Vec<crate::game::native_hooks::NativeMod>) {
         description: m::DESCRIPTION.into(),
         keys: vec![
             [
+                "ore_experiment".into(),
+                "Эксперименты: подсветка руд".into(),
+                crate::game::claim_borders_experimental::DEFAULT_KEY.into(),
+            ],
+            [
                 "trades".into(),
                 "DraimHorizons: Торги".into(),
                 "key.keyboard.b".into(),

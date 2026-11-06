@@ -1,5 +1,6 @@
 use super::claim_borders_chat_preferences::Preferences;
 use super::claim_borders_chat_priority as priority;
+use super::claim_borders_experimental as experimental;
 use super::claim_borders_map as map;
 // Pure management screen state. Only explicit local button presses produce actions.
 #[derive(Clone, Debug)]
@@ -15,12 +16,40 @@ pub struct PartyRow {
     pub friend: bool,
     pub online: bool,
     pub blocked: bool,
+    pub local_only: bool,
     pub outgoing: bool,
     pub skin: String,
     pub code: String,
     pub name: String,
     pub detail: String,
     pub pending: bool,
+}
+/// Include manual chat priorities even when the player does not use the relay.
+pub fn append_important_rows(
+    rows: &mut Vec<PartyRow>,
+    prefs: &priority::Preferences,
+    online: &[(u128, String)],
+) {
+    for name in prefs.rules.keys() {
+        if rows.iter().any(|row| row.name.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        let live = online.iter().find(|(_, n)| n.eq_ignore_ascii_case(name));
+        rows.push(PartyRow {
+            uuid: live.map_or(0, |(id, _)| *id),
+            name: live.map_or_else(|| name.clone(), |(_, n)| n.clone()),
+            detail: if live.is_some() {
+                "Отметка чата · онлайн"
+            } else {
+                "Отметка чата · не в сети"
+            }
+            .into(),
+            online: live.is_some(),
+            blocked: true,
+            local_only: true,
+            ..PartyRow::default()
+        });
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClaimsSettings {
@@ -97,6 +126,8 @@ pub struct ViewModel {
     pub chat_translate: bool,
     pub chat_outgoing: bool,
     pub priority: priority::Preferences,
+    pub experimental: experimental::Preferences,
+    pub experimental_status: String,
     pub chat_preferences: Preferences,
     pub map_preferences: map::Preferences,
     pub claim_rows: Vec<ClaimRow>,
@@ -155,6 +186,7 @@ pub enum Action {
     ToggleTranslation,
     SetChat(Preferences),
     SetPriority(priority::Preferences),
+    SetExperimental(experimental::Preferences),
     PasteFromClipboard,
     SetClaims(ClaimsSettings),
     Close,
@@ -172,6 +204,7 @@ impl std::fmt::Debug for Action {
                 .field(z)
                 .finish(),
             Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
+            Self::SetExperimental(p) => f.debug_tuple("SetExperimental").field(p).finish(),
             Self::SetPriority(p) => f.debug_tuple("SetPriority").field(p).finish(),
             Self::SetChat(p) => f.debug_tuple("SetChat").field(p).finish(),
             Self::ClearClaimCache => f.write_str("ClearClaimCache"),
@@ -225,6 +258,7 @@ pub enum Tab {
     Party,
     Claims,
     Chat,
+    Experimental,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
@@ -309,6 +343,10 @@ pub enum Control {
     ApplyClaimColours,
     BorderReset,
     ChatSection(ChatSection),
+    ExperimentalAllowed,
+    ExperimentalSource,
+    ExperimentalNext,
+    ExperimentalOre,
     ChatAdjust(ChatOption, i8),
     ChatPlacement,
     ChatStyle,
@@ -433,11 +471,15 @@ impl Menu {
                 .get(index)
                 .and_then(|old| next.waypoints.iter().position(|row| row.id == old.id)),
             Tab::Party => previous.party.get(index).and_then(|old| {
-                next.party
-                    .iter()
-                    .position(|row| row.code == old.code && row.pending == old.pending)
+                next.party.iter().position(|row| {
+                    if old.local_only || row.local_only {
+                        old.local_only == row.local_only && row.name.eq_ignore_ascii_case(&old.name)
+                    } else {
+                        row.code == old.code && row.pending == old.pending
+                    }
+                })
             }),
-            Tab::Claims | Tab::Chat => None,
+            Tab::Claims | Tab::Chat | Tab::Experimental => None,
         });
         if self.tab == Tab::Party
             && self
@@ -471,7 +513,7 @@ impl Menu {
                 self.important_names(model).len()
             }
             Tab::Party => self.party_indices(model).len(),
-            Tab::Claims | Tab::Chat => 0,
+            Tab::Claims | Tab::Chat | Tab::Experimental => 0,
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
@@ -485,7 +527,7 @@ impl Menu {
             widget.rect[0] += x + sidebar;
             widget.rect[1] += y;
             if sidebar > 0.0 && widget.control == Some(Control::Economy) {
-                widget.rect = [x + 6.0, y + 44.0 + 4.0 * 26.0, sidebar - 10.0, 22.0];
+                widget.rect = [x + 6.0, y + 44.0 + 5.0 * 26.0, sidebar - 10.0, 22.0];
             }
             if sidebar > 0.0
                 && let Some(Control::Tab(tab)) = widget.control
@@ -495,6 +537,7 @@ impl Menu {
                     Tab::Party => 1,
                     Tab::Claims => 2,
                     Tab::Chat => 3,
+                    Tab::Experimental => 4,
                 };
                 widget.rect = [x + 6.0, y + 44.0 + i as f32 * 26.0, sidebar - 10.0, 22.0];
             }
@@ -519,17 +562,21 @@ impl Menu {
             (Control::Tab(Tab::Party), "Пати"),
             (Control::Tab(Tab::Claims), "Клеймы"),
             (Control::Tab(Tab::Chat), "Чат"),
+            (Control::Tab(Tab::Experimental), "Эксперименты"),
             (Control::Economy, "Торги"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 5.0, y + 22.0, w / 5.0 - 3.0, 20.0],
+                [x + i as f32 * w / 6.0, y + 22.0, w / 6.0 - 3.0, 20.0],
                 label,
                 Some(control),
                 matches!(control,Control::Tab(tab)if self.tab==tab),
             ));
+        }
+        if self.tab == Tab::Experimental {
+            return self.experimental_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Chat {
             return self.chat_layout(model, x, w, height, out);
@@ -1139,6 +1186,76 @@ impl Menu {
         }
         out
     }
+    fn experimental_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        let p = model.experimental;
+        let selected = usize::from(p.selected);
+        for (index, (label, control, on)) in [
+            (
+                format!(
+                    "Разрешить подсветку: {}",
+                    if p.allowed { "вкл." } else { "выкл." }
+                ),
+                Control::ExperimentalAllowed,
+                p.allowed,
+            ),
+            (
+                format!(
+                    "Источник: {}",
+                    if p.prediction {
+                        "ПРОГНОЗ сида SMP"
+                    } else {
+                        "загруженные чанки"
+                    }
+                ),
+                Control::ExperimentalSource,
+                p.prediction,
+            ),
+            (
+                format!("Тип руды: {} →", experimental::ORES[selected].label),
+                Control::ExperimentalNext,
+                false,
+            ),
+            (
+                format!(
+                    "Показывать этот тип: {}",
+                    if p.includes(selected) {
+                        "да"
+                    } else {
+                        "нет"
+                    }
+                ),
+                Control::ExperimentalOre,
+                p.includes(selected),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let step = ((height - 126.0) / 3.0).clamp(24.0, 28.0);
+            let y = 56.0 + index as f32 * step;
+            out.push(widget([x, y, w, 22.0], label, Some(control), on));
+        }
+        out.push(widget(
+            [x, height - 48.0, w, 14.0],
+            "O — включить/выключить · после входа всегда выключено",
+            None,
+            false,
+        ));
+        out.push(widget(
+            [x, height - 30.0, w, 14.0],
+            &model.experimental_status,
+            None,
+            false,
+        ));
+        out
+    }
     fn important_names(&self, model: &ViewModel) -> Vec<String> {
         let mut names: std::collections::BTreeMap<String, String> = model
             .priority
@@ -1157,8 +1274,14 @@ impl Menu {
             .iter()
             .enumerate()
             .filter(|(_, p)| match self.party_filter {
-                PartyFilter::Friends => p.friend,
-                PartyFilter::Users => p.online && !p.pending,
+                PartyFilter::Friends => {
+                    p.friend
+                        || model
+                            .priority
+                            .rules
+                            .contains_key(&p.name.to_ascii_lowercase())
+                }
+                PartyFilter::Users => p.online && !p.pending && !p.local_only,
                 PartyFilter::Invitations => p.pending,
                 PartyFilter::Important => false,
             })
@@ -1365,7 +1488,20 @@ impl Menu {
                 let row = &model.party[index];
                 out.push(widget(
                     [x, 118.0 + slot as f32 * 24.0, w, 22.0],
-                    format!("{} · {}", row.name, row.detail),
+                    if model.priority.rule(&row.name, row.friend).is_some() {
+                        format!(
+                            "{} · Важный{} · {}",
+                            row.name,
+                            if row.friend {
+                                " друг"
+                            } else {
+                                " игрок"
+                            },
+                            row.detail
+                        )
+                    } else {
+                        format!("{} · {}", row.name, row.detail)
+                    },
                     Some(Control::Row(index)),
                     self.selected == Some(index),
                 ));
@@ -1404,14 +1540,15 @@ impl Menu {
             ));
             let selected = self.selected.and_then(|i| model.party.get(i));
             let (primary, title) = match selected {
-                Some(p) if p.pending => (Control::Accept, "Принять приглашение"),
-                Some(p) if p.friend => (Control::Remove, "Удалить друга"),
-                _ => (Control::Invite, "Пригласить игрока"),
+                Some(p) if p.local_only => (None, "Отметка чата · без взаимной дружбы"),
+                Some(p) if p.pending => (Some(Control::Accept), "Принять приглашение"),
+                Some(p) if p.friend => (Some(Control::Remove), "Удалить друга"),
+                _ => (Some(Control::Invite), "Пригласить игрока"),
             };
             out.push(widget(
                 [x, height - 38.0, w * 0.62 - 3.0, 18.0],
                 title,
-                Some(primary),
+                primary,
                 false,
             ));
             out.push(widget(
@@ -1681,6 +1818,22 @@ impl Menu {
                 Some(Action::SetChat(p.normalized()))
             }
 
+            Control::ExperimentalAllowed
+            | Control::ExperimentalSource
+            | Control::ExperimentalNext
+            | Control::ExperimentalOre => {
+                let mut p = model.experimental;
+                match control {
+                    Control::ExperimentalAllowed => p.allowed = !p.allowed,
+                    Control::ExperimentalSource => p.prediction = !p.prediction,
+                    Control::ExperimentalNext => {
+                        p.selected = (p.selected + 1) % experimental::ORES.len() as u8
+                    }
+                    Control::ExperimentalOre => p.ores ^= 1 << p.selected,
+                    _ => {}
+                }
+                Some(Action::SetExperimental(p.normalized()))
+            }
             Control::PriorityRow(i) => {
                 if let Some(name) = self.important_names(model).get(i) {
                     self.priority_name = name.clone();
@@ -2126,6 +2279,118 @@ fn on(value: bool) -> &'static str {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn important_people_are_visible_in_friends_without_granting_friend_rights() {
+        let mut model = ViewModel {
+            party: vec![
+                PartyRow {
+                    name: "Buddy".into(),
+                    friend: true,
+                    ..PartyRow::default()
+                },
+                PartyRow {
+                    name: "Alex".into(),
+                    online: true,
+                    ..PartyRow::default()
+                },
+                PartyRow {
+                    name: "Other".into(),
+                    online: true,
+                    ..PartyRow::default()
+                },
+            ],
+            ..ViewModel::default()
+        };
+        model.priority.set("ALEX", 0xffaa00, true).unwrap();
+        model.priority.set("Offline", 0xffaa00, true).unwrap();
+        let menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Friends,
+            ..Menu::default()
+        };
+        assert_eq!(menu.party_indices(&model), vec![0, 1]);
+        assert!(!model.party[1].friend);
+        let rows = menu.layout(&model, 800.0, 500.0);
+        assert!(
+            rows.iter()
+                .any(|r| r.text.contains("Alex") && r.text.contains("Важный"))
+        );
+        assert!(menu.important_names(&model).iter().any(|n| n == "offline"));
+        assert!(!model.experimental.allowed);
+    }
+    #[test]
+    fn manual_priorities_show_without_relay_and_never_offer_friendship_actions() {
+        let mut model = ViewModel::default();
+        model.priority.set("Offline", 0xabcdef, true).unwrap();
+        model.priority.set("Alex", 0xabcdef, true).unwrap();
+        append_important_rows(&mut model.party, &model.priority, &[(42, "Alex".into())]);
+        assert_eq!(model.party.len(), 2);
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Friends,
+            selected: Some(0),
+            ..Menu::default()
+        };
+        assert_eq!(menu.party_indices(&model).len(), 2);
+        assert!(model.party.iter().all(|row| row.local_only && !row.friend));
+        assert_eq!(menu.activate(&model, 400.0, Control::Invite), None);
+        menu.party_filter = PartyFilter::Users;
+        assert!(menu.party_indices(&model).is_empty());
+        menu.party_filter = PartyFilter::Friends;
+        let mut next = model.clone();
+        next.party.reverse();
+        menu.reconcile(&model, &next, 400.0);
+        assert_eq!(menu.selected, Some(1));
+    }
+
+    #[test]
+    fn experimental_permission_does_not_activate_from_opening_menu() {
+        let model = ViewModel::default();
+        let menu = Menu {
+            tab: Tab::Experimental,
+            ..Menu::default()
+        };
+        let rows = menu.layout(&model, 800.0, 500.0);
+        assert!(
+            rows.iter()
+                .any(|r| r.text.contains("Разрешить подсветку: выкл."))
+        );
+        assert!(!model.experimental.allowed && !model.experimental.prediction);
+    }
+
+    #[test]
+    fn experimental_controls_fit_compact_panels() {
+        let model = ViewModel::default();
+        let menu = Menu {
+            tab: Tab::Experimental,
+            ..Menu::default()
+        };
+        for height in [200.0, 216.0, 300.0, 500.0] {
+            let rows = menu.layout(&model, 360.0, height);
+            let controls: Vec<_> = rows
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.control,
+                        Some(
+                            Control::ExperimentalAllowed
+                                | Control::ExperimentalSource
+                                | Control::ExperimentalNext
+                                | Control::ExperimentalOre
+                        )
+                    )
+                })
+                .collect();
+            assert_eq!(controls.len(), 4);
+            for pair in controls.windows(2) {
+                assert!(pair[0].rect[1] + pair[0].rect[3] <= pair[1].rect[1]);
+            }
+            let hint = rows.iter().find(|r| r.text.starts_with("O —")).unwrap();
+            let last = controls.last().unwrap();
+            assert!(last.rect[1] + last.rect[3] <= hint.rect[1]);
+        }
+    }
+
     use super::*;
     #[test]
     fn snapshots_keep_waypoint_identity_and_preserve_edits() {
@@ -2186,7 +2451,13 @@ mod tests {
     }
     #[test]
     fn controls_fit_minimum_gui() {
-        for tab in [Tab::Waypoints, Tab::Party, Tab::Claims, Tab::Chat] {
+        for tab in [
+            Tab::Waypoints,
+            Tab::Party,
+            Tab::Claims,
+            Tab::Chat,
+            Tab::Experimental,
+        ] {
             let menu = Menu {
                 tab,
                 ..Menu::default()

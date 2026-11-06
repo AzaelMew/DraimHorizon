@@ -143,6 +143,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             model::Tab::Party => "Друзья, приглашения и игроки мода",
             model::Tab::Claims => "Территории, цвета и память карты",
             model::Tab::Chat => "Внешний вид, уведомления и перевод",
+            model::Tab::Experimental => "Необязательные функции, выключенные по умолчанию",
         });
         ui::text(
             game,
@@ -245,6 +246,17 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 horizon_client::hud_layout::paint(batch, &game.gui.atlas, &draws);
                 x += 18.0;
                 w -= 18.0;
+                if let Some(rule) = s.model.priority.rule(&row.name, row.friend) {
+                    ui::icon(
+                        game,
+                        batch,
+                        ui::Icon::Star,
+                        [x + 2.0, y + 6.0, 10.0, 10.0],
+                        rule.color,
+                    );
+                    x += 14.0;
+                    w -= 14.0;
+                }
             }
             let color = if widget.muted {
                 0x8995a5
@@ -285,6 +297,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                             model::Tab::Party => "Друзья и игроки",
                             model::Tab::Claims => "Мои приваты",
                             model::Tab::Chat => "Чат и уведомления",
+                            model::Tab::Experimental => "Эксперименты",
                         }
                         .into(),
                         "Пати" => "Друзья".into(),

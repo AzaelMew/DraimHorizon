@@ -230,6 +230,8 @@ pub(super) fn reset() {
 }
 
 pub(super) fn frame(game: &mut Game<'_>) {
+    crate::game::claim_borders_chat_view::frame(game);
+    crate::game::claim_borders_ore_view::frame(game);
     crate::game::claim_borders_auto_trust_view::frame(game);
     crate::game::claim_borders_economy_client::frame(game);
     crate::game::claim_borders_outgoing_view::frame(game);
@@ -1235,6 +1237,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     friend: true,
                     online: present,
                     blocked: changed,
+                    local_only: false,
                     outgoing: false,
                 });
             }
@@ -1257,6 +1260,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         .iter()
                         .any(|peer| peer.uuid == f.uuid && peer.code == code),
                     blocked: false,
+                    local_only: false,
                     outgoing: false,
                 });
             }
@@ -1285,6 +1289,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 friend: false,
                 online: true,
                 blocked,
+                local_only: false,
                 outgoing: c
                     .party
                     .as_mut()
@@ -1296,6 +1301,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     .unwrap_or_else(|| horizon_client::tab_list::default_skin(peer.uuid).into()),
             });
         }
+        menu::append_important_rows(&mut rows, &priority, &tab);
         for row in &mut rows {
             if row.outgoing {
                 row.detail = "Приглашение отправлено".into();
@@ -1348,6 +1354,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             chat_outgoing: crate::game::claim_borders_outgoing_view::enabled(game),
             chat_preferences: chat.preferences,
             priority,
+            experimental: crate::game::claim_borders_ore_view::settings(game),
+            experimental_status: crate::game::claim_borders_ore_view::status(),
             map_preferences,
             claim_rows,
         }
@@ -1457,6 +1465,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetMap(preferences) => {
             crate::game::claim_borders_map_view::configure(game, preferences);
+            Ok(Vec::new())
+        }
+        Action::SetExperimental(prefs) => {
+            crate::game::claim_borders_ore_view::configure(game, prefs);
             Ok(Vec::new())
         }
         Action::SetPriority(prefs) => {

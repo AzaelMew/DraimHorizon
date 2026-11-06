@@ -14,5 +14,6 @@ fn claim_borders_reset() {
     crate::game::claim_borders_inventory_sort_view::reset();
     crate::game::claim_borders_map_view::reset();
     crate::game::claim_borders_chat_view::reset();
+    crate::game::claim_borders_ore_view::reset();
     crate::game::claim_borders::with_state(|state| state.clear());
 }

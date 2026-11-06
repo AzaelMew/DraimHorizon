@@ -83,3 +83,12 @@ pub mod input;
 
 #[path = "../mixins/claim_borders/seed_map.rs"]
 pub mod seed_map;
+
+#[path = "../mixins/claim_borders/experimental.rs"]
+pub mod experimental;
+pub use experimental as claim_borders_experimental;
+
+pub use chat_feed as claim_borders_chat_feed;
+#[path = "../mixins/claim_borders/chat_archive.rs"]
+pub mod chat_archive;
+pub use chat_archive as claim_borders_chat_archive;
