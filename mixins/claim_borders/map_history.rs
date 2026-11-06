@@ -543,7 +543,16 @@ pub struct Render {
     pub shading: bool,
 }
 fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[u8; 4]> {
-    let (c, h, d, rgb) = r.column(x, z)?;
+    shade_column(|x, z| r.column(x, z), x, z, palette, shading)
+}
+fn shade_column(
+    column: impl Fn(i32, i32) -> Option<(u8, i16, u8, u32)>,
+    x: i32,
+    z: i32,
+    palette: &[u32],
+    shading: bool,
+) -> Option<[u8; 4]> {
+    let (c, h, d, rgb) = column(x, z)?;
     let id = usize::from(c & 0x7f);
     if id == 0 {
         return None;
@@ -552,12 +561,12 @@ fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[
     let mut brightness = 1.0f32;
     if shading {
         let north = if z.rem_euclid(REGION) > 0 {
-            r.column(x, z - 1).map_or(h, |p| p.1)
+            column(x, z - 1).map_or(h, |p| p.1)
         } else {
             h
         };
         let west = if x.rem_euclid(REGION) > 0 {
-            r.column(x - 1, z).map_or(h, |p| p.1)
+            column(x - 1, z).map_or(h, |p| p.1)
         } else {
             h
         };
@@ -575,6 +584,36 @@ fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[
     let channel =
         |shift: u32| ((color >> shift & 255u32) as f32 * brightness).clamp(0.0, 255.0) as u8;
     Some([channel(16), channel(8), channel(0), 255])
+}
+
+pub fn compose_minimap(
+    tiles: &BTreeMap<(i32, i32), Tile>,
+    center: [f64; 2],
+    bpp: f32,
+    palette: &[u32],
+    shading: bool,
+) -> Vec<u8> {
+    const SIZE: usize = 128;
+    let column = |x: i32, z: i32| {
+        let tile = tiles.get(&(x >> 4, z >> 4))?;
+        let i = ((z & 15) * 16 + (x & 15)) as usize;
+        Some((tile.color[i], tile.height[i], tile.depth[i], tile.rgb[i]))
+    };
+    let mut image = Vec::with_capacity(SIZE * SIZE * 4);
+    for z in 0..SIZE {
+        let wz = (center[1] + (z as f64 - 63.5) * f64::from(bpp)).floor() as i32;
+        for x in 0..SIZE {
+            let wx = (center[0] + (x as f64 - 63.5) * f64::from(bpp)).floor() as i32;
+            let shade = if (x / 16 + z / 16) % 2 == 0 { 20 } else { 23 };
+            image.extend(shade_column(column, wx, wz, palette, shading).unwrap_or([
+                shade,
+                shade + 5,
+                shade + 10,
+                255,
+            ]));
+        }
+    }
+    image
 }
 fn read_identity(path: &Path) -> Result<String, String> {
     let file = fs::File::open(path).map_err(|e| e.to_string())?;
@@ -609,6 +648,30 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_minimap_uses_the_passed_slice_and_its_texture_colors() {
+        let center = 4 * (64 * 128 + 64);
+        for (height, rgb, expected) in [
+            (65, 0xff881100, [136, 17, 0, 255]),
+            (66, 0xff115500, [17, 85, 0, 255]),
+            (75, 0xff001188, [0, 17, 136, 255]),
+        ] {
+            let tile = Tile {
+                color: [1; 256],
+                height: [height; 256],
+                depth: [0; 256],
+                rgb: [rgb; 256],
+            };
+            let image = compose_minimap(
+                &BTreeMap::from([((0, 0), tile)]),
+                [8.0, 8.0],
+                1.0,
+                &[],
+                false,
+            );
+            assert_eq!(image[center..center + 4], expected);
+        }
+    }
     use std::sync::atomic::{AtomicU64, Ordering};
     struct Dir(PathBuf);
     impl Dir {

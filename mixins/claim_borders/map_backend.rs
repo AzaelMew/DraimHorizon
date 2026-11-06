@@ -5,7 +5,7 @@ use crate::game::{
     claim_borders_map_view as view, claim_borders_map_worker as worker,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Mutex, OnceLock},
     time::Instant,
 };
@@ -18,7 +18,16 @@ struct Cache {
     worker: Option<worker::Handle>,
     seen: BTreeMap<(i32, i32), u64>,
     context: Option<history::Context>,
-    texture_generation: u64,
+    texture_generation: Option<u64>,
+    live_scope: Option<(String, String)>,
+    live_slices: VecDeque<LiveSlice>,
+    live_displayed: Option<(Layer, model::View, bool)>,
+    live_refresh: Instant,
+}
+struct LiveSlice {
+    layer: Layer,
+    scanner: minimap::Minimap,
+    tiles: BTreeMap<(i32, i32), history::Tile>,
 }
 fn state() -> &'static Mutex<Cache> {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
@@ -32,7 +41,11 @@ fn state() -> &'static Mutex<Cache> {
             worker: None,
             seen: BTreeMap::new(),
             context: None,
-            texture_generation: 0,
+            texture_generation: None,
+            live_scope: None,
+            live_slices: VecDeque::new(),
+            live_displayed: None,
+            live_refresh: Instant::now(),
         })
     })
 }
@@ -58,8 +71,127 @@ pub(in crate::game) fn finish() {
     }
 }
 pub(in crate::game) fn flush() {
-    if let Some(handle) = &state().lock().unwrap_or_else(|p| p.into_inner()).worker {
+    let mut cache = state().lock().unwrap_or_else(|p| p.into_inner());
+    cache.live_scope = None;
+    cache.live_slices.clear();
+    cache.live_displayed = None;
+    if let Some(handle) = &cache.worker {
         handle.flush();
+    }
+}
+fn draw_minimap(
+    game: &mut Game<'_>,
+    cache: &mut Cache,
+    request: &view::Request,
+    layer: Layer,
+    palette: Option<&[crate::game::claim_borders_terrain_colors::Material]>,
+) {
+    let scope = (
+        request.source.scope.clone(),
+        request.source.dimension.clone(),
+    );
+    if cache.live_scope.as_ref() != Some(&scope) {
+        cache.live_scope = Some(scope);
+        cache.live_slices.clear();
+        cache.live_displayed = None;
+    }
+    let mut slice = cache
+        .live_slices
+        .iter()
+        .position(|s| s.layer == layer)
+        .and_then(|i| cache.live_slices.remove(i))
+        .unwrap_or_else(|| LiveSlice {
+            layer,
+            scanner: minimap::Minimap::default(),
+            tiles: BTreeMap::new(),
+        });
+    let center = request.view.center.map(|p| p.floor() as i32);
+    let chunk = (center[0] >> 4, center[1] >> 4);
+    let radius = ((request.view.blocks_per_pixel * 4.0).ceil() as i32 + 1)
+        .min(game.settings.render_distance.max(2));
+    let before = Instant::now();
+    let scanned = slice.scanner.update(
+        &game.world,
+        game.res.facts(),
+        chunk,
+        radius,
+        layer,
+        Duration::from_micros(400),
+    );
+    let old_count = slice.tiles.len();
+    slice.tiles.retain(|&(x, z), _| {
+        (x - chunk.0).abs() <= radius + 2
+            && (z - chunk.1).abs() <= radius + 2
+            && game.world.chunks.contains_key(&(x, z))
+    });
+    let removed = old_count != slice.tiles.len();
+    for (at, color, height, depth) in slice.scanner.claim_borders_tiles(before) {
+        let rgb = palette.map_or([0; 256], |p| {
+            crate::game::claim_borders_terrain_colors::tile(game, at, height, p)
+        });
+        slice.tiles.insert(
+            at,
+            history::Tile {
+                color: *color,
+                height: *height,
+                depth: *depth,
+                rgb,
+            },
+        );
+    }
+    let p = request.preferences;
+    let changed = cache.live_displayed.is_none_or(|(old, last, shading)| {
+        old != layer
+            || shading != p.shading
+            || last.blocks_per_pixel != request.view.blocks_per_pixel
+            || last
+                .center
+                .into_iter()
+                .zip(request.view.center)
+                .any(|(a, b)| (a - b).abs() >= f64::from(p.zoom) / 4.0)
+    });
+    if (changed
+        || removed
+        || scanned != 0
+        || game.extras.minimap.image.is_empty()
+        || cache.live_refresh.elapsed() >= Duration::from_millis(150))
+        && let Some(rect) = game.gui.atlas.sprites.get(MINIMAP_SPRITE).copied()
+    {
+        let size = minimap::SIZE;
+        let mut pixels = history::compose_minimap(
+            &slice.tiles,
+            request.view.center,
+            request.view.blocks_per_pixel,
+            &horizon_client::blocks::MAP_COLORS,
+            p.shading,
+        );
+        model::paint_aspect(
+            &mut pixels,
+            size,
+            request.view,
+            &request.dimension,
+            &request.source,
+            p,
+            1.0,
+        );
+        let (w, h) = (game.gui.atlas.width as f32, game.gui.atlas.height as f32);
+        game.map_patches.push(horizon_client::font::Patch {
+            x: (rect.u0 * w).round() as u32,
+            y: (rect.v0 * h).round() as u32,
+            width: size as u32,
+            height: size as u32,
+            rgba: pixels,
+        });
+        if game.extras.minimap.image.is_empty() {
+            game.extras.minimap.image = vec![0; size * size * 4];
+        }
+        cache.live_displayed = Some((layer, request.view, p.shading));
+        cache.live_refresh = Instant::now();
+        view::mini_published(request.dimension.clone(), request.view);
+    }
+    cache.live_slices.push_back(slice);
+    if cache.live_slices.len() > 4 {
+        cache.live_slices.pop_front();
     }
 }
 pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
@@ -84,11 +216,12 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
         }
     }
     let texture_palette = crate::game::claim_borders_terrain_colors::palette(game);
-    if let Some((generation, _)) = &texture_palette
-        && *generation != cache.texture_generation
-    {
-        cache.texture_generation = *generation;
+    let texture_generation = texture_palette.as_ref().map(|(generation, _)| *generation);
+    if texture_generation != cache.texture_generation {
+        cache.texture_generation = texture_generation;
         cache.seen.clear();
+        cache.live_slices.clear();
+        cache.live_displayed = None;
         cache.captured_at = Instant::now() - Duration::from_secs(86400);
     }
     let head = game
@@ -194,6 +327,28 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
             .seen
             .retain(|at, _| game.world.chunks.contains_key(at));
     }
+    if !request.full {
+        cache.full = false;
+        if request.draw {
+            let [x, z] = request.view.center.map(|p| p.floor() as i32);
+            let covered = game.dim == Dim::Nether || game.world.light(x, head, z) >> 4 == 0;
+            let layer = request
+                .preferences
+                .layer
+                .live_minimap_ceiling(head, covered)
+                .map_or(Layer::Surface, Layer::Below);
+            draw_minimap(
+                game,
+                &mut cache,
+                &request,
+                layer,
+                texture_palette
+                    .as_ref()
+                    .map(|(_, palette)| palette.as_slice()),
+            );
+        }
+        return true;
+    }
     if !request.draw {
         return true;
     }
@@ -235,12 +390,13 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 request.preferences,
                 aspect,
             );
-            let sprite = if request.full {
-                "claim_borders/world_map"
-            } else {
-                MINIMAP_SPRITE
-            };
-            if let Some(rect) = game.gui.atlas.sprites.get(sprite).copied() {
+            if let Some(rect) = game
+                .gui
+                .atlas
+                .sprites
+                .get("claim_borders/world_map")
+                .copied()
+            {
                 let (w, h) = (game.gui.atlas.width as f32, game.gui.atlas.height as f32);
                 game.map_patches.push(horizon_client::font::Patch {
                     x: (rect.u0 * w).round() as u32,
@@ -249,9 +405,6 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                     height: size as u32,
                     rgba: pixels,
                 });
-                if game.extras.minimap.image.is_empty() {
-                    game.extras.minimap.image = vec![0; 128 * 128 * 4];
-                }
                 view::published(request.dimension.clone(), actual, aspect);
             }
             view::history_status(image.dimensions, image.warning);

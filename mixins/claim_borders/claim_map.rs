@@ -24,6 +24,9 @@ impl Layer {
             Self::Cave => Some(head.div_euclid(16) * 16 + 15),
         }
     }
+    pub fn live_minimap_ceiling(self, head: i32, covered: bool) -> Option<i32> {
+        (covered || self == Self::Cave).then_some(head)
+    }
     pub fn label(self) -> &'static str {
         match self {
             Self::Auto => "Поверхность",
@@ -624,6 +627,15 @@ pub fn paint_aspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_minimap_tracks_exact_height_instead_of_the_saved_band() {
+        for y in [-5, -4, 65, 66, 75] {
+            assert_eq!(Layer::Cave.live_minimap_ceiling(y, false), Some(y));
+            assert_eq!(Layer::Surface.live_minimap_ceiling(y, true), Some(y));
+            assert_eq!(Layer::Surface.live_minimap_ceiling(y, false), None);
+        }
+        assert_eq!(Layer::Cave.scan_ceiling(65), Layer::Cave.scan_ceiling(75));
+    }
     #[test]
     fn surface_maps_and_legacy_auto_settings_are_independent_of_player_height() {
         assert_eq!(Preferences::default().layer, Layer::Surface);

@@ -25,6 +25,7 @@ struct State {
     drag: Option<Drag>,
     rect: Option<[f32; 4]>,
     published: Option<(String, model::View, f32)>,
+    mini_published: Option<(String, model::View)>,
     displayed: Option<(String, model::View, f32)>,
     dimensions: Vec<String>,
     history_warning: Option<String>,
@@ -54,6 +55,7 @@ impl Default for State {
             drag: None,
             rect: None,
             published: None,
+            mini_published: None,
             displayed: None,
             dimensions: Vec::new(),
             history_warning: None,
@@ -114,6 +116,7 @@ pub(super) fn reset() {
         s.drag = None;
         s.rect = None;
         s.published = None;
+        s.mini_published = None;
         s.close_request = false;
     });
 }
@@ -125,6 +128,7 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
             .is_some_and(|old| old.scope != source.scope)
         {
             s.published = None;
+            s.mini_published = None;
             s.dimensions.clear();
             s.history_warning = None;
             s.open = false;
@@ -248,6 +252,9 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
 }
 pub(in crate::game) fn published(dimension: String, view: model::View, aspect: f32) {
     state(|s| s.published = Some((dimension, view, aspect)));
+}
+pub(in crate::game) fn mini_published(dimension: String, view: model::View) {
+    state(|s| s.mini_published = Some((dimension, view)));
 }
 pub(in crate::game) fn history_status(dimensions: Vec<String>, warning: Option<String>) {
     state(|s| {
@@ -474,8 +481,8 @@ pub(super) fn hud(
     if wanted(game).is_none() || game.ui.hide_gui || !game.native_corner_shown(corner(p.corner)) {
         return;
     }
-    let (source, image) = state(|s| (s.source.clone(), s.published.clone()));
-    let (Some(source), Some((dimension, view, _))) = (source, image) else {
+    let (source, image) = state(|s| (s.source.clone(), s.mini_published.clone()));
+    let (Some(source), Some((dimension, view))) = (source, image) else {
         return;
     };
     let (x, next_y) = corners.place(corner(p.corner), p.size as f32, 0.0);
