@@ -88,6 +88,8 @@ pub struct ClaimRow {
     pub x: i32,
     pub z: i32,
     pub label: String,
+    pub owner: String,
+    pub foreign: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ClaimsSection {
@@ -133,6 +135,7 @@ pub struct ViewModel {
     pub chat_preferences: Preferences,
     pub map_preferences: map::Preferences,
     pub claim_rows: Vec<ClaimRow>,
+    pub economy_preferences: super::claim_borders_economy::Preferences,
 }
 /// Requests are plain server commands; neither action accepts a request or a trade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,6 +217,8 @@ pub enum Action {
     },
     RefreshClaims,
     OpenEconomy,
+    EconomySetting(&'static str, i64),
+    Appearance,
     ToggleAutoTrust,
     RelayOff,
     RelayConnect,
@@ -298,6 +303,12 @@ impl std::fmt::Debug for Action {
                 f.debug_struct("RemoveFriend").field("name", name).finish()
             }
             Self::SetClaims(settings) => f.debug_tuple("SetClaims").field(settings).finish(),
+            Self::EconomySetting(key, dir) => f
+                .debug_tuple("EconomySetting")
+                .field(key)
+                .field(dir)
+                .finish(),
+            Self::Appearance => f.write_str("Appearance"),
             Self::OpenEconomy => f.write_str("OpenEconomy"),
             Self::ToggleAutoTrust => f.write_str("ToggleAutoTrust"),
             Self::RefreshClaims => f.write_str("RefreshClaims"),
@@ -316,6 +327,7 @@ pub enum Tab {
     Claims,
     Chat,
     Experimental,
+    Settings,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
@@ -328,6 +340,7 @@ pub enum Field {
     FriendClaimColor,
     PriorityName,
     PriorityColor,
+    ClaimOwner,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum PartyFilter {
@@ -359,6 +372,13 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    SettingsSection(i8),
+    SettingsPage(i8),
+    EconomySetting(&'static str, i64),
+    Appearance,
+    ClaimFilter,
+    PartyAccept(usize),
+    PartyDecline(usize),
     PlayerRequest(PlayerRequest),
     PriorityNext,
     PriorityRow(usize),
@@ -453,6 +473,10 @@ pub struct Widget {
 #[derive(Clone)]
 pub struct Menu {
     pub tab: Tab,
+    pub settings_section: u8,
+    pub settings_page: usize,
+    pub claim_owner: String,
+    pub claim_filter: u8,
     pub party_filter: PartyFilter,
     pub chat_section: ChatSection,
     pub claims_section: ClaimsSection,
@@ -479,6 +503,10 @@ impl Default for Menu {
     fn default() -> Self {
         Self {
             tab: Tab::Waypoints,
+            settings_section: 0,
+            settings_page: 0,
+            claim_owner: String::new(),
+            claim_filter: 0,
             party_filter: PartyFilter::Users,
             chat_section: ChatSection::Appearance,
             claims_section: ClaimsSection::Map,
@@ -537,7 +565,7 @@ impl Menu {
                     }
                 })
             }),
-            Tab::Claims | Tab::Chat | Tab::Experimental => None,
+            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Settings => None,
         });
         if self.tab == Tab::Party
             && self
@@ -559,7 +587,7 @@ impl Menu {
         if self.tab == Tab::Party && self.party_filter == PartyFilter::Important {
             (((height - 228.0) / 24.0).floor() as usize).max(1)
         } else if self.tab == Tab::Party {
-            (((height - 176.0) / 24.0).floor() as usize).clamp(1, 12)
+            (((height - 164.0) / 24.0).floor() as usize).clamp(1, 12)
         } else {
             Self::rows_per_page(height)
         }
@@ -571,13 +599,14 @@ impl Menu {
                 self.important_names(model).len()
             }
             Tab::Party => self.party_indices(model).len(),
-            Tab::Claims | Tab::Chat | Tab::Experimental => 0,
+            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Settings => 0,
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = if panel_w >= 380.0 { 96.0 } else { 0.0 };
+        let nav_step = ((panel_h - 80.0) / 6.0).min(26.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
@@ -585,7 +614,12 @@ impl Menu {
             widget.rect[0] += x + sidebar;
             widget.rect[1] += y;
             if sidebar > 0.0 && widget.control == Some(Control::Economy) {
-                widget.rect = [x + 6.0, y + 44.0 + 5.0 * 26.0, sidebar - 10.0, 22.0];
+                widget.rect = [
+                    x + 6.0,
+                    y + 44.0 + 5.0 * nav_step,
+                    sidebar - 10.0,
+                    nav_step - 4.0,
+                ];
             }
             if sidebar > 0.0
                 && let Some(Control::Tab(tab)) = widget.control
@@ -596,8 +630,22 @@ impl Menu {
                     Tab::Claims => 2,
                     Tab::Chat => 3,
                     Tab::Experimental => 4,
+                    Tab::Settings => 6,
                 };
-                widget.rect = [x + 6.0, y + 44.0 + i as f32 * 26.0, sidebar - 10.0, 22.0];
+                widget.rect = [
+                    x + 6.0,
+                    if tab == Tab::Settings {
+                        y + panel_h - 28.0
+                    } else {
+                        y + 44.0 + i as f32 * nav_step
+                    },
+                    sidebar - 10.0,
+                    if tab == Tab::Settings {
+                        22.0
+                    } else {
+                        nav_step - 4.0
+                    },
+                ];
             }
         }
         widgets
@@ -633,17 +681,48 @@ impl Menu {
                 matches!(control,Control::Tab(tab)if self.tab==tab),
             ));
         }
+        out.push(widget(
+            [x + w - 96.0, height - 24.0, 96.0, 20.0],
+            "Настройки",
+            Some(Control::Tab(Tab::Settings)),
+            self.tab == Tab::Settings,
+        ));
+        if self.tab == Tab::Settings {
+            return self.settings_layout(model, x, w, height, out);
+        }
         if self.tab == Tab::Experimental {
             return self.experimental_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Chat {
-            return self.chat_layout(model, x, w, height, out);
+            for (i, (label, control, selected)) in [
+                (
+                    format!("Входящие → RU: {}", on(model.chat_translate)),
+                    Control::ChatTranslate,
+                    model.chat_translate,
+                ),
+                (
+                    format!("Мои сообщения RU → EN: {}", on(model.chat_outgoing)),
+                    Control::ChatOutgoing,
+                    model.chat_outgoing,
+                ),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    [x, 64.0 + i as f32 * 28.0, w, 24.0],
+                    label,
+                    Some(control),
+                    selected,
+                ));
+            }
+            return out;
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
         }
         if self.tab == Tab::Claims {
-            return self.claims_layout(model, x, w, height, out);
+            return self.claim_list_layout(model, x, w, height, out);
         } else {
             let per = Self::rows_per_page(height);
             let start = self.page * per;
@@ -744,6 +823,245 @@ impl Menu {
         out.push(widget([x, height - 19.0, w, 14.0], status, None, false));
         out
     }
+    fn claim_indices(&self, model: &ViewModel) -> Vec<usize> {
+        let query = self.claim_owner.to_lowercase();
+        model
+            .claim_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                c.owner.to_lowercase().contains(&query)
+                    && match self.claim_filter {
+                        1 => !c.foreign,
+                        2 => c.foreign,
+                        _ => true,
+                    }
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+    fn claim_list_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        out.push(widget(
+            [x, 56.0, w * 0.55 - 3.0, 20.0],
+            format!("Игрок: {}", self.claim_owner),
+            Some(Control::Field(Field::ClaimOwner)),
+            self.focus == Some(Field::ClaimOwner),
+        ));
+        out.push(widget(
+            [x + w * 0.55, 56.0, w * 0.45, 20.0],
+            ["Все приваты", "Свои / дружественные", "Чужие"][self.claim_filter as usize],
+            Some(Control::ClaimFilter),
+            false,
+        ));
+        out.push(widget(
+            [x, 80.0, w * 0.5 - 3.0, 18.0],
+            format!("Порядок: {}", model.map_preferences.sort.label()),
+            Some(Control::MapSort),
+            false,
+        ));
+        out.push(widget(
+            [x + w * 0.5, 80.0, w * 0.5, 18.0],
+            "Обновить /claims",
+            Some(Control::Refresh),
+            false,
+        ));
+        let indices = self.claim_indices(model);
+        let per = (((height - 150.0) / 20.0).floor() as usize).clamp(1, 12);
+        let pages = indices.len().div_ceil(per).max(1);
+        let page = self.claims_page.min(pages - 1);
+        for (slot, index) in indices
+            .iter()
+            .copied()
+            .skip(page * per)
+            .take(per)
+            .enumerate()
+        {
+            out.push(widget(
+                [x, 104.0 + slot as f32 * 20.0, w, 18.0],
+                &model.claim_rows[index].label,
+                Some(Control::ClaimRow(index)),
+                false,
+            ));
+        }
+        out.push(widget(
+            [x, height - 46.0, 24.0, 18.0],
+            "←",
+            Some(Control::ClaimsPrevious),
+            false,
+        ));
+        out.push(widget(
+            [x + 28.0, height - 46.0, w - 56.0, 18.0],
+            format!("{} / {} · {} чанков", page + 1, pages, indices.len()),
+            None,
+            false,
+        ));
+        out.push(widget(
+            [x + w - 24.0, height - 46.0, 24.0, 18.0],
+            "→",
+            Some(Control::ClaimsNext),
+            false,
+        ));
+        out
+    }
+    fn settings_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        let titles = [
+            "Основное",
+            "Связь и друзья",
+            "Карта и приваты",
+            "Чат",
+            "Торги",
+            "TAB",
+            "Scoreboard",
+        ];
+        out.push(widget(
+            [x, 56.0, 24.0, 18.0],
+            "←",
+            Some(Control::SettingsSection(-1)),
+            false,
+        ));
+        out.push(widget(
+            [x + 28.0, 56.0, w - 56.0, 18.0],
+            titles[self.settings_section as usize],
+            None,
+            false,
+        ));
+        out.push(widget(
+            [x + w - 24.0, 56.0, 24.0, 18.0],
+            "→",
+            Some(Control::SettingsSection(1)),
+            false,
+        ));
+        let mut inner = match self.settings_section {
+            0 => {
+                let mut v = Vec::new();
+                for (i, (label, control)) in [
+                    ("Оформление интерфейса", Control::Appearance),
+                    ("Связь, relay и Auto Trust", Control::SettingsSection(1)),
+                    ("Карта, границы и память", Control::SettingsSection(2)),
+                    ("Чат и уведомления", Control::SettingsSection(3)),
+                    ("Торги", Control::SettingsSection(4)),
+                    ("TAB", Control::SettingsSection(5)),
+                    ("Scoreboard", Control::SettingsSection(6)),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    v.push(widget(
+                        [
+                            x,
+                            80.0 + i as f32 * ((height - 112.0) / 7.0).min(28.0),
+                            w,
+                            ((height - 112.0) / 7.0).min(26.0) - 2.0,
+                        ],
+                        label,
+                        Some(if i > 0 {
+                            Control::SettingsSection((i as i8).min(6))
+                        } else {
+                            control
+                        }),
+                        false,
+                    ));
+                }
+                out.extend(v);
+                return out;
+            }
+            1 => {
+                let mut copy = self.clone();
+                copy.relay_setup = true;
+                let mut v = copy.party_layout(model, w + 16.0, height - 30.0, Vec::new());
+                for widget in &mut v {
+                    widget.rect[0] += x - 8.0;
+                }
+                v.retain(|v| v.rect[1] < 212.0);
+                v.push(widget(
+                    [x, 212.0, w, 18.0],
+                    format!("Auto Trust: {}", on(model.auto_trust)),
+                    Some(Control::ToggleAutoTrust),
+                    model.auto_trust,
+                ));
+                v
+            }
+            2 => self.claims_layout(model, x, w, height - 26.0, Vec::new()),
+            3 => self.chat_layout(model, x, w, height - 26.0, Vec::new()),
+            section => {
+                let settings: Vec<_> = super::claim_borders_economy::SETTINGS
+                    .iter()
+                    .filter(|setting| match section {
+                        4 => setting.group <= 4,
+                        5 => setting.group == 6,
+                        _ => setting.group == 5,
+                    })
+                    .collect();
+                let per = (((height - 136.0) / 22.0).floor() as usize).max(1);
+                let pages = settings.len().div_ceil(per).max(1);
+                let page = self.settings_page.min(pages - 1);
+                for (i, setting) in settings.into_iter().skip(page * per).take(per).enumerate() {
+                    let y = 80.0 + i as f32 * 22.0;
+                    out.push(widget(
+                        [x, y, w - 48.0, 20.0],
+                        format!(
+                            "{}: {}",
+                            setting.label,
+                            model.economy_preferences.get(setting.key)
+                        ),
+                        None,
+                        false,
+                    ));
+                    out.push(widget(
+                        [x + w - 46.0, y, 22.0, 20.0],
+                        "−",
+                        Some(Control::EconomySetting(setting.key, -1)),
+                        false,
+                    ));
+                    out.push(widget(
+                        [x + w - 22.0, y, 22.0, 20.0],
+                        "+",
+                        Some(Control::EconomySetting(setting.key, 1)),
+                        false,
+                    ));
+                }
+                out.push(widget(
+                    [x, height - 48.0, w / 2.0 - 3.0, 18.0],
+                    format!("← {} / {}", page + 1, pages),
+                    Some(Control::SettingsPage(-1)),
+                    false,
+                ));
+                out.push(widget(
+                    [x + w / 2.0, height - 48.0, w / 2.0, 18.0],
+                    "→",
+                    Some(Control::SettingsPage(1)),
+                    false,
+                ));
+                return out;
+            }
+        };
+        // Preserve each editor's spacing while keeping its last row above the footer.
+        let bottom = inner
+            .iter()
+            .map(|widget| widget.rect[1] + widget.rect[3])
+            .fold(80.0_f32, f32::max);
+        let scale = ((height - 108.0) / (bottom - 54.0).max(1.0)).min(1.0);
+        for widget in &mut inner {
+            widget.rect[1] = 80.0 + (widget.rect[1] - 54.0).max(0.0) * scale;
+            widget.rect[3] *= scale;
+        }
+        out.extend(inner);
+        out
+    }
     fn claims_layout(
         &self,
         model: &ViewModel,
@@ -756,14 +1074,13 @@ impl Menu {
             (ClaimsSection::Map, "Карта"),
             (ClaimsSection::Borders, "Границы"),
             (ClaimsSection::Colours, "Цвета"),
-            (ClaimsSection::List, "Приваты"),
             (ClaimsSection::Storage, "Память"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 5.0, 56.0, w / 5.0 - 3.0, 18.0],
+                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
                 label,
                 Some(Control::ClaimsSection(section)),
                 self.claims_section == section,
@@ -1041,13 +1358,12 @@ impl Menu {
             (ChatSection::Appearance, "Вид / позиция"),
             (ChatSection::Notifications, "Уведомления"),
             (ChatSection::Spam, "Антиспам"),
-            (ChatSection::Priority, "Важные"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
+                [x + i as f32 * w / 3.0, 56.0, w / 3.0 - 3.0, 18.0],
                 label,
                 Some(Control::ChatSection(section)),
                 self.chat_section == section,
@@ -1339,7 +1655,7 @@ impl Menu {
                             .rules
                             .contains_key(&p.name.to_ascii_lowercase())
                 }
-                PartyFilter::Users => p.online && !p.pending && !p.local_only,
+                PartyFilter::Users => (p.online || p.pending) && !p.local_only,
                 PartyFilter::Invitations => p.pending,
                 PartyFilter::Important => false,
             })
@@ -1421,116 +1737,19 @@ impl Menu {
                 false,
             ));
         } else {
-            out.push(widget([x, 54.0, w, 14.0], &model.relay, None, false));
-            out.push(widget(
-                [x, 72.0, w / 2.0 - 3.0, 18.0],
-                "Настроить relay",
-                Some(Control::RelaySetup),
-                false,
-            ));
-            out.push(widget(
-                [x + w / 2.0, 72.0, w / 2.0, 18.0],
-                if model.relay_connected {
-                    "Отключить"
-                } else {
-                    "Подключить"
-                },
-                Some(if model.relay_connected {
-                    Control::RelayOff
-                } else {
-                    Control::RelayConnect
-                }),
-                false,
-            ));
             for (i, (filter, title)) in [
                 (PartyFilter::Friends, "Друзья"),
                 (PartyFilter::Users, "С модом"),
-                (PartyFilter::Invitations, "Приглашения"),
-                (PartyFilter::Important, "Важные"),
             ]
             .into_iter()
             .enumerate()
             {
                 out.push(widget(
-                    [x + i as f32 * w / 4.0, 94.0, w / 4.0 - 3.0, 18.0],
+                    [x + i as f32 * w / 2.0, 56.0, w / 2.0 - 3.0, 20.0],
                     title,
                     Some(Control::PartyFilter(filter)),
                     self.party_filter == filter,
                 ));
-            }
-            if self.party_filter == PartyFilter::Important {
-                let names = self.important_names(model);
-                let per = (((height - 228.0) / 24.0).floor() as usize).max(1);
-                let pages = names.len().div_ceil(per).max(1);
-                let page = self.page.min(pages - 1);
-                for (i, name) in names.iter().enumerate().skip(page * per).take(per) {
-                    let friend = model
-                        .party
-                        .iter()
-                        .any(|p| p.friend && p.name.eq_ignore_ascii_case(name));
-                    out.push(widget(
-                        [x, 118.0 + (i - page * per) as f32 * 24.0, w, 22.0],
-                        format!(
-                            "{} · {}",
-                            name,
-                            if friend {
-                                "Друг · всегда важный"
-                            } else {
-                                "Важный игрок"
-                            }
-                        ),
-                        Some(Control::PriorityRow(i)),
-                        self.priority_name.eq_ignore_ascii_case(name),
-                    ));
-                }
-                let b = height - 104.0;
-                out.push(widget(
-                    [x, b, 24.0, 18.0],
-                    "←",
-                    Some(Control::Previous),
-                    false,
-                ));
-                out.push(widget(
-                    [x + 28.0, b, w - 56.0, 18.0],
-                    format!(
-                        "{} / {} · Друзья добавляются автоматически",
-                        page + 1,
-                        pages
-                    ),
-                    None,
-                    false,
-                ));
-                out.push(widget(
-                    [x + w - 24.0, b, 24.0, 18.0],
-                    "→",
-                    Some(Control::Next),
-                    false,
-                ));
-                out.push(widget(
-                    [x, b + 24.0, w * 0.65 - 3.0, 20.0],
-                    format!("Ник: {}", self.priority_name),
-                    Some(Control::Field(Field::PriorityName)),
-                    self.focus == Some(Field::PriorityName),
-                ));
-                out.push(widget(
-                    [x + w * 0.65, b + 24.0, w * 0.35, 20.0],
-                    "Добавить / сохранить",
-                    Some(Control::PrioritySave),
-                    false,
-                ));
-                out.push(widget(
-                    [x, b + 48.0, w * 0.65 - 3.0, 20.0],
-                    format!("Цвет: {}", self.priority_color),
-                    Some(Control::Field(Field::PriorityColor)),
-                    self.focus == Some(Field::PriorityColor),
-                ));
-                out.push(widget(
-                    [x + w * 0.65, b + 48.0, w * 0.35, 20.0],
-                    "Убрать правило",
-                    Some(Control::PriorityRemove),
-                    false,
-                ));
-                return out;
             }
             let indices = self.party_indices(model);
             let per = self.page_size(height);
@@ -1544,151 +1763,93 @@ impl Menu {
                 .enumerate()
             {
                 let row = &model.party[index];
+                let y = 82.0 + slot as f32 * 24.0;
                 out.push(widget(
-                    [x, 118.0 + slot as f32 * 24.0, w, 22.0],
-                    if model.priority.rule(&row.name, row.friend).is_some() {
-                        format!(
-                            "{} · Важный{} · {}",
-                            row.name,
-                            if row.friend {
-                                " друг"
-                            } else {
-                                " игрок"
-                            },
-                            row.detail
-                        )
-                    } else {
-                        format!("{} · {}", row.name, row.detail)
-                    },
+                    [x, y, w - 48.0, 22.0],
+                    format!(
+                        "{}{} · {}",
+                        row.name,
+                        if model.priority.rule(&row.name, row.friend).is_some() {
+                            " · Важный"
+                        } else {
+                            ""
+                        },
+                        row.detail
+                    ),
                     Some(Control::Row(index)),
                     self.selected == Some(index),
                 ));
+                if row.pending || (!row.friend && !row.outgoing && !row.blocked && !row.local_only)
+                {
+                    out.push(widget(
+                        [x + w - 46.0, y, 22.0, 22.0],
+                        if row.pending {
+                            "Принять"
+                        } else {
+                            "Добавить друга"
+                        },
+                        Some(Control::PartyAccept(index)),
+                        false,
+                    ));
+                }
+                if row.pending || row.friend {
+                    out.push(widget(
+                        [x + w - 22.0, y, 22.0, 22.0],
+                        if row.pending {
+                            "Отклонить"
+                        } else {
+                            "Удалить друга"
+                        },
+                        Some(Control::PartyDecline(index)),
+                        false,
+                    ));
+                }
             }
             if indices.is_empty() {
                 out.push(widget(
-                    [x, 120.0, w, 18.0],
-                    match self.party_filter {
-                        PartyFilter::Friends => "Пока нет друзей. Выбери игрока в «С модом».",
-                        PartyFilter::Users => "Здесь появятся игроки вашего relay на этом сервере.",
-                        PartyFilter::Invitations => "Нет входящих приглашений.",
-                        PartyFilter::Important => "Нет важных игроков.",
-                    },
+                    [x, 86.0, w, 18.0],
+                    "Пока нет игроков в этой группе",
                     None,
                     false,
                 ));
             }
-            let b = 118.0 + per as f32 * 24.0;
+            let b = 82.0 + per as f32 * 24.0;
             out.push(widget(
-                [x, b, 28.0, 16.0],
+                [x, b, 24.0, 18.0],
                 "←",
                 Some(Control::Previous),
                 false,
             ));
             out.push(widget(
-                [x + 32.0, b, w - 64.0, 16.0],
+                [x + 28.0, b, w - 56.0, 18.0],
                 format!("{} / {}", page + 1, pages),
                 None,
                 false,
             ));
             out.push(widget(
-                [x + w - 28.0, b, 28.0, 16.0],
+                [x + w - 24.0, b, 24.0, 18.0],
                 "→",
                 Some(Control::Next),
                 false,
             ));
-            let selected = self.selected.and_then(|i| model.party.get(i));
-            let compact = w < 400.0;
-            let (primary, title) = match selected {
-                Some(p) if p.local_only => (
-                    None,
-                    if compact {
-                        "Отметка"
-                    } else {
-                        "Отметка чата"
-                    },
-                ),
-                Some(p) if p.pending => (
-                    Some(Control::Accept),
-                    if compact {
-                        "Принять"
-                    } else {
-                        "Принять друга"
-                    },
-                ),
-                Some(p) if p.friend => (
-                    Some(Control::Remove),
-                    if compact {
-                        "Друг −"
-                    } else {
-                        "Удалить друга"
-                    },
-                ),
-                _ => (
-                    Some(Control::Invite),
-                    if compact {
-                        "+ Друг"
-                    } else {
-                        "Добавить друга"
-                    },
-                ),
-            };
-            out.push(widget(
-                [x + w * 0.44, height - 38.0, w * 0.29 - 3.0, 18.0],
-                title,
-                primary,
-                false,
-            ));
-            out.push(widget(
-                [x + w * 0.73, height - 38.0, w * 0.27, 18.0],
-                if selected.is_some_and(|p| p.pending) {
-                    "Отклонить"
-                } else {
-                    if model.auto_trust {
-                        if compact {
-                            "Trust +"
-                        } else {
-                            "Авто trust: вкл"
-                        }
-                    } else {
-                        if compact {
-                            "Trust −"
-                        } else {
-                            "Авто trust: выкл"
-                        }
-                    }
-                },
-                Some(if selected.is_some_and(|p| p.pending) {
-                    Control::Decline
-                } else {
-                    Control::ToggleAutoTrust
-                }),
-                false,
-            ));
             for (i, (kind, label)) in [
-                (
-                    PlayerRequest::Teleport,
-                    if compact { "ТП" } else { "Запрос ТП" },
-                ),
+                (PlayerRequest::Teleport, "Запрос ТП"),
                 (PlayerRequest::Trade, "Обмен"),
             ]
             .into_iter()
             .enumerate()
             {
-                let enabled = selected
-                    .is_some_and(|row| row.server_online && kind.command(&row.name).is_ok());
-                let mut button = widget(
-                    [x + i as f32 * w * 0.22, height - 38.0, w * 0.22 - 3.0, 18.0],
+                out.push(widget(
+                    [x + i as f32 * w / 2.0, height - 56.0, w / 2.0 - 3.0, 20.0],
                     label,
                     Some(Control::PlayerRequest(kind)),
                     false,
-                );
-                button.muted = !enabled;
-                out.push(button);
+                ));
             }
         }
         if !self.relay_setup {
             out.push(widget(
-                [x, height - 17.0, w, 12.0],
+                [x, height - 32.0, (w - 100.0).max(100.0), 12.0],
                 if self.notice.is_empty() {
                     &model.status
                 } else {
@@ -1723,6 +1884,62 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::Appearance => Some(Action::Appearance),
+            Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
+            Control::SettingsSection(dir) => {
+                self.settings_section = (self.settings_section as i8 + dir).rem_euclid(7) as u8;
+                self.settings_page = 0;
+                self.focus = None;
+                if self.settings_section == 1 {
+                    self.relay_url = model.relay_url.clone();
+                }
+                None
+            }
+            Control::SettingsPage(dir) => {
+                let per = (((height - 136.0) / 22.0).floor() as usize).max(1);
+                let count = super::claim_borders_economy::SETTINGS
+                    .iter()
+                    .filter(|s| match self.settings_section {
+                        4 => s.group <= 4,
+                        5 => s.group == 6,
+                        _ => s.group == 5,
+                    })
+                    .count();
+                self.settings_page = self
+                    .settings_page
+                    .saturating_add_signed(dir as isize)
+                    .min(count.div_ceil(per).max(1) - 1);
+                None
+            }
+            Control::ClaimFilter => {
+                self.claim_filter = (self.claim_filter + 1) % 3;
+                self.claims_page = 0;
+                None
+            }
+            Control::PartyAccept(index) => {
+                self.selected = Some(index);
+                self.activate(
+                    model,
+                    height,
+                    if model.party.get(index).is_some_and(|p| p.pending) {
+                        Control::Accept
+                    } else {
+                        Control::Invite
+                    },
+                )
+            }
+            Control::PartyDecline(index) => {
+                self.selected = Some(index);
+                self.activate(
+                    model,
+                    height,
+                    if model.party.get(index).is_some_and(|p| p.pending) {
+                        Control::Decline
+                    } else {
+                        Control::Remove
+                    },
+                )
+            }
             Control::Economy => Some(Action::OpenEconomy),
             Control::ToggleAutoTrust => Some(Action::ToggleAutoTrust),
             Control::Decline => self
@@ -1759,9 +1976,9 @@ impl Menu {
                 None
             }
             Control::ClaimsNext => {
-                let per = (((height - 140.0) / 20.0).floor() as usize).clamp(2, 10);
-                self.claims_page =
-                    (self.claims_page + 1).min(model.claim_rows.len().div_ceil(per).max(1) - 1);
+                let per = (((height - 150.0) / 20.0).floor() as usize).clamp(1, 12);
+                self.claims_page = (self.claims_page + 1)
+                    .min(self.claim_indices(model).len().div_ceil(per).max(1) - 1);
                 None
             }
             Control::ClearClaimCache => Some(Action::ClearClaimCache),
@@ -2170,6 +2387,7 @@ impl Menu {
                 None
             }
             Control::RelayBack => {
+                self.settings_section = 0;
                 self.relay_setup = false;
                 self.access_token.clear();
                 self.focus = None;
@@ -2220,6 +2438,7 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
             Field::Name => &mut self.name,
@@ -2233,6 +2452,7 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
             Some(Field::Name) => &self.name,
@@ -2279,7 +2499,7 @@ impl Menu {
         let limit = match field {
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
-            Field::PriorityName => 16,
+            Field::PriorityName | Field::ClaimOwner => 16,
             Field::PriorityColor => 7,
             Field::PeerCode => 24,
             Field::RelayUrl => 2048,
@@ -2318,26 +2538,31 @@ impl Menu {
             return false;
         }
         if key == "key.keyboard.tab" {
-            self.focus = Some(if self.relay_setup {
-                if self.focus == Some(Field::RelayUrl) {
-                    Field::RelayToken
+            self.focus = Some(
+                if self.relay_setup || (self.tab == Tab::Settings && self.settings_section == 1) {
+                    if self.focus == Some(Field::RelayUrl) {
+                        Field::RelayToken
+                    } else {
+                        Field::RelayUrl
+                    }
+                } else if self.tab == Tab::Settings
+                    && self.settings_section == 2
+                    && self.claims_section == ClaimsSection::Colours
+                {
+                    if self.focus == Some(Field::OwnClaimColor) {
+                        Field::FriendClaimColor
+                    } else {
+                        Field::OwnClaimColor
+                    }
+                } else if self.tab == Tab::Party {
+                    self.focus = None;
+                    return true;
+                } else if self.focus == Some(Field::Name) {
+                    Field::Color
                 } else {
-                    Field::RelayUrl
-                }
-            } else if self.tab == Tab::Claims && self.claims_section == ClaimsSection::Colours {
-                if self.focus == Some(Field::OwnClaimColor) {
-                    Field::FriendClaimColor
-                } else {
-                    Field::OwnClaimColor
-                }
-            } else if self.tab == Tab::Party {
-                self.focus = None;
-                return true;
-            } else if self.focus == Some(Field::Name) {
-                Field::Color
-            } else {
-                Field::Name
-            });
+                    Field::Name
+                },
+            );
             self.caret = usize::MAX;
             self.anchor = None;
             return true;
@@ -2414,6 +2639,117 @@ fn on(value: bool) -> &'static str {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unified_settings_keep_work_tabs_clean_and_separate_tab_from_trades() {
+        let model = ViewModel::default();
+        for tab in [Tab::Party, Tab::Chat, Tab::Claims] {
+            let menu = Menu {
+                tab,
+                ..Menu::default()
+            };
+            let widgets = menu.layout(&model, 800.0, 500.0);
+            assert!(!widgets.iter().any(|w| matches!(
+                w.control,
+                Some(Control::RelaySetup | Control::ToggleAutoTrust | Control::RelayOff)
+            )));
+            assert!(
+                !widgets
+                    .iter()
+                    .any(|w| w.text == "Приглашения" || w.text == "Важные")
+            );
+        }
+        for section in 0..7 {
+            let menu = Menu {
+                tab: Tab::Settings,
+                settings_section: section,
+                ..Menu::default()
+            };
+            for width in [240.0, 800.0] {
+                let widgets = menu.layout(&model, width, 216.0);
+                let controls: Vec<_> = widgets.iter().filter(|w| w.control.is_some()).collect();
+                for (index, a) in controls.iter().enumerate() {
+                    for b in &controls[index + 1..] {
+                        let overlap = a.rect[0] < b.rect[0] + b.rect[2]
+                            && b.rect[0] < a.rect[0] + a.rect[2]
+                            && a.rect[1] < b.rect[1] + b.rect[3]
+                            && b.rect[1] < a.rect[1] + a.rect[3];
+                        assert!(
+                            !overlap,
+                            "section {section}: {:?} overlaps {:?}",
+                            a.control, b.control
+                        );
+                    }
+                }
+                for widget in widgets {
+                    if let Some(Control::EconomySetting(key, _)) = widget.control {
+                        let group = super::super::claim_borders_economy::SETTINGS
+                            .iter()
+                            .find(|s| s.key == key)
+                            .unwrap()
+                            .group;
+                        assert!(match section {
+                            4 => group <= 4,
+                            5 => group == 6,
+                            6 => group == 5,
+                            _ => false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn invitations_are_actionable_in_mod_users_and_claim_filters_combine() {
+        let mut model = ViewModel {
+            party: vec![PartyRow {
+                uuid: 42,
+                name: "Alex".into(),
+                code: "abcdef".into(),
+                online: true,
+                pending: true,
+                ..PartyRow::default()
+            }],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Party,
+            ..Menu::default()
+        };
+        assert_eq!(menu.party_indices(&model), vec![0]);
+        assert_eq!(
+            menu.activate(&model, 240.0, Control::PartyAccept(0)),
+            Some(Action::Accept {
+                code: "abcdef".into()
+            })
+        );
+        assert_eq!(
+            menu.activate(&model, 240.0, Control::PartyDecline(0)),
+            Some(Action::Decline { uuid: 42 })
+        );
+        model.claim_rows = vec![
+            ClaimRow {
+                owner: "Alex".into(),
+                foreign: false,
+                dimension: "minecraft:overworld".into(),
+                x: 0,
+                z: 0,
+                label: "Alex".into(),
+            },
+            ClaimRow {
+                owner: "Other".into(),
+                foreign: true,
+                dimension: "minecraft:overworld".into(),
+                x: 16,
+                z: 0,
+                label: "Other".into(),
+            },
+        ];
+        menu.claim_owner = "alex".into();
+        menu.claim_filter = 1;
+        assert_eq!(menu.claim_indices(&model), vec![0]);
+        menu.claim_filter = 2;
+        assert!(menu.claim_indices(&model).is_empty());
+    }
     #[test]
     fn quick_requests_use_server_presence_and_require_an_explicit_button() {
         let mut model = ViewModel {
@@ -2528,7 +2864,7 @@ mod tests {
                         )
                     })
                     .collect();
-                assert_eq!(footer.len(), 4);
+                assert_eq!(footer.len(), 2);
                 footer.sort_by(|a, b| a.rect[0].total_cmp(&b.rect[0]));
                 for pair in footer.windows(2) {
                     assert!(pair[0].rect[0] + pair[0].rect[2] <= pair[1].rect[0]);
@@ -2998,6 +3334,8 @@ mod tests {
         let model = ViewModel {
             claim_rows: (0..20)
                 .map(|i| ClaimRow {
+                    owner: "Alex".into(),
+                    foreign: false,
                     dimension: "minecraft:overworld".into(),
                     x: i * 16,
                     z: 0,

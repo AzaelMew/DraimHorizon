@@ -27,6 +27,17 @@ pub fn money(raw: &str) -> Option<Coins> {
 pub fn amount(text: &str) -> Option<Coins> {
     money(text.split_whitespace().next()?)
 }
+// SMP abbreviates large scoreboard balances, while /bal supplies the exact value.
+fn sidebar_amount(text: &str) -> Option<Coins> {
+    let value = text.split_whitespace().next()?;
+    let (digits, multiplier) = match value.as_bytes().last()? {
+        b'k' | b'K' => (&value[..value.len() - 1], 1_000),
+        b'm' | b'M' => (&value[..value.len() - 1], 1_000_000),
+        b'b' | b'B' => (&value[..value.len() - 1], 1_000_000_000),
+        _ => return money(value),
+    };
+    money(digits)?.checked_mul(multiplier).filter(|v| *v <= MAX)
+}
 pub fn fmt(n: Coins) -> String {
     let sign = if n < 0 { "−" } else { "" };
     let a = n.unsigned_abs();
@@ -592,6 +603,7 @@ pub struct Book {
     pub listings: BTreeMap<u64, Listing>,
     pub rules: Rules,
     pub balance: Option<(Coins, u64)>,
+    sidebar_balance: Option<String>,
     pub coin_left: Option<(Coins, u64)>,
     pub coin_cap: Option<Coins>,
     pub item_cap: Option<u32>,
@@ -1128,11 +1140,15 @@ impl Book {
     }
     pub fn sidebar(&mut self, rows: &[(String, String)], now: u64) {
         for (label, value) in rows {
-            let label = label.trim().to_ascii_lowercase();
+            let label = label.trim().trim_end_matches(':').to_ascii_lowercase();
             if (label == "balance" || label == "balance:" || label == "баланс")
-                && let Some(v) = amount(value)
+                && let Some(v) = sidebar_amount(value)
             {
-                self.balance = Some((v, now));
+                // An unchanged rounded sidebar must not overwrite an exact /bal reply.
+                if self.sidebar_balance.as_deref() != Some(value.as_str()) {
+                    self.balance = Some((v, now));
+                    self.sidebar_balance = Some(value.clone());
+                }
             }
         }
     }
@@ -1492,5 +1508,23 @@ pub fn delta(n: Coins) -> String {
         format!("+{}", fmt(n))
     } else {
         fmt(n)
+    }
+}
+
+#[cfg(test)]
+mod scoreboard_regressions {
+    use super::*;
+    #[test]
+    fn reads_abbreviated_and_colon_balance_and_server_limits() {
+        let mut book = Book::default();
+        book.sidebar(&[("Balance:".into(), "125.4k".into())], 10);
+        assert_eq!(book.balance, Some((12_540_000, 10)));
+        book.server("Balance: 125,432 coins", 11);
+        book.sidebar(&[("Balance:".into(), "125.4k".into())], 12);
+        assert_eq!(book.balance, Some((12_543_200, 11)));
+        assert!(book.server("Selling today: 12,500 coins left of your 25,000 coins; at most 1,000 of each item a day.", 11));
+        assert_eq!(book.coin_left, Some((1_250_000, 11)));
+        assert_eq!(book.coin_cap, Some(2_500_000));
+        assert_eq!(sidebar_amount("invalid"), None);
     }
 }

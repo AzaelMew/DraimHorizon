@@ -27,7 +27,8 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 }
 pub(super) fn claims_settings() {
     state(|s| {
-        s.menu.tab = model::Tab::Claims;
+        s.menu.tab = model::Tab::Settings;
+        s.menu.settings_section = 2;
         s.menu.claims_section = model::ClaimsSection::Map;
         s.menu.focus = None;
     });
@@ -145,6 +146,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             model::Tab::Claims => "Территории, цвета и память карты",
             model::Tab::Chat => "Внешний вид, уведомления и перевод",
             model::Tab::Experimental => "Необязательные функции, выключенные по умолчанию",
+            model::Tab::Settings => "Все параметры мода, по разделам",
         });
         ui::text(
             game,
@@ -218,7 +220,31 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     [x + (w - 10.0) * 0.5, y + (h - 10.0) * 0.5, 10.0, 10.0],
                     0xdfa8b5,
                 );
-                ui::gear(game, batch, [x - 24.0, y, 20.0, h], screen.mouse);
+
+                continue;
+            }
+            if matches!(
+                widget.control,
+                Some(model::Control::PartyAccept(_) | model::Control::PartyDecline(_))
+            ) {
+                ui::icon(
+                    game,
+                    batch,
+                    if matches!(widget.control, Some(model::Control::PartyAccept(_))) {
+                        ui::Icon::Check
+                    } else {
+                        ui::Icon::Close
+                    },
+                    [x + 5.0, y + 5.0, 12.0, 12.0],
+                    if matches!(widget.control, Some(model::Control::PartyAccept(_))) {
+                        0x9ce3ba
+                    } else {
+                        0xe39ca8
+                    },
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
+                }
                 continue;
             }
             if widget.control.is_some() && !matches!(widget.control, Some(model::Control::Field(_)))
@@ -229,7 +255,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     s => s,
                 };
                 if let Some(icon) = crate::game::claim_borders_ui_style::icon_for(&widget.text)
-                    && w >= game.native_text_width(caption) + 22.0
+                    && (w >= game.native_text_width(caption) + 22.0
+                        || matches!(
+                            widget.control,
+                            Some(model::Control::Tab(
+                                model::Tab::Experimental | model::Tab::Settings
+                            ))
+                        ))
                 {
                     ui::icon(
                         game,
@@ -294,6 +326,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         s.menu.text()[..cursor].to_owned()
                     };
                     let label = match s.menu.focus {
+                        Some(model::Field::ClaimOwner) => "Игрок: ",
                         Some(model::Field::Name) => "Имя: ",
                         Some(model::Field::Color) => "Цвет: ",
                         Some(model::Field::OwnClaimColor) => "Свои: ",
@@ -317,6 +350,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                             model::Tab::Claims => "Мои приваты",
                             model::Tab::Chat => "Чат и уведомления",
                             model::Tab::Experimental => "Эксперименты",
+                            model::Tab::Settings => "Настройки",
                         }
                         .into(),
                         "Пати" => "Друзья".into(),
@@ -476,4 +510,12 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) {
 
 pub(super) fn waypoints_tab() -> bool {
     state(|s| s.menu.tab == model::Tab::Waypoints)
+}
+
+pub(super) fn open_settings() {
+    state(|s| {
+        s.menu.tab = model::Tab::Settings;
+        s.menu.settings_section = 0;
+        s.menu.focus = None;
+    });
 }

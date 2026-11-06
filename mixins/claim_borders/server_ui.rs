@@ -164,12 +164,14 @@ pub(super) fn sidebar(
         if p.flag("enabled") && p.flag("sidebar_limits") {
             economy.push(("Продажа серверу · осталось".into(), 0x9aacc0));
             economy.push((
-                format!(
-                    "{} / {} монет",
-                    money(book.coin_left),
-                    book.coin_cap
-                        .map_or("—".into(), crate::game::claim_borders_economy::fmt)
-                ),
+                match (book.coin_left, book.coin_cap) {
+                    (Some(left), Some(cap)) => format!(
+                        "{} / {} монет",
+                        money(Some(left)),
+                        crate::game::claim_borders_economy::fmt(cap)
+                    ),
+                    _ => "Сервер не сообщил дневной лимит".into(),
+                },
                 0xc3dfd3,
             ));
             if book.coin_left.is_some_and(|(n, _)| n == 0) {

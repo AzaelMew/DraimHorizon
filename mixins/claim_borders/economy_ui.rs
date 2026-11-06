@@ -6,8 +6,8 @@ pub struct Panel {
 }
 impl Panel {
     pub fn new(viewport: [f32; 2]) -> Self {
-        let w = (viewport[0] - 24.0).clamp(1.0, 560.0);
-        let h = (viewport[1] - 24.0).clamp(1.0, 320.0);
+        let w = (viewport[0] - 24.0).clamp(1.0, 520.0);
+        let h = (viewport[1] - 24.0).clamp(1.0, 300.0);
         Self {
             rect: [(viewport[0] - w) / 2.0, (viewport[1] - h) / 2.0, w, h],
         }

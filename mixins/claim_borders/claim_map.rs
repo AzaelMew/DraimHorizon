@@ -80,6 +80,7 @@ pub struct Preferences {
     pub shading: bool,
     pub profile: u8,
     pub mobs: u8,
+    pub mob_hidden: [u64; 2],
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -104,6 +105,7 @@ impl Default for Preferences {
             shading: true,
             profile: 0,
             mobs: 1,
+            mob_hidden: [0; 2],
         }
     }
 }
@@ -134,7 +136,7 @@ impl Preferences {
     }
     pub fn encode(self) -> String {
         let p = self.normalized();
-        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step,"remember":p.remember,"shading":p.shading,"profile":p.profile,"mobs":p.mobs}).to_string()
+        json!({"schema":1,"minimap":p.minimap,"corner":p.corner,"size":p.size,"zoom":p.zoom,"grid":p.grid,"coordinates":p.coordinates,"layer":p.layer as u8,"marks":p.marks,"own":p.own,"friends":p.friends,"fill":p.fill,"outline":p.outline,"labels":p.labels,"sort":p.sort as u8,"all_dimensions":p.all_dimensions,"grid_step":p.grid_step,"remember":p.remember,"shading":p.shading,"profile":p.profile,"mobs":p.mobs,"mob_hidden":p.mob_hidden}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, String> {
         if raw.len() > 4096 {
@@ -176,6 +178,10 @@ impl Preferences {
             shading: flag("shading", true),
             profile: v["profile"].as_u64().unwrap_or(0).min(7) as u8,
             mobs: v["mobs"].as_u64().unwrap_or(1).min(2) as u8,
+            mob_hidden: [
+                v["mob_hidden"][0].as_u64().unwrap_or(0),
+                v["mob_hidden"][1].as_u64().unwrap_or(0),
+            ],
         }
         .normalized())
     }
@@ -203,7 +209,113 @@ pub struct Mark {
 pub struct MobMark {
     pub position: [f64; 3],
     pub label: String,
+    pub type_id: String,
     pub hostile: bool,
+}
+// Stable indices are persisted; append new types without reordering existing entries.
+pub const MOB_TYPES: &[&str] = &[
+    "zombie",
+    "skeleton",
+    "creeper",
+    "spider",
+    "enderman",
+    "witch",
+    "slime",
+    "cave_spider",
+    "husk",
+    "drowned",
+    "stray",
+    "bogged",
+    "phantom",
+    "silverfish",
+    "endermite",
+    "warden",
+    "pillager",
+    "vindicator",
+    "evoker",
+    "ravager",
+    "vex",
+    "breeze",
+    "blaze",
+    "ghast",
+    "magma_cube",
+    "wither_skeleton",
+    "piglin",
+    "piglin_brute",
+    "zombified_piglin",
+    "hoglin",
+    "zoglin",
+    "shulker",
+    "ender_dragon",
+    "wither",
+    "guardian",
+    "elder_guardian",
+    "cow",
+    "pig",
+    "sheep",
+    "chicken",
+    "wolf",
+    "cat",
+    "ocelot",
+    "fox",
+    "rabbit",
+    "horse",
+    "donkey",
+    "mule",
+    "llama",
+    "trader_llama",
+    "camel",
+    "goat",
+    "panda",
+    "polar_bear",
+    "bee",
+    "bat",
+    "allay",
+    "armadillo",
+    "sniffer",
+    "frog",
+    "tadpole",
+    "axolotl",
+    "turtle",
+    "dolphin",
+    "squid",
+    "glow_squid",
+    "cod",
+    "salmon",
+    "tropical_fish",
+    "pufferfish",
+    "strider",
+    "mooshroom",
+    "villager",
+    "wandering_trader",
+    "iron_golem",
+    "snow_golem",
+    "zombie_villager",
+    "zombie_horse",
+    "skeleton_horse",
+    "parrot",
+    "happy_ghast",
+    "copper_golem",
+    "nautilus",
+    "zombie_nautilus",
+];
+impl Preferences {
+    pub fn mob_selected(self, index: usize) -> bool {
+        index < MOB_TYPES.len() && self.mob_hidden[index / 64] & (1 << (index % 64)) == 0
+    }
+    pub fn toggle_mob(&mut self, index: usize) {
+        if index < MOB_TYPES.len() {
+            self.mob_hidden[index / 64] ^= 1 << (index % 64);
+        }
+    }
+    pub fn mob_visible(self, id: &str, hostile: bool) -> bool {
+        self.mobs > 0
+            && (self.mobs != 2 || hostile)
+            && MOB_TYPES
+                .iter()
+                .position(|name| *name == id.strip_prefix("minecraft:").unwrap_or(id))
+                .is_none_or(|index| self.mob_selected(index))
+    }
 }
 pub fn mob_group(id: &str, category: &str) -> Option<bool> {
     if id == "minecraft:player" {
@@ -692,5 +804,25 @@ mod observed_tests {
             true,
         );
         assert_eq!(image[center], 0);
+    }
+}
+
+#[cfg(test)]
+mod mob_filter_tests {
+    use super::*;
+    #[test]
+    fn specific_filters_persist_and_combine_with_hostiles_only() {
+        let mut p = Preferences::default();
+        let zombie = MOB_TYPES.iter().position(|id| *id == "zombie").unwrap();
+        p.toggle_mob(zombie);
+        assert!(!p.mob_visible("minecraft:zombie", true));
+        assert!(p.mob_visible("minecraft:cow", false));
+        p = Preferences::decode(&p.encode()).unwrap();
+        assert!(!p.mob_visible("minecraft:zombie", true));
+        p.mobs = 2;
+        assert!(!p.mob_visible("minecraft:cow", false));
+        assert!(p.mob_visible("minecraft:skeleton", true));
+        p.mobs = 0;
+        assert!(!p.mob_visible("minecraft:skeleton", true));
     }
 }

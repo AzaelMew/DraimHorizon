@@ -280,7 +280,8 @@ impl Engine {
         for set in &self.sets.sets {
             let relevant = self.members.get(&set.name).is_some_and(|entries| {
                 entries.iter().any(|id| {
-                    query.preferences.shows(id)
+                    (query.preferences.shows(id)
+                        || (id == "minecraft:end_city" && query.preferences.shows("end_city_ship")))
                         && model::structure_index(id)
                             .is_some_and(|n| model::STRUCTURES[n].group.dimension() == i)
                 })
@@ -341,9 +342,22 @@ impl Engine {
                 return Err("canceled".into());
             }
             for start in worker.structure_starts(ChunkPos::new(x, z)) {
-                if query.preferences.shows(&start.name) {
+                let id = if start.name == "minecraft:end_city" {
+                    let ship = start.pieces.iter().any(|piece| {
+                        piece.save().and_then(|tag| tag.get(&"Template".into()).cloned())
+                            .is_some_and(|tag| matches!(tag, horizon_world::nbt::Tag::String(name) if name.to_string_lossy() == "ship" || name.to_string_lossy().ends_with("/ship")))
+                    });
+                    if ship {
+                        "minecraft:end_city_ship"
+                    } else {
+                        "minecraft:end_city"
+                    }
+                } else {
+                    &start.name
+                };
+                if query.preferences.shows(id) {
                     marks.push(Mark {
-                        id: start.name.clone(),
+                        id: id.to_owned(),
                         position: [f64::from(x * 16 + 8), f64::from(z * 16 + 8)],
                     });
                 }

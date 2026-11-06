@@ -212,7 +212,7 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
     let x = (screen.rect[2] - pw) * 0.5 + sidebar + 8.;
     let y = (screen.rect[3] - ph) * 0.5 + 54.;
     let width = pw - sidebar - 16.;
-    let h = ph - 62.;
+    let h = ph - 88.;
     state(|s| {
         if s.draft.is_none() {
             s.hits.clear();
@@ -260,11 +260,11 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             "+ Здесь",
             Hit::Create,
         );
-        let per = (((h - 54.) / 34.).floor() as usize).max(1);
+        let per = (((h - 54.) / 42.).floor() as usize).max(1);
         let pages = rows.len().div_ceil(per).max(1);
         s.page = s.page.min(pages - 1);
         for (i, w) in rows.iter().skip(s.page * per).take(per).enumerate() {
-            let r = [x, y + 28. + i as f32 * 34., width, 30.];
+            let r = [x, y + 28. + i as f32 * 42., width, 38.];
             ui::button_base(
                 game,
                 batch,
@@ -273,18 +273,25 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
                 false,
                 screen.mouse,
             );
+            ui::rounded(
+                game,
+                batch,
+                [r[0] + 5., r[1] + 5., 28., 28.],
+                7.,
+                0x24000000 | w.color,
+            );
             ui::icon(
                 game,
                 batch,
                 icon(w.kind),
-                [r[0] + 7., r[1] + 8., 12., 12.],
+                [r[0] + 12., r[1] + 12., 14., 14.],
                 w.color,
             );
             ui::text(
                 game,
                 batch,
-                &ui::clip(game, &w.name, width - 62.),
-                [x + 26., r[1] + 4.],
+                &ui::clip(game, &w.name, width - 84.),
+                [x + 42., r[1] + 7.],
                 0xe3ebf3,
                 false,
             );
@@ -300,14 +307,14 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
                         w.position[1],
                         w.position[2]
                     ),
-                    width - 62.,
+                    width - 84.,
                 ),
-                [x + 26., r[1] + 17.],
+                [x + 42., r[1] + 23.],
                 0x9aacc0,
                 false,
             );
-            s.hits.push(([x, r[1], width - 31., 30.], Hit::Row(w.id)));
-            let trash = [x + width - 27., r[1] + 3., 24., 24.];
+            s.hits.push(([x, r[1], width - 31., 38.], Hit::Row(w.id)));
+            let trash = [x + width - 27., r[1] + 7., 24., 24.];
             ui::button_base(game, batch, trash, "Удалить", false, screen.mouse);
             ui::icon(
                 game,

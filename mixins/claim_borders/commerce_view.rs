@@ -326,6 +326,7 @@ fn control(
         s.control_tip = Some(match &hit {
             Hit::Page(n) if *n < 0 => "Предыдущие карточки этой страницы".into(),
             Hit::Page(_) => "Следующие карточки этой страницы".into(),
+            Hit::Standard => "F8 — стандартный вид · ПКМ по лоту AH — порог избранного".into(),
             _ => text.into(),
         });
     }
@@ -393,8 +394,8 @@ pub(super) fn render(
         return false;
     };
     use scan::Role::*;
-    let w = (batch.width - 16.0).clamp(220.0, 740.0);
-    let h = (batch.height - 16.0).clamp(180.0, 430.0);
+    let w = (batch.width - 16.0).clamp(1.0, 620.0);
+    let h = (batch.height - 16.0).clamp(1.0, 360.0);
     let x = (batch.width - w) * 0.5;
     let y = (batch.height - h) * 0.5;
     let start = batch.vertices.len();
@@ -436,7 +437,14 @@ pub(super) fn render(
             .iter()
             .find(|b| scan::role(&page, b) == Balance)
             .map(|b| label(game, &page, b))
-            .unwrap_or_else(|| "Баланс: —".into());
+            .unwrap_or_else(|| {
+                data::read(|book, _, _, _| {
+                    format!(
+                        "Баланс: {}",
+                        book.balance.map_or("—".into(), |(v, _)| economy::fmt(v))
+                    )
+                })
+            });
         let bw = (w * 0.45).min(220.0);
         ui::text(
             game,
@@ -783,8 +791,6 @@ pub(super) fn render(
                     &s.notice
                 } else if s.watch_edit.is_some() {
                     "Enter — сохранить · 0 — убрать · Esc — отменить"
-                } else if page.family == scan::Kind::Auction {
-                    "ПКМ по лоту — задать порог избранного"
                 } else {
                     &status
                 },

@@ -47,7 +47,7 @@ pub struct Structure {
     pub item: &'static str,
     pub color: u32,
 }
-pub const STRUCTURES: [Structure; 34] = [
+pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_plains",
         label: "Равнинная деревня",
@@ -169,7 +169,7 @@ pub const STRUCTURES: [Structure; 34] = [
     },
     Structure {
         id: "end_city",
-        label: "Город Края",
+        label: "Город Края · без корабля",
         group: Group::End,
         item: "minecraft:purpur_block",
         color: 0xc29ce8,
@@ -286,6 +286,13 @@ pub const STRUCTURES: [Structure; 34] = [
         item: "minecraft:mangrove_roots",
         color: 0x92a57c,
     },
+    Structure {
+        id: "end_city_ship",
+        label: "Город с элитрами · корабль",
+        group: Group::End,
+        item: "minecraft:elytra",
+        color: 0xead88a,
+    },
 ];
 const LEGACY: [&str; 18] = [
     "village",
@@ -342,14 +349,14 @@ impl Preferences {
         }
     }
     pub fn encode(&self) -> String {
-        json!({"schema":2,"biomes":self.biomes,"biome":self.biome,"structures":self.structures,"claims":self.claims,"dimension":self.dimension.min(2)}).to_string()
+        json!({"schema":3,"biomes":self.biomes,"biome":self.biome,"structures":self.structures,"claims":self.claims,"dimension":self.dimension.min(2)}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, String> {
         if raw.len() > 4096 {
             return Err("seed map settings too large".into());
         }
         let v: Value = serde_json::from_str(raw).map_err(|_| "invalid seed map settings")?;
-        if v["schema"] != 1 && v["schema"] != 2 {
+        if v["schema"] != 1 && v["schema"] != 2 && v["schema"] != 3 {
             return Err("unsupported seed map settings".into());
         }
         let d = Self::default();
@@ -368,6 +375,9 @@ impl Preferences {
                     structures &= !(1u64 << i);
                 }
             }
+        }
+        if v["schema"] == 2 && structures & (1 << structure_index("end_city").unwrap()) != 0 {
+            structures |= 1 << structure_index("end_city_ship").unwrap();
         }
         Ok(Self {
             biomes: v["biomes"].as_bool().unwrap_or(true),
@@ -554,7 +564,7 @@ mod tests {
             assert!(s.item.starts_with("minecraft:"));
             assert!(Preferences::default().shows(s.id));
         }
-        assert_eq!(names.len(), 34);
+        assert_eq!(names.len(), 35);
         assert!(names.contains("mineshaft_mesa"));
         assert!(names.contains("nether_fossil"));
         assert!(names.contains("trail_ruins"));
@@ -566,6 +576,22 @@ mod tests {
         assert_eq!(p, Preferences::default());
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
         assert!(Preferences::decode(r#"{"schema":99}"#).is_err());
+    }
+    #[test]
+    fn end_cities_have_independent_ship_filters_and_migrate_old_choice() {
+        let mut p = Preferences::default();
+        p.toggle(structure_index("end_city").unwrap());
+        assert!(!p.shows("end_city"));
+        assert!(p.shows("end_city_ship"));
+        assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
+        let old = Preferences::decode(r#"{"schema":2,"structures":131072}"#).unwrap();
+        assert!(old.shows("end_city"));
+        assert!(old.shows("end_city_ship"));
+        assert!(
+            !Preferences::decode(r#"{"schema":2,"structures":0}"#)
+                .unwrap()
+                .shows("end_city_ship")
+        );
     }
     #[test]
     fn controls_and_filter_chips_fit_small_scaled_windows() {
