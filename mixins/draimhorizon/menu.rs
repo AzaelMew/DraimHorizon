@@ -2414,7 +2414,12 @@ impl Menu {
                     {
                         out.push(widget(
                             if compact_tunnel {
-                                [x + ((i + 1) % 2) as f32 * (tab_width + 4.0), 100.0 + ((i + 1) / 2) as f32 * step, tab_width, h]
+                                [
+                                    x + ((i + 1) % 2) as f32 * (tab_width + 4.0),
+                                    100.0 + ((i + 1) / 2) as f32 * step,
+                                    tab_width,
+                                    h,
+                                ]
                             } else {
                                 [x, 100.0 + (i + 1) as f32 * step, w, h]
                             },
@@ -2449,13 +2454,14 @@ impl Menu {
                     out.push(widget(
                         [
                             x + i as f32 * (tab_width + 4.0),
-                            100.0 + if compact_tunnel {
-                                2.0
-                            } else if self.baritone_mode == BaritoneMode::Tunnel {
-                                4.0
-                            } else {
-                                2.0
-                            } * step,
+                            100.0
+                                + if compact_tunnel {
+                                    2.0
+                                } else if self.baritone_mode == BaritoneMode::Tunnel {
+                                    4.0
+                                } else {
+                                    2.0
+                                } * step,
                             tab_width,
                             h,
                         ],
