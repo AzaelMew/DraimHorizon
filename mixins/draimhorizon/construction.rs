@@ -9,6 +9,16 @@ pub enum Direction {
     West,
 }
 impl Direction {
+    /// Minecraft yaw: 0 = south, 90 = west, 180 = north, -90 = east.
+    pub fn from_yaw(yaw: f32) -> Self {
+        let yaw = yaw.rem_euclid(360.0);
+        match ((yaw + 45.0) / 90.0).floor() as u32 % 4 {
+            0 => Self::South,
+            1 => Self::West,
+            2 => Self::North,
+            _ => Self::East,
+        }
+    }
     pub fn vector(self) -> [i32; 2] {
         match self {
             Self::North => [0, -1],
