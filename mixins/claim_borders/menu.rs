@@ -1,5 +1,15 @@
 use super::claim_borders_chat_preferences::Preferences;
 use super::claim_borders_chat_priority as priority;
+pub use claim_borders_relay_client::translation::Language;
+
+macro_rules! localized {
+    ($language:expr, $russian:literal, $english:literal $(, $arg:expr)* $(,)?) => {
+        match $language {
+            Language::Russian => format!($russian $(, $arg)*),
+            Language::English => format!($english $(, $arg)*),
+        }
+    };
+}
 use super::claim_borders_experimental as experimental;
 use super::claim_borders_map as map;
 // Pure management screen state. Only explicit local button presses produce actions.
@@ -30,6 +40,7 @@ pub fn append_important_rows(
     rows: &mut Vec<PartyRow>,
     prefs: &priority::Preferences,
     online: &[(u128, String)],
+    language: Language,
 ) {
     for name in prefs.rules.keys() {
         if rows.iter().any(|row| row.name.eq_ignore_ascii_case(name)) {
@@ -40,9 +51,9 @@ pub fn append_important_rows(
             uuid: live.map_or(0, |(id, _)| *id),
             name: live.map_or_else(|| name.clone(), |(_, n)| n.clone()),
             detail: if live.is_some() {
-                "Отметка чата · онлайн"
+                language.text("Отметка чата · онлайн", "Chat priority · online")
             } else {
-                "Отметка чата · не в сети"
+                language.text("Отметка чата · не в сети", "Chat priority · offline")
             }
             .into(),
             online: live.is_some(),
@@ -116,6 +127,7 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub language: Language,
     pub waypoints: Vec<WaypointRow>,
     pub party: Vec<PartyRow>,
     pub relay: String,
@@ -183,6 +195,7 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    SetLanguage(Language),
     AddWaypoint {
         name: String,
         color: u32,
@@ -250,6 +263,7 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SetLanguage(language) => f.debug_tuple("SetLanguage").field(language).finish(),
             Self::PlayerRequest { kind, uuid, name } => f
                 .debug_struct("PlayerRequest")
                 .field("kind", kind)
@@ -372,6 +386,7 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    Language,
     SettingsSection(i8),
     SettingsPage(i8),
     EconomySetting(&'static str, i64),
@@ -472,6 +487,7 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub language: Language,
     pub tab: Tab,
     pub settings_section: u8,
     pub settings_page: usize,
@@ -502,6 +518,7 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
+            language: Language::default(),
             tab: Tab::Waypoints,
             settings_section: 0,
             settings_page: 0,
@@ -551,6 +568,7 @@ fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
 impl Menu {
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
+        self.language = next.language;
         self.selected = self.selected.and_then(|index| match self.tab {
             Tab::Waypoints => previous
                 .waypoints
@@ -585,7 +603,7 @@ impl Menu {
     }
     fn page_size(&self, height: f32) -> usize {
         if self.tab == Tab::Party && self.party_filter == PartyFilter::Important {
-            (((height - 228.0) / 24.0).floor() as usize).max(1)
+            (((height - 176.0) / 24.0).floor() as usize).max(1)
         } else if self.tab == Tab::Party {
             (((height - 164.0) / 24.0).floor() as usize).clamp(1, 12)
         } else {
@@ -621,6 +639,9 @@ impl Menu {
                     nav_step - 4.0,
                 ];
             }
+            if sidebar > 0.0 && widget.control == Some(Control::Language) {
+                widget.rect = [x + 63.0, y + panel_h - 28.0, 27.0, 22.0];
+            }
             if sidebar > 0.0
                 && let Some(Control::Tab(tab)) = widget.control
             {
@@ -639,7 +660,11 @@ impl Menu {
                     } else {
                         y + 44.0 + i as f32 * nav_step
                     },
-                    sidebar - 10.0,
+                    if tab == Tab::Settings {
+                        54.0
+                    } else {
+                        sidebar - 10.0
+                    },
                     if tab == Tab::Settings {
                         22.0
                     } else {
@@ -664,12 +689,24 @@ impl Menu {
             ),
         ];
         for (i, (control, label)) in [
-            (Control::Tab(Tab::Waypoints), "Метки"),
-            (Control::Tab(Tab::Party), "Пати"),
-            (Control::Tab(Tab::Claims), "Клеймы"),
-            (Control::Tab(Tab::Chat), "Чат"),
-            (Control::Tab(Tab::Experimental), "Эксперименты"),
-            (Control::Economy, "Торги"),
+            (
+                Control::Tab(Tab::Waypoints),
+                self.language.text("Метки", "Waypoints"),
+            ),
+            (
+                Control::Tab(Tab::Party),
+                self.language.text("Пати", "Friends"),
+            ),
+            (
+                Control::Tab(Tab::Claims),
+                self.language.text("Клеймы", "Claims"),
+            ),
+            (Control::Tab(Tab::Chat), self.language.text("Чат", "Chat")),
+            (
+                Control::Tab(Tab::Experimental),
+                self.language.text("Эксперименты", "Experiments"),
+            ),
+            (Control::Economy, self.language.text("Торги", "Trading")),
         ]
         .into_iter()
         .enumerate()
@@ -682,10 +719,16 @@ impl Menu {
             ));
         }
         out.push(widget(
-            [x + w - 96.0, height - 24.0, 96.0, 20.0],
-            "Настройки",
+            [x + w - 96.0, height - 24.0, 63.0, 20.0],
+            self.language.text("Настройки", "Settings"),
             Some(Control::Tab(Tab::Settings)),
             self.tab == Tab::Settings,
+        ));
+        out.push(widget(
+            [x + w - 30.0, height - 24.0, 30.0, 20.0],
+            self.language.text("RU", "EN"),
+            Some(Control::Language),
+            false,
         ));
         if self.tab == Tab::Settings {
             return self.settings_layout(model, x, w, height, out);
@@ -696,12 +739,17 @@ impl Menu {
         if self.tab == Tab::Chat {
             for (i, (label, control, selected)) in [
                 (
-                    format!("Входящие → RU: {}", on(model.chat_translate)),
+                    localized!(
+                        self.language,
+                        "Входящие → RU: {}",
+                        "Incoming → EN: {}",
+                        self.on(model.chat_translate)
+                    ),
                     Control::ChatTranslate,
                     model.chat_translate,
                 ),
                 (
-                    format!("Мои сообщения RU → EN: {}", on(model.chat_outgoing)),
+                    self.outgoing_label(model.chat_outgoing),
                     Control::ChatOutgoing,
                     model.chat_outgoing,
                 ),
@@ -738,7 +786,7 @@ impl Menu {
                         format!(
                             "{}{} · {}",
                             if r.pending {
-                                "[Приглашение] "
+                                self.language.text("[Приглашение] ", "[Invitation] ")
                             } else {
                                 ""
                             },
@@ -757,7 +805,10 @@ impl Menu {
             if self.count(model) == 0 {
                 out.push(widget(
                     [x + 4.0, y + 52.0, w - 8.0, 16.0],
-                    "Нет меток. Введите имя и добавьте текущую позицию.",
+                    self.language.text(
+                        "Нет меток. Введите имя и добавьте текущую позицию.",
+                        "No waypoints. Enter a name and add your current position.",
+                    ),
                     None,
                     false,
                 ));
@@ -772,7 +823,13 @@ impl Menu {
             ));
             out.push(widget(
                 [x + 32.0, b, w - 64.0, 18.0],
-                format!("Страница {} / {}", self.page + 1, pages),
+                localized!(
+                    self.language,
+                    "Страница {} / {}",
+                    "Page {} / {}",
+                    self.page + 1,
+                    pages
+                ),
                 None,
                 false,
             ));
@@ -785,21 +842,21 @@ impl Menu {
             if self.tab == Tab::Waypoints {
                 out.push(widget(
                     [x, b + 22.0, w * 0.65 - 3.0, 20.0],
-                    format!("Имя: {}", self.name),
+                    localized!(self.language, "Имя: {}", "Name: {}", self.name),
                     Some(Control::Field(Field::Name)),
                     self.focus == Some(Field::Name),
                 ));
                 out.push(widget(
                     [x + w * 0.65, b + 22.0, w * 0.35, 20.0],
-                    format!("Цвет: {}", self.color),
+                    localized!(self.language, "Цвет: {}", "Color: {}", self.color),
                     Some(Control::Field(Field::Color)),
                     self.focus == Some(Field::Color),
                 ));
                 for (i, (c, t)) in [
-                    (Control::Add, "+ Здесь"),
-                    (Control::Rename, "Имя"),
-                    (Control::Color, "Цвет"),
-                    (Control::Delete, "Удалить"),
+                    (Control::Add, self.language.text("+ Здесь", "+ Here")),
+                    (Control::Rename, self.language.text("Имя", "Name")),
+                    (Control::Color, self.language.text("Цвет", "Color")),
+                    (Control::Delete, self.language.text("Удалить", "Delete")),
                 ]
                 .into_iter()
                 .enumerate()
@@ -816,7 +873,13 @@ impl Menu {
         let status = if !self.notice.is_empty() {
             self.notice.clone()
         } else if self.tab == Tab::Party {
-            format!("Обмен: {} · {}", model.relay, model.status)
+            localized!(
+                self.language,
+                "Обмен: {} · {}",
+                "Relay: {} · {}",
+                model.relay,
+                model.status
+            )
         } else {
             model.status.clone()
         };
@@ -850,25 +913,34 @@ impl Menu {
     ) -> Vec<Widget> {
         out.push(widget(
             [x, 56.0, w * 0.55 - 3.0, 20.0],
-            format!("Игрок: {}", self.claim_owner),
+            localized!(self.language, "Игрок: {}", "Player: {}", self.claim_owner),
             Some(Control::Field(Field::ClaimOwner)),
             self.focus == Some(Field::ClaimOwner),
         ));
         out.push(widget(
             [x + w * 0.55, 56.0, w * 0.45, 20.0],
-            ["Все приваты", "Свои / дружественные", "Чужие"][self.claim_filter as usize],
+            [
+                self.language.text("Все приваты", "All claims"),
+                self.language.text("Свои / дружественные", "Own / friends"),
+                self.language.text("Чужие", "Other players"),
+            ][self.claim_filter as usize],
             Some(Control::ClaimFilter),
             false,
         ));
         out.push(widget(
             [x, 80.0, w * 0.5 - 3.0, 18.0],
-            format!("Порядок: {}", model.map_preferences.sort.label()),
+            localized!(
+                self.language,
+                "Порядок: {}",
+                "Order: {}",
+                model.map_preferences.sort.label_in(self.language)
+            ),
             Some(Control::MapSort),
             false,
         ));
         out.push(widget(
             [x + w * 0.5, 80.0, w * 0.5, 18.0],
-            "Обновить /claims",
+            self.language.text("Обновить /claims", "Refresh /claims"),
             Some(Control::Refresh),
             false,
         ));
@@ -898,7 +970,14 @@ impl Menu {
         ));
         out.push(widget(
             [x + 28.0, height - 46.0, w - 56.0, 18.0],
-            format!("{} / {} · {} чанков", page + 1, pages, indices.len()),
+            localized!(
+                self.language,
+                "{} / {} · {} чанков",
+                "{} / {} · {} chunks",
+                page + 1,
+                pages,
+                indices.len()
+            ),
             None,
             false,
         ));
@@ -919,11 +998,12 @@ impl Menu {
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
         let titles = [
-            "Основное",
-            "Связь и друзья",
-            "Карта и приваты",
-            "Чат",
-            "Торги",
+            self.language.text("Основное", "General"),
+            self.language
+                .text("Связь и друзья", "Connections and friends"),
+            self.language.text("Карта и приваты", "Map and claims"),
+            self.language.text("Чат", "Chat"),
+            self.language.text("Торги", "Trading"),
             "TAB",
             "Scoreboard",
         ];
@@ -949,11 +1029,32 @@ impl Menu {
             0 => {
                 let mut v = Vec::new();
                 for (i, (label, control)) in [
-                    ("Оформление интерфейса", Control::Appearance),
-                    ("Связь, relay и Auto Trust", Control::SettingsSection(1)),
-                    ("Карта, границы и память", Control::SettingsSection(2)),
-                    ("Чат и уведомления", Control::SettingsSection(3)),
-                    ("Торги", Control::SettingsSection(4)),
+                    (
+                        self.language
+                            .text("Оформление интерфейса", "Interface appearance"),
+                        Control::Appearance,
+                    ),
+                    (
+                        self.language.text(
+                            "Связь, relay и Auto Trust",
+                            "Connection, relay and Auto Trust",
+                        ),
+                        Control::SettingsSection(1),
+                    ),
+                    (
+                        self.language
+                            .text("Карта, границы и память", "Map, borders and storage"),
+                        Control::SettingsSection(2),
+                    ),
+                    (
+                        self.language
+                            .text("Чат и уведомления", "Chat and notifications"),
+                        Control::SettingsSection(3),
+                    ),
+                    (
+                        self.language.text("Торги", "Trading"),
+                        Control::SettingsSection(4),
+                    ),
                     ("TAB", Control::SettingsSection(5)),
                     ("Scoreboard", Control::SettingsSection(6)),
                 ]
@@ -989,7 +1090,7 @@ impl Menu {
                 v.retain(|v| v.rect[1] < 212.0);
                 v.push(widget(
                     [x, 212.0, w, 18.0],
-                    format!("Auto Trust: {}", on(model.auto_trust)),
+                    format!("Auto Trust: {}", self.on(model.auto_trust)),
                     Some(Control::ToggleAutoTrust),
                     model.auto_trust,
                 ));
@@ -1015,7 +1116,7 @@ impl Menu {
                         [x, y, w - 48.0, 20.0],
                         format!(
                             "{}: {}",
-                            setting.label,
+                            self.language.text(setting.label, setting.label_en),
                             model.economy_preferences.get(setting.key)
                         ),
                         None,
@@ -1071,10 +1172,19 @@ impl Menu {
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
         for (i, (section, label)) in [
-            (ClaimsSection::Map, "Карта"),
-            (ClaimsSection::Borders, "Границы"),
-            (ClaimsSection::Colours, "Цвета"),
-            (ClaimsSection::Storage, "Память"),
+            (ClaimsSection::Map, self.language.text("Карта", "Map")),
+            (
+                ClaimsSection::Borders,
+                self.language.text("Границы", "Borders"),
+            ),
+            (
+                ClaimsSection::Colours,
+                self.language.text("Цвета", "Colors"),
+            ),
+            (
+                ClaimsSection::Storage,
+                self.language.text("Память", "Storage"),
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -1100,89 +1210,171 @@ impl Menu {
         let rows = match self.claims_section {
             ClaimsSection::Map => vec![
                 pair(
-                    "Открыть карту · J".into(),
+                    self.language
+                        .text("Открыть карту · J", "Open map · J")
+                        .into(),
                     Control::OpenMap,
-                    "Обновить /claims".into(),
+                    self.language
+                        .text("Обновить /claims", "Refresh /claims")
+                        .into(),
                     Control::Refresh,
                 ),
                 pair(
-                    format!("Миникарта: {}", on(p.minimap)),
+                    localized!(
+                        self.language,
+                        "Миникарта: {}",
+                        "Minimap: {}",
+                        self.on(p.minimap)
+                    ),
                     Control::MapToggle,
-                    format!(
+                    localized!(
+                        self.language,
                         "Угол: {}",
-                        ["Слева ↑", "Справа ↑", "Слева ↓", "Справа ↓"][p.corner as usize]
+                        "Corner: {}",
+                        [
+                            self.language.text("Слева ↑", "Top left"),
+                            self.language.text("Справа ↑", "Top right"),
+                            self.language.text("Слева ↓", "Bottom left"),
+                            self.language.text("Справа ↓", "Bottom right")
+                        ][p.corner as usize]
                     ),
                     Control::MapCorner,
                 ),
                 adjust(
-                    "Размер",
+                    self.language.text("Размер", "Size"),
                     p.size.to_string(),
                     Control::MapAdjust(MapOption::Size, -1),
                     Control::MapAdjust(MapOption::Size, 1),
                 ),
                 adjust(
-                    "Блоков/пикс.",
+                    self.language.text("Блоков/пикс.", "Blocks/pixel"),
                     format!("{:.1}", p.zoom),
                     Control::MapAdjust(MapOption::Zoom, -1),
                     Control::MapAdjust(MapOption::Zoom, 1),
                 ),
                 pair(
-                    format!("Рельеф: {}", p.layer.label()),
+                    localized!(
+                        self.language,
+                        "Рельеф: {}",
+                        "Terrain: {}",
+                        p.layer.label_in(self.language)
+                    ),
                     Control::MapLayer,
-                    format!("Метки: {}", on(p.marks)),
+                    localized!(
+                        self.language,
+                        "Метки: {}",
+                        "Waypoints: {}",
+                        self.on(p.marks)
+                    ),
                     Control::MapMarks,
                 ),
                 pair(
-                    format!("Сетка чанков: {}", on(p.grid)),
+                    localized!(
+                        self.language,
+                        "Сетка чанков: {}",
+                        "Chunk grid: {}",
+                        self.on(p.grid)
+                    ),
                     Control::MapGrid,
-                    format!("Координаты: {}", on(p.coordinates)),
+                    localized!(
+                        self.language,
+                        "Координаты: {}",
+                        "Coordinates: {}",
+                        self.on(p.coordinates)
+                    ),
                     Control::MapCoordinates,
                 ),
                 pair(
-                    format!("Тени: {}", on(p.shading)),
+                    localized!(self.language, "Тени: {}", "Shading: {}", self.on(p.shading)),
                     Control::MapShading,
-                    format!("Мобы: {}", ["выкл.", "все", "опасные"][p.mobs as usize]),
+                    localized!(
+                        self.language,
+                        "Мобы: {}",
+                        "Mobs: {}",
+                        [
+                            self.language.text("выкл.", "off"),
+                            self.language.text("все", "all"),
+                            self.language.text("опасные", "hostile")
+                        ][p.mobs as usize]
+                    ),
                     Control::MapMobs,
                 ),
-                vec![("Сбросить настройки карты".into(), Control::MapReset)],
+                vec![(
+                    self.language
+                        .text("Сбросить настройки карты", "Reset map settings")
+                        .into(),
+                    Control::MapReset,
+                )],
             ],
             ClaimsSection::Storage => vec![
                 vec![(
-                    "Сбросить кеш приватов игроков".into(),
+                    self.language
+                        .text("Сбросить кеш приватов игроков", "Clear player claims cache")
+                        .into(),
                     Control::ClearClaimCache,
                 )],
                 vec![(
-                    format!("Запись карты: {}", on(p.remember)),
+                    localized!(
+                        self.language,
+                        "Запись карты: {}",
+                        "Record map: {}",
+                        self.on(p.remember)
+                    ),
                     Control::MapRemember,
                 )],
                 vec![(
-                    format!("Атлас мира: {} / 8", p.profile + 1),
+                    localized!(
+                        self.language,
+                        "Атлас мира: {} / 8",
+                        "World atlas: {} / 8",
+                        p.profile + 1
+                    ),
                     Control::MapProfile,
                 )],
             ],
             ClaimsSection::Borders => vec![
                 pair(
-                    format!("Границы 3D: {}", on(v.enabled)),
+                    localized!(
+                        self.language,
+                        "Границы 3D: {}",
+                        "3D borders: {}",
+                        self.on(v.enabled)
+                    ),
                     Control::BordersEnabled,
-                    format!("Сквозь блоки: {}", on(v.through_walls)),
+                    localized!(
+                        self.language,
+                        "Сквозь блоки: {}",
+                        "Through blocks: {}",
+                        self.on(v.through_walls)
+                    ),
                     Control::ThroughWalls,
                 ),
                 pair(
-                    format!("Свои 3D: {}", on(v.own_visible)),
+                    localized!(
+                        self.language,
+                        "Свои 3D: {}",
+                        "Own 3D: {}",
+                        self.on(v.own_visible)
+                    ),
                     Control::OwnVisible,
-                    format!("Чужие приваты 3D: {}", on(v.friends_visible)),
+                    localized!(
+                        self.language,
+                        "Чужие приваты 3D: {}",
+                        "Other claims in 3D: {}",
+                        self.on(v.friends_visible)
+                    ),
                     Control::FriendsVisible,
                 ),
                 adjust(
-                    "Дальность",
+                    self.language.text("Дальность", "Distance"),
                     format!("{:.0}", v.distance),
                     Control::BorderAdjust(BorderOption::Distance, -1),
                     Control::BorderAdjust(BorderOption::Distance, 1),
                 ),
                 adjust(
-                    "Высота",
+                    self.language.text("Высота", "Height"),
                     if v.height >= 384.0 {
-                        "весь мир".into()
+                        self.language.text("весь мир", "whole world").into()
                     } else {
                         format!("±{:.0}", v.height / 2.0)
                     },
@@ -1190,77 +1382,109 @@ impl Menu {
                     Control::BorderAdjust(BorderOption::Height, 1),
                 ),
                 adjust(
-                    "Толщина",
+                    self.language.text("Толщина", "Thickness"),
                     format!("{:.0}", v.line_width),
                     Control::BorderAdjust(BorderOption::Width, -1),
                     Control::BorderAdjust(BorderOption::Width, 1),
                 ),
                 adjust(
-                    "Непрозрачность",
+                    self.language.text("Непрозрачность", "Opacity"),
                     format!("{}%", (v.opacity * 100.0).round() as u8),
                     Control::BorderAdjust(BorderOption::Opacity, -1),
                     Control::BorderAdjust(BorderOption::Opacity, 1),
                 ),
                 pair(
-                    format!(
+                    localized!(
+                        self.language,
                         "Шаг сетки: {}",
+                        "Grid spacing: {}",
                         if p.grid_step == 0 {
-                            "только контур".into()
+                            self.language.text("только контур", "outline only").into()
                         } else {
                             p.grid_step.to_string()
                         }
                     ),
                     Control::BorderGrid,
-                    "Сбросить 3D".into(),
+                    self.language.text("Сбросить 3D", "Reset 3D").into(),
                     Control::BorderReset,
                 ),
             ],
             ClaimsSection::Colours => vec![
                 pair(
-                    format!("Свои на карте: {}", on(p.own)),
+                    localized!(
+                        self.language,
+                        "Свои на карте: {}",
+                        "Own claims on map: {}",
+                        self.on(p.own)
+                    ),
                     Control::MapOwn,
-                    format!("Игроки на карте: {}", on(p.friends)),
+                    localized!(
+                        self.language,
+                        "Игроки на карте: {}",
+                        "Players on map: {}",
+                        self.on(p.friends)
+                    ),
                     Control::MapFriends,
                 ),
                 vec![(
-                    format!("Свои: {}", self.own_claim_color),
+                    localized!(self.language, "Свои: {}", "Own: {}", self.own_claim_color),
                     Control::Field(Field::OwnClaimColor),
                 )],
                 vec![(
-                    format!("Друзья: {}", self.friend_claim_color),
+                    localized!(
+                        self.language,
+                        "Друзья: {}",
+                        "Friends: {}",
+                        self.friend_claim_color
+                    ),
                     Control::Field(Field::FriendClaimColor),
                 )],
-                vec![("Применить цвета #RRGGBB".into(), Control::ApplyClaimColours)],
+                vec![(
+                    self.language
+                        .text("Применить цвета #RRGGBB", "Apply colors #RRGGBB")
+                        .into(),
+                    Control::ApplyClaimColours,
+                )],
                 adjust(
-                    "Заливка карты",
+                    self.language.text("Заливка карты", "Map fill"),
                     format!("{}%", (p.fill * 100.0).round() as u8),
                     Control::MapAdjust(MapOption::Fill, -1),
                     Control::MapAdjust(MapOption::Fill, 1),
                 ),
                 adjust(
-                    "Контур карты",
+                    self.language.text("Контур карты", "Map outline"),
                     p.outline.to_string(),
                     Control::MapAdjust(MapOption::Outline, -1),
                     Control::MapAdjust(MapOption::Outline, 1),
                 ),
                 vec![(
-                    format!("Подписи владельцев: {}", on(p.labels)),
+                    localized!(
+                        self.language,
+                        "Подписи владельцев: {}",
+                        "Owner labels: {}",
+                        self.on(p.labels)
+                    ),
                     Control::MapLabels,
                 )],
             ],
             ClaimsSection::List => {
                 out.push(widget(
                     [x, 80.0, w * 0.62 - 3.0, 18.0],
-                    format!("Сортировка: {}", p.sort.label()),
+                    localized!(
+                        self.language,
+                        "Сортировка: {}",
+                        "Sort: {}",
+                        p.sort.label_in(self.language)
+                    ),
                     Some(Control::MapSort),
                     false,
                 ));
                 out.push(widget(
                     [x + w * 0.62, 80.0, w * 0.38 - 3.0, 18.0],
                     if p.all_dimensions {
-                        "Все миры"
+                        self.language.text("Все миры", "All worlds")
                     } else {
-                        "Этот мир"
+                        self.language.text("Этот мир", "This world")
                     },
                     Some(Control::MapDimensions),
                     false,
@@ -1281,7 +1505,10 @@ impl Menu {
                 if model.claim_rows.is_empty() {
                     out.push(widget(
                         [x, 112.0, w, 18.0],
-                        "Нет данных. Нажми «Обновить /claims» в «Карта».",
+                        self.language.text(
+                            "Нет данных. Нажми «Обновить /claims» в «Карта».",
+                            "No data. Use “Refresh /claims” under Map.",
+                        ),
                         None,
                         false,
                     ));
@@ -1294,7 +1521,14 @@ impl Menu {
                 ));
                 out.push(widget(
                     [x + w * 0.3, height - 30.0, w * 0.4 - 3.0, 18.0],
-                    format!("{}/{} · {} чанков", page + 1, pages, model.claim_rows.len()),
+                    localized!(
+                        self.language,
+                        "{}/{} · {} чанков",
+                        "{}/{} · {} chunks",
+                        page + 1,
+                        pages,
+                        model.claim_rows.len()
+                    ),
                     None,
                     false,
                 ));
@@ -1309,11 +1543,26 @@ impl Menu {
         };
         if self.claims_section == ClaimsSection::Storage {
             for (i, text) in [
-                "Сохраняется местность рядом с игроком.",
-                "Серверы, аккаунты и измерения разделены.",
-                "Другой мир на том же сервере? Выбери атлас.",
-                "Смена атласа сохраняет предыдущую карту.",
-                "Выключение записи не удаляет файлы.",
+                self.language.text(
+                    "Сохраняется местность рядом с игроком.",
+                    "Records terrain near the player.",
+                ),
+                self.language.text(
+                    "Серверы, аккаунты и измерения разделены.",
+                    "Servers, accounts and dimensions are stored separately.",
+                ),
+                self.language.text(
+                    "Другой мир на том же сервере? Выбери атлас.",
+                    "Different world on the same server? Choose an atlas.",
+                ),
+                self.language.text(
+                    "Смена атласа сохраняет предыдущую карту.",
+                    "Switching atlases keeps the previous map.",
+                ),
+                self.language.text(
+                    "Выключение записи не удаляет файлы.",
+                    "Turning off recording keeps existing files.",
+                ),
             ]
             .into_iter()
             .enumerate()
@@ -1355,9 +1604,18 @@ impl Menu {
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
         for (i, (section, label)) in [
-            (ChatSection::Appearance, "Вид / позиция"),
-            (ChatSection::Notifications, "Уведомления"),
-            (ChatSection::Spam, "Антиспам"),
+            (
+                ChatSection::Appearance,
+                self.language.text("Вид / позиция", "Style / position"),
+            ),
+            (
+                ChatSection::Notifications,
+                self.language.text("Уведомления", "Notifications"),
+            ),
+            (
+                ChatSection::Spam,
+                self.language.text("Антиспам", "Anti-spam"),
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -1388,113 +1646,201 @@ impl Menu {
             ChatSection::Appearance => vec![
                 vec![
                     (
-                        format!("Чат: {}", on(model.chat_modern)),
+                        localized!(
+                            self.language,
+                            "Чат: {}",
+                            "Chat: {}",
+                            self.on(model.chat_modern)
+                        ),
                         Control::ChatModern,
                         model.chat_modern,
                     ),
                     (
-                        format!("Google→RU: {}", on(model.chat_translate)),
+                        localized!(
+                            self.language,
+                            "Google → RU: {}",
+                            "Google → EN: {}",
+                            self.on(model.chat_translate)
+                        ),
                         Control::ChatTranslate,
                         model.chat_translate,
                     ),
                 ],
                 vec![(
-                    format!("Мои сообщения RU → EN: {}", on(model.chat_outgoing)),
+                    self.outgoing_label(model.chat_outgoing),
                     Control::ChatOutgoing,
                     model.chat_outgoing,
                 )],
-                pair(ChatOption::Width, "Ширина", p.width.to_string()),
-                pair(ChatOption::Height, "Высота", p.height.to_string()),
+                pair(
+                    ChatOption::Width,
+                    self.language.text("Ширина", "Width"),
+                    p.width.to_string(),
+                ),
+                pair(
+                    ChatOption::Height,
+                    self.language.text("Высота", "Height"),
+                    p.height.to_string(),
+                ),
                 pair(
                     ChatOption::Scale,
-                    "Масштаб",
+                    self.language.text("Масштаб", "Scale"),
                     format!("{}%", (p.scale * 100.0).round() as u16),
                 ),
                 vec![(
-                    format!("Положение: {}", p.placement.label()),
+                    localized!(
+                        self.language,
+                        "Положение: {}",
+                        "Position: {}",
+                        p.placement.label_in(self.language)
+                    ),
                     Control::ChatPlacement,
                     false,
                 )],
-                pair(ChatOption::OffsetX, "Сдвиг X", p.offset_x.to_string()),
-                pair(ChatOption::OffsetY, "Сдвиг Y", p.offset_y.to_string()),
+                pair(
+                    ChatOption::OffsetX,
+                    self.language.text("Сдвиг X", "X offset"),
+                    p.offset_x.to_string(),
+                ),
+                pair(
+                    ChatOption::OffsetY,
+                    self.language.text("Сдвиг Y", "Y offset"),
+                    p.offset_y.to_string(),
+                ),
             ],
             ChatSection::Notifications => vec![
                 vec![(
-                    format!("Вид: {}", p.notifications.label()),
+                    localized!(
+                        self.language,
+                        "Вид: {}",
+                        "Style: {}",
+                        p.notifications.label_in(self.language)
+                    ),
                     Control::ChatStyle,
                     false,
                 )],
                 vec![(
-                    format!("Входы / выходы: {}", on(p.presence)),
+                    localized!(
+                        self.language,
+                        "Входы / выходы: {}",
+                        "Joins / leaves: {}",
+                        self.on(p.presence)
+                    ),
                     Control::ChatPresence,
                     p.presence,
                 )],
                 vec![(
-                    format!("Смерти: {}", on(p.deaths)),
+                    localized!(self.language, "Смерти: {}", "Deaths: {}", self.on(p.deaths)),
                     Control::ChatDeaths,
                     p.deaths,
                 )],
-                pair(ChatOption::Duration, "Время", format!("{} с", p.duration)),
+                pair(
+                    ChatOption::Duration,
+                    self.language.text("Время", "Duration"),
+                    localized!(self.language, "{} с", "{} s", p.duration),
+                ),
                 pair(
                     ChatOption::Opacity,
-                    "Фон",
+                    self.language.text("Фон", "Background"),
                     format!("{}%", (p.opacity * 100.0).round() as u16),
                 ),
                 pair(
                     ChatOption::EventWidth,
-                    "Ширина событий",
+                    self.language.text("Ширина событий", "Event width"),
                     p.event_width.to_string(),
                 ),
             ],
             ChatSection::Priority => vec![
                 vec![(
-                    format!("Ник: {}", self.priority_name),
+                    localized!(self.language, "Ник: {}", "Name: {}", self.priority_name),
                     Control::Field(Field::PriorityName),
                     self.focus == Some(Field::PriorityName),
                 )],
                 vec![(
-                    format!("Цвет: {}", self.priority_color),
+                    localized!(self.language, "Цвет: {}", "Color: {}", self.priority_color),
                     Control::Field(Field::PriorityColor),
                     self.focus == Some(Field::PriorityColor),
                 )],
                 vec![(
-                    format!("Закреплять сверху: {}", on(self.priority_pinned)),
+                    localized!(
+                        self.language,
+                        "Закреплять сверху: {}",
+                        "Pin to top: {}",
+                        self.on(self.priority_pinned)
+                    ),
                     Control::PriorityPin,
                     self.priority_pinned,
                 )],
                 vec![
-                    ("Сохранить игрока".into(), Control::PrioritySave, false),
-                    ("Удалить правило".into(), Control::PriorityRemove, false),
-                    ("Следующий".into(), Control::PriorityNext, false),
+                    (
+                        self.language.text("Сохранить игрока", "Save player").into(),
+                        Control::PrioritySave,
+                        false,
+                    ),
+                    (
+                        self.language.text("Удалить правило", "Remove rule").into(),
+                        Control::PriorityRemove,
+                        false,
+                    ),
+                    (
+                        self.language.text("Следующий", "Next").into(),
+                        Control::PriorityNext,
+                        false,
+                    ),
                 ],
                 vec![
                     (
-                        "Друзья: всегда важные".into(),
+                        self.language
+                            .text("Друзья: всегда важные", "Friends: always important")
+                            .into(),
                         Control::PriorityFriends,
                         model.priority.friends,
                     ),
                     (
-                        format!("Верхняя лента: {}", on(model.priority.tray)),
+                        localized!(
+                            self.language,
+                            "Верхняя лента: {}",
+                            "Pinned feed: {}",
+                            self.on(model.priority.tray)
+                        ),
                         Control::PriorityTray,
                         model.priority.tray,
                     ),
                 ],
                 vec![
                     (
-                        format!("Время − {}с", model.priority.seconds),
+                        localized!(
+                            self.language,
+                            "Время − {}с",
+                            "Duration − {}s",
+                            model.priority.seconds
+                        ),
                         Control::PriorityTime(-1),
                         false,
                     ),
-                    ("Время +".into(), Control::PriorityTime(1), false),
+                    (
+                        self.language.text("Время +", "Duration +").into(),
+                        Control::PriorityTime(1),
+                        false,
+                    ),
                 ],
                 vec![
                     (
-                        format!("Строк − {}", model.priority.rows),
+                        localized!(
+                            self.language,
+                            "Строк − {}",
+                            "Rows − {}",
+                            model.priority.rows
+                        ),
                         Control::PriorityRows(-1),
                         false,
                     ),
                     (
-                        format!("Строк + · правил {}", model.priority.rules.len()),
+                        localized!(
+                            self.language,
+                            "Строк + · правил {}",
+                            "Rows + · {} rules",
+                            model.priority.rules.len()
+                        ),
                         Control::PriorityRows(1),
                         false,
                     ),
@@ -1502,17 +1848,27 @@ impl Menu {
             ],
             ChatSection::Spam => vec![
                 vec![(
-                    format!("Режим: {}", p.repeats.label()),
+                    localized!(
+                        self.language,
+                        "Режим: {}",
+                        "Mode: {}",
+                        p.repeats.label_in(self.language)
+                    ),
                     Control::ChatRepeats,
                     false,
                 )],
                 pair(
                     ChatOption::RepeatWindow,
-                    "Интервал",
-                    format!("{} с", p.repeat_window),
+                    self.language.text("Интервал", "Interval"),
+                    localized!(self.language, "{} с", "{} s", p.repeat_window),
                 ),
                 vec![(
-                    format!("Игнорировать префикс: {} симв.", p.ignore_prefix),
+                    localized!(
+                        self.language,
+                        "Игнорировать префикс: {} симв.",
+                        "Ignore prefix: {} chars",
+                        p.ignore_prefix
+                    ),
                     Control::ChatPrefix,
                     false,
                 )],
@@ -1538,14 +1894,24 @@ impl Menu {
         if self.chat_section == ChatSection::Spam {
             out.push(widget(
                 [x, 206.0, w - 3.0, 18.0],
-                "Сбросить настройки чата",
+                self.language
+                    .text("Сбросить настройки чата", "Reset chat settings"),
                 Some(Control::ChatReset),
                 false,
             ));
             for (i, label) in [
-                "Одинаковые сообщения одного автора → ×N",
-                "ЛКМ по сообщению: оригинал / перевод",
-                "Префикс 10 / 11 — для времени [12:34:56]",
+                self.language.text(
+                    "Одинаковые сообщения одного автора → ×N",
+                    "Repeated messages from one author → ×N",
+                ),
+                self.language.text(
+                    "ЛКМ по сообщению: оригинал / перевод",
+                    "Left-click a message to switch original / translation",
+                ),
+                self.language.text(
+                    "Префикс 10 / 11 — для времени [12:34:56]",
+                    "Use a 10/11 character prefix for timestamps like [12:34:56]",
+                ),
             ]
             .into_iter()
             .enumerate()
@@ -1572,37 +1938,56 @@ impl Menu {
         let selected = usize::from(p.selected);
         for (index, (label, control, on)) in [
             (
-                format!(
+                localized!(
+                    self.language,
                     "Разрешить подсветку: {}",
-                    if p.allowed { "вкл." } else { "выкл." }
+                    "Allow highlighting: {}",
+                    if p.allowed {
+                        self.language.text("вкл.", "on")
+                    } else {
+                        self.language.text("выкл.", "off")
+                    }
                 ),
                 Control::ExperimentalAllowed,
                 p.allowed,
             ),
             (
-                format!(
+                localized!(
+                    self.language,
                     "Источник: {}",
+                    "Source: {}",
                     if p.prediction {
-                        "ПРОГНОЗ сида SMP"
+                        self.language
+                            .text("ПРОГНОЗ сида SMP", "SMP seed prediction")
                     } else {
-                        "загруженные чанки"
+                        self.language.text("загруженные чанки", "loaded chunks")
                     }
                 ),
                 Control::ExperimentalSource,
                 p.prediction,
             ),
             (
-                format!("Тип руды: {} →", experimental::ORES[selected].label),
+                localized!(
+                    self.language,
+                    "Тип руды: {} →",
+                    "Ore type: {} →",
+                    self.language.text(
+                        experimental::ORES[selected].label,
+                        experimental::ORES[selected].label_en
+                    )
+                ),
                 Control::ExperimentalNext,
                 false,
             ),
             (
-                format!(
+                localized!(
+                    self.language,
                     "Показывать этот тип: {}",
+                    "Show this type: {}",
                     if p.includes(selected) {
-                        "да"
+                        self.language.text("да", "yes")
                     } else {
-                        "нет"
+                        self.language.text("нет", "no")
                     }
                 ),
                 Control::ExperimentalOre,
@@ -1618,7 +2003,10 @@ impl Menu {
         }
         out.push(widget(
             [x, height - 48.0, w, 14.0],
-            "O — включить/выключить · после входа всегда выключено",
+            self.language.text(
+                "O — включить/выключить · после входа всегда выключено",
+                "O toggles highlighting · off after joining",
+            ),
             None,
             false,
         ));
@@ -1671,10 +2059,25 @@ impl Menu {
     ) -> Vec<Widget> {
         let w = (width - 16.0).clamp(220.0, 590.0);
         let x = (width - w) * 0.5;
+        if !self.relay_setup {
+            out.push(widget(
+                [x, height - 32.0, (w - 100.0).max(100.0), 12.0],
+                if self.notice.is_empty() {
+                    &model.status
+                } else {
+                    &self.notice
+                },
+                None,
+                false,
+            ));
+        }
         if self.relay_setup {
             out.push(widget(
                 [x, 54.0, w, 12.0],
-                "Адрес вашего relay (ws:// или wss://)",
+                self.language.text(
+                    "Адрес вашего relay (ws:// или wss://)",
+                    "Relay address (ws:// or wss://)",
+                ),
                 None,
                 false,
             ));
@@ -1687,9 +2090,13 @@ impl Menu {
             out.push(widget(
                 [x, 94.0, w, 12.0],
                 if model.relay_token_present {
-                    "Токен сохранён; пустое поле сохраняет его"
+                    self.language.text(
+                        "Токен сохранён; пустое поле сохраняет его",
+                        "Token saved. Leave blank to keep it.",
+                    )
                 } else {
-                    "Токен доступа (если нужен)"
+                    self.language
+                        .text("Токен доступа (если нужен)", "Access token (if required)")
                 },
                 None,
                 false,
@@ -1701,11 +2108,20 @@ impl Menu {
                 self.focus == Some(Field::RelayToken),
             ));
             for (i, (control, label)) in [
-                (Control::RelaySave, "Сохранить"),
-                (Control::ClearRelayToken, "Удалить токен"),
-                (Control::RelayConnect, "Подключить"),
-                (Control::RelayOff, "Отключить"),
-                (Control::RelayBack, "Назад"),
+                (Control::RelaySave, self.language.text("Сохранить", "Save")),
+                (
+                    Control::ClearRelayToken,
+                    self.language.text("Удалить токен", "Remove token"),
+                ),
+                (
+                    Control::RelayConnect,
+                    self.language.text("Подключить", "Connect"),
+                ),
+                (
+                    Control::RelayOff,
+                    self.language.text("Отключить", "Disconnect"),
+                ),
+                (Control::RelayBack, self.language.text("Назад", "Back")),
             ]
             .into_iter()
             .enumerate()
@@ -1726,30 +2142,52 @@ impl Menu {
             }
             out.push(widget(
                 [x + w / 2.0, 186.0, w / 2.0 - 3.0, 22.0],
-                format!("Автоподключение: {}", on(model.relay_auto)),
+                localized!(
+                    self.language,
+                    "Автоподключение: {}",
+                    "Auto-connect: {}",
+                    self.on(model.relay_auto)
+                ),
                 Some(Control::ToggleAutoRelay),
                 model.relay_auto,
             ));
             out.push(widget(
                 [x, 212.0, w, 10.0],
-                "После сохранения relay подключается автоматически.",
+                self.language.text(
+                    "После сохранения relay подключается автоматически.",
+                    "Relay connects automatically after saving.",
+                ),
                 None,
                 false,
             ));
         } else {
             for (i, (filter, title)) in [
-                (PartyFilter::Friends, "Друзья"),
-                (PartyFilter::Users, "С модом"),
+                (
+                    PartyFilter::Friends,
+                    self.language.text("Друзья", "Friends"),
+                ),
+                (
+                    PartyFilter::Users,
+                    self.language.text("С модом", "Mod users"),
+                ),
+                (
+                    PartyFilter::Important,
+                    self.language.text("Важные", "Important"),
+                ),
             ]
             .into_iter()
             .enumerate()
             {
                 out.push(widget(
-                    [x + i as f32 * w / 2.0, 56.0, w / 2.0 - 3.0, 20.0],
+                    [x + i as f32 * w / 3.0, 56.0, w / 3.0 - 3.0, 20.0],
                     title,
                     Some(Control::PartyFilter(filter)),
                     self.party_filter == filter,
                 ));
+            }
+            if self.party_filter == PartyFilter::Important {
+                self.layout_priorities(model, x, w, height, &mut out);
+                return out;
             }
             let indices = self.party_indices(model);
             let per = self.page_size(height);
@@ -1770,7 +2208,7 @@ impl Menu {
                         "{}{} · {}",
                         row.name,
                         if model.priority.rule(&row.name, row.friend).is_some() {
-                            " · Важный"
+                            self.language.text(" · Важный", " · Important")
                         } else {
                             ""
                         },
@@ -1784,9 +2222,9 @@ impl Menu {
                     out.push(widget(
                         [x + w - 46.0, y, 22.0, 22.0],
                         if row.pending {
-                            "Принять"
+                            self.language.text("Принять", "Accept")
                         } else {
-                            "Добавить друга"
+                            self.language.text("Добавить друга", "Add friend")
                         },
                         Some(Control::PartyAccept(index)),
                         false,
@@ -1796,9 +2234,9 @@ impl Menu {
                     out.push(widget(
                         [x + w - 22.0, y, 22.0, 22.0],
                         if row.pending {
-                            "Отклонить"
+                            self.language.text("Отклонить", "Decline")
                         } else {
-                            "Удалить друга"
+                            self.language.text("Удалить друга", "Remove friend")
                         },
                         Some(Control::PartyDecline(index)),
                         false,
@@ -1808,7 +2246,10 @@ impl Menu {
             if indices.is_empty() {
                 out.push(widget(
                     [x, 86.0, w, 18.0],
-                    "Пока нет игроков в этой группе",
+                    self.language.text(
+                        "Пока нет игроков в этой группе",
+                        "No players in this group yet",
+                    ),
                     None,
                     false,
                 ));
@@ -1833,8 +2274,11 @@ impl Menu {
                 false,
             ));
             for (i, (kind, label)) in [
-                (PlayerRequest::Teleport, "Запрос ТП"),
-                (PlayerRequest::Trade, "Обмен"),
+                (
+                    PlayerRequest::Teleport,
+                    self.language.text("Запрос ТП", "Teleport request"),
+                ),
+                (PlayerRequest::Trade, self.language.text("Обмен", "Trade")),
             ]
             .into_iter()
             .enumerate()
@@ -1847,19 +2291,85 @@ impl Menu {
                 ));
             }
         }
-        if !self.relay_setup {
+        out
+    }
+    fn layout_priorities(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        let names = self.important_names(model);
+        let per = self.page_size(height);
+        let pages = names.len().div_ceil(per).max(1);
+        let page = self.page.min(pages - 1);
+        for (i, name) in names.iter().enumerate().skip(page * per).take(per) {
+            let automatic = !model
+                .priority
+                .rules
+                .contains_key(&name.to_ascii_lowercase());
             out.push(widget(
-                [x, height - 32.0, (w - 100.0).max(100.0), 12.0],
-                if self.notice.is_empty() {
-                    &model.status
+                [x, 82.0 + (i - page * per) as f32 * 24.0, w, 22.0],
+                if automatic {
+                    localized!(self.language, "{name} · друг", "{name} · friend")
                 } else {
-                    &self.notice
+                    name.clone()
                 },
+                Some(Control::PriorityRow(i)),
+                self.priority_name.eq_ignore_ascii_case(name),
+            ));
+        }
+        if names.is_empty() {
+            out.push(widget(
+                [x, 82.0, w, 22.0],
+                self.language
+                    .text("Введите ник игрока ниже", "Enter a player name below"),
                 None,
                 false,
             ));
         }
-        out
+        let y = height - 94.0;
+        out.extend([
+            widget([x, y, 24.0, 18.0], "←", Some(Control::Previous), false),
+            widget(
+                [x + 28.0, y, w - 56.0, 18.0],
+                format!("{} / {}", page + 1, pages),
+                None,
+                false,
+            ),
+            widget(
+                [x + w - 24.0, y, 24.0, 18.0],
+                "→",
+                Some(Control::Next),
+                false,
+            ),
+            widget(
+                [x, y + 20.0, w * 0.6 - 3.0, 20.0],
+                localized!(self.language, "Ник: {}", "Name: {}", self.priority_name),
+                Some(Control::Field(Field::PriorityName)),
+                self.focus == Some(Field::PriorityName),
+            ),
+            widget(
+                [x + w * 0.6, y + 20.0, w * 0.4, 20.0],
+                self.language.text("Сохранить", "Save"),
+                Some(Control::PrioritySave),
+                false,
+            ),
+            widget(
+                [x, y + 42.0, w * 0.6 - 3.0, 20.0],
+                localized!(self.language, "Цвет: {}", "Color: {}", self.priority_color),
+                Some(Control::Field(Field::PriorityColor)),
+                self.focus == Some(Field::PriorityColor),
+            ),
+            widget(
+                [x + w * 0.6, y + 42.0, w * 0.4, 20.0],
+                self.language.text("Убрать правило", "Remove rule"),
+                Some(Control::PriorityRemove),
+                false,
+            ),
+        ]);
     }
     pub fn click(&mut self, model: &ViewModel, size: [f32; 2], mouse: [f32; 2]) -> Option<Action> {
         let hit = self
@@ -1884,6 +2394,7 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::Language => Some(Action::SetLanguage(self.language.other())),
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
             Control::SettingsSection(dir) => {
@@ -2003,7 +2514,10 @@ impl Menu {
                     v.friend_color = friend;
                     Some(Action::SetClaims(v))
                 } else {
-                    self.notice = "Цвет должен быть #RRGGBB".into();
+                    self.notice = self
+                        .language
+                        .text("Цвет должен быть #RRGGBB", "Use the #RRGGBB color format")
+                        .into();
                     None
                 }
             }
@@ -2220,7 +2734,13 @@ impl Menu {
                         .ok()
                         .filter(|c| *c <= 0xffffff);
                         let Some(color) = color else {
-                            self.notice = "Цвет нужен в формате #RRGGBB".into();
+                            self.notice = self
+                                .language
+                                .text(
+                                    "Цвет нужен в формате #RRGGBB",
+                                    "Use the #RRGGBB color format",
+                                )
+                                .into();
                             return None;
                         };
                         if let Err(e) =
@@ -2292,15 +2812,27 @@ impl Menu {
             }
             Control::Add | Control::Rename | Control::Color | Control::Delete => {
                 if matches!(control, Control::Add | Control::Rename) && name.is_empty() {
-                    self.notice = "Введите имя метки.".into();
+                    self.notice = self
+                        .language
+                        .text("Введите имя метки.", "Enter a waypoint name.")
+                        .into();
                     return None;
                 }
                 if matches!(control, Control::Add | Control::Color) && color.is_none() {
-                    self.notice = "Цвет: #RRGGBB, шесть цифр.".into();
+                    self.notice = self
+                        .language
+                        .text(
+                            "Цвет: #RRGGBB, шесть цифр.",
+                            "Color: #RRGGBB, six hex digits.",
+                        )
+                        .into();
                     return None;
                 }
                 if control != Control::Add && id.is_none() {
-                    self.notice = "Сначала выберите метку.".into();
+                    self.notice = self
+                        .language
+                        .text("Сначала выберите метку.", "Select a waypoint first.")
+                        .into();
                     return None;
                 }
                 Some(match control {
@@ -2321,11 +2853,20 @@ impl Menu {
             }
             Control::PlayerRequest(kind) => {
                 let Some(row) = self.selected.and_then(|i| model.party.get(i)) else {
-                    self.notice = "Сначала выберите игрока".into();
+                    self.notice = self
+                        .language
+                        .text("Сначала выберите игрока", "Select a player first")
+                        .into();
                     return None;
                 };
                 if !row.server_online {
-                    self.notice = "Игрок не в сети на этом сервере".into();
+                    self.notice = self
+                        .language
+                        .text(
+                            "Игрок не в сети на этом сервере",
+                            "Player is offline on this server",
+                        )
+                        .into();
                     return None;
                 }
                 if let Err(error) = kind.command(&row.name) {
@@ -2340,11 +2881,17 @@ impl Menu {
             }
             Control::Invite | Control::Accept => {
                 let Some(row) = self.selected.and_then(|i| model.party.get(i)) else {
-                    self.notice = "Выбери игрока из списка".into();
+                    self.notice = self
+                        .language
+                        .text("Выбери игрока из списка", "Select a player from the list")
+                        .into();
                     return None;
                 };
                 if row.blocked || row.code.is_empty() || !row.online {
-                    self.notice = "Игрок сейчас недоступен".into();
+                    self.notice = self
+                        .language
+                        .text("Игрок сейчас недоступен", "Player is currently unavailable")
+                        .into();
                     return None;
                 }
                 if control == Control::Accept {
@@ -2369,7 +2916,10 @@ impl Menu {
                     .and_then(|i| model.party.get(i))
                     .filter(|row| row.friend)
                 else {
-                    self.notice = "Выберите друга в списке.".into();
+                    self.notice = self
+                        .language
+                        .text("Выберите друга в списке.", "Select a friend from the list.")
+                        .into();
                     return None;
                 };
                 Some(Action::RemoveFriend {
@@ -2396,7 +2946,13 @@ impl Menu {
             Control::RelaySave => {
                 let url = self.relay_url.trim().to_owned();
                 if url.is_empty() {
-                    self.notice = "Введите адрес ws:// или wss://.".into();
+                    self.notice = self
+                        .language
+                        .text(
+                            "Введите адрес ws:// или wss://.",
+                            "Enter a ws:// or wss:// address.",
+                        )
+                        .into();
                     return None;
                 }
                 let access_token = if self.access_token.is_empty() {
@@ -2633,12 +3189,60 @@ impl Menu {
         }
         true
     }
-}
-fn on(value: bool) -> &'static str {
-    if value { "вкл." } else { "выкл." }
+    fn outgoing_label(&self, enabled: bool) -> String {
+        localized!(
+            self.language,
+            "Мои сообщения RU → EN: {}",
+            "Outgoing EN → RU: {}",
+            self.on(enabled)
+        )
+    }
+    fn on(&self, enabled: bool) -> &'static str {
+        match enabled {
+            true => self.language.text("вкл.", "on"),
+            false => self.language.text("выкл.", "off"),
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn language_button_sits_next_to_settings_and_reverses_translation() {
+        let mut model = ViewModel {
+            chat_translate: true,
+            chat_outgoing: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Chat,
+            ..Menu::default()
+        };
+        for size in [[240.0, 216.0], [800.0, 500.0]] {
+            let widgets = menu.layout(&model, size[0], size[1]);
+            let [x, y, w, h] = widgets
+                .iter()
+                .find(|w| w.control == Some(Control::Language))
+                .unwrap()
+                .rect;
+            let settings = widgets
+                .iter()
+                .find(|w| w.control == Some(Control::Tab(Tab::Settings)))
+                .unwrap();
+            assert_eq!(settings.rect[1], y);
+            assert!(settings.rect[0] + settings.rect[2] <= x);
+            assert!(matches!(
+                menu.click(&model, size, [x + w / 2.0, y + h / 2.0]),
+                Some(Action::SetLanguage(Language::English))
+            ));
+        }
+        let previous = model.clone();
+        model.language = Language::English;
+        menu.reconcile(&previous, &model, 400.0);
+        let widgets = menu.layout(&model, 800.0, 500.0);
+        assert!(widgets.iter().any(|w| w.text == "Incoming → EN: on"));
+        assert!(widgets.iter().any(|w| w.text == "Outgoing EN → RU: on"));
+        assert!(widgets.iter().any(|w| w.text == "Settings"));
+    }
     #[test]
     fn unified_settings_keep_work_tabs_clean_and_separate_tab_from_trades() {
         let model = ViewModel::default();
@@ -2652,11 +3256,7 @@ mod tests {
                 w.control,
                 Some(Control::RelaySetup | Control::ToggleAutoTrust | Control::RelayOff)
             )));
-            assert!(
-                !widgets
-                    .iter()
-                    .any(|w| w.text == "Приглашения" || w.text == "Важные")
-            );
+            assert!(!widgets.iter().any(|w| w.text == "Приглашения"));
         }
         for section in 0..7 {
             let menu = Menu {
@@ -2912,11 +3512,55 @@ mod tests {
         assert!(!model.experimental.allowed);
     }
     #[test]
+    fn friends_tab_can_add_and_remove_an_offline_priority_by_nickname() {
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Party,
+            ..Menu::default()
+        };
+        let size = [240.0, 216.0];
+        let click = |menu: &mut Menu, model: &ViewModel, control| {
+            let [x, y, w, h] = menu
+                .layout(model, size[0], size[1])
+                .into_iter()
+                .find(|widget| widget.control == Some(control))
+                .unwrap()
+                .rect;
+            menu.click(model, size, [x + w / 2.0, y + h / 2.0])
+        };
+        click(
+            &mut menu,
+            &model,
+            Control::PartyFilter(PartyFilter::Important),
+        );
+        click(&mut menu, &model, Control::Field(Field::PriorityName));
+        menu.paste("Offline_Player");
+        let Some(Action::SetPriority(prefs)) = click(&mut menu, &model, Control::PrioritySave)
+        else {
+            panic!("saving an offline priority should update settings");
+        };
+        assert!(prefs.rules.contains_key("offline_player"));
+        model.priority = prefs;
+        menu.priority_name.clear();
+        click(&mut menu, &model, Control::PriorityRow(0));
+        assert_eq!(menu.priority_name, "offline_player");
+        let Some(Action::SetPriority(prefs)) = click(&mut menu, &model, Control::PriorityRemove)
+        else {
+            panic!("removing an offline priority should update settings");
+        };
+        assert!(prefs.rules.is_empty());
+    }
+    #[test]
     fn manual_priorities_show_without_relay_and_never_offer_friendship_actions() {
         let mut model = ViewModel::default();
         model.priority.set("Offline", 0xabcdef, true).unwrap();
         model.priority.set("Alex", 0xabcdef, true).unwrap();
-        append_important_rows(&mut model.party, &model.priority, &[(42, "Alex".into())]);
+        append_important_rows(
+            &mut model.party,
+            &model.priority,
+            &[(42, "Alex".into())],
+            Language::Russian,
+        );
         assert_eq!(model.party.len(), 2);
         let mut menu = Menu {
             tab: Tab::Party,

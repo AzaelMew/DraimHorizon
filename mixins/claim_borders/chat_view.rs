@@ -3,7 +3,7 @@ use crate::game::claim_borders_ui_view as ui;
 use crate::game::claim_borders_chat_archive as archive;
 use crate::game::claim_borders_chat_preferences as options;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
-use claim_borders_relay_client::translation::Translator;
+use claim_borders_relay_client::translation::{Language, Translator};
 use horizon_client::{
     hud::{HudBatch, rgba},
     text::Text,
@@ -16,6 +16,7 @@ use std::{
 };
 #[derive(Clone, Copy)]
 pub(super) struct Settings {
+    pub language: Language,
     pub modern: bool,
     pub translate: bool,
     pub preferences: options::Preferences,
@@ -35,6 +36,7 @@ struct State {
     settings: Settings,
     loaded: bool,
     translator: Option<Translator>,
+    translation_language: Language,
     requested: HashSet<u64>,
     retry: HashMap<u64, (u64, u8)>,
     translation_failed: bool,
@@ -60,12 +62,14 @@ impl Default for State {
             nickname_query: None,
             started: Instant::now(),
             settings: Settings {
+                language: Language::default(),
                 modern: true,
                 translate: true,
                 preferences: options::Preferences::default(),
             },
             loaded: false,
             translator: None,
+            translation_language: Language::default(),
             requested: HashSet::new(),
             retry: HashMap::new(),
             translation_failed: false,
@@ -85,9 +89,25 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .lock()
         .unwrap_or_else(|p| p.into_inner()))
 }
+pub(super) fn language(game: &Game<'_>) -> Language {
+    settings(game).language
+}
+pub(super) fn translator(game: &Game<'_>, target: Language) -> Translator {
+    Translator::with_deepl(target, game.native_setting(claims::ID, "deepl_api_key"))
+}
+pub(super) fn set_language(game: &Game<'_>, language: Language) {
+    let _ = settings(game);
+    game.native_set_setting(claims::ID, "language", language.code());
+    state(|s| s.settings.language = language);
+}
 pub(super) fn settings(game: &Game<'_>) -> Settings {
     state(|s| {
         if !s.loaded {
+            s.settings.language = Language::from_code(
+                game.native_setting(claims::ID, "language")
+                    .as_deref()
+                    .unwrap_or_default(),
+            );
             s.settings.modern =
                 game.native_setting(claims::ID, "chat_modern").as_deref() != Some("false");
             s.settings.translate =
@@ -831,6 +851,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         return true;
     }
     let config = settings(game);
+    let language = config.language;
     let friends = crate::game::claim_borders_client::friend_ids()
         .into_iter()
         .map(|(_, n)| n.to_ascii_lowercase())
@@ -845,10 +866,19 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         }
         if config.translate {
             let now = s.started.elapsed().as_millis() as u64;
-            let worker = s.translator.get_or_insert_with(Translator::default);
+            if s.translation_language != language {
+                s.translation_language = language;
+                s.translator = None;
+                s.requested.clear();
+                s.retry.clear();
+                s.translation_failed = false;
+            }
+            let worker = s
+                .translator
+                .get_or_insert_with(|| translator(game, language));
             while let Some((id, value)) = worker.poll() {
                 if let Some(value) = value {
-                    s.feed.translate(id, value);
+                    s.feed.translate(id, value, language);
                     s.translation_failed = false;
                     s.retry.remove(&id);
                 } else {
@@ -864,7 +894,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                     && (e.kind == model::Kind::Message
                         || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
                         || (e.kind == model::Kind::Death && event_entry(e, p)))
-                    && e.translated.is_none()
+                    && !e.has_translation(language)
                     && !s.requested.contains(&e.id)
                     && s.retry.get(&e.id).is_none_or(|(at, _)| now >= *at)
                     && worker.submit(e.id, &e.original)
@@ -874,7 +904,17 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             }
         }
         (
-            s.feed.entries.iter().cloned().collect::<Vec<_>>(),
+            s.feed
+                .entries
+                .iter()
+                .cloned()
+                .map(|mut entry| {
+                    if !entry.has_translation(language) {
+                        entry.translated = None;
+                    }
+                    entry
+                })
+                .collect::<Vec<_>>(),
             s.started.elapsed().as_millis() as u64,
             s.feed.scroll,
             if focused {
@@ -1009,19 +1049,25 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     }
     if focused {
         let hint = if scroll > 0 {
-            format!("История ↑ {scroll} · ЛКМ: оригинал / перевод")
+            let history = language.text("История", "History");
+            format!("{history} ↑ {scroll}")
         } else {
             let status = state(|s| {
                 if !config.translate {
-                    "RU: выкл."
+                    language.text("RU: выкл.", "EN: off")
                 } else if s.translation_failed {
-                    "RU: сервис недоступен · повтор автоматически"
+                    language.text(
+                        "RU: сервис недоступен · повтор автоматически",
+                        "EN: service unavailable · retrying",
+                    )
                 } else {
-                    "RU: автоперевод"
+                    language.text("RU: автоперевод", "EN: auto-translate")
                 }
             });
-            format!("{status} · ЛКМ: оригинал / перевод")
+            status.into()
         };
+        let toggle = language.text("ЛКМ: оригинал / перевод", "Click: original / translation");
+        let hint = format!("{hint} · {toggle}");
         let start = batch.vertices.len();
         text(game, batch, &hint, [x + 2.0, y + h + 4.0], 0xa99eff, 1.0);
         batch.clip_since(start, x, y + h, x + w, y + h + 14.0);

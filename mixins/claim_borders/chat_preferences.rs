@@ -1,3 +1,4 @@
+use claim_borders_relay_client::translation::Language;
 // Shared chat preferences, geometry and hit testing, independent of the game.
 use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,12 +18,12 @@ impl Placement {
             Self::TopLeft => Self::BottomLeft,
         }
     }
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::BottomLeft => "Слева снизу",
-            Self::BottomRight => "Справа снизу",
-            Self::TopLeft => "Слева сверху",
-            Self::TopRight => "Справа сверху",
+            Self::BottomLeft => language.text("Слева снизу", "Bottom left"),
+            Self::BottomRight => language.text("Справа снизу", "Bottom right"),
+            Self::TopLeft => language.text("Слева сверху", "Top left"),
+            Self::TopRight => language.text("Справа сверху", "Top right"),
         }
     }
     pub fn top(self) -> bool {
@@ -49,12 +50,12 @@ impl NotificationStyle {
             Self::Off => Self::Cards,
         }
     }
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Cards => "Карточки рядом",
-            Self::Compact => "Компактные рядом",
-            Self::Inline => "В ленте чата",
-            Self::Off => "Выключены",
+            Self::Cards => language.text("Карточки рядом", "Side cards"),
+            Self::Compact => language.text("Компактные рядом", "Compact cards"),
+            Self::Inline => language.text("В ленте чата", "In chat"),
+            Self::Off => language.text("Выключены", "Off"),
         }
     }
 }
@@ -73,11 +74,11 @@ impl RepeatMode {
             Self::Recent => Self::Off,
         }
     }
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Off => "Выключен",
-            Self::Consecutive => "Повторы подряд",
-            Self::Recent => "Повторы за интервал",
+            Self::Off => language.text("Выключен", "Off"),
+            Self::Consecutive => language.text("Повторы подряд", "Consecutive repeats"),
+            Self::Recent => language.text("Повторы за интервал", "Recent repeats"),
         }
     }
 }

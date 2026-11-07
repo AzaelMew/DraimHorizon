@@ -478,15 +478,15 @@ pub fn strokes(icon: Icon) -> &'static [[f32; 4]] {
 pub fn icon_for(label: &str) -> Option<Icon> {
     use Icon::*;
     match label {
-        "Метки" => Some(Pin),
-        "Пати" | "Друзья" => Some(People),
-        "Клеймы" | "Приваты" => Some(Shield),
-        "Чат" => Some(Chat),
-        "Эксперименты" => Some(Star),
-        "Торги" | "AH" | "Аукц." => Some(Market),
+        "Метки" | "Waypoints" => Some(Pin),
+        "Пати" | "Друзья" | "Friends" => Some(People),
+        "Клеймы" | "Приваты" | "Claims" => Some(Shield),
+        "Чат" | "Chat" => Some(Chat),
+        "Эксперименты" | "Experiments" => Some(Star),
+        "Торги" | "Trading" | "AH" | "Аукц." => Some(Market),
         "Цены" => Some(Wallet),
         "Обзор" | "Профит" | "Прибыль" => Some(Chart),
-        "Опции" | "Настройки" | "E" => Some(Settings),
+        "Опции" | "Настройки" | "Settings" | "E" => Some(Settings),
         "X" | "Закрыть" | "Отклонить" | "Отмена [Esc]" => Some(Close),
         "+" => Some(Plus),
         "−" | "-" => Some(Minus),

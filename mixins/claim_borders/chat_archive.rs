@@ -367,7 +367,11 @@ mod tests {
         let mut feed = Feed::default();
         let p = Preferences::default();
         let id = feed.push_local("[Party] hello", 5, p).unwrap();
-        feed.translate(id, "привет".into());
+        feed.translate(
+            id,
+            "привет".into(),
+            claim_borders_relay_client::translation::Language::Russian,
+        );
         feed.toggle_original(id);
         let worker = Worker::new(root.clone()).unwrap();
         assert!(worker.save("server#account".into(), feed.archive(), true));

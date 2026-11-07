@@ -213,6 +213,7 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
     let y = (screen.rect[3] - ph) * 0.5 + 54.;
     let width = pw - sidebar - 16.;
     let h = ph - 88.;
+    let language = crate::game::claim_borders_chat_view::language(game);
     state(|s| {
         if s.draft.is_none() {
             s.hits.clear();
@@ -246,8 +247,12 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             s,
             [x, y, width * 0.65 - 3., 20.],
             &format!(
-                "Мир: {}",
-                s.filter.as_deref().map(world).unwrap_or("Все миры".into())
+                "{}: {}",
+                language.text("Мир", "World"),
+                s.filter
+                    .as_deref()
+                    .map(world)
+                    .unwrap_or_else(|| language.text("Все миры", "All worlds").into())
             ),
             Hit::World,
         );
@@ -257,7 +262,7 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             screen,
             s,
             [x + width * 0.65, y, width * 0.35, 20.],
-            "+ Здесь",
+            language.text("+ Здесь", "+ Here"),
             Hit::Create,
         );
         let per = (((h - 54.) / 42.).floor() as usize).max(1);
@@ -315,7 +320,14 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             );
             s.hits.push(([x, r[1], width - 31., 38.], Hit::Row(w.id)));
             let trash = [x + width - 27., r[1] + 7., 24., 24.];
-            ui::button_base(game, batch, trash, "Удалить", false, screen.mouse);
+            ui::button_base(
+                game,
+                batch,
+                trash,
+                language.text("Удалить", "Delete"),
+                false,
+                screen.mouse,
+            );
             ui::icon(
                 game,
                 batch,
@@ -329,7 +341,10 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             ui::text(
                 game,
                 batch,
-                "Нет меток в выбранном мире",
+                language.text(
+                    "Нет меток в выбранном мире",
+                    "No waypoints in the selected world",
+                ),
                 [x + 6., y + 42.],
                 0x9aacc0,
                 false,
@@ -348,7 +363,13 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
         ui::text(
             game,
             batch,
-            &format!("{} / {} · {} меток", s.page + 1, pages, rows.len()),
+            &format!(
+                "{} / {} · {} {}",
+                s.page + 1,
+                pages,
+                rows.len(),
+                language.text("меток", "waypoints")
+            ),
             [x + 34., bottom + 5.],
             0x9aacc0,
             false,
@@ -412,6 +433,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
     let h = 210.;
     let x = (batch.width - w) * 0.5;
     let y = (batch.height - h) * 0.5;
+    let language = crate::game::claim_borders_chat_view::language(game);
     game.native_fill(batch, [0., 0., batch.width, batch.height], 0x55080d16);
     ui::rounded(game, batch, [x, y, w, h], 8., 0xf21d2a3a);
     state(|s| {
@@ -430,9 +452,9 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             game,
             batch,
             if d.id.is_some() {
-                "Редактировать метку"
+                language.text("Редактировать метку", "Edit waypoint")
             } else {
-                "Новая метка"
+                language.text("Новая метка", "New waypoint")
             },
             [x + 32., y + 12.],
             0xe3ebf3,
@@ -447,13 +469,26 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             screen,
             s,
             [x + 12., y + 62., w - 24., 21.],
-            &format!("Вид: {} · изменить", d.kind.label()),
+            &format!(
+                "{}: {}",
+                language.text("Вид", "Type"),
+                language.text(
+                    d.kind.label(),
+                    match d.kind {
+                        model::MarkerKind::Pin => "Pin",
+                        model::MarkerKind::Home => "Home",
+                        model::MarkerKind::Portal => "Portal",
+                        model::MarkerKind::Chest => "Chest",
+                        model::MarkerKind::Star => "Star",
+                    },
+                ),
+            ),
             Hit::Kind,
         );
         ui::text(
             game,
             batch,
-            "Цвет метки",
+            language.text("Цвет метки", "Waypoint color"),
             [x + 12., y + 93.],
             0x9aacc0,
             false,
@@ -505,7 +540,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             screen,
             s,
             [x + 12., y + h - 27., (w - 30.) * 0.5, 20.],
-            "Отмена [Esc]",
+            language.text("Отмена [Esc]", "Cancel [Esc]"),
             Hit::Cancel,
         );
         button(
@@ -514,13 +549,14 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             screen,
             s,
             [x + w * 0.5 + 3., y + h - 27., (w - 30.) * 0.5, 20.],
-            "Сохранить",
+            language.text("Сохранить", "Save"),
             Hit::Save,
         );
     });
     ui::finish(game, batch, start, "waypoint-editor", "editor");
 }
 fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
+    let language = crate::game::claim_borders_chat_view::language(game);
     match hit {
         Hit::Delete(id) => s.action = Some(Action::Delete(id)),
         Hit::Row(id) => {
@@ -565,7 +601,7 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
                     id: None,
                     dimension: p.dimension.into(),
                     position: [p.x, p.y, p.z],
-                    name: TextInput::new("Новая метка".into()),
+                    name: TextInput::new(language.text("Новая метка", "New waypoint").into()),
                     color: TextInput::new("#FFCC55".into()),
                     kind: model::MarkerKind::Pin,
                     focus: false,
@@ -595,9 +631,16 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
         Hit::Save => {
             if let Some(d) = &s.draft {
                 if d.name.value.trim().is_empty() {
-                    s.error = "Введите название метки".into();
+                    s.error = language
+                        .text("Введите название метки", "Enter a waypoint name")
+                        .into();
                 } else if model::parse_color(&d.color.value).is_err() {
-                    s.error = "Цвет должен быть в формате #RRGGBB".into();
+                    s.error = language
+                        .text(
+                            "Цвет должен быть в формате #RRGGBB",
+                            "Use the #RRGGBB color format",
+                        )
+                        .into();
                 } else {
                     s.action = Some(Action::Save(d.clone()));
                 }

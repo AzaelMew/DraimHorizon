@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizons";
-pub const VERSION: &str = "0.22.2";
+pub const VERSION: &str = "0.22.3";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
@@ -123,22 +123,12 @@ fn parse_origin(value: &str) -> Result<i32, ParseError> {
     Ok(n)
 }
 
+#[derive(Default)]
 pub struct State {
     pub enabled: bool,
     claims: Vec<Claim>,
     pending: Option<Instant>,
     claims_known: bool,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            claims: Vec::new(),
-            pending: None,
-            claims_known: false,
-        }
-    }
 }
 
 impl State {
@@ -258,10 +248,18 @@ mod tests {
     const SCREENSHOT: &str = "Your chunks (4 of 4): overworld at x -1904 z 48; overworld at x -1904 z 64; overworld at x -1920 z 48; overworld at x -1936 z 48";
 
     fn loaded(text: &str) -> State {
-        let mut state = State::default();
+        let mut state = State {
+            enabled: true,
+            ..State::default()
+        };
         state.begin_refresh();
         assert!(state.receive_chat(text));
         state
+    }
+
+    #[test]
+    fn claim_borders_are_opt_in() {
+        assert!(!State::default().enabled);
     }
 
     #[test]

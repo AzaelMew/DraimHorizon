@@ -1,16 +1,17 @@
 // Async outbound translation, scoped to one live connection; no delayed messages cross servers.
 use crate::game::{Game, claim_borders as claims, claim_borders_outgoing as model};
-use claim_borders_relay_client::translation::{Translator, needs_english};
+use claim_borders_relay_client::translation::{Language, Translator};
 use std::{
     collections::VecDeque,
     sync::{Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 #[derive(Default)]
 struct State {
     scope: String,
     queue: model::Queue,
-    translator: Option<Translator>,
+    russian: Option<Translator>,
+    english: Option<Translator>,
     parts: VecDeque<String>,
     clock: Option<Instant>,
     last: u64,
@@ -42,7 +43,8 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
     if text.is_empty() || text.starts_with('/') || !game.chat_abilities().allows(&text) {
         return false;
     }
-    let translate = enabled(game) && needs_english(&text);
+    let target = crate::game::claim_borders_chat_view::language(game).other();
+    let translate = enabled(game) && target.needs_translation(&text);
     let current = scope(game).unwrap();
     let result = state(|s| {
         if s.scope != current {
@@ -63,13 +65,23 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
             Ok(id) => id,
             Err(e) => return Some(Err(e)),
         };
-        if translate
-            && !s
-                .translator
-                .get_or_insert_with(Translator::english)
-                .submit(id, &text)
-        {
-            s.queue.complete(id, None);
+        if translate {
+            let worker = match target {
+                Language::Russian => &mut s.russian,
+                Language::English => &mut s.english,
+            };
+            if !worker
+                .get_or_insert_with(|| {
+                    crate::game::claim_borders_chat_view::translator(game, target)
+                })
+                .submit_until(
+                    id,
+                    &text,
+                    Instant::now() + Duration::from_millis(model::WAIT_MS - 500),
+                )
+            {
+                s.queue.complete(id, None);
+            }
         }
         Some(Ok(()))
     });
@@ -99,7 +111,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             .get_or_insert_with(Instant::now)
             .elapsed()
             .as_millis() as u64;
-        if let Some(worker) = &s.translator {
+        for worker in [&s.russian, &s.english].into_iter().flatten() {
             while let Some((id, result)) = worker.poll() {
                 s.queue.complete(id, result);
             }
@@ -121,7 +133,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
         (part, failure)
     });
     if failure {
-        game.native_chat("[Перевод] Сервис недоступен: отправляется исходный текст.");
+        game.native_chat(crate::game::claim_borders_chat_view::language(game).text(
+            "[Перевод] Сервис недоступен: отправляется исходный текст.",
+            "[Translation] Service unavailable. Sending the original text.",
+        ));
     }
     if let Some(message) = message
         && game.chat_abilities().send_messages
@@ -142,10 +157,14 @@ pub(super) fn draw_toggle(game: &Game<'_>, batch: &mut horizon_client::hud::HudB
         game,
         batch,
         rect,
-        if enabled(game) {
-            "RU → EN: вкл."
-        } else {
-            "RU → EN: выкл."
+        match (
+            crate::game::claim_borders_chat_view::language(game),
+            enabled(game),
+        ) {
+            (Language::Russian, true) => "RU → EN: вкл.",
+            (Language::Russian, false) => "RU → EN: выкл.",
+            (Language::English, true) => "EN → RU: on",
+            (Language::English, false) => "EN → RU: off",
         },
         enabled(game),
         game.native_cursor(),

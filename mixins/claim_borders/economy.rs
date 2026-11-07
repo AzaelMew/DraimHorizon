@@ -77,6 +77,7 @@ fn charge(amount: Coins, bp: u32, whole: bool) -> Option<Coins> {
 pub struct Setting {
     pub key: &'static str,
     pub label: &'static str,
+    pub label_en: &'static str,
     pub group: u8,
     pub min: i64,
     pub max: i64,
@@ -87,6 +88,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "custom_auction",
         label: "Свой вид аукциона · F8",
+        label_en: "Custom auction view · F8",
         group: 0,
         min: 0,
         max: 1,
@@ -96,6 +98,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "custom_market",
         label: "Свой вид Market · F8",
+        label_en: "Custom Market view · F8",
         group: 0,
         min: 0,
         max: 1,
@@ -105,6 +108,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "sidebar_tps",
         label: "TPS в sidebar",
+        label_en: "TPS in sidebar",
         group: 5,
         min: 0,
         max: 1,
@@ -114,6 +118,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_tps",
         label: "TPS в Tab",
+        label_en: "TPS in Tab",
         group: 6,
         min: 0,
         max: 1,
@@ -123,6 +128,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_opacity",
         label: "Фон Tab, %",
+        label_en: "Tab background, %",
         group: 6,
         min: 10,
         max: 90,
@@ -132,6 +138,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "custom_sidebar",
         label: "Свой sidebar",
+        label_en: "Custom sidebar",
         group: 5,
         min: 0,
         max: 1,
@@ -141,6 +148,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "sidebar_width",
         label: "Ширина sidebar",
+        label_en: "Sidebar width",
         group: 5,
         min: 140,
         max: 320,
@@ -150,6 +158,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "sidebar_scale",
         label: "Масштаб sidebar, %",
+        label_en: "Sidebar scale, %",
         group: 5,
         min: 65,
         max: 125,
@@ -159,6 +168,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "sidebar_opacity",
         label: "Фон sidebar, %",
+        label_en: "Sidebar background, %",
         group: 5,
         min: 0,
         max: 100,
@@ -168,6 +178,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "sidebar_corner",
         label: "Угол sidebar: ЛВ ПВ ЛН ПН",
+        label_en: "Sidebar corner: TL TR BL BR",
         group: 5,
         min: 0,
         max: 3,
@@ -177,6 +188,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "custom_tab",
         label: "Свой Tab",
+        label_en: "Custom Tab",
         group: 6,
         min: 0,
         max: 1,
@@ -186,6 +198,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_columns",
         label: "Колонки Tab",
+        label_en: "Tab columns",
         group: 6,
         min: 1,
         max: 3,
@@ -195,6 +208,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_ping",
         label: "Пинг игроков",
+        label_en: "Player ping",
         group: 6,
         min: 0,
         max: 1,
@@ -204,6 +218,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_friends",
         label: "Друзья первыми",
+        label_en: "Friends first",
         group: 6,
         min: 0,
         max: 1,
@@ -213,6 +228,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "tab_distance",
         label: "Расстояние до видимых друзей",
+        label_en: "Distance to visible friends",
         group: 6,
         min: 0,
         max: 1,
@@ -222,6 +238,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "enabled",
         label: "Модуль экономики",
+        label_en: "Economy module",
         group: 0,
         min: 0,
         max: 1,
@@ -231,6 +248,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "hud",
         label: "HUD экономики",
+        label_en: "Economy HUD",
         group: 0,
         min: 0,
         max: 1,
@@ -240,6 +258,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "overlay",
         label: "Подсказки в AH / market",
+        label_en: "Hints in AH / market",
         group: 0,
         min: 0,
         max: 1,
@@ -249,6 +268,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "hide_sidebar",
         label: "Скрывать серверный sidebar",
+        label_en: "Hide server sidebar",
         group: 0,
         min: 0,
         max: 1,
@@ -258,6 +278,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "hud_balance",
         label: "HUD: баланс",
+        label_en: "HUD: balance",
         group: 0,
         min: 0,
         max: 1,
@@ -267,6 +288,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "hud_hand",
         label: "HUD: цена в руке",
+        label_en: "HUD: price of held item",
         group: 0,
         min: 0,
         max: 1,
@@ -276,6 +298,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "corner",
         label: "Угол HUD (0–3)",
+        label_en: "HUD corner (0–3)",
         group: 1,
         min: 0,
         max: 3,
@@ -285,6 +308,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "width",
         label: "Ширина HUD",
+        label_en: "HUD width",
         group: 1,
         min: 140,
         max: 360,
@@ -294,6 +318,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "scale",
         label: "Масштаб HUD, %",
+        label_en: "HUD scale, %",
         group: 1,
         min: 65,
         max: 150,
@@ -303,6 +328,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "opacity",
         label: "Непрозрачность HUD, %",
+        label_en: "HUD opacity, %",
         group: 1,
         min: 0,
         max: 100,
@@ -312,6 +338,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "offset_x",
         label: "Сдвиг HUD X",
+        label_en: "HUD X offset",
         group: 1,
         min: -300,
         max: 300,
@@ -321,6 +348,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "offset_y",
         label: "Сдвиг HUD Y",
+        label_en: "HUD Y offset",
         group: 1,
         min: -300,
         max: 300,
@@ -330,6 +358,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "quiet",
         label: "Тихие служебные ответы",
+        label_en: "Hide routine command replies",
         group: 2,
         min: 0,
         max: 1,
@@ -339,6 +368,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "auto_poll",
         label: "Обновлять наблюдаемые цены",
+        label_en: "Refresh watched prices",
         group: 2,
         min: 0,
         max: 1,
@@ -348,6 +378,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "held",
         label: "Проверять предмет в руке",
+        label_en: "Check held item",
         group: 2,
         min: 0,
         max: 1,
@@ -357,6 +388,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "interval",
         label: "Интервал запросов, с",
+        label_en: "Request interval, s",
         group: 2,
         min: 10,
         max: 300,
@@ -366,6 +398,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "quote_ttl",
         label: "Свежесть цен, с",
+        label_en: "Price freshness, s",
         group: 2,
         min: 30,
         max: 600,
@@ -375,6 +408,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "ah_ttl",
         label: "Свежесть лотов AH, с",
+        label_en: "AH listing freshness, s",
         group: 2,
         min: 15,
         max: 180,
@@ -384,6 +418,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "scan_delay",
         label: "Пауза сканера, мс",
+        label_en: "Scanner delay, ms",
         group: 2,
         min: 500,
         max: 3000,
@@ -393,6 +428,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "pages",
         label: "Предел страниц сканера",
+        label_en: "Scanner page limit",
         group: 2,
         min: 1,
         max: 200,
@@ -402,6 +438,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "min_profit",
         label: "Минимум прибыли, монет",
+        label_en: "Minimum profit, coins",
         group: 3,
         min: 0,
         max: 10000,
@@ -411,6 +448,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "min_roi",
         label: "Минимум ROI, %",
+        label_en: "Minimum ROI, %",
         group: 3,
         min: 0,
         max: 100,
@@ -420,6 +458,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "slippage",
         label: "Запас на движение цены, %",
+        label_en: "Price movement buffer, %",
         group: 3,
         min: 0,
         max: 30,
@@ -429,6 +468,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "cash_reserve",
         label: "Оставлять монет на балансе",
+        label_en: "Keep coins in balance",
         group: 3,
         min: 0,
         max: 100000,
@@ -438,6 +478,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "strict_history",
         label: "Помечать неполную историю покупок",
+        label_en: "Flag incomplete purchase history",
         group: 3,
         min: 0,
         max: 1,
@@ -447,6 +488,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "whole_fee",
         label: "Округлять комиссию до монеты",
+        label_en: "Round fees to a whole coin",
         group: 4,
         min: 0,
         max: 1,
@@ -456,6 +498,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "override",
         label: "Ручная комиссия размещения AH",
+        label_en: "Override AH listing fee",
         group: 4,
         min: 0,
         max: 1,
@@ -465,6 +508,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "listing_fee",
         label: "Ручная комиссия объявления, %",
+        label_en: "Custom listing fee, %",
         group: 4,
         min: 0,
         max: 50,
@@ -474,6 +518,7 @@ pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "listing_min",
         label: "Минимум комиссии AH, монет",
+        label_en: "Minimum AH fee, coins",
         group: 4,
         min: 0,
         max: 100,

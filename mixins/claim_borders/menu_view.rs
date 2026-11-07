@@ -46,7 +46,7 @@ pub(super) fn open() {
 }
 pub(super) fn sync(model: model::ViewModel) {
     state(|s| {
-        s.menu.reconcile(&s.model, &model, s.height.max(240.0));
+        s.menu.reconcile(&s.model, &model, s.height.max(200.0));
         s.model = model;
     });
 }
@@ -140,13 +140,34 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             0x9aacc0,
             false,
         );
-        let hint = state(|s| match s.menu.tab {
-            model::Tab::Waypoints => "Сохранённые места и быстрые ориентиры",
-            model::Tab::Party => "Друзья, приглашения и игроки мода",
-            model::Tab::Claims => "Территории, цвета и память карты",
-            model::Tab::Chat => "Внешний вид, уведомления и перевод",
-            model::Tab::Experimental => "Необязательные функции, выключенные по умолчанию",
-            model::Tab::Settings => "Все параметры мода, по разделам",
+        let hint = state(|s| {
+            let (ru, en) = match s.menu.tab {
+                model::Tab::Waypoints => (
+                    "Сохранённые места и быстрые ориентиры",
+                    "Saved places and quick waypoints",
+                ),
+                model::Tab::Party => (
+                    "Друзья, приглашения и игроки мода",
+                    "Friends, invitations and mod users",
+                ),
+                model::Tab::Claims => (
+                    "Территории, цвета и память карты",
+                    "Claims, colors and map storage",
+                ),
+                model::Tab::Chat => (
+                    "Внешний вид, уведомления и перевод",
+                    "Appearance, notifications and translation",
+                ),
+                model::Tab::Experimental => (
+                    "Необязательные функции, выключенные по умолчанию",
+                    "Optional features, off by default",
+                ),
+                model::Tab::Settings => (
+                    "Все параметры мода, по разделам",
+                    "Mod settings by category",
+                ),
+            };
+            s.menu.language.text(ru, en)
         });
         ui::text(
             game,
@@ -172,7 +193,12 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && widget.text != "DRAIMHORIZONS"
                 && !matches!(
                     widget.control,
-                    Some(model::Control::Tab(_) | model::Control::Economy | model::Control::Close)
+                    Some(
+                        model::Control::Tab(_)
+                            | model::Control::Language
+                            | model::Control::Economy
+                            | model::Control::Close
+                    )
                 )
             {
                 continue;
@@ -258,9 +284,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     && (w >= game.native_text_width(caption) + 22.0
                         || matches!(
                             widget.control,
-                            Some(model::Control::Tab(
-                                model::Tab::Experimental | model::Tab::Settings
-                            ))
+                            Some(model::Control::Tab(model::Tab::Experimental))
                         ))
                 {
                     ui::icon(
@@ -325,17 +349,19 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     } else {
                         s.menu.text()[..cursor].to_owned()
                     };
-                    let label = match s.menu.focus {
-                        Some(model::Field::ClaimOwner) => "Игрок: ",
-                        Some(model::Field::Name) => "Имя: ",
-                        Some(model::Field::Color) => "Цвет: ",
-                        Some(model::Field::OwnClaimColor) => "Свои: ",
-                        Some(model::Field::FriendClaimColor) => "Друзья: ",
-                        Some(model::Field::PeerCode) => "Код друга: ",
-                        Some(model::Field::PriorityName) => "Ник: ",
-                        Some(model::Field::PriorityColor) => "Цвет: ",
-                        _ => "",
+                    let (ru, en) = match s.menu.focus {
+                        Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
+                        Some(model::Field::Name) => ("Имя: ", "Name: "),
+                        Some(model::Field::Color | model::Field::PriorityColor) => {
+                            ("Цвет: ", "Color: ")
+                        }
+                        Some(model::Field::OwnClaimColor) => ("Свои: ", "Own: "),
+                        Some(model::Field::FriendClaimColor) => ("Друзья: ", "Friends: "),
+                        Some(model::Field::PeerCode) => ("Код друга: ", "Friend code: "),
+                        Some(model::Field::PriorityName) => ("Ник: ", "Name: "),
+                        _ => ("", ""),
                     };
+                    let label = s.menu.language.text(ru, en);
                     let rest = if s.menu.focus == Some(model::Field::RelayToken) {
                         "*".repeat(s.menu.text()[cursor..].chars().count())
                     } else {
@@ -344,15 +370,17 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     format!("{label}{shown}│{rest}")
                 } else {
                     match widget.text.as_str() {
-                        "DRAIMHORIZONS" => match s.menu.tab {
-                            model::Tab::Waypoints => "Мои метки",
-                            model::Tab::Party => "Друзья и игроки",
-                            model::Tab::Claims => "Мои приваты",
-                            model::Tab::Chat => "Чат и уведомления",
-                            model::Tab::Experimental => "Эксперименты",
-                            model::Tab::Settings => "Настройки",
+                        "DRAIMHORIZONS" => {
+                            let (ru, en) = match s.menu.tab {
+                                model::Tab::Waypoints => ("Мои метки", "My waypoints"),
+                                model::Tab::Party => ("Друзья и игроки", "Friends and players"),
+                                model::Tab::Claims => ("Мои приваты", "My claims"),
+                                model::Tab::Chat => ("Чат и уведомления", "Chat and notifications"),
+                                model::Tab::Experimental => ("Эксперименты", "Experiments"),
+                                model::Tab::Settings => ("Настройки", "Settings"),
+                            };
+                            s.menu.language.text(ru, en).into()
                         }
-                        .into(),
                         "Пати" => "Друзья".into(),
                         "Клеймы" => "Приваты".into(),
                         _ => widget.text.clone(),

@@ -1,5 +1,6 @@
 // Translation changes text only. The native adapter sends it as signed chat, never a command.
 use std::collections::VecDeque;
+pub const WAIT_MS: u64 = 15_000;
 #[derive(Clone, Debug)]
 pub struct Message {
     pub id: u64,
@@ -37,7 +38,7 @@ impl Queue {
     }
     pub fn pop(&mut self, now: u64) -> Option<(String, bool)> {
         let m = self.messages.front()?;
-        if m.result.is_none() && now.saturating_sub(m.at) < 15000 {
+        if m.result.is_none() && now.saturating_sub(m.at) < WAIT_MS {
             return None;
         }
         let m = self.messages.pop_front()?;

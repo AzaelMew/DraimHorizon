@@ -156,6 +156,8 @@ fn trade_notice(line: &str) -> bool {
         || line.ends_with(" refused your trade.")
         || line == "Your trade request is withdrawn."
 }
+use claim_borders_relay_client::translation::Language;
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: u64,
@@ -167,6 +169,7 @@ pub struct Entry {
     pub name: String,
     pub original: String,
     pub translated: Option<String>,
+    pub translation_language: Language,
     pub at: u64,
     pub created_at: u64,
     pub joined: Option<bool>,
@@ -176,6 +179,9 @@ pub struct Entry {
     raw: String,
 }
 impl Entry {
+    pub fn has_translation(&self, language: Language) -> bool {
+        self.translated.is_some() && self.translation_language == language
+    }
     pub fn body(&self, translated: bool) -> &str {
         if translated && !self.show_original {
             self.translated.as_deref().unwrap_or(&self.original)
@@ -643,6 +649,7 @@ impl Feed {
             name,
             original: body,
             translated: None,
+            translation_language: Language::default(),
             at: now,
             created_at: now,
             joined,
@@ -671,6 +678,7 @@ impl Feed {
             "channel": e.channel as u8,
             "auction": e.auction.map(|a| match a { AuctionNotice::Listed => "listed", AuctionNotice::Sold => "sold" }),
             "name": e.name, "original": e.original, "translated": e.translated,
+            "translation_language": e.translation_language.code(),
             "joined": e.joined, "repetitions": e.repetitions,
             "show_original": e.show_original, "raw": e.raw,
         })).collect())
@@ -736,6 +744,9 @@ impl Feed {
                 name: string("name", 256)?,
                 original: string("original", 2048)?,
                 translated,
+                translation_language: Language::from_code(
+                    row["translation_language"].as_str().unwrap_or_default(),
+                ),
                 at: 0,
                 created_at: 0,
                 joined,
@@ -776,9 +787,10 @@ impl Feed {
         self.last_whisper_sender = None;
         self.scroll = 0;
     }
-    pub fn translate(&mut self, id: u64, text: String) {
+    pub fn translate(&mut self, id: u64, text: String, language: Language) {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.translated = Some(text.chars().take(2048).collect());
+            entry.translation_language = language;
         }
     }
 }
@@ -822,11 +834,31 @@ mod tests {
         assert!(!restored.entries.back().unwrap().archived);
     }
     #[test]
+    fn archive_distinguishes_english_translations_from_legacy_russian_ones() {
+        let preferences = Preferences::default();
+        let mut feed = Feed::default();
+        let id = feed.push_with("<Alex> hello", 1, preferences).unwrap();
+        feed.translate(id, "привет".into(), Language::Russian);
+        let id = feed.push_with("<Alex> привет", 2, preferences).unwrap();
+        feed.translate(id, "hello".into(), Language::English);
+        let mut archive = feed.archive();
+        archive[0]
+            .as_object_mut()
+            .unwrap()
+            .remove("translation_language");
+        let mut restored = Feed::default();
+        restored.restore(&archive, preferences).unwrap();
+        assert!(restored.entries[0].has_translation(Language::Russian));
+        assert!(!restored.entries[0].has_translation(Language::English));
+        assert!(restored.entries[1].has_translation(Language::English));
+        assert!(!restored.entries[1].has_translation(Language::Russian));
+    }
+    #[test]
     fn archive_merge_keeps_live_ids_and_reply_target_without_repeat_coalescing() {
         let p = Preferences::default();
         let mut old = Feed::default();
         let id = old.push_with("<Alex> hello", 1, p).unwrap();
-        old.translate(id, "привет".into());
+        old.translate(id, "привет".into(), Language::Russian);
         old.toggle_original(id);
         old.push_component("", &serde_json::json!({}), 2, p);
         let incoming = serde_json::json!({"translate": "commands.message.display.incoming", "with": ["OldSender", "secret"]});
@@ -910,7 +942,7 @@ mod tests {
         assert_eq!(entry.kind, Kind::Whisper(Whisper::Incoming));
         assert!(entry.kind.is_chat());
         assert_eq!(entry.original, "hello there");
-        feed.translate(id, "привет".into());
+        feed.translate(id, "привет".into(), Language::Russian);
         assert_eq!(feed.entries[0].body(true), "привет");
         let outgoing = "You whisper to Bob: Steve whispers to you: hi";
         feed.push_component(outgoing, &serde_json::json!({"text": outgoing}), 2, p);
@@ -1066,9 +1098,9 @@ mod tests {
         let old = feed.push("<Steve> hello", 0).unwrap();
         feed.clear();
         let new = feed.push("<Steve> new", 1).unwrap();
-        feed.translate(old, "старое".into());
+        feed.translate(old, "старое".into(), Language::Russian);
         assert!(feed.entries[0].translated.is_none());
-        feed.translate(new, "новое".into());
+        feed.translate(new, "новое".into(), Language::Russian);
         assert_eq!(feed.entries[0].body(true), "новое");
     }
     #[test]
@@ -1076,7 +1108,7 @@ mod tests {
         let mut f = Feed::default();
         let p = Preferences::default();
         let id = f.push_with("<Alice> привет", 0, p).unwrap();
-        f.translate(id, "hello".into());
+        f.translate(id, "hello".into(), Language::Russian);
         f.toggle_original(id);
         f.push_with("<Bob> привет", 10, p);
         f.push_with("<Alice> другое", 20, p);

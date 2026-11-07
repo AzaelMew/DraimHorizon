@@ -3,27 +3,32 @@ use serde_json::{Value, json};
 pub const DEFAULT_KEY: &str = "key.keyboard.o";
 pub struct Ore {
     pub label: &'static str,
+    pub label_en: &'static str,
     pub color: u32,
     pub blocks: &'static [&'static str],
 }
 pub const ORES: [Ore; 10] = [
     Ore {
         label: "Алмазы",
+        label_en: "Diamonds",
         color: 0x54e7e8,
         blocks: &["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"],
     },
     Ore {
         label: "Древние обломки",
+        label_en: "Ancient debris",
         color: 0xd28b76,
         blocks: &["minecraft:ancient_debris"],
     },
     Ore {
         label: "Изумруды",
+        label_en: "Emeralds",
         color: 0x67e495,
         blocks: &["minecraft:emerald_ore", "minecraft:deepslate_emerald_ore"],
     },
     Ore {
         label: "Золото",
+        label_en: "Gold",
         color: 0xf4ce64,
         blocks: &[
             "minecraft:gold_ore",
@@ -33,31 +38,37 @@ pub const ORES: [Ore; 10] = [
     },
     Ore {
         label: "Железо",
+        label_en: "Iron",
         color: 0xe0c1a9,
         blocks: &["minecraft:iron_ore", "minecraft:deepslate_iron_ore"],
     },
     Ore {
         label: "Медь",
+        label_en: "Copper",
         color: 0xda9567,
         blocks: &["minecraft:copper_ore", "minecraft:deepslate_copper_ore"],
     },
     Ore {
         label: "Редстоун",
+        label_en: "Redstone",
         color: 0xef6474,
         blocks: &["minecraft:redstone_ore", "minecraft:deepslate_redstone_ore"],
     },
     Ore {
         label: "Лазурит",
+        label_en: "Lapis lazuli",
         color: 0x7799f2,
         blocks: &["minecraft:lapis_ore", "minecraft:deepslate_lapis_ore"],
     },
     Ore {
         label: "Уголь",
+        label_en: "Coal",
         color: 0xaaaaaa,
         blocks: &["minecraft:coal_ore", "minecraft:deepslate_coal_ore"],
     },
     Ore {
         label: "Кварц Незера",
+        label_en: "Nether quartz",
         color: 0xf1e5dd,
         blocks: &["minecraft:nether_quartz_ore"],
     },

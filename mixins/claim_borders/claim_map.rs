@@ -1,3 +1,4 @@
+use claim_borders_relay_client::translation::Language;
 // Claim cartography and preferences; no game access or server mutations.
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -28,10 +29,13 @@ impl Layer {
         (covered || self == Self::Cave).then_some(head)
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Auto => "Поверхность",
-            Self::Surface => "Поверхность",
-            Self::Cave => "Пещеры",
+            Self::Auto => language.text("Поверхность", "Surface"),
+            Self::Surface => language.text("Поверхность", "Surface"),
+            Self::Cave => language.text("Пещеры", "Caves"),
         }
     }
 }
@@ -52,12 +56,12 @@ impl Sort {
             Self::Coordinates => Self::Distance,
         }
     }
-    pub fn label(self) -> &'static str {
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Distance => "Ближе",
-            Self::Owner => "Владелец",
-            Self::Dimension => "Измерение",
-            Self::Coordinates => "Координаты",
+            Self::Distance => language.text("Ближе", "Nearest"),
+            Self::Owner => language.text("Владелец", "Owner"),
+            Self::Dimension => language.text("Измерение", "Dimension"),
+            Self::Coordinates => language.text("Координаты", "Coordinates"),
         }
     }
 }

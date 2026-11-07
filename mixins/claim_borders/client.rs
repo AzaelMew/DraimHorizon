@@ -1137,6 +1137,7 @@ pub(super) fn visual_settings() -> visualization::Settings {
 
 fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     let chat = crate::game::claim_borders_chat_view::settings(game);
+    let language = chat.language;
     let priority = crate::game::claim_borders_chat_view::priority_settings(game);
     let map_preferences = crate::game::claim_borders_map_view::settings(game);
     let map_source = map_snapshot(game);
@@ -1160,9 +1161,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 c.z.div_euclid(16),
                 crate::game::claim_borders_map::dimension_label(&c.dimension),
                 if c.dimension == map_source.dimension {
-                    format!("{distance:.0}м")
+                    format!("{distance:.0} {}", language.text("м", "m"))
                 } else {
-                    "другой мир".into()
+                    language.text("другой мир", "other world").into()
                 }
             ),
             owner: c.owner,
@@ -1221,13 +1222,22 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     .iter()
                     .any(|peer| peer.uuid == friend.uuid && peer.code != code);
                 let detail = if changed {
-                    "Ключ изменился — добавьте заново".into()
+                    language
+                        .text(
+                            "Ключ изменился — добавьте заново",
+                            "Key changed. Add this friend again.",
+                        )
+                        .into()
                 } else if live.iter().any(|s| s.uuid == friend.uuid) {
-                    "Друг · в сети".into()
+                    language.text("Друг · в сети", "Friend · online").into()
                 } else if present {
-                    "Друг · синхронизация…".into()
+                    language
+                        .text("Друг · синхронизация…", "Friend · syncing…")
+                        .into()
                 } else {
-                    "Друг · не в сети мода".into()
+                    language
+                        .text("Друг · не в сети мода", "Friend · offline in the mod")
+                        .into()
                 };
                 rows.push(menu::PartyRow {
                     uuid: friend.uuid,
@@ -1257,7 +1267,12 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         .unwrap_or_else(|| horizon_client::tab_list::default_skin(f.uuid).into()),
                     code: code.clone(),
                     name: f.name,
-                    detail: "Хочет добавить вас в друзья".into(),
+                    detail: language
+                        .text(
+                            "Хочет добавить вас в друзья",
+                            "Wants to add you as a friend",
+                        )
+                        .into(),
                     pending: true,
                     friend: false,
                     online: c
@@ -1286,9 +1301,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 code: peer.code.clone(),
                 name: peer.name.clone(),
                 detail: if blocked {
-                    "Неоднозначная личность"
+                    language.text("Неоднозначная личность", "Ambiguous identity")
                 } else {
-                    "Пользователь мода · доступен"
+                    language.text("Пользователь мода · доступен", "Mod user · available")
                 }
                 .into(),
                 pending: false,
@@ -1308,13 +1323,15 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     .unwrap_or_else(|| horizon_client::tab_list::default_skin(peer.uuid).into()),
             });
         }
-        menu::append_important_rows(&mut rows, &priority, &tab);
+        menu::append_important_rows(&mut rows, &priority, &tab, language);
         for row in &mut rows {
             row.server_online = tab
                 .iter()
                 .any(|(id, name)| *id == row.uuid && name.eq_ignore_ascii_case(&row.name));
             if row.outgoing {
-                row.detail = "Приглашение отправлено".into();
+                row.detail = language
+                    .text("Приглашение отправлено", "Invitation sent")
+                    .into();
             }
         }
         rows.sort_by(|a, b| {
@@ -1326,6 +1343,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            language,
             waypoints,
             party: rows,
             relay: c.network_status.clone(),
@@ -1412,6 +1430,10 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
+        Action::SetLanguage(language) => {
+            crate::game::claim_borders_chat_view::set_language(game, language);
+            Ok(Vec::new())
+        }
         Action::AddWaypoint { name, color } => {
             waypoint_command(game, &["add", &format!("#{color:06X}"), &name])
         }
@@ -1547,10 +1569,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "chat_outgoing_en",
                 if on { "true" } else { "false" },
             );
-            Ok(vec![format!(
-                "Перевод своих сообщений RU → EN: {}",
-                if on { "вкл." } else { "выкл." }
-            )])
+            Ok(Vec::new())
         }
         Action::ToggleChat => {
             crate::game::claim_borders_chat_view::toggle(game, false);
