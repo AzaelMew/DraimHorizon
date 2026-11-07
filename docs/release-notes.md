@@ -1,4 +1,4 @@
-**DraimHorizons 0.23.0** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
+**DraimHorizons 0.22.6** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
 
 ## English
 

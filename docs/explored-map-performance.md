@@ -2,7 +2,7 @@
 
 Base: `9480f7d` (main, v0.22.5). Branch: `investigate/explored-map-performance`.
 
-The investigation below records the original v0.22.5 behavior and map fixes initially packaged as v0.22.6. They are also included in `feature/compact-chat-map-fixes` (v0.23.0), combined with `feature/compact-chat`. Source pins and exploration files remain unchanged; the combined changelog/release notes cover both English and Russian. The v0.22.6 checks and artifact digest below are historical, not the combined v0.23.0 artifact.
+The investigation below records the original v0.22.5 behavior and map fixes initially packaged as v0.22.6. They are also included in `feature/compact-chat-map-fixes`, combined with `feature/compact-chat`; the combined build is versioned v0.22.6 to match upstream's recent release practice. Source pins and exploration files remain unchanged; the combined changelog/release notes cover both English and Russian. The map-only checks and artifact digest below are historical, not the combined artifact, even though both use v0.22.6.
 
 ## Implemented after investigation (0.22.6)
 

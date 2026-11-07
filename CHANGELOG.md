@@ -1,6 +1,6 @@
 # История версий
 
-## 0.23.0 (unreleased / не опубликовано)
+## 0.22.6 (unreleased / не опубликовано)
 
 ### English
 - Settings → Chat → Appearance: **Compact messages** reduces card padding and gaps without changing font size or multiline spacing. The setting persists; normal spacing remains the default.
