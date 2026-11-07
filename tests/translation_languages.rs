@@ -12,6 +12,9 @@ fn full_screen_controls_cover_each_language_and_migrate_old_targets() {
     assert_eq!(prefs.input, Some(TargetLanguage::English));
     assert!(prefs.common_only);
     prefs.input = Some(TargetLanguage::German);
+    prefs.chat_source = Some(TargetLanguage::Finnish);
+    assert_eq!(prefs.policy(false).google_source(), "fi");
+    assert_eq!(prefs.policy(true).google_source(), "de");
     assert_eq!(TranslationTargets::decode(&prefs.encode()).unwrap(), prefs);
     assert!(TranslationTargets::decode(r#"{"schema":9}"#).is_err());
     assert!(translation_button([640.0, 360.0])[2] <= 39.0);
@@ -22,6 +25,7 @@ fn full_screen_controls_cover_each_language_and_migrate_old_targets() {
                 TranslationField::Input,
                 TranslationField::Output,
                 TranslationField::Received,
+                TranslationField::ChatSource,
             ] {
                 menu.field = field;
                 let mut languages = std::collections::BTreeSet::new();
@@ -50,7 +54,7 @@ fn full_screen_controls_cover_each_language_and_migrate_old_targets() {
                     }
                 }
                 assert_eq!(languages.len(), 20);
-                assert_eq!(auto, field == TranslationField::Input);
+                assert_eq!(auto, field.allows_auto());
             }
         }
     }
@@ -173,4 +177,22 @@ fn common_language_catalog_and_source_filter_are_independent_of_ui() {
     assert!(explicit.allows("hei"));
     assert_eq!(explicit.google_source(), "fi");
     assert_eq!(common.google_source(), "auto");
+}
+
+#[test]
+fn chat_source_is_optional_in_saved_preferences_and_unlocks_short_words() {
+    use claim_borders::outgoing::TranslationTargets;
+    // A file written before the chat-source choice existed must still load as auto-detect.
+    let old = r#"{"schema":1,"input":"en","output":"ru","received":"en","common_only":true}"#;
+    let prefs = TranslationTargets::decode(old).unwrap();
+    assert_eq!(prefs.chat_source, None);
+    assert_eq!(prefs.policy(false).google_source(), "auto");
+    // An explicit chat language bypasses unreliable detection of tiny messages.
+    let mut prefs = prefs;
+    prefs.chat_source = Some(TargetLanguage::Finnish);
+    let policy = prefs.policy(false);
+    assert!(policy.allows("moi"));
+    assert_eq!(policy.google_source(), "fi");
+    assert!(TranslationTargets::decode(&prefs.encode()).unwrap() == prefs);
+    assert!(TranslationTargets::decode(r#"{"schema":1,"input":null,"output":"ru","received":"en","chat_source":"xx","common_only":true}"#).is_err());
 }

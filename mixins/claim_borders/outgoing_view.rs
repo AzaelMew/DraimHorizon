@@ -387,11 +387,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
                 s.action = Some(model::TranslationControl::Save)
             }
             "key.keyboard.tab" => {
-                let field = match menu.field {
-                    model::TranslationField::Input => model::TranslationField::Output,
-                    model::TranslationField::Output => model::TranslationField::Received,
-                    model::TranslationField::Received => model::TranslationField::Input,
-                };
+                let field = menu.field.next();
                 menu.apply(model::TranslationControl::Field(field), s.size);
             }
             "key.keyboard.left" | "key.keyboard.page.up" => {

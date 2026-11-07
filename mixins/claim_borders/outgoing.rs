@@ -7,6 +7,8 @@ pub struct TranslationTargets {
     pub incoming: TargetLanguage,
     pub outgoing: TargetLanguage,
     pub input: Option<TargetLanguage>,
+    /// Language received chat is translated from; None lets the provider detect it.
+    pub chat_source: Option<TargetLanguage>,
     pub common_only: bool,
 }
 impl TranslationTargets {
@@ -22,6 +24,7 @@ impl TranslationTargets {
                 .and_then(TargetLanguage::from_code)
                 .unwrap_or(ui.other().into()),
             input: Some(ui.into()),
+            chat_source: None,
             common_only: true,
         }
     }
@@ -34,12 +37,16 @@ impl TranslationTargets {
     }
     pub fn policy(self, outgoing: bool) -> SourcePolicy {
         SourcePolicy {
-            source: if outgoing { self.input } else { None },
+            source: if outgoing {
+                self.input
+            } else {
+                self.chat_source
+            },
             common_only: self.common_only,
         }
     }
     pub fn encode(self) -> String {
-        serde_json::json!({"schema":1,"input":self.input.map(TargetLanguage::code),"output":self.outgoing.code(),"received":self.incoming.code(),"common_only":self.common_only}).to_string()
+        serde_json::json!({"schema":1,"input":self.input.map(TargetLanguage::code),"output":self.outgoing.code(),"received":self.incoming.code(),"chat_source":self.chat_source.map(TargetLanguage::code),"common_only":self.common_only}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, &'static str> {
         if raw.len() > 2048 {
@@ -61,6 +68,11 @@ impl TranslationTargets {
                 None
             } else {
                 Some(lang("input")?)
+            },
+            chat_source: if v["chat_source"].is_null() {
+                None
+            } else {
+                Some(lang("chat_source")?)
             },
             outgoing: lang("output")?,
             incoming: lang("received")?,
@@ -104,6 +116,21 @@ pub enum TranslationField {
     Input,
     Output,
     Received,
+    ChatSource,
+}
+impl TranslationField {
+    /// Choices that may be left on provider auto-detection.
+    pub fn allows_auto(self) -> bool {
+        matches!(self, Self::Input | Self::ChatSource)
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Input => Self::Output,
+            Self::Output => Self::Received,
+            Self::Received => Self::ChatSource,
+            Self::ChatSource => Self::Input,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranslationControl {
@@ -139,8 +166,7 @@ impl TranslationScreen {
         ((size[1] - 132.0).max(22.0) / 22.0).floor() as usize * columns
     }
     pub fn pages(&self, size: [f32; 2]) -> usize {
-        (20_usize + usize::from(self.field == TranslationField::Input))
-            .div_ceil(Self::capacity(size))
+        (20_usize + usize::from(self.field.allows_auto())).div_ceil(Self::capacity(size))
     }
     pub fn apply(&mut self, control: TranslationControl, size: [f32; 2]) {
         match control {
@@ -150,6 +176,7 @@ impl TranslationScreen {
             }
             TranslationControl::Choose(lang) => match self.field {
                 TranslationField::Input => self.draft.input = lang,
+                TranslationField::ChatSource => self.draft.chat_source = lang,
                 TranslationField::Output => {
                     if let Some(lang) = lang {
                         self.draft.outgoing = lang;
@@ -194,6 +221,7 @@ impl TranslationScreen {
             TranslationField::Input,
             TranslationField::Output,
             TranslationField::Received,
+            TranslationField::ChatSource,
         ]
         .into_iter()
         .enumerate()
@@ -203,16 +231,18 @@ impl TranslationScreen {
                 TranslationField::Output => {
                     (ui.text("Отправка", "Output"), Some(self.draft.outgoing))
                 }
-                TranslationField::Received => (
-                    ui.text("Входящий чат", "Received chat"),
-                    Some(self.draft.incoming),
-                ),
+                TranslationField::Received => {
+                    (ui.text("Чат на", "Chat into"), Some(self.draft.incoming))
+                }
+                TranslationField::ChatSource => {
+                    (ui.text("Чат с", "Chat from"), self.draft.chat_source)
+                }
             };
             add(
                 [
-                    x + i as f32 * (width + 4.0) / 3.0,
+                    x + i as f32 * (width + 4.0) / 4.0,
                     34.0,
-                    (width - 8.0) / 3.0,
+                    (width - 12.0) / 4.0,
                     30.0,
                 ],
                 format!(
@@ -235,13 +265,14 @@ impl TranslationScreen {
         );
         let columns = if size[0] < 420.0 { 2 } else { 3 };
         let languages: Vec<_> = std::iter::once(None)
-            .filter(|_| self.field == TranslationField::Input)
+            .filter(|_| self.field.allows_auto())
             .chain(TargetLanguage::COMMON.into_iter().map(Some))
             .collect();
         let selected = match self.field {
             TranslationField::Input => self.draft.input,
             TranslationField::Output => Some(self.draft.outgoing),
             TranslationField::Received => Some(self.draft.incoming),
+            TranslationField::ChatSource => self.draft.chat_source,
         };
         for (i, lang) in languages
             .into_iter()

@@ -249,7 +249,9 @@ pub(super) fn set_translation_targets(
             .join("translation_preferences"),
     )?;
     state(|s| {
-        if s.settings.translation.common_only != targets.common_only {
+        if s.settings.translation.common_only != targets.common_only
+            || s.settings.translation.chat_source != targets.chat_source
+        {
             for entry in &mut s.feed.entries {
                 entry.translated = None;
             }
