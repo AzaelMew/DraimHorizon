@@ -1,5 +1,13 @@
 # История версий
 
+## 0.27.0
+
+- Add Baritone Tunnel and Bridge modes with cardinal direction, length, preview, pause/resume and stop. Tunnels support widths 1–3, heights 2–3 and optional floor filling.
+- Clear tunnel sections from top to bottom using ordinary digging and server acknowledgements. Stop at fluids, unloaded terrain, falling blocks, containers, unbreakable blocks or unsuitable tools.
+- Build a one-block-wide floor from suitable full blocks in the hotbar. Approach the edge while sneaking, validate the clicked support face and a dry placement preview, then wait for the server before walking onto the new floor.
+- Restore the original hotbar slot after automatic placement while respecting manual slot changes. Keep pending confirmations through pause/resume and cancel construction on world/account changes.
+- Keep the official Nightly 2ebf00a pin, existing navigation/following/ore mining and saved user data.
+
 ## 0.26.0
 
 - Target the latest official Horizon Nightly 2026-11-07 source 2ebf00a, with refreshed source hashes and native validation.

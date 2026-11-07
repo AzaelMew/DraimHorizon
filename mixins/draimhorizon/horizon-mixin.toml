@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.26.0"
+version = "0.27.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -24,6 +24,18 @@ id = "mining"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_mining"
 source = "mining.rs"
+
+[[module]]
+id = "construction"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_construction"
+source = "construction.rs"
+
+[[module]]
+id = "construction-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_construction_view"
+source = "construction_view.rs"
 
 [[injection]]
 id = "mining-attack"

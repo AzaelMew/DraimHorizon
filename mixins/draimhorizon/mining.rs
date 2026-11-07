@@ -136,6 +136,13 @@ pub struct Job {
     await_sequence: Option<i32>,
 }
 impl Job {
+    pub fn excavation(target: nav::Pos) -> Self {
+        let mut job = Self::new(0, 1).unwrap();
+        job.ore = u8::MAX;
+        job.select(target);
+        job.phase = Phase::Breaking;
+        job
+    }
     pub fn new(ore: u8, limit: u16) -> Option<Self> {
         if usize::from(ore) >= ORES.len() || !(1..=64).contains(&limit) {
             return None;
@@ -193,7 +200,7 @@ impl Job {
         }
     }
     pub fn acknowledge(&mut self, sequence: i32, still_ore: bool) {
-        let awaited = if self.phase == Phase::Confirming {
+        let awaited = if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
             self.await_sequence
         } else if self.phase == Phase::Breaking {
             self.start_sequence
@@ -204,7 +211,7 @@ impl Job {
             return;
         }
         if still_ore {
-            if self.phase == Phase::Confirming {
+            if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
                 self.active = false;
                 self.phase = Phase::Refused;
             }
@@ -226,12 +233,18 @@ impl Job {
             return;
         }
         self.active = true;
+        if self.phase == Phase::Timeout && self.await_sequence.is_some() {
+            self.phase = Phase::Confirming;
+        }
         if self.phase != Phase::Confirming {
             self.phase = Phase::Searching;
             self.target = None;
             self.start_sequence = None;
             self.await_sequence = None;
         }
+    }
+    pub fn awaiting_confirmation(&self) -> bool {
+        self.await_sequence.is_some() && matches!(self.phase, Phase::Confirming | Phase::Timeout)
     }
 }
 #[cfg(test)]
@@ -277,6 +290,19 @@ mod tests {
         assert!(Job::new(10, 1).is_none());
         assert!(Job::new(0, 0).is_none());
         assert!(Job::new(0, 65).is_none());
+        let mut late = Job::excavation([1, 0, 0]);
+        late.sent([1, 0, 0], 0, 5);
+        late.sent([1, 0, 0], 3, 6);
+        late.phase = Phase::Timeout;
+        late.active = false;
+        assert!(late.awaiting_confirmation());
+        late.resume();
+        assert_eq!(late.phase, Phase::Confirming);
+        late.active = false;
+        late.acknowledge(6, false);
+        assert_eq!(late.phase, Phase::Done);
+        assert!(!late.active);
+        assert_eq!(late.confirmed, 1);
     }
     #[test]
     fn plans_only_reachable_exposed_ore_and_never_mines_its_support() {

@@ -435,6 +435,8 @@ pub enum BaritoneMode {
     #[default]
     Navigation,
     Mining,
+    Tunnel,
+    Bridge,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -450,6 +452,13 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    ConstructDirection,
+    ConstructLength,
+    ConstructWidth,
+    ConstructHeight,
+    ConstructFloor,
+    ConstructPreview,
+    ConstructStart,
     BaritoneMode(BaritoneMode),
     MiningOre,
     MiningLimit,
@@ -572,6 +581,11 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub construct_direction: super::claim_borders_construction::Direction,
+    pub construct_length: u16,
+    pub construct_width: u8,
+    pub construct_height: u8,
+    pub construct_floor: bool,
     pub baritone_mode: BaritoneMode,
     pub mining_ore: u8,
     pub mining_limit: u16,
@@ -619,6 +633,11 @@ impl Default for Menu {
             baritone_mode: BaritoneMode::Navigation,
             mining_ore: 0,
             mining_limit: 16,
+            construct_direction: super::claim_borders_construction::Direction::North,
+            construct_length: 16,
+            construct_width: 1,
+            construct_height: 2,
+            construct_floor: false,
             experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
@@ -2143,6 +2162,7 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
+            let mode_width = (w - 12.0) / 4.0;
             for (i, mode, label) in [
                 (
                     0,
@@ -2154,9 +2174,19 @@ impl Menu {
                     BaritoneMode::Mining,
                     self.language.text("Добыча", "Mining"),
                 ),
+                (
+                    2,
+                    BaritoneMode::Tunnel,
+                    self.language.text("Тоннель", "Tunnel"),
+                ),
+                (
+                    3,
+                    BaritoneMode::Bridge,
+                    self.language.text("Мост", "Bridge"),
+                ),
             ] {
                 out.push(widget(
-                    [x + i as f32 * (tab_width + 4.0), 80.0, tab_width, 16.0],
+                    [x + i as f32 * (mode_width + 4.0), 80.0, mode_width, 16.0],
                     label,
                     Some(Control::BaritoneMode(mode)),
                     self.baritone_mode == mode,
@@ -2164,7 +2194,118 @@ impl Menu {
             }
             let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
             let h = (step - 2.0).min(22.0);
-            if self.baritone_mode == BaritoneMode::Mining {
+            if matches!(
+                self.baritone_mode,
+                BaritoneMode::Tunnel | BaritoneMode::Bridge
+            ) {
+                use super::claim_borders_construction::Direction;
+                let direction = match self.construct_direction {
+                    Direction::North => self.language.text("Север", "North"),
+                    Direction::East => self.language.text("Восток", "East"),
+                    Direction::South => self.language.text("Юг", "South"),
+                    Direction::West => self.language.text("Запад", "West"),
+                };
+                out.push(widget(
+                    [x, 100.0, tab_width, h],
+                    direction,
+                    Some(Control::ConstructDirection),
+                    false,
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Длина: {}",
+                        "Length: {}",
+                        self.construct_length
+                    ),
+                    Some(Control::ConstructLength),
+                    false,
+                ));
+                if self.baritone_mode == BaritoneMode::Tunnel {
+                    let third = (w - 8.0) / 3.0;
+                    for (i, label, control, on) in [
+                        (
+                            0,
+                            localized!(
+                                self.language,
+                                "Ширина: {}",
+                                "Width: {}",
+                                self.construct_width
+                            ),
+                            Control::ConstructWidth,
+                            false,
+                        ),
+                        (
+                            1,
+                            localized!(
+                                self.language,
+                                "Высота: {}",
+                                "Height: {}",
+                                self.construct_height
+                            ),
+                            Control::ConstructHeight,
+                            false,
+                        ),
+                        (
+                            2,
+                            localized!(
+                                self.language,
+                                "Пол: {}",
+                                "Floor: {}",
+                                if self.construct_floor {
+                                    self.language.text("да", "on")
+                                } else {
+                                    self.language.text("нет", "off")
+                                }
+                            ),
+                            Control::ConstructFloor,
+                            self.construct_floor,
+                        ),
+                    ] {
+                        out.push(widget(
+                            [x + i as f32 * (third + 4.0), 100.0 + step, third, h],
+                            label,
+                            Some(control),
+                            on,
+                        ));
+                    }
+                } else {
+                    out.push(widget(
+                        [x, 100.0 + step, w, h],
+                        self.language.text(
+                            "Блоки для пола — из хотбара",
+                            "Floor blocks are taken from the hotbar",
+                        ),
+                        None,
+                        false,
+                    ));
+                }
+                for (i, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::ConstructPreview,
+                    ),
+                    (
+                        1,
+                        self.language.text("Начать", "Start"),
+                        Control::ConstructStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + i as f32 * (tab_width + 4.0),
+                            100.0 + 2.0 * step,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            } else if self.baritone_mode == BaritoneMode::Mining {
                 let ore = &experimental::ORES
                     [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
                 out.push(widget(
@@ -2308,7 +2449,15 @@ impl Menu {
             ));
             out.push(widget(
                 [x, height - 30.0, w, 14.0],
-                if self.baritone_mode == BaritoneMode::Mining {
+                if matches!(
+                    self.baritone_mode,
+                    BaritoneMode::Tunnel | BaritoneMode::Bridge
+                ) {
+                    self.language.text(
+                        "Пол: камень, булыжник, земля из хотбара",
+                        "Floor: stone, cobblestone or dirt from the hotbar",
+                    )
+                } else if self.baritone_mode == BaritoneMode::Mining {
                     self.language.text(
                         "Нужна исправная кирка и свободный слот",
                         "A usable pickaxe and a free slot are required",
@@ -2802,6 +2951,55 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::ConstructDirection => {
+                self.construct_direction = self.construct_direction.next();
+                None
+            }
+            Control::ConstructLength => {
+                let values = [1, 8, 16, 32, 64];
+                let i = values
+                    .iter()
+                    .position(|v| *v == self.construct_length)
+                    .unwrap_or(0);
+                self.construct_length = values[(i + 1) % values.len()];
+                None
+            }
+            Control::ConstructWidth => {
+                self.construct_width = self.construct_width % 3 + 1;
+                None
+            }
+            Control::ConstructHeight => {
+                self.construct_height = if self.construct_height == 2 { 3 } else { 2 };
+                None
+            }
+            Control::ConstructFloor => {
+                self.construct_floor = !self.construct_floor;
+                None
+            }
+            Control::ConstructPreview | Control::ConstructStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let bridge = self.baritone_mode == BaritoneMode::Bridge;
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Construct(
+                        super::claim_borders_construction::Config {
+                            kind: if bridge {
+                                super::claim_borders_construction::Kind::Bridge
+                            } else {
+                                super::claim_borders_construction::Kind::Tunnel
+                            },
+                            direction: self.construct_direction,
+                            width: if bridge { 1 } else { self.construct_width },
+                            height: if bridge { 2 } else { self.construct_height },
+                            length: self.construct_length,
+                            fill_floor: bridge || self.construct_floor,
+                        },
+                    ),
+                    running: control == Control::ConstructStart,
+                })
+            }
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
                 self.focus = None;
@@ -3697,7 +3895,7 @@ impl Menu {
         if key == "key.keyboard.tab" {
             if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
-                && self.baritone_mode == BaritoneMode::Mining
+                && self.baritone_mode != BaritoneMode::Navigation
             {
                 self.focus = None;
                 return true;
@@ -4518,7 +4716,7 @@ mod tests {
                         )
                     })
                     .collect();
-                assert_eq!(controls.len(), 8);
+                assert_eq!(controls.len(), 10);
                 let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
@@ -4535,6 +4733,79 @@ mod tests {
             model.experiments_accepted = false;
             assert!(menu.activate(&model, 200.0, Control::MiningStart).is_none());
             assert!(menu.experiments_prompt);
+        }
+    }
+
+    #[test]
+    fn construction_modes_validate_consent_and_compact_geometry() {
+        for language in [Language::Russian, Language::English] {
+            for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
+                let mut menu = Menu {
+                    tab: Tab::Experimental,
+                    experimental_section: ExperimentalSection::Baritone,
+                    baritone_mode: mode,
+                    language,
+                    ..Menu::default()
+                };
+                let mut model = ViewModel {
+                    navigation_status: "Build status".into(),
+                    experiments_accepted: true,
+                    ..ViewModel::default()
+                };
+                assert!(matches!(
+                    menu.activate(&model, 200.0, Control::ConstructPreview),
+                    Some(Action::Navigate {
+                        goal: super::super::claim_borders_navigation::Goal::Construct(_),
+                        running: false
+                    })
+                ));
+                for height in [200., 216., 300., 500.] {
+                    let rows = menu.layout(&model, 360., height);
+                    let controls: Vec<_> = rows
+                        .iter()
+                        .filter(|w| {
+                            matches!(
+                                w.control,
+                                Some(
+                                    Control::ConstructDirection
+                                        | Control::ConstructLength
+                                        | Control::ConstructWidth
+                                        | Control::ConstructHeight
+                                        | Control::ConstructFloor
+                                        | Control::ConstructPreview
+                                        | Control::ConstructStart
+                                        | Control::BaritoneMode(_)
+                                        | Control::NavigationPause
+                                        | Control::NavigationResume
+                                        | Control::NavigationStop
+                                )
+                            )
+                        })
+                        .collect();
+                    assert_eq!(
+                        controls.len(),
+                        if mode == BaritoneMode::Tunnel { 13 } else { 10 }
+                    );
+                    let status = rows.iter().find(|w| w.text == "Build status").unwrap();
+                    for (i, a) in controls.iter().enumerate() {
+                        assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                        for b in controls.iter().skip(i + 1) {
+                            assert!(
+                                a.rect[0] + a.rect[2] <= b.rect[0]
+                                    || b.rect[0] + b.rect[2] <= a.rect[0]
+                                    || a.rect[1] + a.rect[3] <= b.rect[1]
+                                    || b.rect[1] + b.rect[3] <= a.rect[1]
+                            );
+                        }
+                    }
+                }
+                model.experiments_accepted = false;
+                assert!(
+                    menu.activate(&model, 200., Control::ConstructStart)
+                        .is_none()
+                );
+                assert!(menu.experiments_prompt);
+            }
         }
     }
 

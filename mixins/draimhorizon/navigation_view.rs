@@ -112,6 +112,7 @@ impl Drop for Worker {
     }
 }
 struct State {
+    use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
     mine_aim: Option<[f32; 2]>,
@@ -126,6 +127,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            use_restore: None,
             attack_restore: None,
             mining: None,
             mine_aim: None,
@@ -147,16 +149,19 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn reset() {
+    crate::game::claim_borders_construction_view::reset();
     state(|s| {
         let restore = s.attack_restore;
+        let use_restore = s.use_restore;
         *s = State::default();
         s.attack_restore = restore;
+        s.use_restore = use_restore;
     });
 }
 fn language() -> Language {
     crate::game::claim_borders_chat_view::current_language()
 }
-fn scope(game: &Game<'_>) -> Option<String> {
+pub(super) fn scope(game: &Game<'_>) -> Option<String> {
     let p = game.native_player()?;
     Some(if let Some(remote) = game.remote.as_ref() {
         format!(
@@ -211,7 +216,11 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
             f.full_collision,
             f.fluid_level > 0 || f.waterlogged,
         ),
-        ore: mining::matches(ore, &f.name),
+        ore: if ore == u8::MAX {
+            crate::game::claim_borders_construction_view::block(game, at).diggable
+        } else {
+            mining::matches(ore, &f.name)
+        },
         falling: mining::falling(&f.name),
     }
 }
@@ -243,6 +252,61 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
             .items()
             .correct_for_drops(Some(stack), &game.native_block(at))
     })
+}
+pub(super) fn construction_tool(game: &Game<'_>) -> bool {
+    mining_tool(game, None)
+}
+pub(super) fn clear_construction_driver() {
+    state(|s| {
+        let attack = s.attack_restore;
+        let use_restore = s.use_restore;
+        *s = State::default();
+        s.attack_restore = attack;
+        s.use_restore = use_restore;
+    });
+}
+pub(super) fn construction_dig(game: &Game<'_>, target: model::Pos) -> Result<(), ()> {
+    if !mining_tool(game, Some(target)) || !free_slot(game) {
+        return Err(());
+    }
+    let Some(p) = game.native_player() else {
+        return Err(());
+    };
+    state(|s| {
+        cancel_pending(s);
+        s.scope = scope(game).unwrap();
+        s.nav.begin(model::block([p.x, p.y, p.z]), true);
+        s.nav.status = model::Status::Mining;
+        let mut job = mining::Job::excavation(target);
+        job.started_ms = s.started.elapsed().as_millis() as u64;
+        s.mining = Some(job);
+        s.mine_aim = None;
+    });
+    Ok(())
+}
+pub(super) fn construction_dig_result() -> Option<bool> {
+    state(|s| match s.mining.as_ref().filter(|j| j.ore == u8::MAX) {
+        Some(j) if j.phase == mining::Phase::Done => Some(true),
+        Some(j) if j.active => None,
+        _ => Some(false),
+    })
+}
+pub(super) fn construction_dig_pending() -> bool {
+    state(|s| {
+        s.mining
+            .as_ref()
+            .is_some_and(|j| j.ore == u8::MAX && j.awaiting_confirmation())
+    })
+}
+pub(super) fn construction_resume_dig() {
+    state(|s| {
+        if let Some(j) = s.mining.as_mut() {
+            j.resume();
+            j.started_ms = s.started.elapsed().as_millis() as u64;
+        }
+        s.nav.running = true;
+        s.nav.status = model::Status::Mining;
+    });
 }
 fn free_slot(game: &Game<'_>) -> bool {
     game.inventory.iter().take(36).any(Option::is_none)
@@ -340,6 +404,7 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
             return Ok(());
         }
         if job.phase == mining::Phase::Confirming {
+            job.started_ms = s.started.elapsed().as_millis() as u64;
             s.nav.status = model::Status::Mining;
             return Ok(());
         }
@@ -412,6 +477,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let _ = position;
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
+    if physical || game.right {
+        crate::game::claim_borders_construction_view::pause();
+    }
     let Some(player) = game.native_player() else {
         return physical;
     };
@@ -501,10 +569,18 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
         state(|s| s.attack_restore = Some(physical));
         game.left = attack;
     }
+    let physical_right = game.right;
+    if crate::game::claim_borders_construction_view::input(game) && !physical_right {
+        state(|s| s.use_restore = Some(physical_right));
+        game.right = true;
+    }
 }
 pub(super) fn mining_attack_end(game: &mut Game<'_>) {
     if let Some(physical) = state(|s| s.attack_restore.take()) {
         game.left = physical;
+    }
+    if let Some(physical) = state(|s| s.use_restore.take()) {
+        game.right = physical;
     }
 }
 pub(super) fn mining_sent(game: &Game<'_>, packet: &horizon_protocol::packets::play::Serverbound) {
@@ -591,6 +667,10 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    if let Goal::Construct(config) = goal_request {
+        return crate::game::claim_borders_construction_view::start(game, config, !running);
+    }
+    crate::game::claim_borders_construction_view::reset();
     if let Goal::Mine { ore, limit } = goal_request {
         return start_mining(game, ore, limit, running);
     }
@@ -609,6 +689,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
             .to_owned()
     })?;
     let goal = match goal_request {
+        Goal::Construct(_) => unreachable!(),
         Goal::Mine { .. } => unreachable!(),
         Goal::Coordinates(at) => at,
         Goal::Follow(uuid) => model::block(
@@ -682,6 +763,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
     })
 }
 pub(super) fn pause() {
+    crate::game::claim_borders_construction_view::pause();
     state(|s| {
         if s.nav.running || s.mining.as_ref().is_some_and(|j| j.active) {
             cancel_pending(s);
@@ -690,6 +772,9 @@ pub(super) fn pause() {
     });
 }
 pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
+    if crate::game::claim_borders_construction_view::exists() {
+        return crate::game::claim_borders_construction_view::resume(game);
+    }
     if state(|s| s.mining.is_some()) {
         return resume_mining(game);
     }
@@ -851,6 +936,9 @@ pub(super) fn movement(
     jump: &mut bool,
     sneak: &mut bool,
 ) {
+    if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
+        return;
+    }
     if !game.native_on(claims::ID) || !game.native_playing() {
         pause();
         return;
@@ -917,6 +1005,9 @@ pub(super) fn movement(
 }
 
 pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
+    if let Some(snapshot) = crate::game::claim_borders_construction_view::snapshot() {
+        return snapshot;
+    }
     let language = language();
     state(|s| {
         if let Some(job) = s.mining.as_ref() {
@@ -1042,7 +1133,11 @@ pub(super) fn render(game: &Game<'_>, gizmos: &mut Gizmos) {
 
 pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
     use crate::game::claim_borders_ui_view as ui;
-    if !game.native_playing() || game.ui.hide_gui || !state(|s| s.nav.goal.is_some()) {
+    if !game.native_playing()
+        || game.ui.hide_gui
+        || !(state(|s| s.nav.goal.is_some())
+            || crate::game::claim_borders_construction_view::exists())
+    {
         return;
     }
     let (label, paused) = snapshot(game);

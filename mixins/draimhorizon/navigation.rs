@@ -10,6 +10,7 @@ pub enum Goal {
     Waypoint(u64),
     Follow(u128),
     Mine { ore: u8, limit: u16 },
+    Construct(super::claim_borders_construction::Config),
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;

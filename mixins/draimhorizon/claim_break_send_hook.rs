@@ -3,6 +3,7 @@ fn claim_borders_break_sent(
     packet: &horizon_protocol::packets::play::Serverbound,
 ) {
     crate::game::claim_borders_navigation_view::mining_sent(game, packet);
+    crate::game::claim_borders_construction_view::sent(packet);
     use horizon_protocol::packets::play::Serverbound as S;
     match packet {
         S::PlayerAction(p) if matches!(p.action, 0 | 1 | 3) => {
