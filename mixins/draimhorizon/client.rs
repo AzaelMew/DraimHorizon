@@ -1316,6 +1316,11 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     let borders_enabled = claims::with_state(|s| s.enabled);
     let (navigation_status, navigation_paused) =
         crate::game::claim_borders_navigation_view::snapshot(game);
+    let navigation_players = tab
+        .iter()
+        .filter(|(uuid, _)| entity_position(game, *uuid).is_some())
+        .cloned()
+        .collect();
     let dimension = game.native_player().map(|p| p.dimension);
     state(|c| {
         let time = now(c);
@@ -1479,6 +1484,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            navigation_players,
             navigation_status,
             navigation_paused,
             navigation_waypoints: c

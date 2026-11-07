@@ -128,6 +128,7 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub navigation_paused: bool,
     pub navigation_waypoints: Vec<WaypointRow>,
@@ -443,6 +444,7 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    NavigationPlayer,
     NavigationWaypoint,
     NavigationPreview,
     NavigationStart,
@@ -559,6 +561,7 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub navigation_player: Option<u128>,
     pub navigation_coordinates: String,
     pub navigation_waypoint: Option<u64>,
     pub experiments_prompt: bool,
@@ -598,6 +601,7 @@ impl Default for Menu {
             experiments_prompt: false,
             navigation_coordinates: String::new(),
             navigation_waypoint: None,
+            navigation_player: None,
             experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
@@ -2127,6 +2131,12 @@ impl Menu {
             let waypoint = self
                 .navigation_waypoint
                 .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+            let player = self.navigation_player.and_then(|id| {
+                model
+                    .navigation_players
+                    .iter()
+                    .find(|(uuid, _)| *uuid == id)
+            });
             out.push(widget(
                 [x, 82.0, w, h],
                 format!("XYZ: {}", self.navigation_coordinates),
@@ -2134,7 +2144,7 @@ impl Menu {
                 self.focus == Some(Field::NavigationCoordinates),
             ));
             out.push(widget(
-                [x, 82.0 + step, w, h],
+                [x, 82.0 + step, tab_width, h],
                 localized!(
                     self.language,
                     "Метка: {}",
@@ -2146,6 +2156,20 @@ impl Menu {
                 Some(Control::NavigationWaypoint),
                 waypoint.is_some(),
             ));
+            out.push(widget(
+                [x + tab_width + 4.0, 82.0 + step, tab_width, h],
+                localized!(
+                    self.language,
+                    "Игрок: {}",
+                    "Player: {}",
+                    player.map_or(
+                        self.language.text("выбрать", "select"),
+                        |(_, name)| name.as_str()
+                    )
+                ),
+                Some(Control::NavigationPlayer),
+                player.is_some(),
+            ));
             for (index, label, control) in [
                 (
                     0,
@@ -2154,7 +2178,11 @@ impl Menu {
                 ),
                 (
                     1,
-                    self.language.text("Идти", "Go"),
+                    if self.navigation_player.is_some() {
+                        self.language.text("Следовать", "Follow")
+                    } else {
+                        self.language.text("Идти", "Go")
+                    },
                     Control::NavigationStart,
                 ),
             ] {
@@ -2685,7 +2713,32 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::NavigationPlayer => {
+                let next = self
+                    .navigation_player
+                    .and_then(|id| {
+                        model
+                            .navigation_players
+                            .iter()
+                            .position(|(uuid, _)| *uuid == id)
+                    })
+                    .map_or(0, |i| i + 1);
+                self.navigation_player = model.navigation_players.get(next).map(|(uuid, _)| *uuid);
+                self.navigation_waypoint = None;
+                self.focus = None;
+                if model.navigation_players.is_empty() {
+                    self.notice = self
+                        .language
+                        .text(
+                            "Поблизости нет загруженных игроков",
+                            "No loaded players nearby",
+                        )
+                        .into();
+                }
+                None
+            }
             Control::NavigationWaypoint => {
+                self.navigation_player = None;
                 let index = self
                     .navigation_waypoint
                     .and_then(|id| model.navigation_waypoints.iter().position(|w| w.id == id));
@@ -2708,7 +2761,9 @@ impl Menu {
                     self.experiments_prompt = true;
                     return None;
                 }
-                let goal = if let Some(id) = self.navigation_waypoint {
+                let goal = if let Some(id) = self.navigation_player {
+                    super::claim_borders_navigation::Goal::Follow(id)
+                } else if let Some(id) = self.navigation_waypoint {
                     super::claim_borders_navigation::Goal::Waypoint(id)
                 } else {
                     let values: Vec<_> = self.navigation_coordinates.split_whitespace().collect();
@@ -3399,6 +3454,7 @@ impl Menu {
         Some(match self.focus? {
             Field::NavigationCoordinates => {
                 self.navigation_waypoint = None;
+                self.navigation_player = None;
                 &mut self.navigation_coordinates
             }
             Field::ClaimOwner => &mut self.claim_owner,
@@ -4262,6 +4318,7 @@ mod tests {
                             Some(
                                 Control::Field(Field::NavigationCoordinates)
                                     | Control::NavigationWaypoint
+                                    | Control::NavigationPlayer
                                     | Control::NavigationPreview
                                     | Control::NavigationStart
                                     | Control::NavigationPause
@@ -4271,7 +4328,7 @@ mod tests {
                         )
                     })
                     .collect();
-                assert_eq!(controls.len(), 6);
+                assert_eq!(controls.len(), 7);
                 let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
@@ -4286,6 +4343,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn navigation_follow_selection_is_by_uuid_and_coordinate_edits_clear_it() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            navigation_players: vec![(71, "Alice".into()), (82, "Bob".into())],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            navigation_waypoint: Some(7),
+            ..Menu::default()
+        };
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        assert_eq!(menu.navigation_waypoint, None);
+        assert_eq!(menu.navigation_player, Some(71));
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Follow(71),
+                running: true
+            })
+        ));
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        assert_eq!(menu.navigation_player, Some(82));
+        menu.focus = Some(Field::NavigationCoordinates);
+        menu.character('2');
+        assert_eq!(menu.navigation_player, None);
+        assert_eq!(menu.navigation_coordinates, "2");
     }
 
     use super::*;

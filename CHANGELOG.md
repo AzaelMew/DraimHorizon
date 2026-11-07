@@ -5,8 +5,10 @@
 - Add an experimental native walking navigator in the Baritone tab: enter XYZ or select a waypoint in the current dimension, preview a route, start, pause, resume and stop.
 - Calculate bounded A* segments on a background worker using snapshots of loaded server chunks. Render the remaining route and a localized HUD status with distance.
 - Walk and jump up one full block using normal movement input. Avoid unknown terrain, hazardous blocks, unsupported shapes and drops greater than one block.
-- Pause on manual movement, open screens, live route changes and stalls. Cancel pending work and clear the destination on disconnect, dimension/account/world changes or mod disable.
-- This is an independent Rust navigator, not the Java Baritone library. Mining, placing, following, farming, schematics and flight are not included.
+- Follow a nearby loaded player by UUID, maintain a short distance and replan as the player moves. Stop moving immediately when the target disappears; stop following after a 10-second loss and require Resume.
+- Replan automatically when terrain changes or movement stalls, with at most three recovery attempts near one location. Wait for landing before planning another segment.
+- Pause on manual movement and open screens. Cancel pending work and clear the destination on disconnect, dimension/account/world changes or mod disable.
+- This is an independent Rust navigator, not the Java Baritone library. Mining, placing, farming, schematics and flight are not included.
 
 ## 0.25.1
 

@@ -18,6 +18,7 @@ struct Query {
     token: u64,
     start: model::Pos,
     goal: model::Pos,
+    radius: u8,
     chunks: HashMap<(i32, i32), Arc<Chunk>>,
     resources: Arc<Resources>,
 }
@@ -44,9 +45,10 @@ impl Worker {
                 while let Ok(query) = requests.recv() {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
-                    let path = model::search(
+                    let path = model::search_near(
                         query.start,
                         query.goal,
+                        query.radius,
                         |at| {
                             let Some(chunk) = query
                                 .chunks
@@ -88,6 +90,7 @@ impl Drop for Worker {
     }
 }
 struct State {
+    started: Instant,
     nav: model::Navigator,
     scope: String,
     worker: Option<Worker>,
@@ -98,6 +101,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            started: Instant::now(),
             nav: model::Navigator::default(),
             scope: String::new(),
             worker: None,
@@ -162,6 +166,11 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     let Some(goal) = s.nav.goal else {
         return Ok(());
     };
+    // A jump is not a valid standing start for the planner. Wait for landing.
+    if s.nav.running && game.player.as_ref().is_some_and(|p| !p.ground.on_ground) {
+        s.nav.status = model::Status::Waiting;
+        return Ok(());
+    }
     if s.worker.is_none() {
         s.worker = Some(Worker::spawn()?);
     }
@@ -178,6 +187,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         token: s.token,
         start: model::block([player.x, player.y, player.z]),
         goal,
+        radius: if s.nav.follow.is_some() { 1 } else { 0 },
         chunks,
         resources: game.res.clone(),
     };
@@ -194,7 +204,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     s.nav.status = model::Status::Planning;
     Ok(())
 }
-pub(super) fn start(game: &Game<'_>, goal: Goal, running: bool) -> Result<(), String> {
+pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
     let language = language();
     if !allowed(game) {
         return Err(language
@@ -209,8 +219,17 @@ pub(super) fn start(game: &Game<'_>, goal: Goal, running: bool) -> Result<(), St
             .text("Сначала войдите в мир", "Join a world first")
             .to_owned()
     })?;
-    let goal = match goal {
+    let goal = match goal_request {
         Goal::Coordinates(at) => at,
+        Goal::Follow(uuid) => model::block(
+            crate::game::claim_borders_client::entity_position(game, uuid)
+                .filter(|p| p.iter().all(|v| v.is_finite()))
+                .ok_or_else(|| {
+                    language
+                        .text("Игрок вне зоны видимости", "Player is not loaded nearby")
+                        .to_owned()
+                })?,
+        ),
         Goal::Waypoint(id) => {
             let waypoint = crate::game::claim_borders_client::own_waypoints()
                 .into_iter()
@@ -238,10 +257,31 @@ pub(super) fn start(game: &Game<'_>, goal: Goal, running: bool) -> Result<(), St
             .into());
     }
     let scope = scope(game).unwrap();
+    let follow = if let Goal::Follow(uuid) = goal_request {
+        Some(uuid)
+    } else {
+        None
+    };
     state(|s| {
         cancel_pending(s);
         s.scope = scope;
         s.nav.begin(goal, running);
+        s.nav.follow =
+            follow.map(|uuid| model::Follow::new(uuid, s.started.elapsed().as_millis() as u64));
+        if running && let Some(follow) = s.nav.follow.as_mut() {
+            let target = crate::game::claim_borders_client::entity_position(game, follow.uuid);
+            if matches!(
+                follow.update(
+                    [player.x, player.y, player.z],
+                    target,
+                    s.started.elapsed().as_millis() as u64
+                ),
+                model::FollowDecision::Hold(_)
+            ) {
+                s.nav.status = model::Status::Holding;
+                return Ok(());
+            }
+        }
         if let Err(e) = request(game, s) {
             s.nav.pause();
             return Err(e);
@@ -260,7 +300,11 @@ pub(super) fn pause() {
 pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
     let goal = state(|s| {
         if scope(game).as_deref() == Some(s.scope.as_str()) {
-            s.nav.goal
+            s.nav
+                .follow
+                .as_ref()
+                .map(|f| Goal::Follow(f.uuid))
+                .or_else(|| s.nav.goal.map(Goal::Coordinates))
         } else {
             None
         }
@@ -270,7 +314,7 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
             .text("Сначала задайте цель", "Set a destination first")
             .to_owned()
     })?;
-    start(game, Goal::Coordinates(goal), true)
+    start(game, goal, true)
 }
 pub(super) fn tick(game: &Game<'_>) {
     if !game.native_on(claims::ID) {
@@ -316,6 +360,49 @@ pub(super) fn tick(game: &Game<'_>) {
             s.nav.pause();
         }
         if s.nav.running
+            && let Some(follow) = s.nav.follow.as_mut()
+        {
+            let target = crate::game::claim_borders_client::entity_position(game, follow.uuid);
+            let decision = follow.update(position, target, s.started.elapsed().as_millis() as u64);
+            match decision {
+                model::FollowDecision::Hold(goal) => {
+                    if s.nav.status != model::Status::Holding {
+                        cancel_pending(s);
+                        s.nav.replan();
+                    }
+                    s.nav.goal = Some(goal);
+                    s.nav.status = model::Status::Holding;
+                }
+                model::FollowDecision::Pursue(goal) => {
+                    let changed = s.nav.goal.is_none_or(|old| {
+                        model::distance(model::center(old), model::center(goal)) >= 2.0
+                    });
+                    if !s.pending
+                        && (matches!(
+                            s.nav.status,
+                            model::Status::Holding | model::Status::TargetMissing
+                        ) || (changed && s.last_query.elapsed() >= Duration::from_millis(500)))
+                    {
+                        s.nav.goal = Some(goal);
+                        s.nav.replan();
+                    }
+                }
+                model::FollowDecision::Missing => {
+                    if s.nav.status != model::Status::TargetMissing {
+                        cancel_pending(s);
+                        s.nav.replan();
+                        s.nav.status = model::Status::TargetMissing;
+                    }
+                }
+                model::FollowDecision::Lost => {
+                    cancel_pending(s);
+                    s.nav.replan();
+                    s.nav.running = false;
+                    s.nav.status = model::Status::TargetLost;
+                }
+            }
+        }
+        if s.nav.running
             && s.nav.status == model::Status::Waiting
             && s.last_query.elapsed() > Duration::from_millis(350)
             && request(game, s).is_err()
@@ -359,6 +446,8 @@ pub(super) fn movement(
     if body.flying
         || body.fall_flying
         || body.swimming
+        || body.fluids.was_touching_water
+        || body.is_in_lava()
         || body.is_passenger
         || body.sleeping
         || body.health.health() <= 0.0
@@ -385,7 +474,14 @@ pub(super) fn movement(
             return;
         }
         let input = s.nav.input(position, p.yaw, body.ground.on_ground);
-        if let Some(&next) = s.nav.path.get(s.nav.next) {
+        if s.nav.status == model::Status::Stuck {
+            cancel_pending(s);
+            s.nav.blocked(position);
+            return;
+        }
+        if s.nav.status == model::Status::Walking
+            && let Some(&next) = s.nav.path.get(s.nav.next)
+        {
             // Recheck live blocks immediately before driving; worker snapshots may be stale.
             let from = if s.nav.next > 0 {
                 s.nav.path[s.nav.next - 1]
@@ -394,7 +490,7 @@ pub(super) fn movement(
             };
             if !model::traversable(from, next, &mut |at| live_cell(game, at)) {
                 cancel_pending(s);
-                s.nav.pause();
+                s.nav.blocked(position);
                 return;
             }
         }
@@ -408,6 +504,18 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     let language = language();
     state(|s| {
         let label = match s.nav.status {
+            model::Status::Holding => language.text(
+                "Следование · держу дистанцию",
+                "Following · holding distance",
+            ),
+            model::Status::TargetMissing => language.text(
+                "Игрок вне видимости · ожидание",
+                "Player not visible · waiting",
+            ),
+            model::Status::TargetLost => language.text(
+                "Игрок потерян · следование остановлено",
+                "Player lost · following stopped",
+            ),
             model::Status::Idle => language.text("Цель не задана", "No destination"),
             model::Status::Planning => language.text("Расчёт маршрута…", "Planning route…"),
             model::Status::Preview => language.text("Просмотр маршрута", "Route preview"),

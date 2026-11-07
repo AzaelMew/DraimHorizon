@@ -460,6 +460,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     w -= 14.0;
                 }
             }
+            if hover
+                && matches!(
+                    widget.control,
+                    Some(model::Control::NavigationWaypoint | model::Control::NavigationPlayer)
+                )
+            {
+                request_tip = Some(widget.text.clone());
+            }
             let color = if widget.muted {
                 0x8995a5
             } else if widget.selected {
