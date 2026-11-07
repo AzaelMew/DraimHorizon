@@ -2416,7 +2416,7 @@ impl Menu {
                             if compact_tunnel {
                                 [
                                     x + ((i + 1) % 2) as f32 * (tab_width + 4.0),
-                                    100.0 + ((i + 1) / 2) as f32 * step,
+                                    100.0 + i.div_ceil(2) as f32 * step,
                                     tab_width,
                                     h,
                                 ]
