@@ -1,4 +1,5 @@
 // Native adapter for the local walking navigator; bounded background path planning.
+use crate::game::claim_borders_mining as mining;
 use crate::game::{Game, Resources, claim_borders as claims, claim_borders_navigation as model};
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{chunk::Chunk, gizmos::Gizmos};
@@ -15,6 +16,7 @@ use std::{
 
 pub use model::Goal;
 struct Query {
+    mine: Option<(u8, Vec<model::Pos>)>,
     token: u64,
     start: model::Pos,
     goal: model::Pos,
@@ -23,6 +25,7 @@ struct Query {
     resources: Arc<Resources>,
 }
 struct Answer {
+    target: Option<model::Pos>,
     token: u64,
     start: model::Pos,
     path: Option<model::Path>,
@@ -45,34 +48,53 @@ impl Worker {
                 while let Ok(query) = requests.recv() {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
-                    let path = model::search_near(
-                        query.start,
-                        query.goal,
-                        query.radius,
-                        |at| {
-                            let Some(chunk) = query
-                                .chunks
-                                .get(&(at[0].div_euclid(16), at[2].div_euclid(16)))
-                            else {
-                                return model::Cell::Unknown;
-                            };
-                            if at[1] < chunk.min_y() || at[1] >= chunk.max_y() {
-                                return model::Cell::Unknown;
+                    let mut read = |at| {
+                        let Some(chunk) = query
+                            .chunks
+                            .get(&(at[0].div_euclid(16), at[2].div_euclid(16)))
+                        else {
+                            return mining::Block::default();
+                        };
+                        if at[1] < chunk.min_y() || at[1] >= chunk.max_y() {
+                            return mining::Block::default();
+                        }
+                        let id = chunk.get(at[0].rem_euclid(16), at[1], at[2].rem_euclid(16));
+                        *table.entry(id).or_insert_with(|| {
+                            let f = query.resources.facts().get(BlockStateId(id));
+                            mining::Block {
+                                cell: model::classify(
+                                    &f.name,
+                                    f.full_collision,
+                                    f.fluid_level > 0 || f.waterlogged,
+                                ),
+                                ore: query
+                                    .mine
+                                    .as_ref()
+                                    .is_some_and(|(ore, _)| mining::matches(*ore, &f.name)),
+                                falling: mining::falling(&f.name),
                             }
-                            let id = chunk.get(at[0].rem_euclid(16), at[1], at[2].rem_euclid(16));
-                            *table.entry(id).or_insert_with(|| {
-                                let facts = query.resources.facts().get(BlockStateId(id));
-                                model::classify(
-                                    &facts.name,
-                                    facts.full_collision,
-                                    facts.fluid_level > 0 || facts.waterlogged,
-                                )
-                            })
-                        },
-                        canceled,
-                    );
+                        })
+                    };
+                    let (target, path) = if let Some((_, excluded)) = query.mine.as_ref() {
+                        match mining::plan(query.start, excluded, &mut read, canceled) {
+                            Some((target, path)) => (Some(target), Some(path)),
+                            None => (None, None),
+                        }
+                    } else {
+                        (
+                            None,
+                            model::search_near(
+                                query.start,
+                                query.goal,
+                                query.radius,
+                                |at| read(at).cell,
+                                canceled,
+                            ),
+                        )
+                    };
                     if !canceled() {
                         let _ = results.send(Answer {
+                            target,
                             token: query.token,
                             start: query.start,
                             path,
@@ -90,6 +112,9 @@ impl Drop for Worker {
     }
 }
 struct State {
+    attack_restore: Option<bool>,
+    mining: Option<mining::Job>,
+    mine_aim: Option<[f32; 2]>,
     started: Instant,
     nav: model::Navigator,
     scope: String,
@@ -101,6 +126,9 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            attack_restore: None,
+            mining: None,
+            mine_aim: None,
             started: Instant::now(),
             nav: model::Navigator::default(),
             scope: String::new(),
@@ -119,7 +147,11 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn reset() {
-    state(|s| *s = State::default());
+    state(|s| {
+        let restore = s.attack_restore;
+        *s = State::default();
+        s.attack_restore = restore;
+    });
 }
 fn language() -> Language {
     crate::game::claim_borders_chat_view::current_language()
@@ -157,6 +189,355 @@ fn cancel_pending(s: &mut State) {
     }
     s.pending = false;
 }
+fn pause_state(s: &mut State) {
+    s.nav.pause();
+    if let Some(job) = s.mining.as_mut() {
+        job.active = false;
+    }
+    s.mine_aim = None;
+}
+fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
+    if !game
+        .world
+        .chunks
+        .contains_key(&(at[0].div_euclid(16), at[2].div_euclid(16)))
+    {
+        return mining::Block::default();
+    }
+    let f = game.res.facts().get(game.world.block(at[0], at[1], at[2]));
+    mining::Block {
+        cell: model::classify(
+            &f.name,
+            f.full_collision,
+            f.fluid_level > 0 || f.waterlogged,
+        ),
+        ore: mining::matches(ore, &f.name),
+        falling: mining::falling(&f.name),
+    }
+}
+fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
+    let Some(stack) = game.held() else {
+        return false;
+    };
+    if !stack.item.ends_with("_pickaxe") {
+        return false;
+    }
+    let mut max = game
+        .res
+        .items()
+        .items
+        .get(&stack.item)
+        .map_or(0, |i| i.max_damage);
+    if let Some(horizon_world::nbt::Tag::Int(value)) = stack
+        .extra
+        .as_deref()
+        .and_then(|e| e.other("minecraft:max_damage"))
+    {
+        max = (*value).max(0) as u32;
+    }
+    if max > 0 && max.saturating_sub(stack.damage) <= 10 {
+        return false;
+    }
+    target.is_none_or(|at| {
+        game.res
+            .items()
+            .correct_for_drops(Some(stack), &game.native_block(at))
+    })
+}
+fn free_slot(game: &Game<'_>) -> bool {
+    game.inventory.iter().take(36).any(Option::is_none)
+}
+fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(), String> {
+    let language = language();
+    if !allowed(game) {
+        return Err(language
+            .text(
+                "Сначала подтвердите экспериментальные функции",
+                "Accept experimental features first",
+            )
+            .into());
+    }
+    let mut job = mining::Job::new(ore, limit).ok_or_else(|| {
+        language
+            .text(
+                "Недопустимая руда или количество",
+                "Invalid ore or block limit",
+            )
+            .to_owned()
+    })?;
+    let player = game.native_player().ok_or_else(|| {
+        language
+            .text("Сначала войдите в мир", "Join a world first")
+            .to_owned()
+    })?;
+    if game.remote.is_none() {
+        return Err(language
+            .text("Подключитесь к серверу", "Connect to a server first")
+            .into());
+    }
+    if running && !mining_tool(game, None) {
+        return Err(language
+            .text(
+                "Возьмите кирку с запасом прочности",
+                "Hold a pickaxe with durability remaining",
+            )
+            .into());
+    }
+    if running && !free_slot(game) {
+        return Err(language
+            .text("Освободите слот в инвентаре", "Free an inventory slot")
+            .into());
+    }
+    job.active = running;
+    state(|s| {
+        cancel_pending(s);
+        s.scope = scope(game).unwrap();
+        s.mine_aim = None;
+        s.mining = Some(job);
+        s.nav
+            .begin(model::block([player.x, player.y, player.z]), running);
+        s.nav.precise = true;
+        if let Err(error) = request(game, s) {
+            pause_state(s);
+            return Err(error);
+        }
+        Ok(())
+    })
+}
+fn resume_mining(game: &Game<'_>) -> Result<(), String> {
+    if !allowed(game) {
+        return Err(language()
+            .text(
+                "Сначала подтвердите экспериментальные функции",
+                "Accept experimental features first",
+            )
+            .into());
+    }
+    state(|s| {
+        if scope(game).as_deref() != Some(s.scope.as_str()) {
+            return Err(language()
+                .text(
+                    "Мир изменился; задайте новую задачу",
+                    "World changed; start a new task",
+                )
+                .into());
+        }
+        let Some(job) = s.mining.as_mut() else {
+            return Ok(());
+        };
+        if !mining_tool(game, None) || !free_slot(game) {
+            return Err(language()
+                .text(
+                    "Нужна исправная кирка и свободный слот",
+                    "A usable pickaxe and a free slot are required",
+                )
+                .into());
+        }
+        job.resume();
+        s.nav.running = job.active;
+        s.mine_aim = None;
+        if !job.active {
+            return Ok(());
+        }
+        if job.phase == mining::Phase::Confirming {
+            s.nav.status = model::Status::Mining;
+            return Ok(());
+        }
+        cancel_pending(s);
+        s.nav.replan();
+        request(game, s)
+    })
+}
+fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
+    let Some(job) = s.mining.as_mut().filter(|j| j.active) else {
+        return;
+    };
+    let now = s.started.elapsed().as_millis() as u64;
+    match job.phase {
+        mining::Phase::Searching => {
+            s.nav.running = true;
+            if !s.pending {
+                s.nav.replan();
+            }
+        }
+        mining::Phase::Approaching => {
+            if matches!(s.nav.status, model::Status::NoPath | model::Status::Stuck)
+                || job
+                    .target
+                    .is_none_or(|at| !mining_block(game, job.ore, at).ore)
+            {
+                job.skip();
+                cancel_pending(s);
+                s.nav.replan();
+            } else if s.nav.status == model::Status::Arrived {
+                job.phase = mining::Phase::Breaking;
+                job.started_ms = now;
+                s.nav.running = true;
+                s.nav.status = model::Status::Mining;
+                s.mine_aim = None;
+            }
+        }
+        mining::Phase::Breaking => {
+            if job
+                .target
+                .is_some_and(|at| !mining_block(game, job.ore, at).ore)
+            {
+                job.predicted_missing();
+                if job.phase == mining::Phase::Breaking {
+                    job.skip();
+                    s.nav.replan();
+                }
+            }
+            if now.saturating_sub(job.started_ms) > 30_000 {
+                job.active = false;
+                job.phase = mining::Phase::Timeout;
+                s.nav.running = false;
+            }
+        }
+        mining::Phase::Confirming => {
+            if now.saturating_sub(job.started_ms) > 5_000 {
+                job.active = false;
+                job.phase = mining::Phase::Timeout;
+                s.nav.running = false;
+            }
+        }
+        _ => {
+            s.nav.running = false;
+            job.active = false;
+        }
+    }
+    if s.mining.as_ref().is_some_and(|j| !j.active) {
+        s.nav.running = false;
+    }
+    let _ = position;
+}
+pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
+    let Some(player) = game.native_player() else {
+        return physical;
+    };
+    state(|s| {
+        if physical || game.right {
+            cancel_pending(s);
+            pause_state(s);
+            return physical;
+        }
+        let Some(job) = s
+            .mining
+            .as_mut()
+            .filter(|j| j.active && j.phase == mining::Phase::Breaking)
+        else {
+            return physical;
+        };
+        if !game.native_on(claims::ID)
+            || !game.native_playing()
+            || scope(game).as_deref() != Some(s.scope.as_str())
+            || game.player.as_ref().is_none_or(|p| {
+                p.flying
+                    || p.fall_flying
+                    || p.is_passenger
+                    || p.fluids.was_touching_water
+                    || p.is_in_lava()
+                    || p.health.health() <= 0.0
+            })
+        {
+            pause_state(s);
+            return physical;
+        }
+        let Some(target) = job.target else {
+            return false;
+        };
+        if !mining_tool(game, Some(target)) {
+            job.active = false;
+            job.phase = mining::Phase::Tool;
+            s.nav.running = false;
+            return false;
+        }
+        if !free_slot(game) {
+            job.active = false;
+            job.phase = mining::Phase::Inventory;
+            s.nav.running = false;
+            return false;
+        }
+        if let Some([yaw, pitch]) = s.mine_aim
+            && (((game.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0).abs() > 0.5
+                || (game.pitch - pitch).abs() > 0.5)
+        {
+            pause_state(s);
+            return physical;
+        }
+        let position = [player.x, player.y, player.z];
+        if !mining::safe_target(target, position, &mut |at| mining_block(game, job.ore, at)) {
+            job.skip();
+            s.mine_aim = None;
+            s.nav.replan();
+            return false;
+        }
+        let Some(eye) = game.eye_position() else {
+            pause_state(s);
+            return false;
+        };
+        let center = [
+            f64::from(target[0]) + 0.5,
+            f64::from(target[1]) + 0.5,
+            f64::from(target[2]) + 0.5,
+        ];
+        let [dx, dy, dz] = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
+        game.yaw = (-dx).atan2(dz).to_degrees() as f32;
+        game.pitch = (-dy).atan2(dx.hypot(dz)).to_degrees() as f32;
+        if game.entity_targeted() || game.pick().is_none_or(|hit| hit.pos != target) {
+            job.skip();
+            s.mine_aim = None;
+            s.nav.replan();
+            return false;
+        }
+        s.mine_aim = Some([game.yaw, game.pitch]);
+        true
+    })
+}
+pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
+    let physical = game.left;
+    let attack = mining_attack(game, physical);
+    if attack != physical {
+        state(|s| s.attack_restore = Some(physical));
+        game.left = attack;
+    }
+}
+pub(super) fn mining_attack_end(game: &mut Game<'_>) {
+    if let Some(physical) = state(|s| s.attack_restore.take()) {
+        game.left = physical;
+    }
+}
+pub(super) fn mining_sent(game: &Game<'_>, packet: &horizon_protocol::packets::play::Serverbound) {
+    if let horizon_protocol::packets::play::Serverbound::PlayerAction(p) = packet {
+        state(|s| {
+            if let Some(job) = s.mining.as_mut() {
+                let before = job.phase;
+                job.sent(p.pos, p.action, p.sequence);
+                if before != job.phase && job.phase == mining::Phase::Confirming {
+                    job.started_ms = s.started.elapsed().as_millis() as u64;
+                }
+            }
+        });
+    }
+    let _ = game;
+}
+pub(super) fn mining_ack(game: &Game<'_>, sequence: i32) {
+    state(|s| {
+        if scope(game).as_deref() != Some(s.scope.as_str()) {
+            return;
+        }
+        if let Some(job) = s.mining.as_mut()
+            && let Some(target) = job.target
+        {
+            job.acknowledge(sequence, mining_block(game, job.ore, target).ore);
+            if !job.active {
+                s.nav.running = false;
+            } else if job.phase == mining::Phase::Searching {
+                s.nav.replan();
+            }
+        }
+    });
+}
 fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     let Some(player) = game.native_player() else {
         return Err(language()
@@ -184,6 +565,11 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
         .collect();
     let query = Query {
+        mine: s
+            .mining
+            .as_ref()
+            .filter(|j| j.phase == mining::Phase::Searching)
+            .map(|j| (j.ore, j.excluded.clone())),
         token: s.token,
         start: model::block([player.x, player.y, player.z]),
         goal,
@@ -205,6 +591,9 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    if let Goal::Mine { ore, limit } = goal_request {
+        return start_mining(game, ore, limit, running);
+    }
     let language = language();
     if !allowed(game) {
         return Err(language
@@ -220,6 +609,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
             .to_owned()
     })?;
     let goal = match goal_request {
+        Goal::Mine { .. } => unreachable!(),
         Goal::Coordinates(at) => at,
         Goal::Follow(uuid) => model::block(
             crate::game::claim_borders_client::entity_position(game, uuid)
@@ -263,6 +653,8 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
         None
     };
     state(|s| {
+        s.mining = None;
+        s.mine_aim = None;
         cancel_pending(s);
         s.scope = scope;
         s.nav.begin(goal, running);
@@ -291,13 +683,16 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
 }
 pub(super) fn pause() {
     state(|s| {
-        if s.nav.running {
+        if s.nav.running || s.mining.as_ref().is_some_and(|j| j.active) {
             cancel_pending(s);
-            s.nav.pause();
+            pause_state(s);
         }
     });
 }
 pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
+    if state(|s| s.mining.is_some()) {
+        return resume_mining(game);
+    }
     let goal = state(|s| {
         if scope(game).as_deref() == Some(s.scope.as_str()) {
             s.nav
@@ -344,7 +739,22 @@ pub(super) fn tick(game: &Game<'_>) {
                     if model::distance(position, model::center(answer.start)) > 1.5 {
                         s.nav.running = false;
                         s.nav.status = model::Status::Paused;
+                        if let Some(job) = s.mining.as_mut() {
+                            job.active = false;
+                        }
                     } else {
+                        if let Some(job) = s.mining.as_mut()
+                            && job.phase == mining::Phase::Searching
+                        {
+                            if let Some(target) = answer.target {
+                                job.select(target);
+                                s.nav.goal =
+                                    answer.path.as_ref().and_then(|p| p.nodes.last().copied());
+                            } else {
+                                job.active = false;
+                                job.phase = mining::Phase::NoTarget;
+                            }
+                        }
                         s.nav.accept(answer.path);
                     }
                 }
@@ -354,10 +764,15 @@ pub(super) fn tick(game: &Game<'_>) {
             cancel_pending(s);
             s.nav.running = false;
             s.nav.status = model::Status::NoPath;
+            if let Some(job) = s.mining.as_mut() {
+                job.active = false;
+                job.phase = mining::Phase::Timeout;
+            }
         }
-        if s.nav.running && !game.native_playing() {
+        if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !game.native_playing()
+        {
             cancel_pending(s);
-            s.nav.pause();
+            pause_state(s);
         }
         if s.nav.running
             && let Some(follow) = s.nav.follow.as_mut()
@@ -402,12 +817,13 @@ pub(super) fn tick(game: &Game<'_>) {
                 }
             }
         }
+        mining_tick(game, s, position);
         if s.nav.running
             && s.nav.status == model::Status::Waiting
             && s.last_query.elapsed() > Duration::from_millis(350)
             && request(game, s).is_err()
         {
-            s.nav.pause();
+            pause_state(s);
         }
     });
 }
@@ -470,7 +886,7 @@ pub(super) fn movement(
             || scope(game).as_deref() != Some(s.scope.as_str())
         {
             cancel_pending(s);
-            s.nav.pause();
+            pause_state(s);
             return;
         }
         let input = s.nav.input(position, p.yaw, body.ground.on_ground);
@@ -503,7 +919,55 @@ pub(super) fn movement(
 pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     let language = language();
     state(|s| {
+        if let Some(job) = s.mining.as_ref() {
+            let text = if !job.active
+                && matches!(
+                    job.phase,
+                    mining::Phase::Searching
+                        | mining::Phase::Approaching
+                        | mining::Phase::Breaking
+                        | mining::Phase::Confirming
+                )
+                && !matches!(
+                    s.nav.status,
+                    model::Status::Preview | model::Status::Planning
+                ) {
+                language.text("Добыча на паузе", "Mining paused")
+            } else {
+                match job.phase {
+                    mining::Phase::Searching => language.text("Поиск руды…", "Finding ore…"),
+                    mining::Phase::Approaching if s.nav.status == model::Status::Preview => {
+                        language.text("Просмотр добычи", "Mining preview")
+                    }
+                    mining::Phase::Approaching => language.text("Подход к руде", "Approaching ore"),
+                    mining::Phase::Breaking => language.text("Добыча", "Mining"),
+                    mining::Phase::Confirming => {
+                        language.text("Ожидание сервера", "Waiting for server")
+                    }
+                    mining::Phase::Done => language.text("Добыча завершена", "Mining complete"),
+                    mining::Phase::NoTarget => {
+                        language.text("Доступная руда не найдена", "No reachable exposed ore")
+                    }
+                    mining::Phase::Refused => {
+                        language.text("Сервер отклонил разрушение", "Server refused the break")
+                    }
+                    mining::Phase::Tool => language.text(
+                        "Нужна подходящая исправная кирка",
+                        "A suitable usable pickaxe is required",
+                    ),
+                    mining::Phase::Inventory => {
+                        language.text("Нужен свободный слот", "A free inventory slot is required")
+                    }
+                    mining::Phase::Timeout => language.text("Тайм-аут добычи", "Mining timed out"),
+                }
+            };
+            return (
+                format!("{text} · {}/{}", job.confirmed, job.limit),
+                !job.active,
+            );
+        }
         let label = match s.nav.status {
+            model::Status::Mining => language.text("Добыча", "Mining"),
             model::Status::Holding => language.text(
                 "Следование · держу дистанцию",
                 "Following · holding distance",

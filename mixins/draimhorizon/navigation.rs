@@ -9,6 +9,7 @@ pub enum Goal {
     Coordinates(Pos),
     Waypoint(u64),
     Follow(u128),
+    Mine { ore: u8, limit: u16 },
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;
@@ -189,6 +190,7 @@ pub enum Status {
     Holding,
     TargetMissing,
     TargetLost,
+    Mining,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -241,6 +243,7 @@ impl Follow {
 
 #[derive(Clone, Debug, Default)]
 pub struct Navigator {
+    pub precise: bool,
     pub follow: Option<Follow>,
     pub status: Status,
     pub goal: Option<Pos>,
@@ -338,7 +341,9 @@ impl Navigator {
         if !self.running || self.status != Status::Walking {
             return Input::default();
         }
-        while self.next < self.path.len() && distance(position, center(self.path[self.next])) < 0.26
+        while self.next < self.path.len()
+            && distance(position, center(self.path[self.next]))
+                < if self.precise { 0.12 } else { 0.26 }
         {
             self.next += 1;
             self.stalled = 0;

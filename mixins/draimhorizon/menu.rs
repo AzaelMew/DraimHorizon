@@ -430,6 +430,12 @@ pub enum ExperimentalSection {
     Ores,
     Baritone,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum BaritoneMode {
+    #[default]
+    Navigation,
+    Mining,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
     Width,
@@ -444,6 +450,11 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    BaritoneMode(BaritoneMode),
+    MiningOre,
+    MiningLimit,
+    MiningPreview,
+    MiningStart,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPreview,
@@ -561,6 +572,9 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub baritone_mode: BaritoneMode,
+    pub mining_ore: u8,
+    pub mining_limit: u16,
     pub navigation_player: Option<u128>,
     pub navigation_coordinates: String,
     pub navigation_waypoint: Option<u64>,
@@ -602,6 +616,9 @@ impl Default for Menu {
             navigation_coordinates: String::new(),
             navigation_waypoint: None,
             navigation_player: None,
+            baritone_mode: BaritoneMode::Navigation,
+            mining_ore: 0,
+            mining_limit: 16,
             experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
@@ -2126,80 +2143,145 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
-            let h = (step - 2.0).min(22.0);
-            let waypoint = self
-                .navigation_waypoint
-                .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
-            let player = self.navigation_player.and_then(|id| {
-                model
-                    .navigation_players
-                    .iter()
-                    .find(|(uuid, _)| *uuid == id)
-            });
-            out.push(widget(
-                [x, 82.0, w, h],
-                format!("XYZ: {}", self.navigation_coordinates),
-                Some(Control::Field(Field::NavigationCoordinates)),
-                self.focus == Some(Field::NavigationCoordinates),
-            ));
-            out.push(widget(
-                [x, 82.0 + step, tab_width, h],
-                localized!(
-                    self.language,
-                    "Метка: {}",
-                    "Waypoint: {}",
-                    waypoint.map_or(self.language.text("выбрать", "select"), |w| w
-                        .name
-                        .as_str())
-                ),
-                Some(Control::NavigationWaypoint),
-                waypoint.is_some(),
-            ));
-            out.push(widget(
-                [x + tab_width + 4.0, 82.0 + step, tab_width, h],
-                localized!(
-                    self.language,
-                    "Игрок: {}",
-                    "Player: {}",
-                    player.map_or(
-                        self.language.text("выбрать", "select"),
-                        |(_, name)| name.as_str()
-                    )
-                ),
-                Some(Control::NavigationPlayer),
-                player.is_some(),
-            ));
-            for (index, label, control) in [
+            for (i, mode, label) in [
                 (
                     0,
-                    self.language.text("Просмотр", "Preview"),
-                    Control::NavigationPreview,
+                    BaritoneMode::Navigation,
+                    self.language.text("Навигация", "Navigation"),
                 ),
                 (
                     1,
-                    if self.navigation_player.is_some() {
-                        self.language.text("Следовать", "Follow")
-                    } else {
-                        self.language.text("Идти", "Go")
-                    },
-                    Control::NavigationStart,
+                    BaritoneMode::Mining,
+                    self.language.text("Добыча", "Mining"),
                 ),
             ] {
                 out.push(widget(
-                    [
-                        x + index as f32 * (tab_width + 4.0),
-                        82.0 + step * 2.0,
-                        tab_width,
-                        h,
-                    ],
+                    [x + i as f32 * (tab_width + 4.0), 80.0, tab_width, 16.0],
                     label,
-                    Some(control),
-                    false,
+                    Some(Control::BaritoneMode(mode)),
+                    self.baritone_mode == mode,
                 ));
             }
+            let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
+            let h = (step - 2.0).min(22.0);
+            if self.baritone_mode == BaritoneMode::Mining {
+                let ore = &experimental::ORES
+                    [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    localized!(
+                        self.language,
+                        "Руда: {}",
+                        "Ore: {}",
+                        self.language.text(ore.label, ore.label_en)
+                    ),
+                    Some(Control::MiningOre),
+                    false,
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, w, h],
+                    localized!(self.language, "Блоков: {}", "Blocks: {}", self.mining_limit),
+                    Some(Control::MiningLimit),
+                    false,
+                ));
+                for (i, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::MiningPreview,
+                    ),
+                    (
+                        1,
+                        self.language.text("Добывать", "Mine"),
+                        Control::MiningStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + i as f32 * (tab_width + 4.0),
+                            100.0 + step * 2.0,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            } else {
+                let waypoint = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+                let player = self.navigation_player.and_then(|id| {
+                    model
+                        .navigation_players
+                        .iter()
+                        .find(|(uuid, _)| *uuid == id)
+                });
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    format!("XYZ: {}", self.navigation_coordinates),
+                    Some(Control::Field(Field::NavigationCoordinates)),
+                    self.focus == Some(Field::NavigationCoordinates),
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Метка: {}",
+                        "Waypoint: {}",
+                        waypoint.map_or(self.language.text("выбрать", "select"), |w| w
+                            .name
+                            .as_str())
+                    ),
+                    Some(Control::NavigationWaypoint),
+                    waypoint.is_some(),
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, 100.0 + step, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Игрок: {}",
+                        "Player: {}",
+                        player.map_or(
+                            self.language.text("выбрать", "select"),
+                            |(_, name)| name.as_str()
+                        )
+                    ),
+                    Some(Control::NavigationPlayer),
+                    player.is_some(),
+                ));
+                for (index, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::NavigationPreview,
+                    ),
+                    (
+                        1,
+                        if self.navigation_player.is_some() {
+                            self.language.text("Следовать", "Follow")
+                        } else {
+                            self.language.text("Идти", "Go")
+                        },
+                        Control::NavigationStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + index as f32 * (tab_width + 4.0),
+                            100.0 + step * 2.0,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            }
             out.push(widget(
-                [x, 82.0 + step * 3.0, tab_width, h],
+                [x, 100.0 + step * 3.0, tab_width, h],
                 if model.navigation_paused {
                     self.language.text("Продолжить", "Resume")
                 } else {
@@ -2213,7 +2295,7 @@ impl Menu {
                 false,
             ));
             out.push(widget(
-                [x + tab_width + 4.0, 82.0 + step * 3.0, tab_width, h],
+                [x + tab_width + 4.0, 100.0 + step * 3.0, tab_width, h],
                 self.language.text("Остановить", "Stop"),
                 Some(Control::NavigationStop),
                 false,
@@ -2226,10 +2308,17 @@ impl Menu {
             ));
             out.push(widget(
                 [x, height - 30.0, w, 14.0],
-                self.language.text(
-                    "XYZ через пробел · движение вручную ставит паузу",
-                    "Space-separated XYZ · manual movement pauses",
-                ),
+                if self.baritone_mode == BaritoneMode::Mining {
+                    self.language.text(
+                        "Нужна исправная кирка и свободный слот",
+                        "A usable pickaxe and a free slot are required",
+                    )
+                } else {
+                    self.language.text(
+                        "XYZ через пробел · движение вручную ставит паузу",
+                        "Space-separated XYZ · manual movement pauses",
+                    )
+                },
                 None,
                 false,
             ));
@@ -2713,6 +2802,37 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::BaritoneMode(mode) => {
+                self.baritone_mode = mode;
+                self.focus = None;
+                None
+            }
+            Control::MiningOre => {
+                self.mining_ore = (self.mining_ore + 1) % experimental::ORES.len() as u8;
+                None
+            }
+            Control::MiningLimit => {
+                let limits = [1, 8, 16, 32, 64];
+                let at = limits
+                    .iter()
+                    .position(|n| *n == self.mining_limit)
+                    .unwrap_or(0);
+                self.mining_limit = limits[(at + 1) % limits.len()];
+                None
+            }
+            Control::MiningPreview | Control::MiningStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Mine {
+                        ore: self.mining_ore,
+                        limit: self.mining_limit,
+                    },
+                    running: control == Control::MiningStart,
+                })
+            }
             Control::NavigationPlayer => {
                 let next = self
                     .navigation_player
@@ -3575,6 +3695,13 @@ impl Menu {
             return false;
         }
         if key == "key.keyboard.tab" {
+            if self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Baritone
+                && self.baritone_mode == BaritoneMode::Mining
+            {
+                self.focus = None;
+                return true;
+            }
             if self.tab == Tab::Settings
                 && self.settings_section == 3
                 && self.chat_section == ChatSection::DeepL
@@ -4342,6 +4469,72 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn mining_controls_are_explicit_and_fit_compact_panels() {
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Experimental,
+                experimental_section: ExperimentalSection::Baritone,
+                baritone_mode: BaritoneMode::Mining,
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel {
+                navigation_status: "Mining status".into(),
+                experiments_accepted: true,
+                ..ViewModel::default()
+            };
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::MiningPreview),
+                Some(Action::Navigate {
+                    goal: super::super::claim_borders_navigation::Goal::Mine { ore: 0, limit: 16 },
+                    running: false
+                })
+            ));
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::MiningStart),
+                Some(Action::Navigate { running: true, .. })
+            ));
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls: Vec<_> = rows
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r.control,
+                            Some(
+                                Control::MiningOre
+                                    | Control::MiningLimit
+                                    | Control::MiningPreview
+                                    | Control::MiningStart
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                                    | Control::BaritoneMode(_)
+                            )
+                        )
+                    })
+                    .collect();
+                assert_eq!(controls.len(), 8);
+                let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
+            model.experiments_accepted = false;
+            assert!(menu.activate(&model, 200.0, Control::MiningStart).is_none());
+            assert!(menu.experiments_prompt);
         }
     }
 

@@ -2,13 +2,17 @@
 
 ## 0.26.0
 
+- Target the latest official Horizon Nightly 2026-11-07 source 2ebf00a, with refreshed source hashes and native validation.
+- Add Baritone > Mining: choose an ore and a 1–64 block limit, preview or mine reachable exposed ore from loaded chunks. Use ordinary attack processing and count only server-confirmed block changes.
+- Mining checks the held pickaxe, remaining durability, a free inventory slot, actual reach and entity obstruction. Avoid support under the player, adjacent fluids and falling blocks above the ore; stop on server rejection or timeout.
+
 - Add an experimental native walking navigator in the Baritone tab: enter XYZ or select a waypoint in the current dimension, preview a route, start, pause, resume and stop.
 - Calculate bounded A* segments on a background worker using snapshots of loaded server chunks. Render the remaining route and a localized HUD status with distance.
 - Walk and jump up one full block using normal movement input. Avoid unknown terrain, hazardous blocks, unsupported shapes and drops greater than one block.
 - Follow a nearby loaded player by UUID, maintain a short distance and replan as the player moves. Stop moving immediately when the target disappears; stop following after a 10-second loss and require Resume.
 - Replan automatically when terrain changes or movement stalls, with at most three recovery attempts near one location. Wait for landing before planning another segment.
 - Pause on manual movement and open screens. Cancel pending work and clear the destination on disconnect, dimension/account/world changes or mod disable.
-- This is an independent Rust navigator, not the Java Baritone library. Mining, placing, farming, schematics and flight are not included.
+- This is an independent Rust navigator, not the Java Baritone library. Block placement, tunneling, farming, schematics and flight are not included.
 
 ## 0.25.1
 

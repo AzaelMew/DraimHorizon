@@ -16,6 +16,9 @@ pub mod menu;
 #[path = "../mixins/draimhorizon/navigation.rs"]
 pub mod navigation;
 pub use navigation as claim_borders_navigation;
+#[path = "../mixins/draimhorizon/mining.rs"]
+pub mod mining;
+pub use mining as claim_borders_mining;
 
 #[path = "../mixins/draimhorizon/relay_settings.rs"]
 pub mod relay_settings;

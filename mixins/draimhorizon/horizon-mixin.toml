@@ -5,7 +5,7 @@ priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "6560641ba51a452f6bc2407baa4eb1b3be517ca8"
+horizon_revision = "2ebf00a0281c592f79191e76fce0e7d522c6f425"
 
 [[module]]
 id = "runtime"
@@ -18,6 +18,42 @@ id = "navigation"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_navigation"
 source = "navigation.rs"
+
+[[module]]
+id = "mining"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_mining"
+source = "mining.rs"
+
+[[injection]]
+id = "mining-attack"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_handle_input"
+helper = "mining_attack_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "mining-attack-reset"
+kind = "RETURN"
+target = "horizon_client::game::remote::Game<'_>::remote_handle_input"
+helper = "mining_attack_end_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "mining-ack"
+kind = "RETURN"
+target = "horizon_client::game::remote::Game<'_>::end_predictions"
+helper = "mining_ack_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "sequence", ty = "i32", value = "sequence" },
+]
 
 [[module]]
 id = "navigation-view"

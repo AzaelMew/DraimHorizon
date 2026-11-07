@@ -335,7 +335,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             if widget.control == Some(model::Control::Language)
                 || matches!(
                     widget.control,
-                    Some(model::Control::SettingsTab(_) | model::Control::ExperimentalTab(_))
+                    Some(
+                        model::Control::SettingsTab(_)
+                            | model::Control::ExperimentalTab(_)
+                            | model::Control::BaritoneMode(_)
+                    )
                 )
             {
                 let text = ui::clip(game, &widget.text, w - 6.0);
