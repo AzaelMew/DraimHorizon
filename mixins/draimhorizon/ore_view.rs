@@ -59,7 +59,7 @@ pub(super) fn settings(game: &Game<'_>) -> model::Preferences {
     state(|s| {
         if !s.loaded {
             s.prefs = game
-                .native_setting(claims::ID, "ore_experiment")
+                .native_setting(claims::SETTINGS_ID, "ore_experiment")
                 .and_then(|s| model::Preferences::decode(&s).ok())
                 .unwrap_or_default();
             s.loaded = true;
@@ -69,7 +69,7 @@ pub(super) fn settings(game: &Game<'_>) -> model::Preferences {
 }
 pub(super) fn configure(game: &Game<'_>, prefs: model::Preferences) {
     let prefs = prefs.normalized();
-    game.native_set_setting(claims::ID, "ore_experiment", &prefs.encode());
+    game.native_set_setting(claims::SETTINGS_ID, "ore_experiment", &prefs.encode());
     state(|s| {
         s.prefs = prefs;
         s.loaded = true;

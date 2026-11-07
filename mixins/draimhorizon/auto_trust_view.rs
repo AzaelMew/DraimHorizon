@@ -37,7 +37,9 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn enabled(game: &Game<'_>) -> bool {
-    game.native_setting(claims::ID, "auto_trust").as_deref() != Some("false")
+    game.native_setting(claims::SETTINGS_ID, "auto_trust")
+        .as_deref()
+        != Some("false")
 }
 pub(super) fn reset() {
     state(|s| *s = State::default());

@@ -1,5 +1,10 @@
 # История версий
 
+## 0.24.2
+
+- Launcher now lists the mod as `draimhorizon` instead of `claim_borders`: the bundle ID, `mixins/draimhorizon/` and the artifact manifest were renamed. Horizon IDs allow only lowercase letters, digits and `_`, so `DraimHorizon` itself is not a valid ID.
+- Existing settings (DeepL key, language, chat, map, economy options) and data directories keep the legacy `claim_borders` key via `SETTINGS_ID`. Custom key bindings and the on/off state are stored by the launcher under the mod ID and reset once.
+
 ## 0.24.1
 
 - Target the official Horizon Nightly 2026-11-07 source commit 6560641, instead of Horizon main.

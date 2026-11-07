@@ -132,7 +132,7 @@ pub(super) fn translator(
     Translator::with_policy(
         target,
         policy,
-        game.native_setting(claims::ID, DEEPL_KEY_SETTING),
+        game.native_setting(claims::SETTINGS_ID, DEEPL_KEY_SETTING),
         crate::game::claim_borders_client::translation_relay(),
     )
 }
@@ -147,7 +147,7 @@ pub(super) fn refresh_translators() {
 }
 pub(super) fn set_deepl_key(game: &Game<'_>, key: Option<&str>) -> Result<(), String> {
     let language = language(game);
-    let dir = game.native_data_dir(claims::ID);
+    let dir = game.native_data_dir(claims::SETTINGS_ID);
     let path = dir.join(DEEPL_KEY_SETTING);
     let result = if let Some(key) = key {
         if !valid_deepl_key(key) {
@@ -194,32 +194,32 @@ pub(super) fn set_deepl_key(game: &Game<'_>, key: Option<&str>) -> Result<(), St
 }
 pub(super) fn set_language(game: &Game<'_>, language: Language) {
     let _ = settings(game);
-    game.native_set_setting(claims::ID, "language", language.code());
+    game.native_set_setting(claims::SETTINGS_ID, "language", language.code());
     state(|s| s.settings.language = language);
 }
 pub(super) fn settings(game: &Game<'_>) -> Settings {
     state(|s| {
         if !s.loaded {
             s.settings.deepl_configured = game
-                .native_setting(claims::ID, DEEPL_KEY_SETTING)
+                .native_setting(claims::SETTINGS_ID, DEEPL_KEY_SETTING)
                 .as_deref()
                 .is_some_and(valid_deepl_key);
             s.settings.language = Language::from_code(
-                game.native_setting(claims::ID, "language")
+                game.native_setting(claims::SETTINGS_ID, "language")
                     .as_deref()
                     .unwrap_or_default(),
             );
             s.settings.translation = TranslationTargets::load(
-                game.native_setting(claims::ID, "chat_incoming_language")
+                game.native_setting(claims::SETTINGS_ID, "chat_incoming_language")
                     .as_deref(),
-                game.native_setting(claims::ID, "chat_outgoing_language")
+                game.native_setting(claims::SETTINGS_ID, "chat_outgoing_language")
                     .as_deref(),
                 s.settings.language,
             );
             let path = game
-                .native_data_dir(claims::ID)
+                .native_data_dir(claims::SETTINGS_ID)
                 .join("translation_preferences");
-            match game.native_setting(claims::ID, "translation_preferences") {
+            match game.native_setting(claims::SETTINGS_ID, "translation_preferences") {
                 Some(raw) => {
                     if let Ok(prefs) = TranslationTargets::decode(&raw) {
                         s.settings.translation = prefs;
@@ -231,16 +231,20 @@ pub(super) fn settings(game: &Game<'_>) -> Settings {
                     let _ = s.settings.translation.save(&path);
                 }
             }
-            s.settings.modern =
-                game.native_setting(claims::ID, "chat_modern").as_deref() != Some("false");
-            s.settings.translate =
-                game.native_setting(claims::ID, "chat_translate").as_deref() != Some("false");
+            s.settings.modern = game
+                .native_setting(claims::SETTINGS_ID, "chat_modern")
+                .as_deref()
+                != Some("false");
+            s.settings.translate = game
+                .native_setting(claims::SETTINGS_ID, "chat_translate")
+                .as_deref()
+                != Some("false");
             s.settings.preferences = game
-                .native_setting(claims::ID, "chat_preferences")
+                .native_setting(claims::SETTINGS_ID, "chat_preferences")
                 .and_then(|raw| options::Preferences::decode(&raw).ok())
                 .unwrap_or_default();
             s.priority = game
-                .native_setting(claims::ID, "chat_priority")
+                .native_setting(claims::SETTINGS_ID, "chat_priority")
                 .and_then(|r| {
                     crate::game::claim_borders_chat_priority::Preferences::decode(&r).ok()
                 })
@@ -262,7 +266,7 @@ pub(super) fn set_translation_targets(
 ) -> Result<(), String> {
     targets.save(
         &game
-            .native_data_dir(claims::ID)
+            .native_data_dir(claims::SETTINGS_ID)
             .join("translation_preferences"),
     )?;
     state(|s| {
@@ -282,7 +286,7 @@ pub(super) fn priority_configure(
     game: &Game<'_>,
     prefs: crate::game::claim_borders_chat_priority::Preferences,
 ) {
-    game.native_set_setting(claims::ID, "chat_priority", &prefs.encode());
+    game.native_set_setting(claims::SETTINGS_ID, "chat_priority", &prefs.encode());
     state(|s| s.priority = prefs);
 }
 fn priority_rule(name: &str) -> Option<crate::game::claim_borders_chat_priority::Rule> {
@@ -293,7 +297,11 @@ fn priority_rule(name: &str) -> Option<crate::game::claim_borders_chat_priority:
 }
 pub(super) fn configure(game: &Game<'_>, preferences: options::Preferences) {
     let preferences = preferences.normalized();
-    game.native_set_setting(claims::ID, "chat_preferences", &preferences.encode());
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        "chat_preferences",
+        &preferences.encode(),
+    );
     state(|s| {
         s.settings.preferences = preferences;
         s.feed.reconfigure(preferences);
@@ -309,7 +317,11 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
     } else {
         ("chat_modern", !current.modern)
     };
-    game.native_set_setting(claims::ID, key, if value { "true" } else { "false" });
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        key,
+        if value { "true" } else { "false" },
+    );
     state(|s| {
         if translation {
             s.settings.translate = value;

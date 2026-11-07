@@ -145,7 +145,10 @@ fn load_settings(game: &Game<'_>) {
         if s.loaded {
             return;
         }
-        match std::fs::read_to_string(game.native_data_dir(claims::ID).join("inventory_tools")) {
+        match std::fs::read_to_string(
+            game.native_data_dir(claims::SETTINGS_ID)
+                .join("inventory_tools"),
+        ) {
             Ok(raw) => match Preferences::decode(&raw) {
                 Ok(p) => {
                     s.preferences = p;
@@ -741,7 +744,7 @@ fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bo
         }
         Button::Done => {
             if s.writable {
-                let dir = game.native_data_dir(claims::ID);
+                let dir = game.native_data_dir(claims::SETTINGS_ID);
                 let saved = std::fs::create_dir_all(&dir).and_then(|()| {
                     let temp = dir.join("inventory_tools.tmp");
                     std::fs::write(&temp, s.preferences.encode())?;

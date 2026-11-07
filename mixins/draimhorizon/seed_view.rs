@@ -140,7 +140,7 @@ fn text(game: &Game<'_>, batch: &mut HudBatch, value: &str, pos: [f32; 2], width
     terrain::label(game, batch, value, pos, width, color);
 }
 fn save(game: &Game<'_>, s: &State) {
-    game.native_set_setting(claims::ID, "seed_map", &s.preferences.encode());
+    game.native_set_setting(claims::SETTINGS_ID, "seed_map", &s.preferences.encode());
 }
 fn filter_rect(size: [f32; 2]) -> [f32; 4] {
     model::filter_rect(size)
@@ -470,7 +470,7 @@ pub(super) fn render(
     state(|s| {
         if !s.loaded {
             if let Some(stored) = game
-                .native_setting(claims::ID, "seed_map")
+                .native_setting(claims::SETTINGS_ID, "seed_map")
                 .and_then(|v| model::Preferences::decode(&v).ok())
             {
                 s.preferences = stored;
@@ -496,7 +496,7 @@ pub(super) fn render(
             s.poi_hits.clear();
             s.drag = None;
             match poi::Found::load(
-                &game.native_data_dir(claims::ID),
+                &game.native_data_dir(claims::SETTINGS_ID),
                 &source.scope,
                 model::SEED,
             ) {
@@ -980,7 +980,7 @@ pub(super) fn mouse(
                     // an invalid existing save never creates a writable Found.
                     s.found_error = found
                         .toggle(key)
-                        .and_then(|_| found.save(&game.native_data_dir(claims::ID)))
+                        .and_then(|_| found.save(&game.native_data_dir(claims::SETTINGS_ID)))
                         .err();
                 }
             });
