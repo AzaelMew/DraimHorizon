@@ -39,6 +39,7 @@ jobs:
       - name: Format, lint and test runtime
         run: |
           python3 tools/version.py check
+          python3 -m unittest discover -s tools/tests -p "test_compatibility.py"
           python3 tools/compatibility.py
           cargo fmt --all --check
           rustfmt --edition 2024 --check mixins/claim_borders/*.rs

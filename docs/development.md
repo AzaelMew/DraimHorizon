@@ -47,7 +47,7 @@ cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/ho
 
 ## Релиз
 
-Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование и проверку пакета; полная компиляция клиента проверяется локально; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
+Workflow `.github/workflows/release.yml` при изменении исходников в `main` запускает проверки, официальное стадирование и проверку пакета; полная компиляция клиента проверяется отдельным обязательным CI workflow; затем публикует GitHub Release для версии из Cargo.toml. Повторный запуск не заменяет существующий релиз. Перед изменениями увеличивайте версию одновременно в Cargo.toml, bundle manifest и runtime VERSION.
 
 Артефакты: `draimhorizons-<version>.hnmod` и его `.sha256`. Пакет содержит только исходники и `horizon-native.json`; одинаковые исходники дают одинаковые байты. Подпись minisign пока не используется. Публикация GitHub Release не добавляет мод автоматически в каталог Horizon: для каталога требуется отдельная заявка и ревью.
 
@@ -167,8 +167,15 @@ Click-through использует `native_interaction_key` на удалённ�
 
 ## Аукцион и Horizon Nightly 2026-11-05 (0.16.0)
 
-Текущий source pin — `f319701e8c9ab657ff562250b3ba07b2d654e3bc`, native hooks API 409. Инструмент остаётся на штатном pin лаунчера `e8cd0aa38cffef49cb2e088ef716baa107148c02`. Предыдущие разделы nightly сохранены как история; `compatibility.json` определяет текущую цель.
+В версии 0.16.0 использовался source pin `f319701e8c9ab657ff562250b3ba07b2d654e3bc`, native hooks API 409. Инструмент остаётся на штатном pin лаунчера `e8cd0aa38cffef49cb2e088ef716baa107148c02`. Предыдущие разделы nightly сохранены как история; `compatibility.json` определяет текущую цель.
 
 `economy::Preferences` хранит независимые `custom_auction` / `custom_market`; старые настройки получают включённые значения по умолчанию. F8 обрабатывается до проверки активности кастомного UI, чтобы возвращать его из стандартного вида. Переключение отменяет подготовленное действие и подтверждение.
 
 `chat_feed::AuctionNotice` распознаёт подтверждения из `horizon-mods/native/smp/mixins/smp/smp_auction.rs`. Только серверный `push_component` может создать важное уведомление; player/local push не повышает приоритет. Дедупликация различает доверенные уведомления и обычный текст. История ограничена 200 записями; недавние уведомления сохраняются до 180 секунд при вытеснении обычных строк. Время показа блока задаётся существующей настройкой важных сообщений (10–180 секунд).
+
+
+## Official Nightly policy (0.24.1)
+
+Target the latest official release at https://github.com/horizon-rust/horizon/releases/tag/nightly, not Horizon main. For 0.24.1 this is Nightly 2026-11-07, source `6560641ba51a452f6bc2407baa4eb1b3be517ca8`, native hooks API 411.
+
+Run `python tools/compatibility.py` before work and publication. Refresh with `python tools/compatibility.py --update --horizon PATH`, then apply the pinned mixins and compile the real client. The tool peels the official nightly tag to its source SHA, updates source hashes and records the nightly channel; CI rejects a missing or stale Nightly. `compatibility.json` always holds the exact tested SHA, never a moving branch or tag.

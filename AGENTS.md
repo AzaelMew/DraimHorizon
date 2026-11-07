@@ -6,10 +6,12 @@ Use skills and subagents only when explicitly requested by the user.
 
 ## Start from current sources
 
-- Check Git status, remote main and release tags. Preserve local changes before updating.
+- Check Git status, DraimHorizon remote main and release tags. Preserve local changes before updating.
 - Read relevant symbols and bounded ranges with rg. Source and compatibility.json take precedence over old prose.
 - This is a native Rust mod for Horizon. Bundle ID is claim_borders. Distribution name is DraimHorizons. Artifacts use .hnmod.
-- Exact Horizon and horizon-mixins pins live in compatibility.json. Check their actual APIs. Before every task run tools/compatibility.py; if behind main, refresh with --update --horizon PATH, adapt the hooks and compile the real client. Never release with a stale pin. Exact tested SHAs remain reproducible.
+- Always use the latest **official Horizon Nightly release**: https://github.com/horizon-rust/horizon/releases/tag/nightly. Never select Horizon main, a nightly/build branch or the stable releases/latest endpoint as the target. A Nightly can include selected PRs, so its source may differ from main.
+- Resolve the official nightly tag to its full source commit SHA (peel annotated tags); keep that exact tested SHA and source hashes in compatibility.json with horizon_channel = nightly. Do not put a mutable tag or branch in horizon_revision.
+- Before every task and release run python tools/compatibility.py. If the published Nightly differs, run python tools/compatibility.py --update --horizon PATH, adapt the hooks and compile the real client. Never publish with a stale Nightly pin or silently fall back to main. Keep the independent horizon-mixins pin verified too.
 - Use the existing toolchain. Keep Windows file operations within checked paths, use -LiteralPath and UTF-8, and preserve system configuration.
 
 ## Navigation

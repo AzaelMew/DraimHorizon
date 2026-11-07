@@ -1,5 +1,12 @@
 # История версий
 
+## 0.24.1
+
+- Target the official Horizon Nightly 2026-11-07 source commit 6560641, instead of Horizon main.
+- Resolve and check the published Nightly tag in the compatibility tool and release CI. Keep the tested full commit SHA and source hashes reproducible.
+- Document the mandatory official Nightly policy in AGENTS.md; add regression checks for annotated tags, missing tags and avoiding a main fallback.
+
+
 ## 0.24.0
 
 - Show X/Y/Z in one styled minimap coordinate strip; allow editing all three coordinates in the X waypoint editor.

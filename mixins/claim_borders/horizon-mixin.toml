@@ -1,11 +1,11 @@
 [mod]
 id = "claim_borders"
-version = "0.24.0"
+version = "0.24.1"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "6cc93d13ced86a355d41764644506ae2550123cb"
+horizon_revision = "6560641ba51a452f6bc2407baa4eb1b3be517ca8"
 
 [[module]]
 id = "runtime"

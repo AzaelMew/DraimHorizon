@@ -1,4 +1,4 @@
-name: Validate current pinned Horizon client
+name: Validate official Horizon Nightly client
 on:
   push:
     branches: [main]
@@ -55,11 +55,12 @@ jobs:
           from pathlib import Path
           compat=json.loads(Path("compatibility.json").read_text())
           assert len(compat["horizon_revision"]) == 40
+          assert compat["horizon_channel"] == "nightly"
           assert compat["horizon_mixins_revision"]=="e8cd0aa38cffef49cb2e088ef716baa107148c02"
           assert compat["horizon_revision"] in Path("mixins/claim_borders/horizon-mixin.toml").read_text()
           print("COMPATIBILITY_JSON "+json.dumps(compat,separators=(",",":")))
           PY
-      - name: Check current Horizon main
+      - name: Check latest official Horizon Nightly
         run: python3 tools/compatibility.py
       - name: Test mod runtime
         run: |
