@@ -493,7 +493,45 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     Some(model::Control::NavigationWaypoint | model::Control::NavigationPlayer)
                 )
             {
-                request_tip = Some(widget.text.clone());
+                request_tip = Some(match widget.control {
+                    Some(model::Control::NavigationWaypoint) => {
+                        let mut choices = s
+                            .model
+                            .navigation_waypoints
+                            .iter()
+                            .take(8)
+                            .map(|waypoint| waypoint.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" • ");
+                        if s.model.navigation_waypoints.len() > 8 {
+                            choices.push_str(" …");
+                        }
+                        if choices.is_empty() {
+                            widget.text.clone()
+                        } else {
+                            format!("{}\n{}", widget.text, choices)
+                        }
+                    }
+                    Some(model::Control::NavigationPlayer) => {
+                        let mut choices = s
+                            .model
+                            .navigation_players
+                            .iter()
+                            .take(8)
+                            .map(|(_, name)| name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" • ");
+                        if s.model.navigation_players.len() > 8 {
+                            choices.push_str(" …");
+                        }
+                        if choices.is_empty() {
+                            widget.text.clone()
+                        } else {
+                            format!("{}\n{}", widget.text, choices)
+                        }
+                    }
+                    _ => widget.text.clone(),
+                });
             }
             let color = if widget.muted {
                 0x8995a5
