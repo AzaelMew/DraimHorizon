@@ -5045,7 +5045,7 @@ mod tests {
                         .collect();
                     assert_eq!(
                         controls.len(),
-                        if mode == BaritoneMode::Tunnel { 15 } else { 12 }
+                        if mode == BaritoneMode::Tunnel { 14 } else { 11 }
                     );
                     let status = rows.iter().find(|w| w.text == "Build status").unwrap();
                     for (i, a) in controls.iter().enumerate() {
