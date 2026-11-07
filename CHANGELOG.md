@@ -3,6 +3,7 @@
 ## 0.22.6 (unreleased / не опубликовано)
 
 ### English
+- Seed Map: click an individual POI to mark it found and dim its icon; click again to undo. Marks persist locally per server/world, account, seed and dimension. Dragging still pans; zoom into clusters before marking individual locations.
 - Chat wraps at spaces instead of splitting words that fit on a full line. Explicit newlines are preserved; oversized words/URLs retain a character-wrapping fallback to avoid clipping.
 - Localize live claim-list dimensions and observed-owner labels on the claims screen and map; waypoint dimension labels also follow the RU/EN switch. Owner and reporter names remain unchanged.
 - Preserve leading colons in chat messages such as `:3` and `:`; repeat filtering no longer merges them with messages lacking those colons.
@@ -13,6 +14,7 @@
 - Views exceeding the detailed-region cache use existing chunk overviews instead of repeatedly decoding and evicting the visible regions. Distant terrain is therefore coarser; saved exploration and its file format are unchanged.
 
 ### Русский
+- Seed Map: щелчок по отдельной структуре отмечает её найденной и затемняет значок; повторный щелчок снимает отметку. Отметки сохраняются локально отдельно для сервера/мира, аккаунта, сида и измерения. Перетаскивание двигает карту; для отметки отдельной структуры в группе сначала приблизьте карту.
 - Чат переносит текст по пробелам, не разрывая слова, помещающиеся в полную строку. Явные переводы строк сохраняются; слишком длинные слова и ссылки переносятся по символам, чтобы избежать обрезания.
 - Названия измерений в списке приватов, подписи наблюдений в меню и на карте, а также измерения в метках учитывают переключатель RU/EN. Ники владельцев и наблюдателей не изменяются.
 - Сохраняются начальные двоеточия в сообщениях чата, например `:3` и `:`; фильтр повторов больше не объединяет их с сообщениями без этих двоеточий.

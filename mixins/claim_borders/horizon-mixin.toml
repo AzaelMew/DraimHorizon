@@ -801,6 +801,12 @@ name = "claim_borders_seed_map"
 source = "seed_map.rs"
 
 [[module]]
+id = "seed-poi"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_seed_poi"
+source = "seed_poi.rs"
+
+[[module]]
 id = "seed-worker"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_seed_worker"
