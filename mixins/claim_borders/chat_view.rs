@@ -670,6 +670,7 @@ fn draw_card(
     focused: bool,
     compact: bool,
     opacity: f32,
+    metrics: options::CardMetrics,
 ) {
     let [x, y, w, h] = rect;
     let color = entry
@@ -697,7 +698,7 @@ fn draw_card(
             game,
             batch,
             ui::Icon::Info,
-            [tx + 2.0, y + 6.0, 10.0, 10.0],
+            [tx + 2.0, y + metrics.face_y + 1.0, 10.0, 10.0],
             ((alpha * 255.0) as u32) << 24 | color,
         );
         tx += 17.0;
@@ -711,8 +712,8 @@ fn draw_card(
             &mut face,
             &skin,
             (x + 6.0) as i32,
-            (y + 5.0) as i32,
-            12,
+            (y + metrics.face_y) as i32,
+            metrics.face_size,
             true,
             matches!(entry.name.as_str(), "Dinnerbone" | "Grumm"),
             rgba(255, 255, 255, (alpha * 255.0) as u8),
@@ -727,7 +728,7 @@ fn draw_card(
                 game,
                 batch,
                 row,
-                [tx, y + 6.0],
+                [tx, y + metrics.text_y],
                 if entry.kind == model::Kind::Death {
                     0xdfa8b5
                 } else {
@@ -746,7 +747,7 @@ fn draw_card(
             }
         );
         for (i, row) in rows.iter().enumerate() {
-            let line_y = y + 6.0 + i as f32 * 10.0;
+            let line_y = y + metrics.text_y + i as f32 * 10.0;
             if i == 0
                 && let Some(body) = row.strip_prefix(&prefix)
             {
@@ -764,13 +765,13 @@ fn draw_card(
             }
         }
     } else {
-        text(game, batch, &name, [tx, y + 4.0], color, alpha);
+        text(game, batch, &name, [tx, y + metrics.header_y], color, alpha);
         if entry.show_original {
             text(
                 game,
                 batch,
                 current_language().text("ОРИГ", "ORIG"),
-                [x + w - 29.0, y + 4.0],
+                [x + w - 29.0, y + metrics.header_y],
                 0x7e899f,
                 alpha,
             );
@@ -779,7 +780,7 @@ fn draw_card(
                 game,
                 batch,
                 current_language().text("RU", "EN"),
-                [x + w - 17.0, y + 4.0],
+                [x + w - 17.0, y + metrics.header_y],
                 0x7e899f,
                 alpha,
             );
@@ -789,7 +790,7 @@ fn draw_card(
                 game,
                 batch,
                 row,
-                [tx, y + 15.0 + i as f32 * 10.0],
+                [tx, y + metrics.body_y + i as f32 * 10.0],
                 0xe7eaf2,
                 alpha,
             );
@@ -874,8 +875,8 @@ fn paint_region<'a>(
         } else {
             y - region[1]
         };
-        let padding = if inline { 10.0 } else { 20.0 };
-        let max_rows = (((available - padding) / 10.0).floor() as usize).min(context.line_limit);
+        let metrics = options::CardMetrics::new(p.compact_messages, inline, compact);
+        let max_rows = metrics.max_rows(available).min(context.line_limit);
         if max_rows == 0 {
             break;
         }
@@ -885,22 +886,18 @@ fn paint_region<'a>(
                 last.push('…');
             }
         }
-        let h = if compact {
-            20.0
-        } else {
-            (padding + rows.len() as f32 * 10.0).max(if inline { 22.0 } else { 30.0 })
-        };
+        let h = metrics.height(rows.len());
         if h > available {
             break;
         }
         let card_y = if context.layout.top {
             let at = y;
-            y += h + 4.0;
+            y += h + metrics.gap;
             at
         } else {
             y -= h;
             let at = y;
-            y -= 4.0;
+            y -= metrics.gap;
             at
         };
         // Stable cards while reading/clicking; appearance uses alpha only.
@@ -918,6 +915,7 @@ fn paint_region<'a>(
             context.focused || !context.translate,
             compact,
             p.opacity,
+            metrics,
         );
         batch.clip_since(
             start,

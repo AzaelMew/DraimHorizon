@@ -1,8 +1,8 @@
 // Fullscreen seed atlas with dimension tabs, searchable icon filters and native item markers.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_map as map, claim_borders_map_view as terrain,
-    claim_borders_seed_map as model, claim_borders_seed_worker as worker,
-    claim_borders_ui_view as ui,
+    claim_borders_seed_map as model, claim_borders_seed_poi as poi,
+    claim_borders_seed_worker as worker, claim_borders_ui_view as ui,
 };
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{hud::HudBatch, items::ItemStack};
@@ -28,6 +28,10 @@ struct State {
     offset: usize,
     biome_tab: bool,
     right_click: Option<(std::time::Instant, usize, [f32; 2])>,
+    found: Option<poi::Found>,
+    found_error: Option<String>,
+    poi_click: Option<poi::Click>,
+    poi_hits: Vec<poi::Hit>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -55,6 +59,10 @@ impl Default for State {
             offset: 0,
             biome_tab: false,
             right_click: None,
+            found: None,
+            found_error: None,
+            poi_click: None,
+            poi_hits: Vec::new(),
         }
     }
 }
@@ -79,12 +87,18 @@ pub(super) fn reset() {
         s.drag = None;
         s.right_click = None;
         s.scope.clear();
+        s.found = None;
+        s.found_error = None;
+        s.poi_click = None;
+        s.poi_hits.clear();
         s.search_focus = false;
     });
 }
 /// Opening M always prepares the seed atlas in the background, with explored terrain selected.
 pub(super) fn open(source: &map::Snapshot, _focus: &Option<(String, i32, i32)>) {
     state(|s| {
+        s.poi_click = None;
+        s.poi_hits.clear();
         s.active = false;
         s.drag = None;
         s.right_click = None;
@@ -113,6 +127,8 @@ pub(super) fn open(source: &map::Snapshot, _focus: &Option<(String, i32, i32)>) 
 }
 pub(super) fn show() {
     state(|s| {
+        s.poi_click = None;
+        s.poi_hits.clear();
         s.active = true;
         s.requested = None;
         s.drag = None;
@@ -474,6 +490,26 @@ pub(super) fn render(
             s.requested = None;
             s.scope = source.scope.clone();
             s.error = None;
+            s.poi_click = None;
+            s.poi_hits.clear();
+            s.drag = None;
+            match poi::Found::load(
+                &game.native_data_dir(claims::ID),
+                &source.scope,
+                model::SEED,
+            ) {
+                Ok(found) => {
+                    s.found = Some(found);
+                    s.found_error = None;
+                }
+                Err(error) => {
+                    s.found = None;
+                    s.found_error = Some(error);
+                }
+            }
+        }
+        if let Some(click) = &mut s.poi_click {
+            click.update(screen.mouse);
         }
         if let Some((mouse, center)) = s.drag {
             let scale = f64::from(128.0 * s.views[s.selected].blocks_per_pixel / r[3]);
@@ -545,6 +581,7 @@ pub(super) fn render(
             )
         };
         let covered = s.filters && model::contains(filter_rect(s.size), screen.mouse);
+        s.poi_hits.clear();
         if let Some(im) = s.image.as_ref().filter(|im| {
             im.query.dimension == s.selected && im.query.preferences.same_biomes(&s.preferences)
         }) {
@@ -577,25 +614,39 @@ pub(super) fn render(
                 }
                 let mut clusters = std::collections::BTreeMap::<
                     (i32, i32),
-                    (usize, [f32; 2], &worker::Mark),
+                    (usize, usize, [f32; 2], &worker::Mark),
                 >::new();
                 for mark in panel.marks.iter().filter(|m| s.preferences.shows(&m.id)) {
                     let at = view.pixel_aspect(mark.position, 128.0, aspect);
                     let at = [r[0] + at[0] / 128.0 * r[2], r[1] + at[1] / 128.0 * r[3]];
                     if model::contains(r, at) {
+                        let found = poi::Poi::new(s.selected, &mark.id, mark.position)
+                            .is_some_and(|key| s.found.as_ref().is_some_and(|f| f.contains(&key)));
                         let key = ((at[0] / 22.0).floor() as i32, (at[1] / 22.0).floor() as i32);
                         clusters
                             .entry(key)
-                            .and_modify(|v| v.0 += 1)
-                            .or_insert((1, at, mark));
+                            .and_modify(|v| {
+                                v.0 += 1;
+                                v.1 += usize::from(found);
+                            })
+                            .or_insert((1, usize::from(found), at, mark));
                     }
                 }
                 let first = batch.vertices.len();
-                for (_, (count, at, mark)) in clusters {
+                for (_, (count, found_count, at, mark)) in clusters {
                     let Some(i) = model::structure_index(&mark.id) else {
                         continue;
                     };
                     let def = &model::STRUCTURES[i];
+                    let found = found_count == count;
+                    if let Some(key) = poi::Poi::new(s.selected, &mark.id, mark.position) {
+                        s.poi_hits.push(poi::Hit {
+                            rect: [at[0] - 11.0, at[1] - 11.0, 22.0, 22.0],
+                            poi: key,
+                            count,
+                        });
+                    }
+                    let marker_start = batch.vertices.len();
                     ui::rounded(
                         game,
                         batch,
@@ -621,24 +672,33 @@ pub(super) fn render(
                             0xffe6a6,
                         );
                     }
+                    for vertex in &mut batch.vertices[marker_start..] {
+                        vertex.color = poi::dim_color(vertex.color, found);
+                    }
                     if !covered
                         && (screen.mouse[0] - at[0]).abs() < 11.0
                         && (screen.mouse[1] - at[1]).abs() < 11.0
                     {
                         info = format!(
-                            "{} · X {:.0} Z {:.0}{}",
+                            "{} · X {:.0} Z {:.0} · {}",
                             def.label_in(language()),
                             mark.position[0],
                             mark.position[1],
                             if count > 1 {
                                 format!(
-                                    " · {} {}: {}",
+                                    "{} {}: {}",
                                     language().text("ещё", "more"),
                                     count - 1,
                                     language().text("приблизьте", "zoom in")
                                 )
+                            } else if found {
+                                language()
+                                    .text("Найдено · ЛКМ: снять отметку", "Found · LMB: unmark")
+                                    .into()
                             } else {
-                                String::new()
+                                language()
+                                    .text("ЛКМ: отметить найденным", "LMB: mark found")
+                                    .into()
                             }
                         );
                     }
@@ -738,6 +798,15 @@ pub(super) fn render(
                 }
             }
         }
+        if let Some(error) = &s.found_error {
+            info = format!(
+                "{}: {error}",
+                language().text(
+                    "Метки POI не сохранены/недоступны",
+                    "POI marks not saved/unavailable"
+                )
+            );
+        }
         text(
             game,
             batch,
@@ -750,8 +819,8 @@ pub(super) fn render(
             game,
             batch,
             language().text(
-                "ЛКМ: двигать · колесо: масштаб · 2×ПКМ: метка Y64 · F: фильтры",
-                "LMB: pan · wheel: zoom · 2×RMB: Y64 waypoint · F: filters",
+                "ЛКМ по POI: найдено · тянуть: двигать · колесо: масштаб · 2×ПКМ: метка · F: фильтры",
+                "Click POI: found · drag: pan · wheel: zoom · 2×RMB: waypoint · F: filters",
             ),
             [8.0, s.size[1] - 12.0],
             s.size[0] - 16.0,
@@ -811,6 +880,11 @@ fn draw_claims(
     batch.clip_since(start, r[0], r[1], r[0] + r[2], r[1] + r[3]);
 }
 fn act(game: &Game<'_>, control: Control) {
+    state(|s| {
+        s.poi_click = None;
+        s.poi_hits.clear();
+        s.drag = None;
+    });
     match control {
         Control::Explored => state(|s| {
             s.active = false;
@@ -868,11 +942,41 @@ pub(super) fn mouse(
     button: i32,
     pressed: bool,
 ) -> bool {
-    if !active() {
+    if !active() || !game.native_on(claims::ID) {
         return false;
     }
     if !pressed {
-        state(|s| s.drag = None);
+        if button == 0 {
+            let scope = terrain::seed_source().map(|s| s.scope);
+            state(|s| {
+                s.drag = None;
+                let Some(click) = s.poi_click.take() else {
+                    return;
+                };
+                if scope.as_deref() != Some(s.scope.as_str()) {
+                    return;
+                }
+                let blocked = !model::contains(s.rect, screen.mouse)
+                    || s.filters && model::contains(filter_rect(s.size), screen.mouse)
+                    || controls(s.size)
+                        .iter()
+                        .any(|(_, r, _)| model::contains(*r, screen.mouse));
+                let Some(key) = click.finish(screen.mouse) else {
+                    return;
+                };
+                if poi::target(&s.poi_hits, screen.mouse, blocked) != Some(key.clone()) {
+                    return;
+                }
+                if let Some(found) = &mut s.found {
+                    // Failed saves retain the edit in memory and expose an error;
+                    // an invalid existing save never creates a writable Found.
+                    s.found_error = found
+                        .toggle(key)
+                        .and_then(|_| found.save(&game.native_data_dir(claims::ID)))
+                        .err();
+                }
+            });
+        }
         return true;
     }
     let mut control = None;
@@ -983,6 +1087,12 @@ pub(super) fn mouse(
         }
         if button == 0 {
             s.drag = Some((screen.mouse, s.views[s.selected].center));
+            s.poi_click = if s.found.is_some() {
+                poi::target(&s.poi_hits, screen.mouse, false)
+                    .map(|key| poi::Click::new(key, screen.mouse))
+            } else {
+                None
+            };
         }
         if button == 1 {
             let double = s.right_click.as_ref().is_some_and(|(t, i, p)| {
@@ -1040,6 +1150,8 @@ pub(super) fn scroll(
             return;
         }
         if model::contains(s.rect, screen.mouse) {
+            s.poi_click = None;
+            s.poi_hits.clear();
             let view = &mut s.views[s.selected];
             let before = model::world(*view, s.rect, screen.mouse);
             view.blocks_per_pixel = (view.blocks_per_pixel * if amount > 0.0 { 0.5 } else { 2.0 })

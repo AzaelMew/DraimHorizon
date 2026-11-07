@@ -83,6 +83,9 @@ pub mod input;
 
 #[path = "../mixins/claim_borders/seed_map.rs"]
 pub mod seed_map;
+pub use seed_map as claim_borders_seed_map;
+#[path = "../mixins/claim_borders/seed_poi.rs"]
+pub mod seed_poi;
 
 #[path = "../mixins/claim_borders/experimental.rs"]
 pub mod experimental;

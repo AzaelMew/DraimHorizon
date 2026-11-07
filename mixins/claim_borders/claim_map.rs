@@ -200,7 +200,41 @@ pub struct Cell {
     pub x: i32,
     pub z: i32,
     pub owner: String,
+    // Keep observation metadata separate from identity and the active language.
+    pub reporter: Option<String>,
     pub own: bool,
+}
+impl Cell {
+    pub fn owner_label(&self, language: Language) -> String {
+        let owner = if self.own {
+            language.text("Вы", "You")
+        } else {
+            &self.owner
+        };
+        match &self.reporter {
+            Some(reporter) => format!(
+                "{owner} ({} · {reporter})",
+                language.text("наблюдение", "observation")
+            ),
+            None => owner.to_owned(),
+        }
+    }
+    pub fn row_label(&self, player: [f64; 3], dimension: &str, language: Language) -> String {
+        let distance =
+            (f64::from(self.x) + 8.0 - player[0]).hypot(f64::from(self.z) + 8.0 - player[2]);
+        format!(
+            "{} · [{},{}] · {} · {}",
+            self.owner_label(language),
+            self.x.div_euclid(16),
+            self.z.div_euclid(16),
+            dimension_label_in(&self.dimension, language),
+            if self.dimension == dimension {
+                format!("{distance:.0} {}", language.text("м", "m"))
+            } else {
+                language.text("другой мир", "other world").into()
+            }
+        )
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Mark {
@@ -540,6 +574,121 @@ pub fn paint(
 ) {
     paint_aspect(image, size, view, dimension, snapshot, p, 1.0);
 }
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayRect {
+    pub rect: [f32; 4],
+    pub color: u32,
+}
+
+/// Screen-space overlays, independent of the terrain texture's resolution/camera.
+pub fn overlay_rects(
+    view: View,
+    dimension: &str,
+    snapshot: &Snapshot,
+    p: Preferences,
+    viewport: [f32; 4],
+) -> Vec<OverlayRect> {
+    let [vx, vy, width, height] = viewport;
+    let mut out = Vec::new();
+    if !viewport.iter().all(|v| v.is_finite())
+        || width <= 0.0
+        || height <= 0.0
+        || !view.blocks_per_pixel.is_finite()
+        || view.blocks_per_pixel <= 0.0
+        || !view.center.iter().all(|v| v.is_finite())
+    {
+        return out;
+    }
+    let aspect = width / height;
+    if !(0.1..=32.0).contains(&aspect) {
+        return out;
+    }
+    let project = |world| {
+        let xy = view.pixel_aspect(world, 128.0, aspect);
+        [vx + xy[0] * width / 128.0, vy + xy[1] * height / 128.0]
+    };
+    let mut push = |rect: [f32; 4], color| {
+        let left = rect[0].max(vx);
+        let top = rect[1].max(vy);
+        let right = (rect[0] + rect[2]).min(vx + width);
+        let bottom = (rect[1] + rect[3]).min(vy + height);
+        if left < right && top < bottom {
+            out.push(OverlayRect {
+                rect: [left, top, right - left, bottom - top],
+                color,
+            });
+        }
+    };
+    if p.grid && view.blocks_per_pixel <= 8.0 {
+        let low = view.world_aspect([0.0, 0.0], 128.0, aspect);
+        let high = view.world_aspect([128.0, 128.0], 128.0, aspect);
+        for axis in 0..2 {
+            let first = (low[axis] / 16.0).ceil() as i64;
+            let last = (high[axis] / 16.0).floor() as i64;
+            // GUI aspect is bounded in practice; keep malformed/extreme inputs bounded too.
+            for line in first..=last.min(first + 4095) {
+                let mut world = view.center;
+                world[axis] = line as f64 * 16.0;
+                let xy = project(world);
+                push(
+                    if axis == 0 {
+                        [xy[0] - 0.5, vy, 1.0, height]
+                    } else {
+                        [vx, xy[1] - 0.5, width, 1.0]
+                    },
+                    0x2ec0c9d5,
+                );
+            }
+        }
+    }
+    let mut cells = BTreeMap::new();
+    for c in snapshot
+        .cells
+        .iter()
+        .filter(|c| c.dimension == dimension && ((c.own && p.own) || (!c.own && p.friends)))
+    {
+        if c.own || !cells.contains_key(&(c.x, c.z)) {
+            cells.insert((c.x, c.z), c);
+        }
+    }
+    for ((x, z), cell) in cells {
+        let color = if cell.foreign {
+            0xe45b65
+        } else if cell.own {
+            snapshot.own_color
+        } else {
+            snapshot.friend_color
+        } & 0x00ff_ffff;
+        let at = project([f64::from(x), f64::from(z)]);
+        let end = project([f64::from(x) + 16.0, f64::from(z) + 16.0]);
+        if view.blocks_per_pixel > 8.0 {
+            let center = project([f64::from(x) + 8.0, f64::from(z) + 8.0]);
+            push(
+                [center[0] - 1.5, center[1] - 1.5, 3.0, 3.0],
+                0xff00_0000 | color,
+            );
+            continue;
+        }
+        let w = end[0] - at[0];
+        let h = end[1] - at[1];
+        let alpha = (p.fill.clamp(0.0, 0.8) * 255.0).round() as u32;
+        if alpha > 0 {
+            push([at[0], at[1], w, h], alpha << 24 | color);
+        }
+        let t = f32::from(p.outline.clamp(1, 3)).min(w * 0.5).min(h * 0.5);
+        // Clip after constructing borders: do not invent a border at the viewport edge.
+        for r in [
+            [at[0], at[1], w, t],
+            [at[0], end[1] - t, w, t],
+            [at[0], at[1] + t, t, h - 2.0 * t],
+            [end[0] - t, at[1] + t, t, h - 2.0 * t],
+        ] {
+            push(r, 0xf200_0000 | color);
+        }
+    }
+    out
+}
+
 pub fn paint_aspect(
     image: &mut [u8],
     size: usize,
@@ -555,84 +704,230 @@ pub fn paint_aspect(
     {
         return;
     }
-    let mut cells = BTreeMap::new();
-    for c in snapshot
-        .cells
-        .iter()
-        .filter(|c| c.dimension == dimension && ((c.own && p.own) || (!c.own && p.friends)))
-    {
-        let key = (c.x, c.z);
-        if c.own || !cells.contains_key(&key) {
-            cells.insert(key, (c.own, c.foreign));
-        }
+    if !aspect.is_finite() || aspect <= 0.0 {
+        return;
     }
-    for y in 0..size {
-        for x in 0..size {
-            let world = view.world_aspect([x as f32 + 0.5, y as f32 + 0.5], size as f32, aspect);
-            let bx = origin(world[0]);
-            let bz = origin(world[1]);
-            let lx = world[0] - bx as f64;
-            let lz = world[1] - bz as f64;
-            let edge = lx.min(lz).min(16.0 - lx).min(16.0 - lz);
-            let pixel = &mut image[(y * size + x) * 4..(y * size + x + 1) * 4];
-            if p.grid
-                && view.blocks_per_pixel <= 8.0
-                && edge < f64::from(view.blocks_per_pixel) * 0.45
-            {
-                blend(pixel, 0xc0c9d5, 0.18);
-            }
-            if let Some((own, observed)) = cells.get(&(bx, bz)) {
-                let color = if *observed {
-                    0xe45b65
-                } else if *own {
-                    snapshot.own_color
-                } else {
-                    snapshot.friend_color
-                };
-                blend(pixel, color, p.fill);
-                if edge < f64::from(view.blocks_per_pixel) * f64::from(p.outline) {
-                    blend(pixel, color, 0.95);
-                }
-            }
-        }
-    }
-    let mut dot = |position: [f64; 2], color: u32, radius: i32| {
-        let xy = view.pixel_aspect(position, size as f32, aspect);
-        if !xy.iter().all(|v| v.is_finite()) {
-            return;
-        }
-        let (cx, cy) = (xy[0].round() as i32, xy[1].round() as i32);
-        for y in cy - radius..=cy + radius {
-            for x in cx - radius..=cx + radius {
-                if x >= 1 && y >= 1 && (x as usize) < size - 1 && (y as usize) < size - 1 {
-                    let i = (y as usize * size + x as usize) * 4;
-                    blend(&mut image[i..i + 4], color, 1.0);
-                }
-            }
-        }
+    let logical = View {
+        blocks_per_pixel: view.blocks_per_pixel * size as f32 / 128.0,
+        ..view
     };
-    if view.blocks_per_pixel > 8.0 {
-        for c in snapshot
-            .cells
-            .iter()
-            .filter(|c| c.dimension == dimension && ((c.own && p.own) || (!c.own && p.friends)))
-        {
-            dot(
-                [c.x as f64 + 8.0, c.z as f64 + 8.0],
-                if c.foreign {
-                    0xe45b65
-                } else if c.own {
-                    snapshot.own_color
-                } else {
-                    snapshot.friend_color
-                },
-                1,
-            );
+    for overlay in overlay_rects(
+        logical,
+        dimension,
+        snapshot,
+        p,
+        [0.0, 0.0, size as f32 * aspect, size as f32],
+    ) {
+        let [x, y, w, h] = overlay.rect;
+        for py in (y.floor().max(0.0) as usize)..((y + h).ceil() as usize).min(size) {
+            for px in ((x / aspect).floor().max(0.0) as usize)
+                ..(((x + w) / aspect).ceil() as usize).min(size)
+            {
+                let i = (py * size + px) * 4;
+                blend(
+                    &mut image[i..i + 4],
+                    overlay.color,
+                    (overlay.color >> 24) as f32 / 255.0,
+                );
+            }
         }
     }
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_claim_labels_follow_the_selected_language() {
+        let mut cell = Cell {
+            dimension: "minecraft:overworld".into(),
+            x: -1936,
+            z: 48,
+            owner: "Armagidoshka".into(),
+            own: false,
+            foreign: true,
+            reporter: Some("MarlBerry".into()),
+        };
+        assert_eq!(
+            cell.owner_label(Language::English),
+            "Armagidoshka (observation · MarlBerry)"
+        );
+        assert_eq!(
+            cell.owner_label(Language::Russian),
+            "Armagidoshka (наблюдение · MarlBerry)"
+        );
+        let english = cell.row_label(
+            [-1928.0, 64.0, 56.0],
+            "minecraft:overworld",
+            Language::English,
+        );
+        assert_eq!(
+            english,
+            "Armagidoshka (observation · MarlBerry) · [-121,3] · Overworld · 0 m"
+        );
+        let russian = cell.row_label(
+            [-1928.0, 64.0, 56.0],
+            "minecraft:overworld",
+            Language::Russian,
+        );
+        assert!(russian.contains("Обычный мир"));
+        // Switching back must render from metadata, not reuse a localized owner string.
+        assert_eq!(
+            cell.owner_label(Language::English),
+            "Armagidoshka (observation · MarlBerry)"
+        );
+        assert_eq!(cell.owner, "Armagidoshka");
+        cell.reporter = None;
+        assert_eq!(cell.owner_label(Language::English), "Armagidoshka");
+        cell.own = true;
+        assert_eq!(cell.owner_label(Language::English), "You");
+        assert_eq!(cell.owner_label(Language::Russian), "Вы");
+        for (dim, name) in [
+            ("minecraft:the_nether", "Nether"),
+            ("minecraft:the_end", "End"),
+        ] {
+            cell.dimension = dim.into();
+            assert!(
+                cell.row_label([0.0; 3], "minecraft:overworld", Language::English)
+                    .contains(&format!("{name} · other world"))
+            );
+        }
+    }
+
+    #[test]
+    fn overlay_geometry_keeps_priority_filters_and_clips_without_false_edges() {
+        let own = Cell {
+            dimension: "minecraft:overworld".into(),
+            x: 0,
+            z: 0,
+            owner: "fixture".into(),
+            own: true,
+            foreign: false,
+            reporter: None,
+        };
+        let s = Snapshot {
+            own_color: 0x8b7bff,
+            friend_color: 0x123456,
+            cells: vec![
+                Cell {
+                    own: false,
+                    foreign: true,
+                    ..own.clone()
+                },
+                own,
+            ],
+            ..Snapshot::default()
+        };
+        let view = View {
+            center: [8.125, 8.25],
+            blocks_per_pixel: 0.25,
+        };
+        let viewport = [10.0, 20.0, 512.0, 256.0];
+        let rects = overlay_rects(
+            view,
+            "minecraft:overworld",
+            &s,
+            Preferences::default(),
+            viewport,
+        );
+        assert_eq!(rects.len(), 5);
+        assert!(rects.iter().all(|r| r.color & 0xffffff == s.own_color));
+        assert!(
+            rects
+                .iter()
+                .filter(|r| r.color >> 24 > 200)
+                .all(|r| r.rect[2] == 1.0 || r.rect[3] == 1.0)
+        );
+        assert!(
+            overlay_rects(
+                view,
+                "minecraft:the_nether",
+                &s,
+                Preferences::default(),
+                viewport
+            )
+            .is_empty()
+        );
+        assert!(
+            overlay_rects(
+                view,
+                "minecraft:overworld",
+                &s,
+                Preferences {
+                    own: false,
+                    friends: false,
+                    ..Preferences::default()
+                },
+                viewport
+            )
+            .is_empty()
+        );
+        // Zoom in until the claim surrounds the viewport: fill remains, but
+        // its real four borders are all offscreen and must not become a frame.
+        let rects = overlay_rects(
+            View {
+                blocks_per_pixel: 0.05,
+                ..view
+            },
+            "minecraft:overworld",
+            &s,
+            Preferences::default(),
+            viewport,
+        );
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].rect, viewport);
+        assert!(rects[0].color >> 24 < 200);
+    }
+
+    #[test]
+    fn claim_edges_survive_fractional_pan_and_wide_views() {
+        let s = Snapshot {
+            own_color: 0x00ff00,
+            cells: vec![Cell {
+                dimension: "minecraft:overworld".into(),
+                x: -16,
+                z: -16,
+                owner: "fixture".into(),
+                reporter: None,
+                own: true,
+                foreign: false,
+            }],
+            ..Snapshot::default()
+        };
+        for aspect in [1.0, 2.0, 3.0] {
+            for offset in [0.0, 0.125, 0.25, 0.375] {
+                let mut pixels = vec![0; 512 * 512 * 4];
+                paint_aspect(
+                    &mut pixels,
+                    512,
+                    View {
+                        center: [-8.0 + offset, -8.0 + offset],
+                        blocks_per_pixel: 0.5,
+                    },
+                    "minecraft:overworld",
+                    &s,
+                    Preferences::default(),
+                    aspect,
+                );
+                let strong = |x: usize, y: usize| pixels[(y * 512 + x) * 4 + 1] > 200;
+                assert!(
+                    (0..256).any(|x| strong(x, 256)),
+                    "left aspect={aspect} offset={offset}"
+                );
+                assert!(
+                    (256..512).any(|x| strong(x, 256)),
+                    "right aspect={aspect} offset={offset}"
+                );
+                assert!(
+                    (0..256).any(|y| strong(256, y)),
+                    "top aspect={aspect} offset={offset}"
+                );
+                assert!(
+                    (256..512).any(|y| strong(256, y)),
+                    "bottom aspect={aspect} offset={offset}"
+                );
+            }
+        }
+    }
+
     use super::*;
     #[test]
     fn english_dimension_labels_have_no_russian_text() {
@@ -740,6 +1035,7 @@ mod tests {
                     x: 32,
                     z: 0,
                     owner: "Вы".into(),
+                    reporter: None,
                     own: true,
                     foreign: false,
                 },
@@ -748,6 +1044,7 @@ mod tests {
                     x: -16,
                     z: 0,
                     owner: "Друг".into(),
+                    reporter: None,
                     own: false,
                     foreign: false,
                 },
@@ -756,6 +1053,7 @@ mod tests {
                     x: 0,
                     z: 0,
                     owner: "Вы".into(),
+                    reporter: None,
                     own: true,
                     foreign: false,
                 },
@@ -798,6 +1096,7 @@ mod tests {
                 owner: "Вы".into(),
                 own: true,
                 foreign: false,
+                reporter: None,
             }],
             ..Snapshot::default()
         };
@@ -844,7 +1143,8 @@ mod observed_tests {
                 dimension: "minecraft:overworld".into(),
                 x: 0,
                 z: 0,
-                owner: "Alex (наблюдение)".into(),
+                owner: "Alex".into(),
+                reporter: Some("Steve".into()),
                 own: false,
             }],
             own_color: 0x00ff00,

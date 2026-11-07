@@ -474,7 +474,9 @@ pub fn classify(line: &str) -> (Kind, String, String, Option<bool>) {
             return (
                 Kind::Message,
                 name.into(),
-                body.trim_start_matches([' ', ':']).into(),
+                // Only an adjacent ": " belongs to the name separator.
+                // Colons after the separator's whitespace are message content.
+                body.strip_prefix(": ").unwrap_or(body).trim_start().into(),
                 None,
             );
         }
@@ -824,6 +826,17 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
         }
         line.push(c);
         if measure(&line) > width.max(12.0) && line.chars().count() > 1 {
+            if let Some(boundary) = line.rfind(char::is_whitespace) {
+                let head = line[..boundary].trim_end();
+                if !head.is_empty() {
+                    let remainder = line[boundary..].trim_start().to_owned();
+                    rows.push(head.to_owned());
+                    line = remainder;
+                    continue;
+                }
+            }
+            // A word wider than an empty line has no usable space boundary.
+            // Retain the UTF-8-safe fallback instead of clipping or dropping it.
             line.pop();
             rows.push(std::mem::take(&mut line));
             line.push(c);
@@ -837,6 +850,50 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chat_wrap_moves_a_whole_word_to_the_next_line() {
+        let measure = |s: &str| s.chars().count() as f32;
+        assert_eq!(
+            wrap("hello wonderful world", 16.0, measure),
+            ["hello wonderful", "world"]
+        );
+        assert_eq!(
+            wrap("Steve: hello beautiful world", 18.0, measure),
+            ["Steve: hello", "beautiful world"]
+        );
+        assert_eq!(
+            wrap("Привет красивый мир", 12.0, measure),
+            ["Привет", "красивый мир"]
+        );
+        assert_eq!(
+            wrap("hello\u{2003}wonderful", 12.0, measure),
+            ["hello", "wonderful"]
+        );
+        assert_eq!(wrap("one  two three", 12.0, measure), ["one  two", "three"]);
+    }
+    #[test]
+    fn chat_wrap_preserves_newlines_and_bounds_oversized_words() {
+        let measure = |s: &str| s.chars().count() as f32;
+        assert_eq!(
+            wrap("hello\n\nworld", 12.0, measure),
+            ["hello", "", "world"]
+        );
+        assert_eq!(wrap("", 12.0, measure), [""]);
+        let word = "длинноесловобезпробелов";
+        let rows = wrap(word, 12.0, measure);
+        assert!(rows.iter().all(|r| measure(r) <= 12.0));
+        assert_eq!(rows.concat(), word);
+    }
+    #[test]
+    fn chat_wrap_uses_measured_width_instead_of_character_count() {
+        let measure = |s: &str| s.chars().map(|c| if c == 'W' { 4.0 } else { 1.0 }).sum();
+        assert_eq!(wrap("iii WWW iii", 12.0, measure), ["iii", "WWW", "iii"]);
+        assert_eq!(wrap("hello world!", 12.0, measure), ["hello world!"]);
+        let text = "word ".repeat(500);
+        let rows = wrap(&text, 12.0, measure);
+        assert!(rows.iter().all(|row| measure(row) <= 12.0));
+        assert!(rows.concat().chars().count() <= 2048);
+    }
     #[test]
     fn archived_auction_receipts_cannot_evict_new_live_chat() {
         let p = Preferences::default();
@@ -1140,6 +1197,39 @@ mod tests {
         assert_eq!(classify("Steve fell from a high place").0, Kind::Death);
         assert_eq!(classify("<Steve> Alex joined the game").0, Kind::Message);
         assert_eq!(classify("(Steve) hello").2, "hello");
+    }
+    #[test]
+    fn chat_bodies_preserve_leading_colons() {
+        for header in ["<Steve> ", "(Steve) ", "<Steve>: ", "(Steve): "] {
+            for body in [":3", ":", "::", ": hello", ":: привет", "hello"] {
+                let line = format!("{header}{body}");
+                let mut feed = Feed::default();
+                feed.push_player_component(
+                    &line,
+                    &serde_json::json!({"text": line}),
+                    0,
+                    Preferences::default(),
+                )
+                .unwrap();
+                let entry = &feed.entries[0];
+                assert_eq!(entry.kind, Kind::Message);
+                assert_eq!(entry.name, "Steve");
+                assert_eq!(entry.original, body, "line={line:?}");
+                for language in [Language::English, Language::Russian] {
+                    assert_eq!(entry.display_body(false, language), body);
+                }
+            }
+        }
+    }
+    #[test]
+    fn colon_emotes_do_not_merge_with_different_message_bodies() {
+        let mut feed = Feed::default();
+        let p = Preferences::default();
+        let emote = feed.push_with("<Steve> :3", 0, p).unwrap();
+        let digit = feed.push_with("<Steve> 3", 1, p).unwrap();
+        assert_ne!(emote, digit);
+        assert_eq!(feed.entries.len(), 2);
+        assert_eq!(feed.push_with("<Steve> :3", 2, p), Some(emote));
     }
     #[test]
     fn unicode_wrap_and_delayed_translation_after_reset() {

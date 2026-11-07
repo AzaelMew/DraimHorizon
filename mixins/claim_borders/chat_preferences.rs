@@ -87,6 +87,7 @@ pub struct Preferences {
     pub width: u16,
     pub height: u16,
     pub scale: f32,
+    pub compact_messages: bool,
     pub placement: Placement,
     pub offset_x: i16,
     pub offset_y: i16,
@@ -106,6 +107,7 @@ impl Default for Preferences {
             width: 320,
             height: 180,
             scale: 1.0,
+            compact_messages: false,
             placement: Placement::BottomLeft,
             offset_x: 0,
             offset_y: 0,
@@ -145,7 +147,7 @@ impl Preferences {
     }
     pub fn encode(self) -> String {
         let p = self.normalized();
-        json!({"schema":1,"width":p.width,"height":p.height,"scale":p.scale,"placement":p.placement as u8,
+        json!({"schema":1,"width":p.width,"height":p.height,"scale":p.scale,"compact_messages":p.compact_messages,"placement":p.placement as u8,
             "offset_x":p.offset_x,"offset_y":p.offset_y,"notifications":p.notifications as u8,
             "presence":p.presence,"deaths":p.deaths,"duration":p.duration,"opacity":p.opacity,
             "event_width":p.event_width,"repeats":p.repeats as u8,"repeat_window":p.repeat_window,"ignore_prefix":p.ignore_prefix}).to_string()
@@ -172,6 +174,7 @@ impl Preferences {
         p.repeat_window = number("repeat_window", p.repeat_window);
         p.ignore_prefix = number("ignore_prefix", 0).min(64) as u8;
         p.scale = v["scale"].as_f64().unwrap_or(1.0) as f32;
+        p.compact_messages = v["compact_messages"].as_bool().unwrap_or(false);
         p.opacity = v["opacity"].as_f64().unwrap_or(0.86) as f32;
         p.offset_x = v["offset_x"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
         p.offset_y = v["offset_y"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
@@ -195,6 +198,61 @@ impl Preferences {
             _ => RepeatMode::Recent,
         };
         Ok(p.normalized())
+    }
+}
+// Shared by card painting and row fitting so compact hit boxes match the visuals.
+#[derive(Clone, Copy, Debug)]
+pub struct CardMetrics {
+    pub gap: f32,
+    pub text_y: f32,
+    pub header_y: f32,
+    pub body_y: f32,
+    pub face_y: f32,
+    pub face_size: i32,
+    padding: f32,
+    minimum: f32,
+    summary: bool,
+}
+impl CardMetrics {
+    pub fn new(dense: bool, inline: bool, summary: bool) -> Self {
+        Self {
+            gap: if dense { 1.0 } else { 4.0 },
+            text_y: if dense { 3.0 } else { 6.0 },
+            header_y: if dense { 3.0 } else { 4.0 },
+            body_y: if dense { 13.0 } else { 15.0 },
+            face_y: if dense { 2.0 } else { 5.0 },
+            face_size: if dense { 10 } else { 12 },
+            padding: match (dense, inline) {
+                (true, true) => 4.0,
+                (true, false) => 14.0,
+                (false, true) => 10.0,
+                (false, false) => 20.0,
+            },
+            minimum: match (dense, inline, summary) {
+                (true, true, _) => 14.0,
+                (true, false, _) => 24.0,
+                (false, _, true) => 20.0,
+                (false, true, false) => 22.0,
+                (false, false, false) => 30.0,
+            },
+            summary,
+        }
+    }
+    pub fn height(self, rows: usize) -> f32 {
+        if self.summary {
+            self.minimum
+        } else {
+            (self.padding + rows as f32 * 10.0).max(self.minimum)
+        }
+    }
+    pub fn max_rows(self, available: f32) -> usize {
+        if available < self.minimum {
+            0
+        } else if self.summary {
+            1
+        } else {
+            ((available - self.padding) / 10.0).floor() as usize
+        }
     }
 }
 pub fn contains(rect: [f32; 4], point: [f32; 2]) -> bool {
@@ -289,6 +347,43 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_cards_reduce_padding_and_gap_without_changing_line_height() {
+        let normal = CardMetrics::new(false, true, false);
+        let dense = CardMetrics::new(true, true, false);
+        assert_eq!(normal.height(1) + normal.gap, 26.0);
+        assert_eq!(dense.height(1) + dense.gap, 15.0);
+        for rows in 1..=24 {
+            assert_eq!(dense.height(rows + 1) - dense.height(rows), 10.0);
+            assert!(dense.text_y + (rows - 1) as f32 * 10.0 + 8.0 <= dense.height(rows));
+        }
+        assert!(dense.face_y + dense.face_size as f32 <= dense.height(1));
+        let system = CardMetrics::new(true, false, false);
+        assert_eq!(system.height(1), 24.0);
+        assert!(system.body_y + 8.0 <= system.height(1));
+        let summary = CardMetrics::new(true, true, true);
+        assert_eq!(summary.height(1), 14.0);
+        assert_eq!(normal.max_rows(21.0), 0);
+        assert_eq!(dense.max_rows(14.0), 1);
+        assert_eq!(dense.max_rows(13.0), 0);
+    }
+    #[test]
+    fn old_or_invalid_preferences_keep_normal_message_spacing() {
+        for raw in [
+            r#"{"schema":1}"#,
+            r#"{"schema":1,"compact_messages":"true"}"#,
+        ] {
+            assert!(!Preferences::decode(raw).unwrap().compact_messages);
+        }
+        assert!(!Preferences::default().compact_messages);
+    }
+    #[test]
+    fn compact_message_preference_survives_save_and_reload() {
+        let p = Preferences::decode(r#"{"schema":1,"compact_messages":true}"#).unwrap();
+        let saved: Value = serde_json::from_str(&p.encode()).unwrap();
+        assert_eq!(saved["compact_messages"], true);
+        assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
+    }
     #[test]
     fn round_trip_and_corrupt_values_are_bounded() {
         let p = Preferences {

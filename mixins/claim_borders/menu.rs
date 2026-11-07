@@ -470,6 +470,7 @@ pub enum Control {
     ExperimentalOre,
     ChatAdjust(ChatOption, i8),
     ChatPlacement,
+    ChatCompactMessages,
     ChatStyle,
     ChatPresence,
     ChatDeaths,
@@ -1770,6 +1771,16 @@ impl Menu {
                 vec![(
                     localized!(
                         self.language,
+                        "Компактные сообщения: {}",
+                        "Compact messages: {}",
+                        self.on(p.compact_messages)
+                    ),
+                    Control::ChatCompactMessages,
+                    p.compact_messages,
+                )],
+                vec![(
+                    localized!(
+                        self.language,
                         "Положение: {}",
                         "Position: {}",
                         p.placement.label_in(self.language)
@@ -2709,6 +2720,11 @@ impl Menu {
                 Some(Action::SetDeepLKey(None))
             }
             Control::ChatReset => Some(Action::SetChat(Preferences::default())),
+            Control::ChatCompactMessages => {
+                let mut p = model.chat_preferences;
+                p.compact_messages = !p.compact_messages;
+                Some(Action::SetChat(p))
+            }
             Control::ChatPlacement => {
                 let mut p = model.chat_preferences;
                 p.placement = p.placement.next();
@@ -4150,6 +4166,46 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+    #[test]
+    fn chat_spacing_control_toggles_and_resets_in_both_languages() {
+        for (language, caption) in [
+            (Language::English, "Compact messages"),
+            (Language::Russian, "Компактные сообщения"),
+        ] {
+            let mut menu = Menu {
+                language,
+                tab: Tab::Settings,
+                settings_section: 3,
+                chat_section: ChatSection::Appearance,
+                ..Menu::default()
+            };
+            let mut model = ViewModel {
+                language,
+                ..ViewModel::default()
+            };
+            let widgets = menu.layout(&model, 320.0, 240.0);
+            let button = widgets
+                .iter()
+                .find(|w| w.text.starts_with(caption))
+                .expect("chat spacing control");
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, button.control.unwrap())
+            else {
+                panic!("spacing must update chat preferences");
+            };
+            assert!(p.compact_messages);
+            assert_eq!(p.scale, model.chat_preferences.scale);
+            model.chat_preferences = p;
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, button.control.unwrap())
+            else {
+                panic!();
+            };
+            assert!(!p.compact_messages);
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatReset) else {
+                panic!();
+            };
+            assert!(!p.compact_messages);
         }
     }
     #[test]

@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.22.5"
+version = "0.22.6"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -799,6 +799,12 @@ id = "seed-map"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_seed_map"
 source = "seed_map.rs"
+
+[[module]]
+id = "seed-poi"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_seed_poi"
+source = "seed_poi.rs"
 
 [[module]]
 id = "seed-worker"
