@@ -2374,12 +2374,22 @@ impl Menu {
                 if self.baritone_mode == BaritoneMode::Tunnel {
                     for (i, (label, control, on)) in [
                         (
-                            localized!(self.language, "Ширина: {}", "Width: {}", self.construct_width),
+                            localized!(
+                                self.language,
+                                "Ширина: {}",
+                                "Width: {}",
+                                self.construct_width
+                            ),
                             Control::ConstructWidth,
                             false,
                         ),
                         (
-                            localized!(self.language, "Высота: {}", "Height: {}", self.construct_height),
+                            localized!(
+                                self.language,
+                                "Высота: {}",
+                                "Height: {}",
+                                self.construct_height
+                            ),
                             Control::ConstructHeight,
                             false,
                         ),
@@ -2402,7 +2412,12 @@ impl Menu {
                     .enumerate()
                     {
                         out.push(widget(
-                            [x, 100.0 + (i + 1) as f32 * step, w, h],
+                            [
+                                x,
+                                100.0 + (i + 1) as f32 * step,
+                                w,
+                                h,
+                            ],
                             label,
                             Some(control),
                             on,
@@ -2434,7 +2449,11 @@ impl Menu {
                     out.push(widget(
                         [
                             x + i as f32 * (tab_width + 4.0),
-                            100.0 + if self.baritone_mode == BaritoneMode::Tunnel { 4.0 } else { 2.0 } * step,
+                            100.0 + if self.baritone_mode == BaritoneMode::Tunnel {
+                                4.0
+                            } else {
+                                2.0
+                            } * step,
                             tab_width,
                             h,
                         ],
