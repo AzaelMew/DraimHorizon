@@ -690,7 +690,7 @@ impl Default for Menu {
             construct_length: 16,
             construct_width: 1,
             construct_height: 2,
-            construct_floor: false,
+            construct_floor: true,
             experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
@@ -2360,27 +2360,9 @@ impl Menu {
                 self.baritone_mode,
                 BaritoneMode::Tunnel | BaritoneMode::Bridge
             ) {
-                use super::claim_borders_construction::Direction;
-                let direction = match self.construct_direction {
-                    Direction::North => self.language.text("Север", "North"),
-                    Direction::East => self.language.text("Восток", "East"),
-                    Direction::South => self.language.text("Юг", "South"),
-                    Direction::West => self.language.text("Запад", "West"),
-                };
                 out.push(widget(
-                    [x, 100.0, tab_width, h],
-                    direction,
-                    Some(Control::ConstructDirection),
-                    false,
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, 100.0, tab_width, h],
-                    localized!(
-                        self.language,
-                        "Длина: {}",
-                        "Length: {}",
-                        self.construct_length
-                    ),
+                    [x, 100.0, w, h],
+                    localized!(self.language, "Длина: {}", "Length: {}", self.construct_length),
                     Some(Control::ConstructLength),
                     false,
                 ));
