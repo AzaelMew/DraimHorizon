@@ -401,6 +401,15 @@ mod tests {
         );
     }
     #[test]
+    fn tunnel_direction_tracks_player_yaw() {
+        assert_eq!(Direction::from_yaw(0.0), Direction::South);
+        assert_eq!(Direction::from_yaw(90.0), Direction::West);
+        assert_eq!(Direction::from_yaw(180.0), Direction::North);
+        assert_eq!(Direction::from_yaw(-90.0), Direction::East);
+        assert_eq!(Direction::from_yaw(359.0), Direction::South);
+        assert_eq!(Direction::from_yaw(-179.0), Direction::North);
+    }
+    #[test]
     fn edge_movement_is_bounded_and_materials_exclude_gravity_and_containers() {
         let job = Job::new(config(Kind::Bridge), [0, 0, 0], false).unwrap();
         assert!(job.edge_safe(job.edge()));
