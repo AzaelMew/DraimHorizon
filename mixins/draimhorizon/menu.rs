@@ -2415,8 +2415,8 @@ impl Menu {
                         out.push(widget(
                             if compact_tunnel {
                                 [
-                                    x + (i % 2) as f32 * (tab_width + 4.0),
-                                    100.0 + (i / 2) as f32 * step,
+                                    x + ((i + 1) % 2) as f32 * (tab_width + 4.0),
+                                    100.0 + ((i + 1) / 2) as f32 * step,
                                     tab_width,
                                     h,
                                 ]
