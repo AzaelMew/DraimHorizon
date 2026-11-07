@@ -507,6 +507,7 @@ pub enum Control {
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
     NavigationWaypointChoice(usize),
+    NavigationChoicesPage(i8),
     NavigationPreview,
     NavigationStart,
     NavigationPause,
@@ -641,6 +642,7 @@ pub struct Menu {
     pub navigation_coordinates: String,
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
+    pub navigation_choices_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     deepl_key: String,
@@ -686,6 +688,7 @@ impl Default for Menu {
             navigation_coordinates: String::new(),
             navigation_waypoint: None,
             navigation_choices: None,
+            navigation_choices_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
             mining_ore: 0,
@@ -869,9 +872,12 @@ impl Menu {
                     } else {
                         model.navigation_waypoints.iter().map(|w| w.name.as_str()).collect::<Vec<_>>()
                     };
-                    let count = entries.len().min(8);
+                    let page_count = entries.len().div_ceil(8);
+                    let page = self.navigation_choices_page.min(page_count.saturating_sub(1));
+                    let start = page * 8;
+                    let count = entries.len().saturating_sub(start).min(8);
                     let item_h = 20.0;
-                    let menu_h = count.max(1) as f32 * item_h;
+                    let menu_h = (count + usize::from(page_count > 1)).max(1) as f32 * item_h;
                     let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
                         rect[1] + rect[3]
                     } else {
@@ -880,8 +886,22 @@ impl Menu {
                     for i in 0..count {
                         widgets.push(widget(
                             [rect[0], top + i as f32 * item_h, rect[2], item_h],
-                            entries[i],
-                            Some(if players { Control::NavigationPlayerChoice(i) } else { Control::NavigationWaypointChoice(i) }),
+                            entries[start + i],
+                            Some(if players { Control::NavigationPlayerChoice(start + i) } else { Control::NavigationWaypointChoice(start + i) }),
+                            false,
+                        ));
+                    }
+                    if page_count > 1 {
+                        widgets.push(widget(
+                            [rect[0], top + count as f32 * item_h, rect[2] / 2.0, item_h],
+                            format!("← {}/{}", page + 1, page_count),
+                            Some(Control::NavigationChoicesPage(-1)),
+                            false,
+                        ));
+                        widgets.push(widget(
+                            [rect[0] + rect[2] / 2.0, top + count as f32 * item_h, rect[2] / 2.0, item_h],
+                            format!("{}/{} →", page + 1, page_count),
+                            Some(Control::NavigationChoicesPage(1)),
                             false,
                         ));
                     }
@@ -3348,12 +3368,28 @@ impl Menu {
             }
             Control::NavigationPlayer => {
                 self.navigation_choices = if self.navigation_choices == Some(true) { None } else { Some(true) };
+                self.navigation_choices_page = 0;
                 self.focus = None;
                 None
             }
             Control::NavigationWaypoint => {
                 self.navigation_choices = if self.navigation_choices == Some(false) { None } else { Some(false) };
+                self.navigation_choices_page = 0;
                 self.focus = None;
+                None
+            }
+            Control::NavigationChoicesPage(direction) => {
+                let count = if self.navigation_choices == Some(true) {
+                    model.navigation_players.len()
+                } else {
+                    model.navigation_waypoints.len()
+                };
+                let pages = count.div_ceil(8);
+                if pages > 0 {
+                    self.navigation_choices_page =
+                        (self.navigation_choices_page as isize + direction as isize)
+                            .rem_euclid(pages as isize) as usize;
+                }
                 None
             }
             Control::NavigationPlayerChoice(index) => {
