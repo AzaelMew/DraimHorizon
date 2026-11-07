@@ -25,7 +25,7 @@ The bug was before the HTTP requests, not in Google/DeepL's source detection. Bo
 - `chat_view.rs`: received chat uses the Received-chat target and the common-only policy; badges show the target code.
 - `relay/`: 1.3.0 accepts the 20 DeepL targets and an optional source.
 
-Short messages are the weak point of auto-detection (and of the common-languages filter). Setting **Chat from** to the chat's language sends it as the explicit source and bypasses detection for received chat.
+The filter only skips on a reliable detection of an uncommon language (and accepts Cyrillic neighbours of Russian/Ukrainian); unidentifiable text is translated, not dropped. Short messages are the weak point of auto-detection (and of the common-languages filter). Setting **Chat from** to the chat's language sends it as the explicit source and bypasses detection for received chat.
 
 Limits: language identification of short text is probabilistic; provider quotas and coverage still apply; the UI is localized only in English and Russian.
 

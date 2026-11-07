@@ -88,17 +88,30 @@ impl SourcePolicy {
     pub fn google_source(self) -> &'static str {
         self.source.map_or("auto", TargetLanguage::code)
     }
-    // Runs on the translation worker, never in a draw/input hook. Unknown/unlisted
-    // sources fail closed before any provider request. Identification of short/mixed text
-    // is probabilistic; explicit input selection bypasses auto-identification.
+    // Runs on the translation worker, never in a draw/input hook.
+    // The filter exists to skip text that is clearly in a rare language, so it only skips
+    // on a *reliable* detection of an uncommon language. Anything it cannot identify
+    // (tiny words, typos, mixed text, slang) is translated rather than silently dropped.
+    // Cyrillic neighbours of Russian/Ukrainian are accepted: trigram detection routinely
+    // confuses them on short chat lines, and wrongly skipping Russian is the worse error.
     pub fn allows(self, text: &str) -> bool {
-        needs_translation(text)
-            && (!self.common_only
-                || self.source.is_some()
-                || super::detector::detect(text).is_some_and(|info| {
-                    TargetLanguage::COMMON
-                        .iter()
-                        .any(|lang| lang.detector_code() == info.lang().code())
-                }))
+        if !needs_translation(text) {
+            return false;
+        }
+        if !self.common_only || self.source.is_some() {
+            return true;
+        }
+        let Some(info) = super::detector::detect(text) else {
+            return true;
+        };
+        if !info.is_reliable() || info.script() == super::detector::Script::Cyrillic {
+            return true;
+        }
+        let code = info.lang().code();
+        // Close relatives that are routinely mistaken for a listed language.
+        TargetLanguage::COMMON
+            .iter()
+            .any(|lang| lang.detector_code() == code)
+            || matches!(code, "nob" | "slk" | "cat")
     }
 }

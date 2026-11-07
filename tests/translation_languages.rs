@@ -196,3 +196,26 @@ fn chat_source_is_optional_in_saved_preferences_and_unlocks_short_words() {
     assert!(TranslationTargets::decode(&prefs.encode()).unwrap() == prefs);
     assert!(TranslationTargets::decode(r#"{"schema":1,"input":null,"output":"ru","received":"en","chat_source":"xx","common_only":true}"#).is_err());
 }
+
+#[test]
+fn common_filter_never_skips_real_chat_lines_it_cannot_identify_reliably() {
+    let common = SourcePolicy {
+        source: None,
+        common_only: true,
+    };
+    // Lines seen in a live chat that were left untranslated.
+    for text in [
+        "куда на моей территорке",
+        "claim команда",
+        "./claim на нужном чанке напиши в чат",
+        "hi",
+        "ok",
+        "moi",
+        "lol xd",
+        "где спавн?",
+    ] {
+        assert!(common.allows(text), "{text}");
+    }
+    // A long, clearly uncommon language is still skipped.
+    assert!(!common.allows("ეს არის ქართული ტექსტი და ჩვენ ვსაუბრობთ ერთმანეთთან ქართულ ენაზე."));
+}
