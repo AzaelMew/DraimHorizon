@@ -2578,8 +2578,13 @@ impl Menu {
                     ));
                 }
             }
+            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel {
+                100.0 + step * 5.0
+            } else {
+                100.0 + step * 3.0
+            };
             out.push(widget(
-                [x, 100.0 + step * 3.0, tab_width, h],
+                [x, controls_y, tab_width, h],
                 if model.navigation_paused {
                     self.language.text("Продолжить", "Resume")
                 } else {
@@ -2593,7 +2598,7 @@ impl Menu {
                 false,
             ));
             out.push(widget(
-                [x + tab_width + 4.0, 100.0 + step * 3.0, tab_width, h],
+                [x + tab_width + 4.0, controls_y, tab_width, h],
                 self.language.text("Остановить", "Stop"),
                 Some(Control::NavigationStop),
                 false,
