@@ -1,18 +1,21 @@
 # История версий
 
-## 0.22.6 (unreleased / не опубликовано)
+## 0.23.0 (unreleased / не опубликовано)
 
 ### English
+- Settings → Chat → Appearance: **Compact messages** reduces card padding and gaps without changing font size or multiline spacing. The setting persists; normal spacing remains the default.
 - Fullscreen claim fills, outlines and the chunk grid are drawn independently of terrain. Borders retain screen-pixel thickness during fractional panning and in wide viewports.
 - Terrain shading reads neighbouring region heights, removing artificial lines on continuous slopes at 256-block boundaries.
 - A world-aligned, buffered terrain image is reused during small drags; unchanged results no longer trigger full texture uploads. The buffer preserves the previous visible texel density.
 - Views exceeding the detailed-region cache use existing chunk overviews instead of repeatedly decoding and evicting the visible regions. Distant terrain is therefore coarser; saved exploration and its file format are unchanged.
 
 ### Русский
+- Настройки → Чат → Оформление: «Компактные сообщения» уменьшают вертикальные отступы карточек и промежутки между ними, не меняя размер шрифта и межстрочный интервал. Параметр сохраняется; прежний вид остаётся по умолчанию.
 - Заливка приватов, контуры и сетка чанков полноэкранной карты рисуются отдельно от рельефа. Толщина контуров в экранных пикселях сохраняется при дробном смещении и в широких окнах.
 - Затенение рельефа использует высоты соседних регионов, убирая искусственные линии на непрерывных склонах через каждые 256 блоков.
 - При небольшом перетаскивании переиспользуется привязанный к миру снимок рельефа с запасом по краям; неизменённые результаты больше не загружают текстуру заново. Прежняя плотность видимых пикселей сохранена.
 - Если видимая область превышает кеш подробных регионов, используются существующие обзоры чанков вместо постоянного чтения и вытеснения регионов. Дальний рельеф становится грубее; сохранённая карта и формат её файлов не изменены.
+
 
 ## 0.22.5
 
