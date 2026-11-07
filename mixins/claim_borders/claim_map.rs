@@ -200,7 +200,41 @@ pub struct Cell {
     pub x: i32,
     pub z: i32,
     pub owner: String,
+    // Keep observation metadata separate from identity and the active language.
+    pub reporter: Option<String>,
     pub own: bool,
+}
+impl Cell {
+    pub fn owner_label(&self, language: Language) -> String {
+        let owner = if self.own {
+            language.text("Вы", "You")
+        } else {
+            &self.owner
+        };
+        match &self.reporter {
+            Some(reporter) => format!(
+                "{owner} ({} · {reporter})",
+                language.text("наблюдение", "observation")
+            ),
+            None => owner.to_owned(),
+        }
+    }
+    pub fn row_label(&self, player: [f64; 3], dimension: &str, language: Language) -> String {
+        let distance =
+            (f64::from(self.x) + 8.0 - player[0]).hypot(f64::from(self.z) + 8.0 - player[2]);
+        format!(
+            "{} · [{},{}] · {} · {}",
+            self.owner_label(language),
+            self.x.div_euclid(16),
+            self.z.div_euclid(16),
+            dimension_label_in(&self.dimension, language),
+            if self.dimension == dimension {
+                format!("{distance:.0} {}", language.text("м", "m"))
+            } else {
+                language.text("другой мир", "other world").into()
+            }
+        )
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Mark {
@@ -702,6 +736,63 @@ pub fn paint_aspect(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn live_claim_labels_follow_the_selected_language() {
+        let mut cell = Cell {
+            dimension: "minecraft:overworld".into(),
+            x: -1936,
+            z: 48,
+            owner: "Armagidoshka".into(),
+            own: false,
+            foreign: true,
+            reporter: Some("MarlBerry".into()),
+        };
+        assert_eq!(
+            cell.owner_label(Language::English),
+            "Armagidoshka (observation · MarlBerry)"
+        );
+        assert_eq!(
+            cell.owner_label(Language::Russian),
+            "Armagidoshka (наблюдение · MarlBerry)"
+        );
+        let english = cell.row_label(
+            [-1928.0, 64.0, 56.0],
+            "minecraft:overworld",
+            Language::English,
+        );
+        assert_eq!(
+            english,
+            "Armagidoshka (observation · MarlBerry) · [-121,3] · Overworld · 0 m"
+        );
+        let russian = cell.row_label(
+            [-1928.0, 64.0, 56.0],
+            "minecraft:overworld",
+            Language::Russian,
+        );
+        assert!(russian.contains("Обычный мир"));
+        // Switching back must render from metadata, not reuse a localized owner string.
+        assert_eq!(
+            cell.owner_label(Language::English),
+            "Armagidoshka (observation · MarlBerry)"
+        );
+        assert_eq!(cell.owner, "Armagidoshka");
+        cell.reporter = None;
+        assert_eq!(cell.owner_label(Language::English), "Armagidoshka");
+        cell.own = true;
+        assert_eq!(cell.owner_label(Language::English), "You");
+        assert_eq!(cell.owner_label(Language::Russian), "Вы");
+        for (dim, name) in [
+            ("minecraft:the_nether", "Nether"),
+            ("minecraft:the_end", "End"),
+        ] {
+            cell.dimension = dim.into();
+            assert!(
+                cell.row_label([0.0; 3], "minecraft:overworld", Language::English)
+                    .contains(&format!("{name} · other world"))
+            );
+        }
+    }
+
+    #[test]
     fn overlay_geometry_keeps_priority_filters_and_clips_without_false_edges() {
         let own = Cell {
             dimension: "minecraft:overworld".into(),
@@ -710,6 +801,7 @@ mod tests {
             owner: "fixture".into(),
             own: true,
             foreign: false,
+            reporter: None,
         };
         let s = Snapshot {
             own_color: 0x8b7bff,
@@ -794,6 +886,7 @@ mod tests {
                 x: -16,
                 z: -16,
                 owner: "fixture".into(),
+                reporter: None,
                 own: true,
                 foreign: false,
             }],
@@ -942,6 +1035,7 @@ mod tests {
                     x: 32,
                     z: 0,
                     owner: "Вы".into(),
+                    reporter: None,
                     own: true,
                     foreign: false,
                 },
@@ -950,6 +1044,7 @@ mod tests {
                     x: -16,
                     z: 0,
                     owner: "Друг".into(),
+                    reporter: None,
                     own: false,
                     foreign: false,
                 },
@@ -958,6 +1053,7 @@ mod tests {
                     x: 0,
                     z: 0,
                     owner: "Вы".into(),
+                    reporter: None,
                     own: true,
                     foreign: false,
                 },
@@ -1000,6 +1096,7 @@ mod tests {
                 owner: "Вы".into(),
                 own: true,
                 foreign: false,
+                reporter: None,
             }],
             ..Snapshot::default()
         };
@@ -1046,7 +1143,8 @@ mod observed_tests {
                 dimension: "minecraft:overworld".into(),
                 x: 0,
                 z: 0,
-                owner: "Alex (наблюдение)".into(),
+                owner: "Alex".into(),
+                reporter: Some("Steve".into()),
                 own: false,
             }],
             own_color: 0x00ff00,

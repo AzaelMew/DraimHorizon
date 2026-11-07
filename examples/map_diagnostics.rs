@@ -18,6 +18,7 @@ fn overlay(aspect: f32, offset: f64) -> (usize, usize) {
             owner: "fixture".into(),
             own: true,
             foreign: false,
+            reporter: None,
         }],
         ..Default::default()
     };
@@ -62,6 +63,7 @@ fn main() {
             owner: "fixture".into(),
             own: true,
             foreign: false,
+            reporter: None,
         }],
         ..Default::default()
     };

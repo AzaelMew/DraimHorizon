@@ -448,6 +448,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 x: claim.x,
                 z: claim.z,
                 owner: tr!("Вы", "You"),
+                reporter: None,
                 own: true,
                 foreign: false,
             })
@@ -492,6 +493,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                                 x: c.x,
                                 z: c.z,
                                 owner: friend.name.clone(),
+                                reporter: None,
                                 own: false,
                                 foreign: false,
                             }),
@@ -536,6 +538,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 owner: owner.clone(),
                 own: false,
                 foreign: !friend_names.contains(&owner.to_ascii_lowercase()),
+                reporter: None,
             }));
         }
         let known_cells: std::collections::BTreeSet<_> = cells
@@ -548,11 +551,8 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                     dimension: r.claim.dimension,
                     x: r.claim.x,
                     z: r.claim.z,
-                    owner: format!(
-                        "{} (наблюдение · {})",
-                        r.owner.unwrap_or_default(),
-                        r.reporter
-                    ),
+                    owner: r.owner.unwrap_or_default(),
+                    reporter: Some(r.reporter),
                     own: false,
                     foreign: true,
                 });
@@ -1284,28 +1284,13 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         },
     )
     .into_iter()
-    .map(|c| {
-        let distance = (c.x as f64 + 8.0 - map_source.player[0])
-            .hypot(c.z as f64 + 8.0 - map_source.player[2]);
-        menu::ClaimRow {
-            label: format!(
-                "{} · [{},{}] · {} · {}",
-                c.owner,
-                c.x.div_euclid(16),
-                c.z.div_euclid(16),
-                crate::game::claim_borders_map::dimension_label(&c.dimension),
-                if c.dimension == map_source.dimension {
-                    format!("{distance:.0} {}", language.text("м", "m"))
-                } else {
-                    language.text("другой мир", "other world").into()
-                }
-            ),
-            owner: c.owner,
-            foreign: c.foreign,
-            dimension: c.dimension,
-            x: c.x,
-            z: c.z,
-        }
+    .map(|c| menu::ClaimRow {
+        label: c.row_label(map_source.player, &map_source.dimension, language),
+        owner: c.owner_label(language),
+        foreign: c.foreign,
+        dimension: c.dimension,
+        x: c.x,
+        z: c.z,
     })
     .collect();
     let tab = if game.remote.is_some() {

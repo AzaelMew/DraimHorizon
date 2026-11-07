@@ -3,6 +3,9 @@
 ## 0.22.6 (unreleased / не опубликовано)
 
 ### English
+- Chat wraps at spaces instead of splitting words that fit on a full line. Explicit newlines are preserved; oversized words/URLs retain a character-wrapping fallback to avoid clipping.
+- Localize live claim-list dimensions and observed-owner labels on the claims screen and map; waypoint dimension labels also follow the RU/EN switch. Owner and reporter names remain unchanged.
+- Preserve leading colons in chat messages such as `:3` and `:`; repeat filtering no longer merges them with messages lacking those colons.
 - Settings → Chat → Appearance: **Compact messages** reduces card padding and gaps without changing font size or multiline spacing. The setting persists; normal spacing remains the default.
 - Fullscreen claim fills, outlines and the chunk grid are drawn independently of terrain. Borders retain screen-pixel thickness during fractional panning and in wide viewports.
 - Terrain shading reads neighbouring region heights, removing artificial lines on continuous slopes at 256-block boundaries.
@@ -10,6 +13,9 @@
 - Views exceeding the detailed-region cache use existing chunk overviews instead of repeatedly decoding and evicting the visible regions. Distant terrain is therefore coarser; saved exploration and its file format are unchanged.
 
 ### Русский
+- Чат переносит текст по пробелам, не разрывая слова, помещающиеся в полную строку. Явные переводы строк сохраняются; слишком длинные слова и ссылки переносятся по символам, чтобы избежать обрезания.
+- Названия измерений в списке приватов, подписи наблюдений в меню и на карте, а также измерения в метках учитывают переключатель RU/EN. Ники владельцев и наблюдателей не изменяются.
+- Сохраняются начальные двоеточия в сообщениях чата, например `:3` и `:`; фильтр повторов больше не объединяет их с сообщениями без этих двоеточий.
 - Настройки → Чат → Оформление: «Компактные сообщения» уменьшают вертикальные отступы карточек и промежутки между ними, не меняя размер шрифта и межстрочный интервал. Параметр сохраняется; прежний вид остаётся по умолчанию.
 - Заливка приватов, контуры и сетка чанков полноэкранной карты рисуются отдельно от рельефа. Толщина контуров в экранных пикселях сохраняется при дробном смещении и в широких окнах.
 - Затенение рельефа использует высоты соседних регионов, убирая искусственные линии на непрерывных склонах через каждые 256 блоков.

@@ -106,7 +106,7 @@ pub(super) fn icon(kind: model::MarkerKind) -> ui::Icon {
     }
 }
 fn world(dim: &str) -> String {
-    crate::game::claim_borders_map::dimension_label(dim).to_owned()
+    crate::game::claim_borders_map::dimension_label_in(dim, language()).to_owned()
 }
 fn world_order(dim: &str) -> u8 {
     match dim {

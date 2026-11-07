@@ -930,12 +930,15 @@ pub(super) fn render(
                     rect[0] + at[0] / 128.0 * rect[2],
                     rect[1] + at[1] / 128.0 * rect[3],
                 ];
-                if contains(rect, xy) && owners.len() < 16 && owners.insert(cell.owner.clone()) {
+                if contains(rect, xy)
+                    && owners.len() < 16
+                    && owners.insert((cell.owner.clone(), cell.reporter.clone()))
+                {
                     let start = batch.vertices.len();
                     label(
                         game,
                         batch,
-                        &cell.owner,
+                        &cell.owner_label(language()),
                         xy,
                         80.0,
                         if cell.foreign {
@@ -1000,7 +1003,7 @@ pub(super) fn render(
                 .cells
                 .iter()
                 .find(|c| c.dimension == dimension && c.x == cx && c.z == cz)
-                .map_or("—", |c| c.owner.as_str());
+                .map_or_else(|| "—".to_owned(), |c| c.owner_label(language()));
             format!(
                 "X {:.0}  Z {:.0}  ·  {} [{}, {}]  ·  {}: {owner}",
                 world[0].floor(),
