@@ -514,6 +514,26 @@ pub fn world(view: View, r: [f32; 4], mouse: [f32; 2]) -> [f64; 2] {
         r[2] / r[3],
     )
 }
+/// Select only a local waypoint under the map cursor, in screen pixels at any zoom.
+pub fn waypoint_at<'a>(
+    view: View,
+    rect: [f32; 4],
+    mouse: [f32; 2],
+    dimension: &str,
+    waypoints: impl Iterator<Item = (u64, &'a str, [f64; 3])>,
+) -> Option<u64> {
+    if !contains(rect, mouse) || rect[3] <= 0.0 {
+        return None;
+    }
+    let at = world(view, rect, mouse);
+    let radius = 7.0 * 128.0 * f64::from(view.blocks_per_pixel) / f64::from(rect[3]);
+    waypoints
+        .filter(|(_, dim, _)| *dim == dimension)
+        .map(|(id, _, position)| (id, (position[0] - at[0]).hypot(position[2] - at[1])))
+        .filter(|(_, distance)| *distance <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
+}
 pub const SEARCH_TILE_BLOCKS: i32 = 1024;
 pub const MAX_SEARCH_TILES: usize = 512;
 #[derive(Clone, Debug, PartialEq)]
@@ -903,6 +923,63 @@ mod tests {
                 1
             )
             .is_none()
+        );
+    }
+    #[test]
+    fn waypoint_hit_test_uses_visible_dimension_and_screen_radius() {
+        let marks = [
+            (1, "minecraft:the_end", [0.0, 64.0, 0.0]),
+            (2, "minecraft:overworld", [1.0, 64.0, 0.0]),
+            (3, "minecraft:overworld", [3.0, 64.0, 0.0]),
+        ];
+        let rect = [0.0, 0.0, 128.0, 128.0];
+        let view = View {
+            center: [0.0, 0.0],
+            blocks_per_pixel: 1.0,
+        };
+        assert_eq!(
+            waypoint_at(
+                view,
+                rect,
+                [64.0, 64.0],
+                "minecraft:overworld",
+                marks.into_iter()
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            waypoint_at(
+                view,
+                rect,
+                [100.0, 100.0],
+                "minecraft:overworld",
+                marks.into_iter()
+            ),
+            None
+        );
+        assert_eq!(
+            waypoint_at(
+                view,
+                rect,
+                [-1.0, 64.0],
+                "minecraft:overworld",
+                marks.into_iter()
+            ),
+            None
+        );
+        let zoomed = View {
+            blocks_per_pixel: 0.25,
+            ..view
+        };
+        assert_eq!(
+            waypoint_at(
+                zoomed,
+                rect,
+                [64.0, 64.0],
+                "minecraft:overworld",
+                marks[2..].iter().copied()
+            ),
+            None
         );
     }
 }

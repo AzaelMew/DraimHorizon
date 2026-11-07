@@ -1,0 +1,14 @@
+--- a/launcher/src/instance_mods.rs
++++ b/launcher/src/instance_mods.rs
+@@ -156,7 +156,10 @@
+                 .into_iter()
+                 .map(|native| ModRow {
+                     file: native.file.clone(),
+-                    name: native.id.clone(),
++                    name: horizon_launcher::github_mods::origin(home, &native.id)
++                        .map(|origin| origin.repo)
++                        .filter(|name| !name.trim().is_empty())
++                        .unwrap_or_else(|| native.id.clone()),
+                     version: native.version.clone(),
+                     on: java::is_enabled(home, &native.id),
+                     entry: None,

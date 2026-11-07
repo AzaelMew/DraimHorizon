@@ -1,8 +1,8 @@
-**DraimHorizons 0.23.0** for Horizon Nightly f319701 (Java 26.3).
+**DraimHorizon 0.23.1** for Horizon main c78187d (Java 26.3).
 
-- Chat and DM messages show a gray tag for the original language, including compact spacing. Provider detection refines local estimates. Ambiguous text uses ??.
-- Source-language tags survive local history and switching between original and translation.
-- The visual README explains maps, Seed Map, chat, translation, friends, trading, inventory and client utilities.
-- A synchronized version manager and expanded agent instructions define major, minor and patch updates.
+- Official Lucide interface icons, a one-line title and a gear settings button.
+- Smaller waypoint rows; double left click your own waypoint in Seed Map to delete it.
+- One-time RU/EN Experiments warning with explicit Confirm / Decline. Accepting does not enable features.
+- Release checks reject an outdated Horizon pin.
 
-Rebuild native mods after updating. Seed Map and other changes from 0.22.5–0.22.7 are included.
+The current Horizon Launcher displays `claim_borders` for GitHub-installed native mods. Its native format has no display-name field; fixing that label requires a launcher update. Existing settings and map data retain their stable ID.

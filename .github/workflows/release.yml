@@ -39,6 +39,7 @@ jobs:
       - name: Format, lint and test runtime
         run: |
           python3 tools/version.py check
+          python3 tools/compatibility.py
           cargo fmt --all --check
           rustfmt --edition 2024 --check mixins/claim_borders/*.rs
           cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -113,4 +114,4 @@ jobs:
             fi
             sleep 20
           done
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizons ${version} — Horizon Nightly 2026-11-05 · f319701" --notes-file docs/release-notes.md
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizon ${version} - Horizon Java 26.3" --notes-file docs/release-notes.md

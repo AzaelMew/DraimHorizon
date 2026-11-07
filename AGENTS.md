@@ -9,7 +9,7 @@ Use skills and subagents only when explicitly requested by the user.
 - Check Git status, remote main and release tags. Preserve local changes before updating.
 - Read relevant symbols and bounded ranges with rg. Source and compatibility.json take precedence over old prose.
 - This is a native Rust mod for Horizon. Bundle ID is claim_borders. Distribution name is DraimHorizons. Artifacts use .hnmod.
-- Exact Horizon and horizon-mixins pins live in compatibility.json. Check their actual APIs. Advance pins only in a requested compatibility update.
+- Exact Horizon and horizon-mixins pins live in compatibility.json. Check their actual APIs. Before every task run tools/compatibility.py; if behind main, refresh with --update --horizon PATH, adapt the hooks and compile the real client. Never release with a stale pin. Exact tested SHAs remain reproducible.
 - Use the existing toolchain. Keep Windows file operations within checked paths, use -LiteralPath and UTF-8, and preserve system configuration.
 
 ## Navigation

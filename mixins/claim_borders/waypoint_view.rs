@@ -273,11 +273,11 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             language.text("+ Здесь", "+ Here"),
             Hit::Create,
         );
-        let per = (((h - 54.) / 42.).floor() as usize).max(1);
+        let per = (((h - 54.) / 32.).floor() as usize).max(1);
         let pages = rows.len().div_ceil(per).max(1);
         s.page = s.page.min(pages - 1);
         for (i, w) in rows.iter().skip(s.page * per).take(per).enumerate() {
-            let r = [x, y + 28. + i as f32 * 42., width, 38.];
+            let r = [x, y + 28. + i as f32 * 32., width, 28.];
             ui::button_base(
                 game,
                 batch,
@@ -289,7 +289,7 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
             ui::rounded(
                 game,
                 batch,
-                [r[0] + 5., r[1] + 5., 28., 28.],
+                [r[0] + 5., r[1] + 4., 20., 20.],
                 7.,
                 0x24000000 | w.color,
             );
@@ -297,14 +297,14 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
                 game,
                 batch,
                 icon(w.kind),
-                [r[0] + 12., r[1] + 12., 14., 14.],
+                [r[0] + 9., r[1] + 8., 12., 12.],
                 w.color,
             );
             ui::text(
                 game,
                 batch,
                 &ui::clip(game, &w.name, width - 84.),
-                [x + 42., r[1] + 7.],
+                [x + 32., r[1] + 4.],
                 0xe3ebf3,
                 false,
             );
@@ -322,12 +322,12 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
                     ),
                     width - 84.,
                 ),
-                [x + 42., r[1] + 23.],
+                [x + 32., r[1] + 16.],
                 0x9aacc0,
                 false,
             );
-            s.hits.push(([x, r[1], width - 31., 38.], Hit::Row(w.id)));
-            let trash = [x + width - 27., r[1] + 7., 24., 24.];
+            s.hits.push(([x, r[1], width - 31., 28.], Hit::Row(w.id)));
+            let trash = [x + width - 27., r[1] + 3., 22., 22.];
             ui::button_base(
                 game,
                 batch,

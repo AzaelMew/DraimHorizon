@@ -34,6 +34,9 @@ pub(super) fn claims_settings() {
         s.menu.focus = None;
     });
 }
+pub(super) fn experiments_prompt() -> bool {
+    state(|s| s.menu.experiments_prompt)
+}
 pub(super) fn reset() {
     state(|s| *s = State::default());
 }
@@ -118,27 +121,12 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     ui::fill(game, batch, [px, py, pw, 2.0], 0xff8b7bff);
     if pw >= 380.0 {
         ui::fill(game, batch, [px, py + 2.0, 96.0, ph - 2.0], 0xff111520);
-        ui::icon(
-            game,
-            batch,
-            ui::Icon::Layers,
-            [px + 9.0, py + 11.0, 12.0, 12.0],
-            ui::preferences(game).accent.color(),
-        );
         ui::text(
             game,
             batch,
-            "DRAIM",
-            [px + 28.0, py + 11.0],
+            "DraimHorizon",
+            [px + 8.0, py + 17.0],
             0xe3ebf3,
-            false,
-        );
-        ui::text(
-            game,
-            batch,
-            "HORIZONS",
-            [px + 10.0, py + 27.0],
-            0x9aacc0,
             false,
         );
         let hint = state(|s| {
@@ -188,10 +176,26 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     state(|s| {
         s.height = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
         s.menu.clamp_page(&s.model, s.height);
+        if s.menu.experiments_prompt {
+            ui::fill(game, batch, screen.rect, 0xcc080b12);
+            let w = (screen.rect[2] - 32.0).clamp(200.0, 460.0);
+            ui::fill(
+                game,
+                batch,
+                [
+                    (screen.rect[2] - w) * 0.5,
+                    (screen.rect[3] - 144.0) * 0.5,
+                    w,
+                    144.0,
+                ],
+                0xff181c28,
+            );
+        }
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
         for widget in widgets {
-            if s.menu.tab == model::Tab::Waypoints
-                && widget.text != "DRAIMHORIZONS"
+            if !s.menu.experiments_prompt
+                && s.menu.tab == model::Tab::Waypoints
+                && widget.text != "DraimHorizon"
                 && !matches!(
                     widget.control,
                     Some(
@@ -252,6 +256,19 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     widget.selected,
                     screen.mouse,
                 );
+            }
+            if widget.control == Some(model::Control::Tab(model::Tab::Settings)) {
+                ui::icon(
+                    game,
+                    batch,
+                    ui::Icon::Settings,
+                    [x + (w - 12.0) * 0.5, y + (h - 12.0) * 0.5, 12.0, 12.0],
+                    ui::preferences(game).accent.color(),
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
+                }
+                continue;
             }
             if widget.control == Some(model::Control::Close) {
                 ui::icon(
@@ -390,7 +407,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     format!("{label}{shown}│{rest}")
                 } else {
                     match widget.text.as_str() {
-                        "DRAIMHORIZONS" => {
+                        "DraimHorizon" => {
                             let (ru, en) = match s.menu.tab {
                                 model::Tab::Waypoints => ("Мои метки", "My waypoints"),
                                 model::Tab::Party => ("Друзья и игроки", "Friends and players"),
@@ -458,7 +475,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             );
         }
     });
-    crate::game::claim_borders_waypoint_view::render_list(game, batch, screen);
+    if !state(|s| s.menu.experiments_prompt) {
+        crate::game::claim_borders_waypoint_view::render_list(game, batch, screen);
+    }
     if let Some(tip) = request_tip {
         ui::tooltip(game, batch, &tip, screen.mouse);
     }

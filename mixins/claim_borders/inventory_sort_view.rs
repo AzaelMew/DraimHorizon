@@ -478,7 +478,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     if p.ignored.contains(&i) {
                         let r = slot_rect(game, screen, *slot);
                         ui::fill(game, batch, r, 0x88551a25);
-                        ui::text(game, batch, "×", [r[0] + 5.0, r[1] + 4.0], 0xff7979, true);
+                        ui::icon(
+                            game,
+                            batch,
+                            ui::Icon::Close,
+                            [r[0] + 4.0, r[1] + 4.0, 10.0, 10.0],
+                            0xff7979,
+                        );
                     }
                 }
             }

@@ -27,6 +27,7 @@ struct State {
     search_focus: bool,
     offset: usize,
     biome_tab: bool,
+    left_click: Option<(std::time::Instant, usize, [f32; 2])>,
     right_click: Option<(std::time::Instant, usize, [f32; 2])>,
     found: Option<poi::Found>,
     found_error: Option<String>,
@@ -58,6 +59,7 @@ impl Default for State {
             search_focus: false,
             offset: 0,
             biome_tab: false,
+            left_click: None,
             right_click: None,
             found: None,
             found_error: None,
@@ -825,8 +827,8 @@ pub(super) fn render(
             game,
             batch,
             language().text(
-                "ЛКМ по POI: найдено · тянуть: двигать · колесо: масштаб · 2×ПКМ: метка · F: фильтры",
-                "Click POI: found · drag: pan · wheel: zoom · 2×RMB: waypoint · F: filters",
+                "2×ЛКМ по метке: удалить · POI: найдено · тянуть: двигать · колесо: масштаб · 2×ПКМ: метка · F: фильтры",
+                "2×LMB waypoint: delete · Click POI: found · drag: pan · wheel: zoom · 2×RMB: waypoint · F: filters",
             ),
             [8.0, s.size[1] - 12.0],
             s.size[0] - 16.0,
@@ -985,8 +987,10 @@ pub(super) fn mouse(
         }
         return true;
     }
+    let own_waypoints = crate::game::claim_borders_client::own_waypoints();
     let mut control = None;
     let mut point = None;
+    let mut deletion = None;
     state(|s| {
         if s.filters && model::contains(filter_rect(s.size), screen.mouse) {
             if button != 0 {
@@ -1092,8 +1096,40 @@ pub(super) fn mouse(
             return;
         }
         if button == 0 {
+            let waypoint = model::waypoint_at(
+                s.views[s.selected],
+                s.rect,
+                screen.mouse,
+                model::DIMENSIONS[s.selected],
+                own_waypoints
+                    .iter()
+                    .map(|w| (w.id, w.dimension.as_str(), w.position)),
+            );
+            let double = s.left_click.as_ref().is_some_and(|(t, dim, at)| {
+                t.elapsed().as_millis() <= 400
+                    && *dim == s.selected
+                    && (at[0] - screen.mouse[0]).hypot(at[1] - screen.mouse[1]) < 5.0
+            });
+            s.left_click = Some((std::time::Instant::now(), s.selected, screen.mouse));
+            if double && waypoint.is_some() {
+                if s.image
+                    .as_ref()
+                    .is_none_or(|im| im.query.dimension != s.selected || im.panel.is_none())
+                {
+                    return;
+                }
+                deletion = Some((
+                    model::DIMENSIONS[s.selected].to_string(),
+                    s.views[s.selected],
+                    s.rect,
+                ));
+                s.left_click = None;
+                s.poi_click = None;
+                s.drag = None;
+                return;
+            }
             s.drag = Some((screen.mouse, s.views[s.selected].center));
-            s.poi_click = if s.found.is_some() {
+            s.poi_click = if waypoint.is_none() && s.found.is_some() {
                 poi::target(&s.poi_hits, screen.mouse, false)
                     .map(|key| poi::Click::new(key, screen.mouse))
             } else {
@@ -1121,6 +1157,19 @@ pub(super) fn mouse(
             }
         }
     });
+    if let Some((dimension, view, rect)) = deletion {
+        if let Some(id) = model::waypoint_at(
+            view,
+            rect,
+            screen.mouse,
+            &dimension,
+            own_waypoints
+                .iter()
+                .map(|w| (w.id, w.dimension.as_str(), w.position)),
+        ) {
+            crate::game::claim_borders_waypoint_view::queue_delete(id);
+        }
+    }
     if let Some(c) = control {
         act(game, c);
     }

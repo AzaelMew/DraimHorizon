@@ -128,6 +128,7 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub experiments_accepted: bool,
     pub language: Language,
     pub waypoints: Vec<WaypointRow>,
     pub party: Vec<PartyRow>,
@@ -217,6 +218,7 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    AcceptExperiments,
     SetDeepLKey(Option<String>),
     SetLanguage(Language),
     AddWaypoint {
@@ -304,6 +306,7 @@ impl std::fmt::Debug for Action {
                 .field(z)
                 .finish(),
             Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
+            Self::AcceptExperiments => f.write_str("AcceptExperiments"),
             Self::SetExperimental(p) => f.debug_tuple("SetExperimental").field(p).finish(),
             Self::SetPriority(p) => f.debug_tuple("SetPriority").field(p).finish(),
             Self::SetChat(p) => f.debug_tuple("SetChat").field(p).finish(),
@@ -412,6 +415,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    ConfirmExperiments,
+    DeclineExperiments,
     SaveDeepLKey,
     RemoveDeepLKey,
     Language,
@@ -516,6 +521,7 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub experiments_prompt: bool,
     deepl_key: String,
     pub language: Language,
     pub tab: Tab,
@@ -548,6 +554,7 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
+            experiments_prompt: false,
             deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
@@ -652,6 +659,9 @@ impl Menu {
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
+        if self.experiments_prompt {
+            return self.experiments_dialog(width, height);
+        }
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = if panel_w >= 380.0 { 96.0 } else { 0.0 };
@@ -706,12 +716,63 @@ impl Menu {
         }
         widgets
     }
+    fn experiments_dialog(&self, width: f32, height: f32) -> Vec<Widget> {
+        let w = (width - 32.0).clamp(200.0, 460.0);
+        let x = (width - w) * 0.5;
+        let y = (height - 144.0) * 0.5;
+        let lines = match self.language {
+            Language::Russian => [
+                "Экспериментальные функции",
+                "Автор мода не рекомендует",
+                "использовать эти функции.",
+                "Используйте их только",
+                "на свой страх и риск.",
+            ],
+            Language::English => [
+                "Experimental features",
+                "The mod author does not",
+                "recommend these features.",
+                "Use them entirely",
+                "at your own risk.",
+            ],
+        };
+        let mut out: Vec<_> = lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| {
+                widget(
+                    [x + 10.0, y + 10.0 + i as f32 * 18.0, w - 20.0, 18.0],
+                    text,
+                    None,
+                    false,
+                )
+            })
+            .collect();
+        out.push(widget(
+            [x + 10.0, y + 110.0, (w - 30.0) * 0.5, 24.0],
+            self.language.text("Подтвердить", "Confirm"),
+            Some(Control::ConfirmExperiments),
+            false,
+        ));
+        out.push(widget(
+            [
+                x + 20.0 + (w - 30.0) * 0.5,
+                y + 110.0,
+                (w - 30.0) * 0.5,
+                24.0,
+            ],
+            self.language.text("Отклонить", "Decline"),
+            Some(Control::DeclineExperiments),
+            false,
+        ));
+        out
+    }
     fn legacy_layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
         let w = (width - 16.0).clamp(220.0, 590.0);
         let x = (width - w) * 0.5;
         let y = 8.0;
         let mut out = vec![
-            widget([x, y, w - 30.0, 18.0], "DRAIMHORIZONS", None, false),
+            widget([x, y, w - 30.0, 18.0], "DraimHorizon", None, false),
             widget(
                 [x + w - 26.0, y, 26.0, 18.0],
                 "X",
@@ -2477,6 +2538,18 @@ impl Menu {
         self.activate(model, (size[1] - 16.0).clamp(200.0, 400.0), control)
     }
     fn activate(&mut self, model: &ViewModel, height: f32, control: Control) -> Option<Action> {
+        if self.experiments_prompt {
+            match control {
+                Control::ConfirmExperiments => {
+                    self.experiments_prompt = false;
+                    self.tab = Tab::Experimental;
+                    return Some(Action::AcceptExperiments);
+                }
+                Control::DeclineExperiments | Control::Close => self.experiments_prompt = false,
+                _ => {}
+            }
+            return None;
+        }
         self.notice.clear();
         let id = self
             .selected
@@ -2892,6 +2965,12 @@ impl Menu {
             Control::ChatModern => Some(Action::ToggleChat),
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
+            Control::ConfirmExperiments | Control::DeclineExperiments => None,
+            Control::Tab(Tab::Experimental) if !model.experiments_accepted => {
+                self.experiments_prompt = true;
+                self.focus = None;
+                None
+            }
             Control::Tab(t) => {
                 self.deepl_key.clear();
                 self.tab = t;
@@ -3214,6 +3293,12 @@ impl Menu {
     }
     /// False only for Escape when the native screen should close itself.
     pub fn key(&mut self, key: &str, modifiers: u32) -> bool {
+        if self.experiments_prompt {
+            if key == "key.keyboard.escape" {
+                self.experiments_prompt = false;
+            }
+            return true;
+        }
         if key == "key.keyboard.escape" {
             self.access_token.clear();
             self.deepl_key.clear();
@@ -4432,5 +4517,33 @@ mod tests {
             "Russian text in English layout:\n{}",
             bad.into_iter().collect::<Vec<_>>().join("\n")
         );
+    }
+    #[test]
+    fn experiments_require_explicit_consent_and_escape_declines() {
+        let model = ViewModel::default();
+        let mut menu = Menu::default();
+        assert_eq!(
+            menu.activate(&model, 400.0, Control::Tab(Tab::Experimental)),
+            None
+        );
+        assert!(menu.experiments_prompt);
+        assert_eq!(menu.tab, Tab::Waypoints);
+        assert_eq!(menu.activate(&model, 400.0, Control::ChatTranslate), None);
+        assert!(menu.key("key.keyboard.escape", 0));
+        assert!(!menu.experiments_prompt);
+        menu.activate(&model, 400.0, Control::Tab(Tab::Experimental));
+        assert_eq!(
+            menu.activate(&model, 400.0, Control::ConfirmExperiments),
+            Some(Action::AcceptExperiments)
+        );
+        assert_eq!(menu.tab, Tab::Experimental);
+        let accepted = ViewModel {
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut reopened = Menu::default();
+        reopened.activate(&accepted, 400.0, Control::Tab(Tab::Experimental));
+        assert!(!reopened.experiments_prompt);
+        assert_eq!(reopened.tab, Tab::Experimental);
     }
 }

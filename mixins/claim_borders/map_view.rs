@@ -1230,15 +1230,28 @@ fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse:
         mouse,
     );
     for (rect, index, name) in mob_filter_hits(game, size) {
-        ui::button(
+        ui::button_base(game, batch, rect, &name, p.mob_selected(index), mouse);
+        ui::icon(
             game,
             batch,
-            rect,
-            &format!("{} {}", if p.mob_selected(index) { "✓" } else { "–" }, name),
-            p.mob_selected(index),
-            mouse,
+            if p.mob_selected(index) {
+                ui::Icon::Check
+            } else {
+                ui::Icon::Minus
+            },
+            [rect[0] + 4.0, rect[1] + (rect[3] - 10.0) * 0.5, 10.0, 10.0],
+            0xc6d3df,
+        );
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &name, rect[2] - 22.0),
+            [rect[0] + 18.0, rect[1] + (rect[3] - 8.0) * 0.5],
+            0xc6d3df,
+            false,
         );
     }
+
     ui::button(
         game,
         batch,

@@ -1,5 +1,14 @@
 # История версий
 
+## 0.23.1
+
+- Target current Horizon main c78187d; prevent release with a stale source pin.
+- Use official Lucide outlines, a single-line DraimHorizon title and an icon-only settings button.
+- Compact waypoint rows and delete own Seed Map waypoints with a double left click.
+- Ask once for explicit consent before opening Experiments; declining keeps features unchanged.
+- Launcher limitation: GitHub native mod rows still display the stable bundle ID; Horizon Launcher needs display-name support.
+
+
 ## 0.23.0
 
 - Gray original-language badges appear after chat and private messages in normal and compact layouts. Provider detection refines the local estimate, and unknown text uses ??.

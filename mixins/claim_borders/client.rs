@@ -1462,6 +1462,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            experiments_accepted: game
+                .native_setting(claims::ID, "experiments_accepted")
+                .as_deref()
+                == Some("true"),
             language,
             waypoints,
             party: rows,
@@ -1686,6 +1690,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetMap(preferences) => {
             crate::game::claim_borders_map_view::configure(game, preferences);
+            Ok(Vec::new())
+        }
+        Action::AcceptExperiments => {
+            game.native_set_setting(claims::ID, "experiments_accepted", "true");
             Ok(Vec::new())
         }
         Action::SetExperimental(prefs) => {

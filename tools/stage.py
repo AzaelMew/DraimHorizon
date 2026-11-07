@@ -6,7 +6,11 @@ See notices/LICENSE-horizon-native-mod-template. Does not compile the full game.
 """
 import argparse
 import contextlib
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows uses the existing portable toolchain too.
+    fcntl = None
+    import msvcrt
 import hashlib
 import json
 import os
@@ -66,11 +70,24 @@ def export_horizon(horizon, stages, compat):
     out.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".export-", dir=out.parent))
     try:
-        process = subprocess.Popen(["git", "-C", str(horizon), "archive", "--format=tar", revision], stdout=subprocess.PIPE)
+        process = subprocess.Popen(["git", "-c", "core.autocrlf=false", "-C", str(horizon), "archive", "--format=tar", revision], stdout=subprocess.PIPE)
         try:
             with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                links = []
                 for member in archive:
-                    archive.extract(member, temporary, filter="data")
+                    if member.issym():
+                        links.append((member.name, member.linkname))
+                    else:
+                        archive.extract(member, temporary, filter="data")
+                # Materialize documentation links after all targets exist. Windows
+                # cannot reliably create symlinks, and stream tar cannot seek back.
+                for name, link in links:
+                    destination = temporary / name
+                    source = (destination.parent / link).resolve()
+                    if not source.is_relative_to(temporary.resolve()) or not source.is_file():
+                        raise ValueError(f"unsupported source symlink: {name}")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(source.read_bytes())
         finally:
             process.stdout.close()
             code = process.wait()
@@ -103,8 +120,19 @@ def export_horizon(horizon, stages, compat):
 def stage_lock(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        else:
+            handle.write(" ")
+            handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            if fcntl is None:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def main():
