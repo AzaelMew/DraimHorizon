@@ -2,7 +2,7 @@
 use super::{Language, needs_translation};
 
 macro_rules! languages {
-    ($(($variant:ident, $code:literal, $deepl:literal, $detector:literal, $ru:literal, $en:literal)),+ $(,)?) => {
+    ($(($variant:ident, $code:literal, $deepl:literal, $ru:literal, $en:literal)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum TargetLanguage { #[default] Russian, $($variant),+ }
         impl TargetLanguage {
@@ -22,9 +22,6 @@ macro_rules! languages {
             pub fn deepl_code(self) -> &'static str {
                 match self { Self::Russian => "RU", $(Self::$variant => $deepl),+ }
             }
-            pub fn detector_code(self) -> &'static str {
-                match self { Self::Russian => "rus", $(Self::$variant => $detector),+ }
-            }
             pub fn name(self, ui: Language) -> &'static str {
                 match self { Self::Russian => ui.text("Русский", "Russian"), $(Self::$variant => ui.text($ru, $en)),+ }
             }
@@ -32,25 +29,25 @@ macro_rules! languages {
     };
 }
 languages! {
-    (English, "en", "EN-US", "eng", "Английский", "English"),
-    (Finnish, "fi", "FI", "fin", "Финский", "Finnish"),
-    (Polish, "pl", "PL", "pol", "Польский", "Polish"),
-    (German, "de", "DE", "deu", "Немецкий", "German"),
-    (French, "fr", "FR", "fra", "Французский", "French"),
-    (Spanish, "es", "ES", "spa", "Испанский", "Spanish"),
-    (Italian, "it", "IT", "ita", "Итальянский", "Italian"),
-    (Portuguese, "pt", "PT-BR", "por", "Португальский", "Portuguese"),
-    (Ukrainian, "uk", "UK", "ukr", "Украинский", "Ukrainian"),
-    (Dutch, "nl", "NL", "nld", "Нидерландский", "Dutch"),
-    (Swedish, "sv", "SV", "swe", "Шведский", "Swedish"),
-    (Danish, "da", "DA", "dan", "Датский", "Danish"),
-    (Czech, "cs", "CS", "ces", "Чешский", "Czech"),
-    (Turkish, "tr", "TR", "tur", "Турецкий", "Turkish"),
-    (Arabic, "ar", "AR", "ara", "Арабский", "Arabic"),
-    (Hindi, "hi", "HI", "hin", "Хинди", "Hindi"),
-    (Japanese, "ja", "JA", "jpn", "Японский", "Japanese"),
-    (Korean, "ko", "KO", "kor", "Корейский", "Korean"),
-    (Chinese, "zh-CN", "ZH-HANS", "cmn", "Китайский", "Chinese"),
+    (English, "en", "EN-US", "Английский", "English"),
+    (Finnish, "fi", "FI", "Финский", "Finnish"),
+    (Polish, "pl", "PL", "Польский", "Polish"),
+    (German, "de", "DE", "Немецкий", "German"),
+    (French, "fr", "FR", "Французский", "French"),
+    (Spanish, "es", "ES", "Испанский", "Spanish"),
+    (Italian, "it", "IT", "Итальянский", "Italian"),
+    (Portuguese, "pt", "PT-BR", "Португальский", "Portuguese"),
+    (Ukrainian, "uk", "UK", "Украинский", "Ukrainian"),
+    (Dutch, "nl", "NL", "Нидерландский", "Dutch"),
+    (Swedish, "sv", "SV", "Шведский", "Swedish"),
+    (Danish, "da", "DA", "Датский", "Danish"),
+    (Czech, "cs", "CS", "Чешский", "Czech"),
+    (Turkish, "tr", "TR", "Турецкий", "Turkish"),
+    (Arabic, "ar", "AR", "Арабский", "Arabic"),
+    (Hindi, "hi", "HI", "Хинди", "Hindi"),
+    (Japanese, "ja", "JA", "Японский", "Japanese"),
+    (Korean, "ko", "KO", "Корейский", "Korean"),
+    (Chinese, "zh-CN", "ZH-HANS", "Китайский", "Chinese"),
 }
 impl From<Language> for TargetLanguage {
     fn from(language: Language) -> Self {
@@ -88,12 +85,11 @@ impl SourcePolicy {
     pub fn google_source(self) -> &'static str {
         self.source.map_or("auto", TargetLanguage::code)
     }
-    // Runs on the translation worker, never in a draw/input hook.
-    // The filter exists to skip text that is clearly in a rare language, so it only skips
-    // on a *reliable* detection of an uncommon language. Anything it cannot identify
-    // (tiny words, typos, mixed text, slang) is translated rather than silently dropped.
-    // Cyrillic neighbours of Russian/Ukrainian are accepted: trigram detection routinely
-    // confuses them on short chat lines, and wrongly skipping Russian is the worse error.
+    // Runs on the translation worker, never in a draw/input hook. It reuses the detector that
+    // already labels chat lines (`detect_source_language`), so what is skipped matches the
+    // badge the player sees. The filter only skips a line the detector positively identifies
+    // as an uncommon language; anything it cannot identify (tiny words, typos, slang, mixed
+    // lines) is translated rather than silently dropped.
     pub fn allows(self, text: &str) -> bool {
         if !needs_translation(text) {
             return false;
@@ -101,17 +97,15 @@ impl SourcePolicy {
         if !self.common_only || self.source.is_some() {
             return true;
         }
-        let Some(info) = super::detector::detect(text) else {
-            return true;
-        };
-        if !info.is_reliable() || info.script() == super::detector::Script::Cyrillic {
-            return true;
+        match super::detect_source_language(text) {
+            None => true,
+            // BE is a Cyrillic neighbour of Russian/Ukrainian, easily mistaken for them.
+            Some(code) => {
+                code == "BE"
+                    || TargetLanguage::COMMON
+                        .iter()
+                        .any(|l| l.source_code() == code)
+            }
         }
-        let code = info.lang().code();
-        // Close relatives that are routinely mistaken for a listed language.
-        TargetLanguage::COMMON
-            .iter()
-            .any(|lang| lang.detector_code() == code)
-            || matches!(code, "nob" | "slk" | "cat")
     }
 }

@@ -15,8 +15,6 @@ use std::{
 const ENDPOINT: &str = "https://translate.googleapis.com/translate_a/single";
 const GOOGLE_MIRROR: &str = "https://translate.google.com/translate_a/single";
 const DEEPL_FREE: &str = "https://api-free.deepl.com/v2/translate";
-#[path = "language_detector/mod.rs"]
-mod detector;
 #[path = "translation_languages.rs"]
 mod languages;
 pub use languages::{SourcePolicy, TargetLanguage};
@@ -797,7 +795,7 @@ mod tests {
     }
     #[test]
     fn common_only_skips_unlisted_sources_without_waiting_for_network() {
-        let text = "ეს არის ქართული ტექსტი და ჩვენ ვსაუბრობთ ერთმანეთთან ქართულ ენაზე.";
+        let text = "Γεια σας φίλοι, αυτή είναι μια ολόκληρη πρόταση στην ελληνική γλώσσα.";
         let policy = SourcePolicy {
             source: None,
             common_only: true,

@@ -18,14 +18,14 @@ The bug was before the HTTP requests, not in Google/DeepL's source detection. Bo
 
 ## Implementation
 
-- `relay_client/src/translation_languages.rs`: 20-language catalog (Google, DeepL and detector codes, RU/EN names) and `SourcePolicy`. `language_detector/` is a bundled, MIT-licensed copy of whatlang 0.18; the pinned native tool rejects registry dependencies absent from Horizon's lock file, so a crate dependency was not possible.
+- `relay_client/src/translation_languages.rs`: 20-language catalog (Google and DeepL codes, RU/EN names) and `SourcePolicy`. The filter reuses `detect_source_language` (the same detector that produces the per-line language badge) instead of a second detector, so there is no extra dependency or vendored code.
 - `relay_client/src/translation.rs`: workers take a target plus policy. Skipped (non-common) text returns unchanged without any network request. Explicit input sets Google `sl` and DeepL `source_lang`; shared-relay frames carry it as an optional third element.
 - `outgoing.rs`: `TranslationTargets` (schema 1, atomic save, never overwrites an invalid file), layout/hit-testing shared by painting and input, 39 px button.
 - `outgoing_view.rs`: right-click opens a dedicated mod screen. The native chat text field is moved aside and restored, so draft, caret and selection survive.
 - `chat_view.rs`: received chat uses the Received-chat target and the common-only policy; badges show the target code.
 - `relay/`: 1.3.0 accepts the 20 DeepL targets and an optional source.
 
-The filter only skips on a reliable detection of an uncommon language (and accepts Cyrillic neighbours of Russian/Ukrainian); unidentifiable text is translated, not dropped. Short messages are the weak point of auto-detection (and of the common-languages filter). Setting **Chat from** to the chat's language sends it as the explicit source and bypasses detection for received chat.
+The filter only skips text the detector positively identifies as an uncommon language; unidentifiable text is translated, not dropped. Short messages are the weak point of auto-detection (and of the common-languages filter). Setting **Chat from** to the chat's language sends it as the explicit source and bypasses detection for received chat.
 
 Limits: language identification of short text is probabilistic; provider quotas and coverage still apply; the UI is localized only in English and Russian.
 

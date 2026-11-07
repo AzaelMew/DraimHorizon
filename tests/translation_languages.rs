@@ -159,7 +159,7 @@ fn common_language_catalog_and_source_filter_are_independent_of_ui() {
     assert!(
         common.allows("Tämä on suomenkielinen viesti ystäville ja haluan rakentaa suuren talon.")
     );
-    assert!(!common.allows("ეს არის ქართული ტექსტი და ჩვენ ვსაუბრობთ ერთმანეთთან ქართულ ენაზე."));
+    assert!(!common.allows("שלום לכולם, זה משפט שלם בשפה העברית שאנחנו כותבים כאן."));
     assert!(
         !common.allows("Γεια σας φίλοι, αυτή είναι μια ολόκληρη πρόταση στην ελληνική γλώσσα.")
     );
@@ -217,5 +217,5 @@ fn common_filter_never_skips_real_chat_lines_it_cannot_identify_reliably() {
         assert!(common.allows(text), "{text}");
     }
     // A long, clearly uncommon language is still skipped.
-    assert!(!common.allows("ეს არის ქართული ტექსტი და ჩვენ ვსაუბრობთ ერთმანეთთან ქართულ ენაზე."));
+    assert!(!common.allows("שלום לכולם, זה משפט שלם בשפה העברית שאנחנו כותבים כאן."));
 }
