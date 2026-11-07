@@ -3168,8 +3168,21 @@ impl Menu {
             .find(|w| w.control.is_some() && contains(w.rect, mouse));
         let Some(control) = hit.and_then(|w| w.control) else {
             self.focus = None;
+            self.navigation_choices = None;
             return None;
         };
+        if self.navigation_choices.is_some()
+            && !matches!(
+                control,
+                Control::NavigationWaypoint
+                    | Control::NavigationPlayer
+                    | Control::NavigationWaypointChoice(_)
+                    | Control::NavigationPlayerChoice(_)
+                    | Control::NavigationChoicesPage(_)
+            )
+        {
+            self.navigation_choices = None;
+        }
         self.activate(model, (size[1] - 16.0).clamp(200.0, 400.0), control)
     }
     fn activate(&mut self, model: &ViewModel, height: f32, control: Control) -> Option<Action> {
@@ -3337,6 +3350,7 @@ impl Menu {
             }
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
+                self.navigation_choices = None;
                 self.focus = None;
                 None
             }
@@ -3411,6 +3425,7 @@ impl Menu {
                 None
             }
             Control::NavigationPreview | Control::NavigationStart => {
+                self.navigation_choices = None;
                 if !model.experiments_accepted {
                     self.experiments_prompt = true;
                     return None;
@@ -5206,6 +5221,24 @@ mod tests {
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
         assert_eq!(menu.navigation_coordinates, "2");
+    }
+
+    #[test]
+    fn navigation_dropdown_pagination_selects_absolute_player_id() {
+        let model = ViewModel {
+            navigation_players: (0..19).map(|i| (100 + i, format!("Player{i}"))).collect(),
+            ..ViewModel::default()
+        };
+        let mut menu = Menu::default();
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        menu.activate(&model, 200.0, Control::NavigationChoicesPage(1));
+        assert_eq!(menu.navigation_choices_page, 1);
+        menu.activate(&model, 200.0, Control::NavigationPlayerChoice(9));
+        assert_eq!(menu.navigation_player, Some(109));
+        assert_eq!(menu.navigation_choices, None);
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        menu.activate(&model, 200.0, Control::NavigationChoicesPage(-1));
+        assert_eq!(menu.navigation_choices_page, 2);
     }
 
     use super::*;
