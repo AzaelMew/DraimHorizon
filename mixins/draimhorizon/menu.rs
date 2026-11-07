@@ -5077,6 +5077,24 @@ mod tests {
                         controls.len(),
                         if mode == BaritoneMode::Tunnel { 14 } else { 11 }
                     );
+                    if mode == BaritoneMode::Tunnel && height < 320.0 {
+                        let control_rect = |control| {
+                            controls
+                                .iter()
+                                .find(|w| w.control == Some(control))
+                                .unwrap()
+                                .rect
+                        };
+                        let length = control_rect(Control::ConstructLength);
+                        let width = control_rect(Control::ConstructWidth);
+                        let tunnel_height = control_rect(Control::ConstructHeight);
+                        let floor = control_rect(Control::ConstructFloor);
+                        assert_eq!(length[1], width[1]);
+                        assert_eq!(tunnel_height[1], floor[1]);
+                        assert!(length[0] < width[0]);
+                        assert!(tunnel_height[0] < floor[0]);
+                        assert!(length[1] < tunnel_height[1]);
+                    }
                     let status = rows.iter().find(|w| w.text == "Build status").unwrap();
                     for (i, a) in controls.iter().enumerate() {
                         assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
