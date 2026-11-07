@@ -514,7 +514,121 @@ pub fn world(view: View, r: [f32; 4], mouse: [f32; 2]) -> [f64; 2] {
         r[2] / r[3],
     )
 }
-/// Hard bound on placement checks, including dense mineshaft/fossil sets.
+pub const SEARCH_TILE_BLOCKS: i32 = 1024;
+pub const MAX_SEARCH_TILES: usize = 512;
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    pub id: String,
+    pub position: [f64; 2],
+}
+pub struct SearchArea {
+    pub tiles: Vec<(i32, i32)>,
+    pub limited: bool,
+}
+pub fn tile_view(at: (i32, i32)) -> View {
+    View {
+        center: [
+            f64::from(at.0) * 1024.0 + 512.0,
+            f64::from(at.1) * 1024.0 + 512.0,
+        ],
+        blocks_per_pixel: 8.0,
+    }
+}
+/// Plan a bounded working set; a landscape 2 km scale fits in full.
+pub fn search_tiles(view: View, aspect: f32) -> Option<SearchArea> {
+    if !(0.1..=32.0).contains(&aspect)
+        || !(0.25..=524288.0).contains(&view.blocks_per_pixel)
+        || !view
+            .center
+            .iter()
+            .all(|p| p.is_finite() && p.abs() <= 30_000_000.0)
+    {
+        return None;
+    }
+    let a = view.world_aspect([0.0, 0.0], 128.0, aspect);
+    let b = view.world_aspect([128.0, 128.0], 128.0, aspect);
+    let size = f64::from(SEARCH_TILE_BLOCKS);
+    let mut lo = a.map(|v| (v / size).floor().max((-30_000_000.0 / size).floor()) as i32);
+    let mut hi = b.map(|v| ((v / size).ceil() - 1.0).min((30_000_000.0 / size).floor()) as i32);
+    let w = i64::from(hi[0]) - i64::from(lo[0]) + 1;
+    let h = i64::from(hi[1]) - i64::from(lo[1]) + 1;
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let limited = w * h > MAX_SEARCH_TILES as i64;
+    if limited {
+        let nx = ((MAX_SEARCH_TILES as f64 * w as f64 / h as f64)
+            .sqrt()
+            .ceil() as i64)
+            .clamp(1, w.min(MAX_SEARCH_TILES as i64));
+        let ny = (MAX_SEARCH_TILES as i64 / nx).clamp(1, h);
+        for (axis, n) in [nx, ny].into_iter().enumerate() {
+            let center = (view.center[axis] / size).floor() as i32;
+            lo[axis] = (center - n as i32 / 2).clamp(lo[axis], hi[axis] - n as i32 + 1);
+            hi[axis] = lo[axis] + n as i32 - 1;
+        }
+    }
+    let mut tiles: Vec<_> = (lo[1]..=hi[1])
+        .flat_map(|z| (lo[0]..=hi[0]).map(move |x| (x, z)))
+        .collect();
+    let distance = |at| {
+        let v = tile_view(at);
+        (v.center[0] - view.center[0]).hypot(v.center[1] - view.center[1])
+    };
+    tiles.sort_by(|a, b| distance(*a).total_cmp(&distance(*b)).then(a.cmp(b)));
+    Some(SearchArea { tiles, limited })
+}
+#[derive(Default)]
+pub struct StructureTiles {
+    entries: std::collections::BTreeMap<(usize, i32, i32), Vec<Mark>>,
+    order: std::collections::VecDeque<(usize, i32, i32)>,
+}
+impl StructureTiles {
+    pub fn contains(&self, dimension: usize, at: (i32, i32)) -> bool {
+        self.entries.contains_key(&(dimension, at.0, at.1))
+    }
+    pub fn insert(
+        &mut self,
+        dimension: usize,
+        at: (i32, i32),
+        marks: Vec<Mark>,
+        keep: &[(i32, i32)],
+    ) -> Result<(), String> {
+        let key = (dimension, at.0, at.1);
+        if !self.entries.contains_key(&key) {
+            while self.entries.len() >= MAX_SEARCH_TILES {
+                let index = self
+                    .order
+                    .iter()
+                    .position(|&(d, x, z)| d != dimension || !keep.contains(&(x, z)))
+                    .ok_or("seed-map tile working set exceeds cache")?;
+                let old = self
+                    .order
+                    .remove(index)
+                    .ok_or("seed-map cache order mismatch")?;
+                self.entries.remove(&old);
+            }
+            self.order.push_back(key);
+        }
+        self.entries.insert(key, marks);
+        Ok(())
+    }
+    pub fn marks(&self, dimension: usize, view: View, aspect: f32, p: &Preferences) -> Vec<Mark> {
+        self.entries
+            .iter()
+            .filter(|((d, _, _), _)| *d == dimension)
+            .flat_map(|(_, marks)| marks)
+            .filter(|m| p.shows(&m.id))
+            .filter(|m| {
+                let xy = view.pixel_aspect(m.position, 128.0, aspect);
+                xy.iter().all(|v| *v >= -2.0 && *v <= 130.0)
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+/// Hard bound on placement checks within one search tile, including dense sets.
 pub fn region_bounds(view: View, aspect: f32, spacing: i32) -> Option<([i32; 2], [i32; 2])> {
     if spacing <= 0 || !aspect.is_finite() || aspect <= 0.0 {
         return None;
@@ -602,6 +716,91 @@ pub fn biome_color(id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn two_kilometre_view_is_fully_searchable_in_bounded_tiles() {
+        let view = View {
+            center: [-1928.0, 56.0],
+            blocks_per_pixel: 64.0,
+        };
+        let aspect = 2.5;
+        assert_eq!(
+            super::super::claim_borders_map::scale_bar(128.0 * 64.0 * 2.5, 1000.0, 160.0)
+                .unwrap()
+                .0,
+            2000.0
+        );
+        let area = search_tiles(view, aspect).unwrap();
+        assert!(!area.limited);
+        assert_eq!(area.tiles.len(), 21 * 9);
+        let tiles: std::collections::BTreeSet<_> = area.tiles.iter().copied().collect();
+        for z in -4..=4 {
+            for x in -12..=8 {
+                assert!(tiles.contains(&(x, z)));
+                assert!(region_bounds(tile_view((x, z)), 1.0, 1).is_some());
+            }
+        }
+        let far = search_tiles(
+            View {
+                blocks_per_pixel: 524288.0,
+                ..view
+            },
+            aspect,
+        )
+        .unwrap();
+        assert!(far.limited);
+        assert!(far.tiles.len() <= MAX_SEARCH_TILES);
+        assert!(search_tiles(view, f32::NAN).is_none());
+    }
+    #[test]
+    fn cached_pois_survive_zooming_out_without_a_global_512_marker_cutoff() {
+        let mut cache = StructureTiles::default();
+        let view = View {
+            center: [0.0, 0.0],
+            blocks_per_pixel: 64.0,
+        };
+        let keep = [(0, 0), (-1, 0)];
+        let dense: Vec<_> = (0..600)
+            .map(|x| Mark {
+                id: "mineshaft".into(),
+                position: [x as f64, 8.0],
+            })
+            .collect();
+        cache.insert(0, (0, 0), dense, &keep).unwrap();
+        cache
+            .insert(
+                0,
+                (-1, 0),
+                vec![Mark {
+                    id: "village_plains".into(),
+                    position: [-8.0, 8.0],
+                }],
+                &keep,
+            )
+            .unwrap();
+        let marks = cache.marks(0, view, 2.5, &Preferences::default());
+        assert_eq!(marks.len(), 601);
+        assert!(marks.iter().any(|m| m.id == "village_plains"));
+        let zoomed = cache.marks(
+            0,
+            View {
+                blocks_per_pixel: 128.0,
+                ..view
+            },
+            2.5,
+            &Preferences::default(),
+        );
+        assert_eq!(marks, zoomed);
+        assert!(
+            cache
+                .marks(1, view, 2.5, &Preferences::default())
+                .is_empty()
+        );
+        for x in 1..=MAX_SEARCH_TILES as i32 {
+            cache.insert(0, (x, 1), Vec::new(), &keep).unwrap();
+        }
+        assert!(cache.contains(0, (0, 0)) && cache.contains(0, (-1, 0)));
+        assert!(cache.entries.len() <= MAX_SEARCH_TILES);
+    }
     #[test]
     fn english_labels_have_no_russian_text() {
         let cyrillic = |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));

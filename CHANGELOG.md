@@ -1,6 +1,14 @@
 # История версий
 
-## 0.22.6 (unreleased / не опубликовано)
+## 0.22.7 (unreleased / не опубликовано)
+
+### English
+- Seed Map searches wide views progressively in cached 1024-block tiles instead of dropping whole structure sets or stopping at 512 candidates. The 2 km landscape view is fully covered; progress is shown while new tiles load. POI clustering is world-aligned and type-specific, so panning does not arbitrarily swap a village for a mineshaft icon.
+
+### Русский
+- Seed Map последовательно ищет структуры в кешируемых областях по 1024 блока вместо пропуска целых наборов или остановки на 512 кандидатах. Широкий вид с линейкой 2 км покрывается полностью; во время загрузки новых областей показан прогресс. Группировка POI привязана к миру и типу структуры, поэтому перемещение карты не подменяет деревню значком шахты.
+
+## 0.22.6
 
 ### English
 - Seed Map: click an individual POI to mark it found and dim its icon; click again to undo. Marks persist locally per server/world, account, seed and dimension. Dragging still pans; zoom into clusters before marking individual locations.

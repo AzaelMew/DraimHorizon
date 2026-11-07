@@ -612,28 +612,22 @@ pub(super) fn render(
                 if s.preferences.claims {
                     draw_claims(game, batch, &source, dim, view, r, p);
                 }
-                let mut clusters = std::collections::BTreeMap::<
-                    (i32, i32),
-                    (usize, usize, [f32; 2], &worker::Mark),
-                >::new();
-                for mark in panel.marks.iter().filter(|m| s.preferences.shows(&m.id)) {
-                    let at = view.pixel_aspect(mark.position, 128.0, aspect);
-                    let at = [r[0] + at[0] / 128.0 * r[2], r[1] + at[1] / 128.0 * r[3]];
-                    if model::contains(r, at) {
-                        let found = poi::Poi::new(s.selected, &mark.id, mark.position)
-                            .is_some_and(|key| s.found.as_ref().is_some_and(|f| f.contains(&key)));
-                        let key = ((at[0] / 22.0).floor() as i32, (at[1] / 22.0).floor() as i32);
-                        clusters
-                            .entry(key)
-                            .and_modify(|v| {
-                                v.0 += 1;
-                                v.1 += usize::from(found);
-                            })
-                            .or_insert((1, usize::from(found), at, mark));
-                    }
-                }
+                let clusters = poi::clusters(
+                    &panel.marks,
+                    s.selected,
+                    view,
+                    r,
+                    &s.preferences,
+                    s.found.as_ref(),
+                );
                 let first = batch.vertices.len();
-                for (_, (count, found_count, at, mark)) in clusters {
+                for poi::Cluster {
+                    count,
+                    found_count,
+                    at,
+                    mark,
+                } in clusters
+                {
                     let Some(i) = model::structure_index(&mark.id) else {
                         continue;
                     };
@@ -728,14 +722,26 @@ pub(super) fn render(
                         );
                     }
                 }
-                if panel.limited {
+                if panel.searching || panel.limited {
+                    let status = if panel.searching {
+                        format!(
+                            "{} ({}/{})",
+                            language().text("Поиск POI…", "Searching POIs…"),
+                            panel.searched,
+                            panel.total
+                        )
+                    } else {
+                        language()
+                            .text(
+                                "Для полного поиска структур приблизьте карту",
+                                "Zoom in for a full structure search",
+                            )
+                            .to_owned()
+                    };
                     text(
                         game,
                         batch,
-                        language().text(
-                            "Для полного поиска структур приблизьте карту",
-                            "Zoom in for a full structure search",
-                        ),
+                        &status,
                         [44.0, r[1] + 7.0],
                         r[2] - 60.0,
                         0xf1c77c,

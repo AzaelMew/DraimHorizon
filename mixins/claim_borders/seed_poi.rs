@@ -248,6 +248,82 @@ pub fn dim_color(color: u32, found: bool) -> u32 {
     u32::from_le_bytes([dim(r), dim(g), dim(b), a])
 }
 
+pub struct Cluster<'a> {
+    pub count: usize,
+    pub found_count: usize,
+    pub at: [f32; 2],
+    pub mark: &'a catalog::Mark,
+}
+/// Cluster only equal POI types in world-aligned cells, independent of pan/order.
+pub fn clusters<'a>(
+    marks: &'a [catalog::Mark],
+    dimension: usize,
+    view: super::claim_borders_map::View,
+    rect: [f32; 4],
+    preferences: &catalog::Preferences,
+    found: Option<&Found>,
+) -> Vec<Cluster<'a>> {
+    let mut groups = std::collections::BTreeMap::<(i64, i64, usize), Cluster<'a>>::new();
+    if !rect.iter().all(|v| v.is_finite()) || rect[2] <= 0.0 || rect[3] <= 0.0 {
+        return Vec::new();
+    }
+    let cell = 22.0 * 128.0 * f64::from(view.blocks_per_pixel) / f64::from(rect[3]);
+    if !cell.is_finite() || cell <= 0.0 {
+        return Vec::new();
+    }
+    for mark in marks.iter().filter(|m| preferences.shows(&m.id)) {
+        let Some(poi) = Poi::new(dimension, &mark.id, mark.position) else {
+            continue;
+        };
+        let Some(kind) = catalog::structure_index(&mark.id) else {
+            continue;
+        };
+        let xy = view.pixel_aspect(mark.position, 128.0, rect[2] / rect[3]);
+        let at = [
+            rect[0] + xy[0] * rect[2] / 128.0,
+            rect[1] + xy[1] * rect[3] / 128.0,
+        ];
+        if !catalog::contains(rect, at) {
+            continue;
+        }
+        let key = (
+            (mark.position[0] / cell).floor() as i64,
+            (mark.position[1] / cell).floor() as i64,
+            kind,
+        );
+        let is_found = usize::from(found.is_some_and(|f| f.contains(&poi)));
+        groups
+            .entry(key)
+            .and_modify(|c| {
+                c.count += 1;
+                c.found_count += is_found;
+                if mark.position[0] < c.mark.position[0]
+                    || mark.position[0] == c.mark.position[0]
+                        && mark.position[1] < c.mark.position[1]
+                {
+                    c.mark = mark;
+                    c.at = at;
+                }
+            })
+            .or_insert(Cluster {
+                count: 1,
+                found_count: is_found,
+                at,
+                mark,
+            });
+    }
+    let mut groups: Vec<_> = groups.into_values().collect();
+    // Dense clusters go underneath rare/individual POIs, not over them.
+    groups.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.mark.id.cmp(&b.mark.id))
+            .then(a.mark.position[0].total_cmp(&b.mark.position[0]))
+            .then(a.mark.position[1].total_cmp(&b.mark.position[1]))
+    });
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +350,68 @@ mod tests {
     }
     fn key() -> Poi {
         Poi::new(0, "village_plains", [-120.0, 56.0]).unwrap()
+    }
+    #[test]
+    fn clustering_keeps_poi_types_separate_and_is_stable_while_panning() {
+        use super::super::claim_borders_map::View;
+        let marks = vec![
+            catalog::Mark {
+                id: "village_plains".into(),
+                position: [8.0, 8.0],
+            },
+            catalog::Mark {
+                id: "mineshaft".into(),
+                position: [10.0, 8.0],
+            },
+            catalog::Mark {
+                id: "village_plains".into(),
+                position: [12.0, 8.0],
+            },
+        ];
+        let view = View {
+            center: [0.0; 2],
+            blocks_per_pixel: 64.0,
+        };
+        let rect = [0.0, 0.0, 1000.0, 400.0];
+        let p = catalog::Preferences::default();
+        let clusters = clusters(&marks, 0, view, rect, &p, None);
+        assert_eq!(clusters.len(), 2);
+        assert_eq!(clusters.iter().map(|c| c.count).sum::<usize>(), 3);
+        assert!(
+            clusters
+                .iter()
+                .any(|c| c.mark.id == "village_plains" && c.count == 2)
+        );
+        assert!(
+            clusters
+                .iter()
+                .any(|c| c.mark.id == "mineshaft" && c.count == 1)
+        );
+        let shifted = super::clusters(
+            &marks,
+            0,
+            View {
+                center: [100.0, -80.0],
+                ..view
+            },
+            rect,
+            &p,
+            None,
+        );
+        let reversed: Vec<_> = marks.iter().cloned().rev().collect();
+        let reversed = super::clusters(&reversed, 0, view, rect, &p, None);
+        for other in [&shifted, &reversed] {
+            assert_eq!(
+                clusters
+                    .iter()
+                    .map(|c| (&c.mark.id, c.mark.position, c.count))
+                    .collect::<Vec<_>>(),
+                other
+                    .iter()
+                    .map(|c| (&c.mark.id, c.mark.position, c.count))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
     #[test]
     fn found_pois_toggle_and_survive_restart_without_crossing_scopes_or_seeds() {

@@ -1,21 +1,19 @@
-**DraimHorizons 0.22.6** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
+**DraimHorizons 0.22.7** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
 
 ## English
 
-- Seed Map: click an individual POI to toggle a saved **found** mark and dim its icon. Click again to undo; dragging still pans. Zoom in to separate clustered POIs. Marks stay local and are isolated by server/world, account, seed and dimension.
-- Settings → Chat → Appearance now has a **Compact messages** toggle. It reduces card padding and the gaps between messages without shrinking the font or changing multiline text spacing.
-- The setting persists across restarts. Existing preferences keep normal spacing until compact messages are enabled; resetting chat settings restores normal spacing.
-- Fullscreen claim outlines remain complete during fractional panning; terrain shading no longer creates the confirmed 256-block region-boundary stripes.
-- Small map drags reuse buffered terrain instead of rebuilding and uploading unchanged images. Broad views use coarser chunk overviews to avoid detailed-region cache thrashing; exploration files are unchanged.
+- Fix missing Seed Map POIs at the **2 km landscape scale**: structure searches now fill cached world-aligned tiles progressively instead of dropping whole structure sets or stopping at a shared 512-candidate cutoff.
+- Known POIs remain available while new tiles load. Wait for **Searching POIs…** to finish in a cold area; extremely distant views still show an explicit search-limit warning.
+- Clusters combine only matching structure types and use stable real-world representatives, so panning does not arbitrarily replace a village icon with a mineshaft icon. Dense clusters draw underneath individual POIs.
+- Existing found marks, click/drag handling, world/account/seed/dimension isolation, and English/Russian controls remain supported. Source pins and saved exploration/found-marker formats are unchanged.
 
-Rebuild native mods in the launcher after updating.
+Rebuild native mods in the launcher after updating. The new 2 km rendering still needs in-game acceptance; synthetic coverage tests do not establish live generator completeness or visual quality.
 
 ## Русский
 
-- Seed Map: щелчок по отдельной структуре переключает сохраняемую отметку **найдено** и затемняет значок. Повторный щелчок снимает отметку; перетаскивание по-прежнему двигает карту. Для выбора структуры в группе сначала приблизьте карту. Отметки локальные и разделены по серверу/миру, аккаунту, сиду и измерению.
-- Настройки → Чат → Оформление: «Компактные сообщения» уменьшают отступы карточек и промежутки между ними без изменения размера шрифта и межстрочного интервала.
-- Параметр сохраняется после перезапуска. По умолчанию и после сброса настроек сохраняются обычные отступы.
-- Контуры приватов полноэкранной карты сохраняют все стороны при дробном смещении; затенение рельефа больше не создаёт подтверждённые полосы на границах регионов через каждые 256 блоков.
-- Небольшое перетаскивание переиспользует снимок рельефа с запасом по краям вместо повторной загрузки неизменённой текстуры. Широкие виды используют более грубые обзоры чанков, избегая постоянного вытеснения подробных регионов; файлы исследованной карты не меняются.
+- Исправлено исчезновение POI Seed Map на **широком виде с линейкой 2 км**: поиск последовательно заполняет привязанные к миру кешируемые области вместо пропуска целых наборов структур или остановки на общих 512 кандидатах.
+- Известные POI сохраняются на карте во время загрузки новых областей. В новой области дождитесь завершения надписи **Поиск POI…**; на чрезвычайно далёком масштабе ограничение поиска явно отмечается.
+- Группируются только одинаковые типы структур с устойчивым выбором реального представителя, поэтому перемещение карты не подменяет значок деревни значком шахты. Плотные группы рисуются под отдельными POI.
+- Сохранены отметки найденных мест, различение щелчка и перетаскивания, разделение по миру/аккаунту/сиду/измерению и переключатель RU/EN. Source pins и форматы сохранённой карты и отметок не изменены.
 
-После обновления пересоберите нативные моды в лаунчере.
+После обновления пересоберите нативные моды в лаунчере. Новому виду 2 км ещё требуется игровая проверка: синтетические тесты охвата не подтверждают полноту живого генератора или качество изображения.
