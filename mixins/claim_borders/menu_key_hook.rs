@@ -11,6 +11,9 @@ fn claim_borders_menu_key(
     if crate::game::claim_borders_ui_view::key_event(game, key, canceled) {
         return;
     }
+    if crate::game::claim_borders_outgoing_view::key(game, key, canceled) {
+        return;
+    }
     if crate::game::claim_borders_commerce_view::key(game, key, canceled) {
         return;
     }

@@ -2,8 +2,11 @@ use crate::game::claim_borders_ui_view as ui;
 // Native chat cards. The original signed message/history path remains untouched.
 use crate::game::claim_borders_chat_archive as archive;
 use crate::game::claim_borders_chat_preferences as options;
+use crate::game::claim_borders_outgoing::TranslationTargets;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
-use claim_borders_relay_client::translation::{Language, Translator, valid_deepl_key};
+use claim_borders_relay_client::translation::{
+    Language, SourcePolicy, TargetLanguage, Translator, valid_deepl_key,
+};
 use horizon_client::{
     hud::{HudBatch, rgba},
     text::Text,
@@ -22,6 +25,7 @@ const DEEPL_KEY_SETTING: &str = "deepl_api_key";
 pub(super) struct Settings {
     pub deepl_configured: bool,
     pub language: Language,
+    pub translation: TranslationTargets,
     pub modern: bool,
     pub translate: bool,
     pub preferences: options::Preferences,
@@ -41,7 +45,7 @@ struct State {
     settings: Settings,
     loaded: bool,
     translator: Option<Translator>,
-    translation_language: Language,
+    translation_language: TargetLanguage,
     requested: HashSet<u64>,
     retry: HashMap<u64, (u64, u8)>,
     translation_failed_at: Option<u64>,
@@ -69,13 +73,14 @@ impl Default for State {
             settings: Settings {
                 deepl_configured: false,
                 language: Language::default(),
+                translation: TranslationTargets::load(None, None, Language::default()),
                 modern: true,
                 translate: true,
                 preferences: options::Preferences::default(),
             },
             loaded: false,
             translator: None,
-            translation_language: Language::default(),
+            translation_language: TargetLanguage::default(),
             requested: HashSet::new(),
             retry: HashMap::new(),
             translation_failed_at: None,
@@ -119,9 +124,14 @@ pub(super) fn language(game: &Game<'_>) -> Language {
 pub(super) fn current_language() -> Language {
     state(|s| s.settings.language)
 }
-pub(super) fn translator(game: &Game<'_>, target: Language) -> Translator {
-    Translator::with_deepl(
+pub(super) fn translator(
+    game: &Game<'_>,
+    target: TargetLanguage,
+    policy: SourcePolicy,
+) -> Translator {
+    Translator::with_policy(
         target,
+        policy,
         game.native_setting(claims::ID, DEEPL_KEY_SETTING),
         crate::game::claim_borders_client::translation_relay(),
     )
@@ -199,6 +209,28 @@ pub(super) fn settings(game: &Game<'_>) -> Settings {
                     .as_deref()
                     .unwrap_or_default(),
             );
+            s.settings.translation = TranslationTargets::load(
+                game.native_setting(claims::ID, "chat_incoming_language")
+                    .as_deref(),
+                game.native_setting(claims::ID, "chat_outgoing_language")
+                    .as_deref(),
+                s.settings.language,
+            );
+            let path = game
+                .native_data_dir(claims::ID)
+                .join("translation_preferences");
+            match game.native_setting(claims::ID, "translation_preferences") {
+                Some(raw) => {
+                    if let Ok(prefs) = TranslationTargets::decode(&raw) {
+                        s.settings.translation = prefs;
+                    }
+                }
+                // First start after the update: persist the migrated legacy behaviour once.
+                // A failed write only means we migrate again next start.
+                None => {
+                    let _ = s.settings.translation.save(&path);
+                }
+            }
             s.settings.modern =
                 game.native_setting(claims::ID, "chat_modern").as_deref() != Some("false");
             s.settings.translate =
@@ -223,6 +255,28 @@ pub(super) fn priority_settings(
 ) -> crate::game::claim_borders_chat_priority::Preferences {
     let _ = settings(game);
     state(|s| s.priority.clone())
+}
+pub(super) fn set_translation_targets(
+    game: &Game<'_>,
+    targets: TranslationTargets,
+) -> Result<(), String> {
+    targets.save(
+        &game
+            .native_data_dir(claims::ID)
+            .join("translation_preferences"),
+    )?;
+    state(|s| {
+        if s.settings.translation.common_only != targets.common_only
+            || s.settings.translation.chat_source != targets.chat_source
+        {
+            for entry in &mut s.feed.entries {
+                entry.translated = None;
+            }
+        }
+        s.settings.translation = targets;
+    });
+    refresh_translators();
+    Ok(())
 }
 pub(super) fn priority_configure(
     game: &Game<'_>,
@@ -814,7 +868,7 @@ fn draw_card(
             text(
                 game,
                 batch,
-                current_language().text("RU", "EN"),
+                &entry.translation_language.tag(),
                 [x + w - 17.0, y + metrics.header_y],
                 0x7e899f,
                 alpha,
@@ -989,6 +1043,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     }
     let config = settings(game);
     let language = config.language;
+    let target_language = config.translation.incoming;
     let friends = crate::game::claim_borders_client::friend_ids()
         .into_iter()
         .map(|(_, n)| n.to_ascii_lowercase())
@@ -1003,24 +1058,27 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         }
         if config.translate {
             let now = s.started.elapsed().as_millis() as u64;
-            if s.translation_language != language {
-                s.translation_language = language;
+            if s.translation_language != target_language {
+                s.translation_language = target_language;
                 s.translator = None;
                 s.requested.clear();
                 s.retry.clear();
                 s.translation_failed_at = None;
             }
-            let worker = s
-                .translator
-                .get_or_insert_with(|| translator(game, language));
+            let worker = s.translator.get_or_insert_with(|| {
+                translator(game, target_language, config.translation.policy(false))
+            });
             while let Some((id, value)) = worker.poll_translation() {
                 if let Some(value) = value {
-                    if let Some(entry) = s.feed.entries.iter_mut().find(|e| e.id == id)
-                        && value.source_language.is_some()
-                    {
-                        entry.source_language = value.source_language;
+                    if let Some(entry) = s.feed.entries.iter_mut().find(|e| e.id == id) {
+                        if value.source_language.is_some() {
+                            entry.source_language = value.source_language.clone();
+                        }
+                        // Text returned unchanged (skipped or already in the target) is not a translation.
+                        if entry.original != value.text {
+                            s.feed.translate(id, value.text, target_language);
+                        }
                     }
-                    s.feed.translate(id, value.text, language);
                     s.translation_failed_at = None;
                     s.retry.remove(&id);
                 } else {
@@ -1036,7 +1094,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                     && (e.kind == model::Kind::Message
                         || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
                         || (e.kind == model::Kind::Death && event_entry(e, p)))
-                    && !e.has_translation(language)
+                    && !e.has_translation(target_language)
                     && !s.requested.contains(&e.id)
                     && s.retry.get(&e.id).is_none_or(|(at, _)| now >= *at)
                     && worker.submit(e.id, &e.original)
@@ -1051,7 +1109,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 .iter()
                 .cloned()
                 .map(|mut entry| {
-                    if !entry.has_translation(language) {
+                    if !entry.has_translation(target_language) {
                         entry.translated = None;
                     }
                     entry
@@ -1219,20 +1277,17 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         } else {
             let status = state(|s| {
                 if !config.translate {
-                    language.text("RU: выкл.", "EN: off")
+                    language.text("выкл.", "off")
                 } else if s
                     .translation_failed_at
                     .is_some_and(|failed| now.saturating_sub(failed) < TRANSLATION_RETRY_MS)
                 {
-                    language.text(
-                        "RU: последний перевод не удался",
-                        "EN: last translation failed",
-                    )
+                    language.text("последний перевод не удался", "last translation failed")
                 } else {
-                    language.text("RU: автоперевод", "EN: auto-translate")
+                    language.text("автоперевод", "auto-translate")
                 }
             });
-            status.into()
+            format!("{}: {status}", target_language.code().to_ascii_uppercase())
         };
         let toggle = language.text("ЛКМ: оригинал / перевод", "Click: original / translation");
         let hint = format!("{hint} · {toggle}");

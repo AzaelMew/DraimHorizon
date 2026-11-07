@@ -838,8 +838,8 @@ impl Menu {
                 (
                     localized!(
                         self.language,
-                        "Входящие → RU: {}",
-                        "Incoming → EN: {}",
+                        "Перевод входящих: {}",
+                        "Incoming translation: {}",
                         self.on(model.chat_translate)
                     ),
                     Control::ChatTranslate,
@@ -1770,8 +1770,8 @@ impl Menu {
                     (
                         localized!(
                             self.language,
-                            "Google → RU: {}",
-                            "Google → EN: {}",
+                            "Перевод входящих: {}",
+                            "Incoming translation: {}",
                             self.on(model.chat_translate)
                         ),
                         Control::ChatTranslate,
@@ -3397,8 +3397,8 @@ impl Menu {
     fn outgoing_label(&self, enabled: bool) -> String {
         localized!(
             self.language,
-            "Мои сообщения RU → EN: {}",
-            "Outgoing EN → RU: {}",
+            "Перевод исходящих: {}",
+            "Outgoing translation: {}",
             self.on(enabled)
         )
     }
@@ -3482,8 +3482,8 @@ mod tests {
         model.language = Language::English;
         menu.reconcile(&previous, &model, 400.0);
         let widgets = menu.layout(&model, 800.0, 500.0);
-        assert!(widgets.iter().any(|w| w.text == "Incoming → EN: on"));
-        assert!(widgets.iter().any(|w| w.text == "Outgoing EN → RU: on"));
+        assert!(widgets.iter().any(|w| w.text == "Incoming translation: on"));
+        assert!(widgets.iter().any(|w| w.text == "Outgoing translation: on"));
         assert!(widgets.iter().any(|w| w.text == "Settings"));
     }
     #[test]

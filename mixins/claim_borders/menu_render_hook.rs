@@ -4,6 +4,9 @@ fn claim_borders_menu_render(
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
 ) {
     crate::game::claim_borders_ui_view::screen_begin(game);
+    if crate::game::claim_borders_outgoing_view::render_menu(game, batch, screen) {
+        return;
+    }
     if crate::game::claim_borders_commerce_view::render(game, batch, screen) {
         crate::game::claim_borders_ui_view::settings_render(game, batch, screen);
         return;

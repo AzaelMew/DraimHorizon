@@ -12,8 +12,12 @@ fn claim_borders_chat_input_layout(
     };
     if let Some(screen) = game.ui.chat_screen.as_mut() {
         screen.resize(&m, &c, batch.width as i32, batch.height as i32);
-        screen.input.x = 70;
-        screen.input.width = (batch.width as i32 - 74).max(32);
+        // Start 4 px after the translation button, derived from its geometry.
+        let button =
+            crate::game::claim_borders_outgoing::translation_button([batch.width, batch.height]);
+        let start = (button[0] + button[2]).ceil() as i32 + 4;
+        screen.input.x = start;
+        screen.input.width = (batch.width as i32 - start - 4).max(32);
     }
     crate::game::claim_borders_chat_view::prepare_nickname_list(game, false);
 }

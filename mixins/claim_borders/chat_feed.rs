@@ -166,8 +166,9 @@ fn trade_notice(line: &str) -> bool {
         || line.ends_with(" refused your trade.")
         || line == "Your trade request is withdrawn."
 }
-use claim_borders_relay_client::translation::Language;
-use claim_borders_relay_client::translation::{detect_source_language, source_language};
+use claim_borders_relay_client::translation::{
+    Language, TargetLanguage, detect_source_language, source_language,
+};
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -181,7 +182,7 @@ pub struct Entry {
     pub original: String,
     pub source_language: Option<String>,
     pub translated: Option<String>,
-    pub translation_language: Language,
+    pub translation_language: TargetLanguage,
     pub at: u64,
     pub created_at: u64,
     pub joined: Option<bool>,
@@ -202,8 +203,8 @@ impl Entry {
             self.body(translated)
         }
     }
-    pub fn has_translation(&self, language: Language) -> bool {
-        self.translated.is_some() && self.translation_language == language
+    pub fn has_translation(&self, language: impl Into<TargetLanguage>) -> bool {
+        self.translated.is_some() && self.translation_language == language.into()
     }
     pub fn body(&self, translated: bool) -> &str {
         if translated && !self.show_original {
@@ -678,7 +679,7 @@ impl Feed {
                 .flatten(),
             original: body,
             translated: None,
-            translation_language: Language::default(),
+            translation_language: TargetLanguage::default(),
             at: now,
             created_at: now,
             joined,
@@ -782,9 +783,10 @@ impl Feed {
                 },
                 original: string("original", 2048)?,
                 translated,
-                translation_language: Language::from_code(
+                translation_language: TargetLanguage::from_code(
                     row["translation_language"].as_str().unwrap_or_default(),
-                ),
+                )
+                .unwrap_or_default(),
                 at: 0,
                 created_at: 0,
                 joined,
@@ -825,10 +827,10 @@ impl Feed {
         self.last_whisper_sender = None;
         self.scroll = 0;
     }
-    pub fn translate(&mut self, id: u64, text: String, language: Language) {
+    pub fn translate(&mut self, id: u64, text: String, language: impl Into<TargetLanguage>) {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.translated = Some(text.chars().take(2048).collect());
-            entry.translation_language = language;
+            entry.translation_language = language.into();
         }
     }
 }

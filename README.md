@@ -4,7 +4,7 @@
 
 [Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md)
 
-**Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is Horizon Nightly `1d63e0a` for Java 26.3.
+**Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is Horizon Nightly `6cc93d1` for Java 26.3.
 
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
 ![Seed Map instructions](docs/showcase/seed-map.svg)

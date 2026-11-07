@@ -5,7 +5,7 @@ priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "1d63e0a5a37a7a708eb0b32b49bf0dfeb28ed8a9"
+horizon_revision = "6cc93d13ced86a355d41764644506ae2550123cb"
 
 [[module]]
 id = "runtime"

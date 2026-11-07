@@ -196,7 +196,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
                 await ws.send(encode(["EN-US", "Привет"]))
                 self.assertEqual(json.loads(await ws.recv()), ["ok", "Hello"])
             upstream.assert_called_once_with("test-key:fx", "Привет", "EN-US")
-            for request in (["DE", "Привет"], ["EN-US", "а" * 501], ["RU", "/msg player hi"]):
+            for request in (["XX", "Привет"], ["EN-US", "а" * 501], ["RU", "/msg player hi"]):
                 async with connect(url, additional_headers=headers) as ws:
                     await ws.send(encode(request))
                     self.assertEqual(json.loads(await ws.recv()), ["error"])
@@ -205,6 +205,24 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
                 await ws.send(encode(["EN-US", "Привет" * 50]))
                 self.assertEqual(json.loads(await ws.recv()), ["error"])
             self.assertEqual(upstream.call_count, 1)
+
+    async def test_common_targets_and_explicit_source_are_forwarded(self):
+        url = f"ws://127.0.0.1:{self.port}/v1/translate"
+        self.relay.deepl_key = "test-key:fx"
+        self.relay.access_token = "local-test-token"
+        headers = {"Authorization": "Bearer local-test-token"}
+        targets = ["EN-US", "RU", "FI", "PL", "DE", "FR", "ES", "IT", "PT-BR", "UK", "NL", "SV", "DA", "CS", "TR", "AR", "HI", "JA", "KO", "ZH-HANS"]
+        with patch("dhrelay.server.translate_deepl", return_value="translated") as upstream:
+            for target in targets:
+                async with connect(url, additional_headers=headers) as ws:
+                    await ws.send(encode([target, "hei", "FI"]))
+                    self.assertEqual(json.loads(await ws.recv()), ["ok", "translated"])
+                upstream.assert_called_with("test-key:fx", "hei", target, "FI")
+            for frame in (["PL", "hello", "XX"], ["XX", "hello", "FI"], ["PL", "hello", "FI", "extra"]):
+                async with connect(url, additional_headers=headers) as ws:
+                    await ws.send(encode(frame))
+                    self.assertEqual(json.loads(await ws.recv()), ["error"])
+            self.assertEqual(upstream.call_count, len(targets))
 
     async def test_token_and_health(self):
         self.relay.access_token = "local-test-token"
@@ -219,7 +237,7 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
                 return response.status, response.read()
         status, body = await asyncio.to_thread(health)
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body), ["ok", "1.2.0"])
+        self.assertEqual(json.loads(body), ["ok", "1.3.0"])
 
     async def test_auth_deadline_oversize_and_binary(self):
         self.relay.limits = replace(Limits(), auth_timeout=0.05)
