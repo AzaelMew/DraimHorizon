@@ -13,7 +13,8 @@ on:
       - 'rust-toolchain.toml'
       - '.github/workflows/release.yml'
       - 'tools/**'
-      - 'compatibility.json'  workflow_dispatch:
+      - 'compatibility.json'
+  workflow_dispatch:
 
 defaults:
   run:
