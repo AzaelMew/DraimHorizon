@@ -1,6 +1,7 @@
 use crate::game::claim_borders_ui_view as ui;
 // Heads-up requests can be clicked only with the chat cursor open; actions drain on the game thread.
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_teleport as model};
+use claim_borders_relay_client::translation::Language;
 use horizon_client::hud::HudBatch;
 use std::{
     collections::VecDeque,
@@ -60,6 +61,7 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
         state(|s| s.hits.clear());
         return;
     }
+    let language = crate::game::claim_borders_chat_view::current_language();
     state(|s| {
         let now = s.clock.elapsed().as_millis() as u64;
         s.requests.prune(now);
@@ -87,21 +89,25 @@ pub(super) fn draw(game: &Game<'_>, batch: &mut HudBatch) {
                 game,
                 batch,
                 &format!(
-                    "{} · {} · {}с",
-                    if r.trade {
-                        "Обмен"
-                    } else {
-                        "Телепорт"
+                    "{} · {} · {}{}",
+                    match (r.trade, language) {
+                        (true, Language::Russian) => "Обмен",
+                        (false, Language::Russian) => "Телепорт",
+                        (true, Language::English) => "Trade",
+                        (false, Language::English) => "Teleport",
                     },
                     r.name,
-                    remain.div_ceil(1000)
+                    remain.div_ceil(1000),
+                    language.text("с", "s")
                 ),
                 [x + 26.0, y + 6.0],
                 0xe1e9f5,
                 false,
             );
-            for (j, accept, label) in [(0, true, "Принять"), (1, false, "Отклонить")]
-            {
+            for (j, accept, label) in [
+                (0, true, language.text("Принять", "Accept")),
+                (1, false, language.text("Отклонить", "Decline")),
+            ] {
                 let rect = [
                     x + 8.0 + j as f32 * (w - 16.0) / 2.0,
                     y + 21.0,

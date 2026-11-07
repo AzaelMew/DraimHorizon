@@ -1,4 +1,5 @@
 // Pure bounded plans. Each transaction leaves the cursor empty; native code verifies it.
+use claim_borders_relay_client::translation::Language;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,10 +27,13 @@ impl Mode {
         }
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Id => "По ID",
-            Self::Name => "По имени",
-            Self::Quantity => "По количеству",
+            Self::Id => language.text("По ID", "By ID"),
+            Self::Name => language.text("По имени", "By name"),
+            Self::Quantity => language.text("По количеству", "By quantity"),
         }
     }
     pub fn number(self) -> u8 {
@@ -74,11 +78,16 @@ impl Operation {
         }
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Sort => "Сортировать",
-            Self::Fill => "Дополнить неполные стаки",
-            Self::Restock => "Пополнить имеющиеся предметы",
-            Self::Transfer => "Перенести всё",
+            Self::Sort => language.text("Сортировать", "Sort"),
+            Self::Fill => language.text("Дополнить неполные стаки", "Top up partial stacks"),
+            Self::Restock => {
+                language.text("Пополнить имеющиеся предметы", "Restock existing items")
+            }
+            Self::Transfer => language.text("Перенести всё", "Move everything"),
         }
     }
 }
@@ -236,6 +245,21 @@ pub fn safe_game_slot(i: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_labels_have_no_russian_text() {
+        let cyr = |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));
+        for m in [Mode::Id, Mode::Name, Mode::Quantity] {
+            assert!(!cyr(m.label_in(Language::English)));
+        }
+        for o in [
+            Operation::Sort,
+            Operation::Fill,
+            Operation::Restock,
+            Operation::Transfer,
+        ] {
+            assert!(!cyr(o.label_in(Language::English)));
+        }
+    }
     use std::collections::BTreeMap;
     fn stack(id: &str, count: u32) -> Option<Stack> {
         Some(Stack {

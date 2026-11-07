@@ -1,6 +1,7 @@
 use crate::game::claim_borders_ui_view as ui;
 // Native map presentation and controls. Terrain is supplied by Horizon's minimap.
 use crate::game::{Game, claim_borders as claims, claim_borders_map as model};
+use claim_borders_relay_client::translation::Language;
 use horizon_client::hud::HudBatch;
 use std::{
     collections::BTreeSet,
@@ -357,7 +358,12 @@ pub(super) fn map_marks(
                 {
                     let distance = (mark.position[0] - source.player[0])
                         .hypot(mark.position[1] - source.player[2]);
-                    let text = format!("{} · {:.0} м", mark.label, distance);
+                    let text = format!(
+                        "{} · {:.0} {}",
+                        mark.label,
+                        distance,
+                        language().text("м", "m")
+                    );
                     let width = (game.native_text_width(&text) + 8.0).min(rect[2] - 4.0);
                     let x = (at[0] - width / 2.0).clamp(
                         rect[0] + 2.0,
@@ -425,7 +431,7 @@ pub(super) fn map_marks(
                 label(
                     game,
                     batch,
-                    "Последняя смерть",
+                    language().text("Последняя смерть", "Last death"),
                     [at[0] + 8.0, at[1] - 4.0],
                     105.0,
                     0xff879b,
@@ -573,16 +579,17 @@ fn map_rect(size: [f32; 2]) -> [f32; 4] {
     crate::game::claim_borders_seed_map::map_rect(size)
 }
 fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
+    let lang = language();
     let mut out: Vec<_> = [
         (Button::ZoomIn, "+"),
         (Button::ZoomOut, "−"),
-        (Button::Center, "К себе"),
-        (Button::Death, "Смерть"),
-        (Button::Fit, "Зоны"),
-        (Button::Layer, "Рельеф"),
-        (Button::Grid, "Сетка"),
-        (Button::Mobs, "Фильтр мобов"),
-        (Button::Settings, "Настройки"),
+        (Button::Center, lang.text("К себе", "Center")),
+        (Button::Death, lang.text("Смерть", "Death")),
+        (Button::Fit, lang.text("Зоны", "Zones")),
+        (Button::Layer, lang.text("Рельеф", "Terrain")),
+        (Button::Grid, lang.text("Сетка", "Grid")),
+        (Button::Mobs, lang.text("Фильтр мобов", "Mob filter")),
+        (Button::Settings, lang.text("Настройки", "Settings")),
     ]
     .into_iter()
     .enumerate()
@@ -598,9 +605,16 @@ fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
     out.push((
         Button::Back,
         [size[0] - 28.0, 4.0, 22.0, 22.0],
-        "Закрыть".into(),
+        lang.text("Закрыть", "Close").into(),
     ));
-    for (i, label) in ["Обычный мир", "Незер", "Край"].into_iter().enumerate() {
+    for (i, label) in [
+        lang.text("Обычный мир", "Overworld"),
+        lang.text("Незер", "Nether"),
+        lang.text("Край", "End"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         out.push((
             Button::Dimension(i),
             crate::game::claim_borders_seed_map::dimension_rect(size, i),
@@ -676,9 +690,9 @@ pub(super) fn map_frame(
         let bx = x + 6.0;
         let by = y + h - 6.0;
         let text = if blocks >= 1000.0 {
-            format!("{} км", blocks / 1000.0)
+            format!("{} {}", blocks / 1000.0, language().text("км", "km"))
         } else {
-            format!("{blocks:.0} м")
+            format!("{blocks:.0} {}", language().text("м", "m"))
         };
         let label_width = (pixels + 5.0).max(game.native_text_width(&text) + 6.0);
         ui::fill(
@@ -875,7 +889,10 @@ pub(super) fn render(
         label(
             game,
             batch,
-            "Загрузка исследованной местности…",
+            language().text(
+                "Загрузка исследованной местности…",
+                "Loading explored area…",
+            ),
             [rect[0] + 12.0, rect[1] + 12.0],
             rect[2] - 24.0,
             0x9fadb9,
@@ -977,11 +994,13 @@ pub(super) fn render(
                 .find(|c| c.dimension == dimension && c.x == cx && c.z == cz)
                 .map_or("—", |c| c.owner.as_str());
             format!(
-                "X {:.0}  Z {:.0}  ·  чанк [{}, {}]  ·  Владелец: {owner}",
+                "X {:.0}  Z {:.0}  ·  {} [{}, {}]  ·  {}: {owner}",
                 world[0].floor(),
                 world[1].floor(),
+                language().text("чанк", "chunk"),
                 cx.div_euclid(16),
-                cz.div_euclid(16)
+                cz.div_euclid(16),
+                language().text("Владелец", "Owner")
             )
         } else if let Some((dim, [x, y, z])) = &game.level.last_death {
             let distance = if dim == &source.dimension {
@@ -989,16 +1008,24 @@ pub(super) fn render(
                     source.player,
                     [f64::from(*x) + 0.5, f64::from(*y), f64::from(*z) + 0.5],
                 );
-                meters.map_or(String::new(), |m| format!(" · {m:.0} м"))
+                meters.map_or(String::new(), |m| {
+                    format!(" · {m:.0} {}", language().text("м", "m"))
+                })
             } else {
                 String::new()
             };
             format!(
-                "Последняя смерть · {} · {x} {y} {z}{distance}",
-                model::dimension_label(dim)
+                "{} · {} · {x} {y} {z}{distance}",
+                language().text("Последняя смерть", "Last death"),
+                model::dimension_label_in(dim, language())
             )
         } else {
-            "Тянуть ЛКМ — карта · 2×ЛКМ — удалить свою метку · 2×ПКМ — создать".into()
+            language()
+                .text(
+                    "Тянуть ЛКМ — карта · 2×ЛКМ — удалить свою метку · 2×ПКМ — создать",
+                    "Drag LMB — pan map · 2×LMB — delete your waypoint · 2×RMB — create",
+                )
+                .into()
         };
         label(
             game,
@@ -1011,19 +1038,27 @@ pub(super) fn render(
         let info = warning.as_ref().map_or_else(
             || {
                 format!(
-                    "{} · свои приваты {} · чужие {}",
+                    "{} · {} {} · {} {}",
                     if !source.own_known {
-                        "Свои приваты: обнови /claims"
+                        language().text(
+                            "Свои приваты: обнови /claims",
+                            "Own claims: refresh with /claims",
+                        )
                     } else if p.remember {
-                        "Исследованная местность сохраняется на диск"
+                        language().text(
+                            "Исследованная местность сохраняется на диск",
+                            "Explored area is saved to disk",
+                        )
                     } else {
-                        "Запись карты выключена"
+                        language().text("Запись карты выключена", "Map recording is off")
                     },
+                    language().text("свои приваты", "own claims"),
                     source
                         .cells
                         .iter()
                         .filter(|c| c.own && c.dimension == dimension)
                         .count(),
+                    language().text("чужие", "others"),
                     source
                         .cells
                         .iter()
@@ -1031,7 +1066,15 @@ pub(super) fn render(
                         .count()
                 )
             },
-            |error| format!("Не удалось сохранить/прочитать карту: {error}"),
+            |error| {
+                format!(
+                    "{}: {error}",
+                    language().text(
+                        "Не удалось сохранить/прочитать карту",
+                        "Could not save/read the map"
+                    )
+                )
+            },
         );
         label(
             game,
@@ -1052,7 +1095,7 @@ pub(super) fn render(
         game,
         batch,
         [6.0, 4.0, 118.0, 22.0],
-        "Исследованная",
+        language().text("Исследованная", "Explored"),
         true,
         screen.mouse,
     );
@@ -1081,7 +1124,11 @@ pub(super) fn render(
                     _ => ui::Icon::Close,
                 };
                 let caption = if matches!(button, Button::Layer) {
-                    format!("Рельеф: {}", p.layer.label())
+                    format!(
+                        "{}: {}",
+                        language().text("Рельеф", "Terrain"),
+                        p.layer.label_in(language())
+                    )
                 } else {
                     caption
                 };
@@ -1157,7 +1204,12 @@ fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse:
     let r = mob_filter_rect(size);
     let p = settings(game);
     ui::fill(game, batch, r, 0xf21a2330);
-    let mode = ["Выключены", "Все категории", "Только враждебные"][p.mobs as usize];
+    let lang = language();
+    let mode = [
+        lang.text("Выключены", "Off"),
+        lang.text("Все категории", "All categories"),
+        lang.text("Только враждебные", "Hostile only"),
+    ][p.mobs as usize];
     ui::button(
         game,
         batch,
@@ -1188,7 +1240,7 @@ fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse:
         game,
         batch,
         [r[0] + 38.0, r[1] + r[3] - 24.0, r[2] - 76.0, 18.0],
-        "Выбрать все",
+        language().text("Выбрать все", "Select all"),
         false,
         mouse,
     );
@@ -1468,4 +1520,8 @@ pub(super) fn seed_patch(game: &Game<'_>, rect: horizon_client::hud::Rect, rgba:
 }
 pub(super) fn take_seed_patch() -> Option<horizon_client::font::Patch> {
     state(|s| s.seed_patch.take())
+}
+
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
 }

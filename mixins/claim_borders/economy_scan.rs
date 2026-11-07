@@ -1,4 +1,5 @@
 // A scanner may click navigation only, never an item, buy/sell button or bid.
+use claim_borders_relay_client::translation::Language;
 use std::collections::VecDeque;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -249,7 +250,34 @@ pub enum Step {
     Wait,
     Click(usize),
     Finished,
-    Stopped(String),
+    Stopped(Stop),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    OtherMenu,
+    TimeLimit,
+    PageNotChanged,
+    PageLimit,
+    CategoriesChanged,
+}
+impl Stop {
+    pub fn label_in(self, language: Language) -> &'static str {
+        match self {
+            Self::OtherMenu => language.text("Открыто другое меню", "Another menu opened"),
+            Self::TimeLimit => language.text(
+                "Сканирование ограничено 10 минутами",
+                "Scan limited to 10 minutes",
+            ),
+            Self::PageNotChanged => language.text(
+                "Сервер не переключил страницу",
+                "Server did not change the page",
+            ),
+            Self::PageLimit => language.text("Достигнут предел страниц", "Page limit reached"),
+            Self::CategoriesChanged => {
+                language.text("Список категорий изменился", "Category list changed")
+            }
+        }
+    }
 }
 #[derive(Default)]
 pub struct Scanner {
@@ -282,17 +310,17 @@ impl Scanner {
         }
         if self.kind != Some(page.family) {
             self.stop();
-            return Step::Stopped("Открыто другое меню".into());
+            return Step::Stopped(Stop::OtherMenu);
         }
         if now.saturating_sub(self.started) > 600000 {
             self.stop();
-            return Step::Stopped("Сканирование ограничено 10 минутами".into());
+            return Step::Stopped(Stop::TimeLimit);
         }
         if let Some((old, at)) = self.waiting {
             if old == page.fingerprint {
                 if now.saturating_sub(at) > 8000 {
                     self.stop();
-                    return Step::Stopped("Сервер не переключил страницу".into());
+                    return Step::Stopped(Stop::PageNotChanged);
                 }
                 return Step::Wait;
             }
@@ -303,7 +331,7 @@ impl Scanner {
         }
         if self.pages >= limit {
             self.stop();
-            return Step::Stopped("Достигнут предел страниц".into());
+            return Step::Stopped(Stop::PageLimit);
         }
         let arrow = |slot: usize, name: &str| {
             page.buttons.iter().any(|b| {
@@ -373,7 +401,7 @@ impl Scanner {
                         }
                         Some(_) => {
                             self.stop();
-                            return Step::Stopped("Список категорий изменился".into());
+                            return Step::Stopped(Stop::CategoriesChanged);
                         }
                         None => None,
                     }
@@ -401,6 +429,19 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_stop_reasons_have_no_russian_text() {
+        for stop in [
+            Stop::OtherMenu,
+            Stop::TimeLimit,
+            Stop::PageNotChanged,
+            Stop::PageLimit,
+            Stop::CategoriesChanged,
+        ] {
+            let text = stop.label_in(Language::English);
+            assert!(!text.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)));
+        }
+    }
     #[test]
     fn menu_roles_keep_services_out_of_goods_and_preserve_trade_quantities() {
         let mut p = Page {

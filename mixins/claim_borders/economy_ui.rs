@@ -1,5 +1,6 @@
 // Shared geometry and ordering for a bounded, centred trading window.
 use super::claim_borders_economy::{Book, Listing, Preferences};
+use claim_borders_relay_client::translation::Language;
 #[derive(Clone, Copy, Debug)]
 pub struct Panel {
     pub rect: [f32; 4],
@@ -29,14 +30,17 @@ pub enum Sort {
 }
 impl Sort {
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Unit => "Цена/шт. ↑",
-            Self::Total => "Цена лота ↑",
-            Self::Profit => "Прибыль ↓",
-            Self::Roi => "Доходность ↓",
-            Self::Count => "Количество ↓",
-            Self::Name => "Название А–Я",
-            Self::Recent => "Свежие первыми",
+            Self::Unit => language.text("Цена/шт. ↑", "Price/unit ↑"),
+            Self::Total => language.text("Цена лота ↑", "Lot price ↑"),
+            Self::Profit => language.text("Прибыль ↓", "Profit ↓"),
+            Self::Roi => language.text("Доходность ↓", "ROI ↓"),
+            Self::Count => language.text("Количество ↓", "Quantity ↓"),
+            Self::Name => language.text("Название А–Я", "Name A–Z"),
+            Self::Recent => language.text("Свежие первыми", "Newest first"),
         }
     }
     pub fn listings<'a>(
@@ -90,6 +94,22 @@ impl Sort {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_sort_labels_have_no_russian_text() {
+        for sort in [
+            Sort::Unit,
+            Sort::Total,
+            Sort::Profit,
+            Sort::Roi,
+            Sort::Count,
+            Sort::Name,
+            Sort::Recent,
+        ] {
+            let text = sort.label_in(Language::English);
+            assert!(!text.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)));
+            assert_eq!(sort.label(), sort.label_in(Language::Russian));
+        }
+    }
     #[test]
     fn centred_window_and_mouse_agree_after_resize() {
         for viewport in [[1280., 720.], [854., 480.], [320., 240.]] {

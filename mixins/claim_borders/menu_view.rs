@@ -3,6 +3,7 @@ use crate::game::claim_borders_ui_view as ui;
 use crate::game::native_hooks::NativeScreenView;
 use crate::game::{Game, claim_borders as claims, claim_borders_menu as model};
 use horizon_client::hud::HudBatch;
+use model::Language;
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 
@@ -212,16 +213,30 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && screen.mouse[1] < y + h;
             if hover && let Some(model::Control::PlayerRequest(kind)) = widget.control {
                 request_tip = Some(match s.menu.selected.and_then(|i| s.model.party.get(i)) {
-                    None => "Выберите игрока, затем отправьте запрос".into(),
-                    Some(row) if !row.server_online => {
-                        format!("{} не в сети на этом сервере", row.name)
-                    }
-                    Some(row) => match kind.command(&row.name) {
+                    None => s
+                        .menu
+                        .language
+                        .text(
+                            "Выберите игрока, затем отправьте запрос",
+                            "Select a player, then send the request",
+                        )
+                        .into(),
+                    Some(row) if !row.server_online => match s.menu.language {
+                        Language::Russian => format!("{} не в сети на этом сервере", row.name),
+                        Language::English => format!("{} is offline on this server", row.name),
+                    },
+                    Some(row) => match kind.command(&row.name, s.menu.language) {
                         Ok(command) => format!(
                             "{command} — {}",
                             match kind {
-                                model::PlayerRequest::Teleport => "запросить телепортацию к игроку",
-                                model::PlayerRequest::Trade => "предложить обмен игроку",
+                                model::PlayerRequest::Teleport => s.menu.language.text(
+                                    "запросить телепортацию к игроку",
+                                    "request teleport to the player"
+                                ),
+                                model::PlayerRequest::Trade => s
+                                    .menu
+                                    .language
+                                    .text("предложить обмен игроку", "offer a trade to the player"),
                             }
                         ),
                         Err(error) => error,

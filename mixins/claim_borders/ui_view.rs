@@ -3,6 +3,7 @@ use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_ui_style as style,
     native_hooks::NativeScreenView,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::hud::{HudBatch, rgba};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,6 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 pub(super) use style::Icon;
+
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
 struct Hover {
     over: f32,
     selected: f32,
@@ -53,7 +58,15 @@ pub(super) fn preferences(game: &Game<'_>) -> style::Preferences {
                     Err(e) => s.error = Some(e),
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => s.writable = true,
-                Err(e) => s.error = Some(format!("Не удалось прочитать оформление: {e}")),
+                Err(e) => {
+                    s.error = Some(format!(
+                        "{}: {e}",
+                        language().text(
+                            "Не удалось прочитать оформление",
+                            "Could not read the appearance file"
+                        )
+                    ))
+                }
             }
             s.loaded = true;
         }
@@ -279,10 +292,13 @@ pub(super) fn button_base(
         h.selected = style::approach(h.selected, if selected { 1.0 } else { 0.0 }, dt, p.motion);
         (h.over, h.selected)
     });
-    let danger = label.contains("Удалить") || label == "Отклонить" || label.contains("Очистить");
+    let danger = label.contains("Удалить")
+        || label.contains("Delete")
+        || matches!(label, "Отклонить" | "Decline")
+        || label.contains("Очистить");
     let accent = if danger {
         style::BAD
-    } else if matches!(label, "Принять" | "Готово") {
+    } else if matches!(label, "Принять" | "Accept" | "Готово" | "Done") {
         style::GOOD
     } else {
         p.accent.color()
@@ -399,7 +415,14 @@ pub(super) fn finish(
 }
 pub(super) fn gear(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], mouse: [f32; 2]) {
     state(|s| s.gear = Some(rect));
-    button(game, batch, rect, "Опции", false, mouse);
+    button(
+        game,
+        batch,
+        rect,
+        language().text("Опции", "Options"),
+        false,
+        mouse,
+    );
 }
 pub(super) fn tooltip(game: &Game<'_>, batch: &mut HudBatch, value: &str, mouse: [f32; 2]) {
     let max = (batch.width - 24.0).clamp(80.0, 260.0);
@@ -471,7 +494,14 @@ fn act(game: &Game<'_>, id: u8) {
         }
         8 => {
             if !s.writable {
-                s.error = Some("Оформление не сохранено: проверьте файл appearance".into());
+                s.error = Some(
+                    language()
+                        .text(
+                            "Оформление не сохранено: проверьте файл appearance",
+                            "Appearance not saved: check the appearance file",
+                        )
+                        .into(),
+                );
                 return;
             }
             let dir = game.native_data_dir(claims::ID);
@@ -486,7 +516,12 @@ fn act(game: &Game<'_>, id: u8) {
                     s.error = None;
                     s.hits.clear();
                 }
-                Err(e) => s.error = Some(format!("Не удалось сохранить: {e}")),
+                Err(e) => {
+                    s.error = Some(format!(
+                        "{}: {e}",
+                        language().text("Не удалось сохранить", "Could not save")
+                    ))
+                }
             }
         }
         _ => {}
@@ -499,7 +534,15 @@ pub(super) fn settings_render(
 ) {
     if !editing() {
         if state(|s| s.gear.is_some_and(|r| style::contains(r, screen.mouse))) {
-            tooltip(game, batch, "Оформление всего мода · Ctrl+,", screen.mouse);
+            tooltip(
+                game,
+                batch,
+                language().text(
+                    "Оформление всего мода · Ctrl+,",
+                    "Mod-wide appearance · Ctrl+,",
+                ),
+                screen.mouse,
+            );
         }
         return;
     }
@@ -529,15 +572,16 @@ pub(super) fn settings_render(
     text(
         game,
         batch,
-        "Оформление",
+        language().text("Оформление", "Appearance"),
         [x + 34.0, y + 12.0],
         style::TEXT,
         false,
     );
     let error = state(|s| s.error.clone());
-    let hint = error
-        .as_deref()
-        .unwrap_or("Единый стиль меню, карты, HUD и инвентаря");
+    let hint = error.as_deref().unwrap_or(language().text(
+        "Единый стиль меню, карты, HUD и инвентаря",
+        "One style for menus, map, HUD and inventory",
+    ));
     text(
         game,
         batch,
@@ -550,14 +594,41 @@ pub(super) fn settings_render(
         },
         false,
     );
-    let on = |v| if v { "Вкл." } else { "Выкл." };
+    let lang = language();
+    let on = |v| {
+        if v {
+            lang.text("Вкл.", "On")
+        } else {
+            lang.text("Выкл.", "Off")
+        }
+    };
     let labels = [
-        format!("Плотность фона: {}%", p.opacity),
-        format!("Акцент: {}", p.accent.label()),
-        format!("Плавные эффекты: {}", on(p.motion)),
-        format!("Мягкие тени: {}", on(p.shadows)),
-        format!("Высокий контраст: {}", on(p.contrast)),
-        "Сбросить оформление".into(),
+        format!(
+            "{}: {}%",
+            lang.text("Плотность фона", "Background opacity"),
+            p.opacity
+        ),
+        format!(
+            "{}: {}",
+            lang.text("Акцент", "Accent"),
+            p.accent.label_in(lang)
+        ),
+        format!(
+            "{}: {}",
+            lang.text("Плавные эффекты", "Smooth effects"),
+            on(p.motion)
+        ),
+        format!(
+            "{}: {}",
+            lang.text("Мягкие тени", "Soft shadows"),
+            on(p.shadows)
+        ),
+        format!(
+            "{}: {}",
+            lang.text("Высокий контраст", "High contrast"),
+            on(p.contrast)
+        ),
+        lang.text("Сбросить оформление", "Reset appearance").into(),
     ];
     let focus = state(|s| {
         s.hits.clear();
@@ -587,8 +658,8 @@ pub(super) fn settings_render(
         }
     }
     for (id, xx, title) in [
-        (7, x + 12.0, "Отмена [Esc]"),
-        (8, x + w * 0.5 + 3.0, "Готово"),
+        (7, x + 12.0, lang.text("Отмена [Esc]", "Cancel [Esc]")),
+        (8, x + w * 0.5 + 3.0, lang.text("Готово", "Done")),
     ] {
         let r = [xx, y + h - 26.0, w * 0.5 - 15.0, 19.0];
         button(game, batch, r, title, focus == Some(id), screen.mouse);

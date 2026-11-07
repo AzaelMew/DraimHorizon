@@ -4,6 +4,7 @@ use crate::game::{
     claim_borders_seed_map as model, claim_borders_seed_worker as worker,
     claim_borders_ui_view as ui,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::{hud::HudBatch, items::ItemStack};
 use std::sync::{Mutex, OnceLock};
 struct State {
@@ -141,18 +142,49 @@ enum Control {
     Close,
     Claims,
 }
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
 fn controls(size: [f32; 2]) -> Vec<(Control, [f32; 4], &'static str)> {
+    let lang = language();
     let mut out = vec![
-        (Control::Explored, [6.0, 4.0, 118.0, 22.0], "Исследованная"),
-        (Control::Close, [size[0] - 28.0, 4.0, 22.0, 22.0], "Закрыть"),
+        (
+            Control::Explored,
+            [6.0, 4.0, 118.0, 22.0],
+            lang.text("Исследованная", "Explored"),
+        ),
+        (
+            Control::Close,
+            [size[0] - 28.0, 4.0, 22.0, 22.0],
+            lang.text("Закрыть", "Close"),
+        ),
         (Control::Zoom(0.5), [8.0, 42.0, 24.0, 24.0], "+"),
         (Control::Zoom(2.0), [8.0, 70.0, 24.0, 24.0], "−"),
-        (Control::Center, [8.0, 106.0, 24.0, 24.0], "К себе"),
-        (Control::Filters, [8.0, 134.0, 24.0, 24.0], "Фильтры"),
+        (
+            Control::Center,
+            [8.0, 106.0, 24.0, 24.0],
+            lang.text("К себе", "Center"),
+        ),
+        (
+            Control::Filters,
+            [8.0, 134.0, 24.0, 24.0],
+            lang.text("Фильтры", "Filters"),
+        ),
         (Control::Claims, [8.0, 162.0, 24.0, 24.0], "Claims"),
-        (Control::Settings, [8.0, 190.0, 24.0, 24.0], "Настройки"),
+        (
+            Control::Settings,
+            [8.0, 190.0, 24.0, 24.0],
+            lang.text("Настройки", "Settings"),
+        ),
     ];
-    for (i, label) in ["Обычный мир", "Незер", "Край"].into_iter().enumerate() {
+    for (i, label) in [
+        lang.text("Обычный мир", "Overworld"),
+        lang.text("Незер", "Nether"),
+        lang.text("Край", "End"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         out.push((Control::World(i), model::dimension_rect(size, i), label));
     }
     let mut index = 0;
@@ -211,13 +243,14 @@ fn bulk_rect(s: &State) -> [f32; 4] {
 }
 fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
     let r = filter_rect(s.size);
+    let lang = language();
     let mut tooltip = None;
     ui::rounded(game, batch, r, 6.0, 0xf019222b);
     ui::button(
         game,
         batch,
         [r[0] + 8.0, r[1] + 6.0, (r[2] - 44.0) / 2.0, 19.0],
-        "Структуры",
+        lang.text("Структуры", "Structures"),
         !s.biome_tab,
         mouse,
     );
@@ -230,7 +263,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             (r[2] - 44.0) / 2.0,
             19.0,
         ],
-        "Биомы",
+        lang.text("Биомы", "Biomes"),
         s.biome_tab,
         mouse,
     );
@@ -238,13 +271,20 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
         game,
         batch,
         [r[0] + r[2] - 26.0, r[1] + 6.0, 18.0, 19.0],
-        "Закрыть фильтры",
+        lang.text("Закрыть фильтры", "Close filters"),
         ui::Icon::Close,
         false,
         mouse,
     );
     let search = search_rect(s);
-    ui::button_base(game, batch, search, "Поиск фильтров", s.search_focus, mouse);
+    ui::button_base(
+        game,
+        batch,
+        search,
+        lang.text("Поиск фильтров", "Search filters"),
+        s.search_focus,
+        mouse,
+    );
     ui::icon(
         game,
         batch,
@@ -256,7 +296,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
         game,
         batch,
         if s.search.is_empty() {
-            "Поиск…"
+            lang.text("Поиск…", "Search…")
         } else {
             &s.search
         },
@@ -269,7 +309,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             game,
             batch,
             [r[0] + 8.0, r[1] + 56.0, 80.0, 22.0],
-            "Все биомы",
+            lang.text("Все биомы", "All biomes"),
             s.preferences.biome.is_none(),
             mouse,
         );
@@ -277,7 +317,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             game,
             batch,
             [r[0] + 92.0, r[1] + 56.0, r[2] - 100.0, 22.0],
-            "Цвета биомов",
+            lang.text("Цвета биомов", "Biome colors"),
             s.preferences.biomes,
             mouse,
         );
@@ -330,7 +370,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
                 game,
                 batch,
                 [r[0] + 8.0 + i as f32 * w, r[1] + 56.0, w - 2.0, 22.0],
-                g.map_or("Все", model::Group::label),
+                g.map_or(lang.text("Все", "All"), |g| g.label_in(lang)),
                 s.group == g,
                 mouse,
             );
@@ -344,12 +384,12 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             let c = chip_rect(s, n);
             let def = &model::STRUCTURES[i];
             let on = s.preferences.shows(def.id);
-            ui::button_base(game, batch, c, def.label, on, mouse);
+            ui::button_base(game, batch, c, def.label_in(lang), on, mouse);
             item_icon(game, batch, def.item, [c[0] + c[2] / 2.0 - 8.0, c[1] + 4.0]);
             text(
                 game,
                 batch,
-                def.label,
+                def.label_in(lang),
                 [c[0] + 3.0, c[1] + 27.0],
                 c[2] - 6.0,
                 if on { def.color } else { 0x687887 },
@@ -357,11 +397,11 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             if model::contains(c, mouse) {
                 tooltip = Some(format!(
                     "{} · {}",
-                    def.label,
+                    def.label_in(lang),
                     if on {
-                        "показано"
+                        lang.text("показано", "shown")
                     } else {
-                        "скрыто"
+                        lang.text("скрыто", "hidden")
                     }
                 ));
             }
@@ -370,7 +410,7 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
     text(
         game,
         batch,
-        "Колесо — прокрутка",
+        lang.text("Колесо — прокрутка", "Wheel — scroll"),
         [r[0] + 8.0, r[1] + r[3] - 13.0],
         r[2] - 84.0,
         0x7f94a4,
@@ -385,9 +425,9 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             batch,
             bulk_rect(s),
             if all {
-                "Скрыть"
+                lang.text("Скрыть", "Hide")
             } else {
-                "Показать"
+                lang.text("Показать", "Show")
             },
             false,
             mouse,
@@ -490,9 +530,19 @@ pub(super) fn render(
         let mut info = if let Some(e) = &s.error {
             format!("Seed Map: {e}")
         } else if s.image.as_ref().is_none_or(|im| im.query != query) {
-            "Расчёт… · прогноз vanilla Java 26.3".into()
+            language()
+                .text(
+                    "Расчёт… · прогноз vanilla Java 26.3",
+                    "Calculating… · vanilla Java 26.3 forecast",
+                )
+                .into()
         } else {
-            format!("Сид {} · Биомы Y64 · Java 26.3", model::SEED)
+            format!(
+                "{} {} · {} Y64 · Java 26.3",
+                language().text("Сид", "Seed"),
+                model::SEED,
+                language().text("Биомы", "Biomes")
+            )
         };
         let covered = s.filters && model::contains(filter_rect(s.size), screen.mouse);
         if let Some(im) = s.image.as_ref().filter(|im| {
@@ -577,11 +627,16 @@ pub(super) fn render(
                     {
                         info = format!(
                             "{} · X {:.0} Z {:.0}{}",
-                            def.label,
+                            def.label_in(language()),
                             mark.position[0],
                             mark.position[1],
                             if count > 1 {
-                                format!(" · ещё {}: приблизьте", count - 1)
+                                format!(
+                                    " · {} {}: {}",
+                                    language().text("ещё", "more"),
+                                    count - 1,
+                                    language().text("приблизьте", "zoom in")
+                                )
                             } else {
                                 String::new()
                             }
@@ -606,7 +661,7 @@ pub(super) fn render(
                     }) {
                         info = format!(
                             "{} · X {:.0} Z {:.0} · {}",
-                            map::dimension_label(dim),
+                            map::dimension_label_in(dim, language()),
                             at[0].floor(),
                             at[1].floor(),
                             biome_label(game, &panel.biomes[y * worker::SIDE + x])
@@ -617,7 +672,10 @@ pub(super) fn render(
                     text(
                         game,
                         batch,
-                        "Для полного поиска структур приблизьте карту",
+                        language().text(
+                            "Для полного поиска структур приблизьте карту",
+                            "Zoom in for a full structure search",
+                        ),
                         [44.0, r[1] + 7.0],
                         r[2] - 60.0,
                         0xf1c77c,
@@ -628,7 +686,7 @@ pub(super) fn render(
             text(
                 game,
                 batch,
-                "Подготовка карты сида…",
+                language().text("Подготовка карты сида…", "Preparing seed map…"),
                 [44.0, r[1] + 8.0],
                 r[2] - 60.0,
                 0x9cb0bf,
@@ -691,7 +749,10 @@ pub(super) fn render(
         text(
             game,
             batch,
-            "ЛКМ: двигать · колесо: масштаб · 2×ПКМ: метка Y64 · F: фильтры",
+            language().text(
+                "ЛКМ: двигать · колесо: масштаб · 2×ПКМ: метка Y64 · F: фильтры",
+                "LMB: pan · wheel: zoom · 2×RMB: Y64 waypoint · F: filters",
+            ),
             [8.0, s.size[1] - 12.0],
             s.size[0] - 16.0,
             0x758d9f,

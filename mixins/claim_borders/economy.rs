@@ -1,4 +1,5 @@
 // Observed economy data and conservative estimates. No trading or game access.
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 pub type Coins = i64; // hundredths of a coin; calculations never use binary floats.
@@ -645,6 +646,48 @@ pub struct Book {
     pub movers: Vec<String>,
     pub movers_at: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Note {
+    StalePrice,
+    RecheckLot,
+    ResaleLimit(u32),
+    HistoryIncomplete,
+    PartialSale(u32, u32),
+    BalanceStale,
+    BalanceUnknown,
+    NotEnoughCoins,
+}
+impl Note {
+    pub fn text(self, language: Language) -> String {
+        match self {
+            Self::StalePrice => language.text("Устарела цена", "Price is stale").into(),
+            Self::RecheckLot => language
+                .text("Лот нужно перепроверить", "Lot needs rechecking")
+                .into(),
+            Self::ResaleLimit(n) => match language {
+                Language::Russian => format!("Ограничение обратной продажи: {n} шт."),
+                Language::English => format!("Resale limit: {n} pcs"),
+            },
+            Self::HistoryIncomplete => language
+                .text(
+                    "История покупок market может быть неполной",
+                    "Market purchase history may be incomplete",
+                )
+                .into(),
+            Self::PartialSale(n, total) => match language {
+                Language::Russian => format!("Продажа {n}/{total}; остаток не оценён"),
+                Language::English => format!("Selling {n}/{total}; remainder not estimated"),
+            },
+            Self::BalanceStale => language
+                .text("Баланс нужно обновить", "Balance needs refreshing")
+                .into(),
+            Self::BalanceUnknown => language.text("Баланс неизвестен", "Balance unknown").into(),
+            Self::NotEnoughCoins => language
+                .text("Недостаточно свободных монет", "Not enough free coins")
+                .into(),
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Opportunity {
     pub listing: Listing,
@@ -652,7 +695,7 @@ pub struct Opportunity {
     pub gross: Coins,
     pub full_profit: Coins,
     pub profit: Coins,
-    pub notes: Vec<String>,
+    pub notes: Vec<Note>,
     pub ready: bool,
 }
 fn fresh(at: u64, now: u64, ttl: i64) -> bool {
@@ -1031,23 +1074,23 @@ impl Book {
         let price = q.sell.filter(|v| *v > 0)?;
         let mut notes = Vec::new();
         if !fresh(q.at, now, p.get("quote_ttl")) {
-            notes.push("Устарела цена".into());
+            notes.push(Note::StalePrice);
         }
         if !fresh(l.seen, now, p.get("ah_ttl")) {
-            notes.push("Лот нужно перепроверить".into());
+            notes.push(Note::RecheckLot);
         }
         let mut n = l.count;
         let back = if q.blocked_until > now { q.blocked } else { 0 };
         let have = self.inventory.get(&l.item).copied().unwrap_or(0);
         n = n.min(have.saturating_add(l.count).saturating_sub(back));
         if back > 0 {
-            notes.push(format!("Ограничение обратной продажи: {back} шт."));
+            notes.push(Note::ResaleLimit(back));
         }
         if p.flag("strict_history") {
-            notes.push("История покупок market может быть неполной".into());
+            notes.push(Note::HistoryIncomplete);
         }
         if n < l.count {
-            notes.push(format!("Продажа {n}/{}; остаток не оценён", l.count));
+            notes.push(Note::PartialSale(n, l.count));
         }
         let conservative =
             i64::try_from(i128::from(price) * i128::from(100 - p.get("slippage")) / 100).ok()?;
@@ -1064,14 +1107,14 @@ impl Book {
             .balance
             .is_some_and(|(_, at)| !fresh(at, now, p.get("quote_ttl")))
         {
-            notes.push("Баланс нужно обновить".into());
+            notes.push(Note::BalanceStale);
         }
         let budget = self
             .balance
             .map(|(v, _)| v.saturating_sub(p.get("cash_reserve") * 100));
         match budget {
-            None => notes.push("Баланс неизвестен".into()),
-            Some(n) if n < l.cost => notes.push("Недостаточно свободных монет".into()),
+            None => notes.push(Note::BalanceUnknown),
+            Some(n) if n < l.cost => notes.push(Note::NotEnoughCoins),
             _ => {}
         }
 
@@ -1186,7 +1229,7 @@ impl Book {
                 buy: m(&row[1]),
                 sell: m(&row[2]),
                 at: row[3].as_u64().unwrap_or(0),
-                source: "сохранено".into(),
+                source: "saved".into(),
                 blocked: row[5].as_u64().unwrap_or(0).min(u64::from(u32::MAX)) as u32,
                 blocked_until: row[6].as_u64().unwrap_or(0),
                 ..Quote::default()
@@ -1245,6 +1288,23 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_notes_and_settings_have_no_russian_text() {
+        let cyr = |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));
+        for note in [
+            Note::StalePrice,
+            Note::RecheckLot,
+            Note::ResaleLimit(3),
+            Note::HistoryIncomplete,
+            Note::PartialSale(1, 2),
+            Note::BalanceStale,
+            Note::BalanceUnknown,
+            Note::NotEnoughCoins,
+        ] {
+            assert!(!cyr(&note.text(Language::English)));
+        }
+        assert!(SETTINGS.iter().all(|s| !cyr(s.label_en)));
+    }
     #[test]
     fn auction_favorites_persist_and_compare_exact_unit_prices() {
         let mut book = Book::default();

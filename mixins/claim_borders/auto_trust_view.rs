@@ -106,7 +106,16 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
         if let Some(e) = error {
-            game.native_chat(&format!("[Друзья] Авто /trust остановлен: {e}"));
+            game.native_chat(
+                &match crate::game::claim_borders_chat_view::current_language() {
+                    claim_borders_relay_client::translation::Language::Russian => {
+                        format!("[Друзья] Авто /trust остановлен: {e}")
+                    }
+                    claim_borders_relay_client::translation::Language::English => {
+                        format!("[Friends] Auto /trust stopped: {e}")
+                    }
+                },
+            );
         }
     }
     let friends = client::friend_ids();

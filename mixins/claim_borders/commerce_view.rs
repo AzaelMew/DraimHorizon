@@ -5,11 +5,21 @@ use crate::game::{
     claim_borders_input::{Edit, TextInput},
     claim_borders_ui_view as ui,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::{clipboard::Clipboard, hud::HudBatch};
 use std::{
     collections::BTreeSet,
     sync::{Mutex, OnceLock},
 };
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
+fn t(russian: &'static str, english: &'static str) -> &'static str {
+    language().text(russian, english)
+}
+fn russian() -> bool {
+    language() == Language::Russian
+}
 #[derive(Clone)]
 struct Pending {
     token: String,
@@ -121,9 +131,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
             && data::server_click(game, &p.token, &p.button, p.at);
         state(|s| {
             s.notice = if ok {
-                "Запрос отправлен серверу".into()
+                t("Запрос отправлен серверу", "Request sent to the server").into()
             } else {
-                "Окно, цена или предмет изменились. Выберите действие заново.".into()
+                t(
+                    "Окно, цена или предмет изменились. Выберите действие заново.",
+                    "The window, price or item changed. Choose the action again.",
+                )
+                .into()
             }
         });
     }
@@ -139,40 +153,62 @@ pub(super) fn frame(game: &mut Game<'_>) {
 fn label(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
     use scan::Role::*;
     match scan::role(page, b) {
-        Close => "Закрыть".into(),
-        Back => "Назад".into(),
-        Previous => "Предыдущая страница".into(),
-        Next => "Следующая страница".into(),
+        Close => t("Закрыть", "Close").into(),
+        Back => t("Назад", "Back").into(),
+        Previous => t("Предыдущая страница", "Previous page").into(),
+        Next => t("Следующая страница", "Next page").into(),
+        Balance if !russian() => b.name.clone(),
         Balance => b
             .name
             .replace("Balance:", "Баланс:")
             .replace("coins", "монет"),
-        News => "Динамика · 24 часа".into(),
-        Help => "Информация".into(),
-        Mine => "Мои объявления".into(),
-        Mail => "Почта".into(),
-        ClaimAll => "Забрать всё".into(),
-        Claim => format!(
-            "Получить · {}",
-            crate::game::claim_borders_economy_view::item_label(game, &b.item)
-        ),
-        Buy(n) if n > 0 => format!("Купить {n}"),
-        Sell(n) => format!("Продать {n}"),
-        SellAll => "Продать всё".into(),
-        Buy(_) => format!(
-            "Купить лот · {}",
-            b.name
+        News => t("Динамика · 24 часа", "Trends · 24 hours").into(),
+        Help => t("Информация", "Information").into(),
+        Mine => t("Мои объявления", "My listings").into(),
+        Mail => t("Почта", "Mail").into(),
+        ClaimAll => t("Забрать всё", "Claim all").into(),
+        Claim => {
+            let item = crate::game::claim_borders_economy_view::item_label(game, &b.item);
+            if russian() {
+                format!("Получить · {item}")
+            } else {
+                format!("Claim · {item}")
+            }
+        }
+        Buy(n) if n > 0 => {
+            if russian() {
+                format!("Купить {n}")
+            } else {
+                format!("Buy {n}")
+            }
+        }
+        Sell(n) => {
+            if russian() {
+                format!("Продать {n}")
+            } else {
+                format!("Sell {n}")
+            }
+        }
+        SellAll => t("Продать всё", "Sell all").into(),
+        Buy(_) => {
+            let price = b
+                .name
                 .split_once(" for ")
                 .map(|(_, v)| v)
-                .unwrap_or(&b.name)
-                .replace("coins", "монет")
-        ),
+                .unwrap_or(&b.name);
+            if russian() {
+                format!("Купить лот · {}", price.replace("coins", "монет"))
+            } else {
+                format!("Buy listing · {price}")
+            }
+        }
+        Bid if !russian() => b.name.clone(),
         Bid => b
             .name
             .replacen("Bid ", "Ставка ", 1)
             .replace("coins", "монет"),
-        Chart(1) => "График · 24 часа".into(),
-        Chart(_) => "График · 7 дней".into(),
+        Chart(1) => t("График · 24 часа", "Chart · 24 hours").into(),
+        Chart(_) => t("График · 7 дней", "Chart · 7 days").into(),
         Goods | Preview => {
             if page.family == scan::Kind::Auction
                 && !b.name.trim().is_empty()
@@ -199,6 +235,9 @@ fn label(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
     }
 }
 fn local_category(raw: &str) -> String {
+    if !russian() {
+        return raw.to_owned();
+    }
     let mut s = raw.to_owned();
     for (en, ru) in [
         ("All listings", "Все лоты"),
@@ -224,12 +263,20 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
         Buy(_) | Sell(_) => b
             .name
             .split_once(" for ")
-            .map(|(_, s)| format!("{} монет", s.replace(" coins", "")))
+            .map(|(_, s)| {
+                if russian() {
+                    format!("{} монет", s.replace(" coins", ""))
+                } else {
+                    format!("{} coins", s.replace(" coins", ""))
+                }
+            })
             .unwrap_or_default(),
         Listing => {
             let text = scan::listing_text(b).unwrap_or_default();
             let parts: Vec<_> = text.split('·').map(str::trim).collect();
-            if parts.len() == 4 {
+            if parts.len() == 4 && !russian() {
+                format!("{} · {} · {}", parts[1], parts[2], parts[3])
+            } else if parts.len() == 4 {
                 format!(
                     "{} · {} · {}",
                     parts[1].replace("coins", "монет").replace("each", "/ шт."),
@@ -237,19 +284,25 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
                     parts[3].replace(" left", " осталось")
                 )
             } else {
-                "Лот сервера".into()
+                t("Лот сервера", "Server listing").into()
             }
         }
-        _ => b
-            .lore
-            .first()
-            .map(|l| crate::game::claim_borders_economy_view::market_lore(game, l))
-            .unwrap_or_else(|| match scan::role(page, b) {
-                Category => "Открыть категорию".into(),
-                Claim => "Возвращённый товар / выигрыш".into(),
-                _ => String::new(),
-            })
-            .replace(" items", " товаров"),
+        _ => {
+            let lore = b
+                .lore
+                .first()
+                .map(|l| crate::game::claim_borders_economy_view::market_lore(game, l))
+                .unwrap_or_else(|| match scan::role(page, b) {
+                    Category => t("Открыть категорию", "Open category").into(),
+                    Claim => t("Возвращённый товар / выигрыш", "Returned goods / won lots").into(),
+                    _ => String::new(),
+                });
+            if russian() {
+                lore.replace(" items", " товаров")
+            } else {
+                lore
+            }
+        }
     }
 }
 fn action_icon(role: scan::Role) -> ui::Icon {
@@ -324,9 +377,21 @@ fn control(
     }
     if crate::game::claim_borders_ui_style::contains(r, mouse) {
         s.control_tip = Some(match &hit {
-            Hit::Page(n) if *n < 0 => "Предыдущие карточки этой страницы".into(),
-            Hit::Page(_) => "Следующие карточки этой страницы".into(),
-            Hit::Standard => "F8 — стандартный вид · ПКМ по лоту AH — порог избранного".into(),
+            Hit::Page(n) if *n < 0 => t(
+                "Предыдущие карточки этой страницы",
+                "Previous cards on this page",
+            )
+            .into(),
+            Hit::Page(_) => t(
+                "Следующие карточки этой страницы",
+                "Next cards on this page",
+            )
+            .into(),
+            Hit::Standard => t(
+                "F8 — стандартный вид · ПКМ по лоту AH — порог избранного",
+                "F8 — standard view · RMB on an AH listing — favorite threshold",
+            )
+            .into(),
             _ => text.into(),
         });
     }
@@ -424,12 +489,12 @@ pub(super) fn render(
         );
         let title = if page.family == scan::Kind::Market {
             if scan::market_detail(&page) {
-                "MARKET · Товар"
+                t("MARKET · Товар", "MARKET · Item")
             } else {
-                "MARKET · Рынок"
+                t("MARKET · Рынок", "MARKET · Market")
             }
         } else {
-            "AH · Аукцион"
+            t("AH · Аукцион", "AH · Auction")
         };
         ui::text(game, batch, title, [x + 30.0, y + 12.0], 0xe3ebf3, false);
         let balance = page
@@ -439,10 +504,12 @@ pub(super) fn render(
             .map(|b| label(game, &page, b))
             .unwrap_or_else(|| {
                 data::read(|book, _, _, _| {
-                    format!(
-                        "Баланс: {}",
-                        book.balance.map_or("—".into(), |(v, _)| economy::fmt(v))
-                    )
+                    let v = book.balance.map_or("—".into(), |(v, _)| economy::fmt(v));
+                    if russian() {
+                        format!("Баланс: {v}")
+                    } else {
+                        format!("Balance: {v}")
+                    }
                 })
             });
         let bw = (w * 0.45).min(220.0);
@@ -615,13 +682,19 @@ pub(super) fn render(
             let query = [x + 8.0, y + 58.0, w - 16.0, 18.0];
             if !confirming {
                 let caption = if let Some((item, edit)) = &s.watch_edit {
-                    format!(
-                        "{} · монет/шт. ≤ {}│",
-                        item.rsplit(':').next().unwrap_or(item),
-                        edit.value
-                    )
+                    let name = item.rsplit(':').next().unwrap_or(item);
+                    if russian() {
+                        format!("{name} · монет/шт. ≤ {}│", edit.value)
+                    } else {
+                        format!("{name} · coins/each ≤ {}│", edit.value)
+                    }
                 } else {
-                    format!("Поиск: {}{}", s.query.value, if s.focus { "│" } else { "" })
+                    let cursor = if s.focus { "│" } else { "" };
+                    if russian() {
+                        format!("Поиск: {}{cursor}", s.query.value)
+                    } else {
+                        format!("Search: {}{cursor}", s.query.value)
+                    }
                 };
                 ui::button(
                     game,
@@ -679,7 +752,7 @@ pub(super) fn render(
                 ui::text(
                     game,
                     batch,
-                    "Нет предметов на этой странице",
+                    t("Нет предметов на этой странице", "No items on this page"),
                     [x + 12.0, y + 88.0],
                     0x9aacc0,
                     false,
@@ -697,7 +770,7 @@ pub(super) fn render(
                     batch,
                     s,
                     [x + 8.0, bottom, 112.0, 18.0],
-                    "Пред. страница",
+                    t("Пред. страница", "Prev. page"),
                     Hit::Server(b.clone()),
                     screen.mouse,
                     ui::Icon::Back,
@@ -709,7 +782,7 @@ pub(super) fn render(
                     batch,
                     s,
                     [x + w - 120.0, bottom, 112.0, 18.0],
-                    "След. страница",
+                    t("След. страница", "Next page"),
                     Hit::Server(b.clone()),
                     screen.mouse,
                     ui::Icon::Next,
@@ -767,12 +840,20 @@ pub(super) fn render(
         }
         let status = data::read(|_, _, status, _| {
             if status.scanning {
-                format!(
-                    "Синхронизация · {} страниц · нажатие остановит обход",
-                    status.pages
-                )
+                if russian() {
+                    format!(
+                        "Синхронизация · {} страниц · нажатие остановит обход",
+                        status.pages
+                    )
+                } else {
+                    format!("Syncing · {} pages · click to stop the scan", status.pages)
+                }
             } else {
-                "Цены обновляются по данным сервера".into()
+                t(
+                    "Цены обновляются по данным сервера",
+                    "Prices update from server data",
+                )
+                .into()
             }
         });
         ui::text(
@@ -783,7 +864,10 @@ pub(super) fn render(
                 if !s.notice.is_empty() {
                     &s.notice
                 } else if s.watch_edit.is_some() {
-                    "Enter — сохранить · 0 — убрать · Esc — отменить"
+                    t(
+                        "Enter — сохранить · 0 — убрать · Esc — отменить",
+                        "Enter — save · 0 — remove · Esc — cancel",
+                    )
                 } else {
                     &status
                 },
@@ -798,7 +882,10 @@ pub(super) fn render(
             game,
             batch,
             raw,
-            "Стандартный вид · F8 (сохранить)",
+            t(
+                "Стандартный вид · F8 (сохранить)",
+                "Standard view · F8 (save)",
+            ),
             false,
             screen.mouse,
         );
@@ -818,9 +905,9 @@ pub(super) fn render(
                 game,
                 batch,
                 if transaction {
-                    "Подтверждение действия"
+                    t("Подтверждение действия", "Confirm action")
                 } else {
-                    "Информация"
+                    t("Информация", "Information")
                 },
                 [mx + 10.0, my + 10.0],
                 0xf0d68a,
@@ -846,19 +933,55 @@ pub(super) fn render(
                 }
             }
             if role == Help {
-                lines = vec![
-                    "Выберите лот, затем подтвердите покупку или ставку.".into(),
-                    "Мои объявления — ваши выставленные товары.".into(),
-                    "Почта — непроданные товары и выигранные лоты.".into(),
-                    "Забрать всё — перенести доступные посылки в инвентарь.".into(),
-                    "/ah sell <цена> [количество] — выставить предмет из руки.".into(),
-                    "/ah auction <цена> [часы] — создать торги.".into(),
-                    "/ah claim — забрать почту.".into(),
-                ];
+                lines = [
+                    (
+                        "Выберите лот, затем подтвердите покупку или ставку.",
+                        "Choose a listing, then confirm the purchase or bid.",
+                    ),
+                    (
+                        "Мои объявления — ваши выставленные товары.",
+                        "My listings — your items for sale.",
+                    ),
+                    (
+                        "Почта — непроданные товары и выигранные лоты.",
+                        "Mail — unsold items and won lots.",
+                    ),
+                    (
+                        "Забрать всё — перенести доступные посылки в инвентарь.",
+                        "Claim all — move available parcels to your inventory.",
+                    ),
+                    (
+                        "/ah sell <цена> [количество] — выставить предмет из руки.",
+                        "/ah sell <price> [amount] — list the item in your hand.",
+                    ),
+                    (
+                        "/ah auction <цена> [часы] — создать торги.",
+                        "/ah auction <price> [hours] — start an auction.",
+                    ),
+                    (
+                        "/ah claim — забрать почту.",
+                        "/ah claim — collect your mail.",
+                    ),
+                ]
+                .into_iter()
+                .map(|(ru, en)| t(ru, en).into())
+                .collect();
             } else if role == ClaimAll {
-                lines.push("Забрать все доступные посылки в инвентарь.".into());
+                lines.push(
+                    t(
+                        "Забрать все доступные посылки в инвентарь.",
+                        "Claim all available parcels to your inventory.",
+                    )
+                    .into(),
+                );
             } else if role == SellAll {
-                lines.push("Продать весь доступный запас этого товара.".into());
+                lines.push(
+                    t(
+                        "Продать весь доступный запас этого товара.",
+                        "Sell the entire available stock of this item.",
+                    )
+                    .into(),
+                );
             } else {
                 lines.extend(
                     p.button
@@ -897,16 +1020,23 @@ pub(super) fn render(
                 batch,
                 cr,
                 if transaction {
-                    "Отмена"
+                    t("Отмена", "Cancel")
                 } else {
-                    "Понятно"
+                    t("Понятно", "Got it")
                 },
                 false,
                 screen.mouse,
             );
             s.hits.push((cr, Hit::Cancel));
             if transaction {
-                ui::button(game, batch, ok, "Подтвердить", false, screen.mouse);
+                ui::button(
+                    game,
+                    batch,
+                    ok,
+                    t("Подтвердить", "Confirm"),
+                    false,
+                    screen.mouse,
+                );
                 s.hits.push((ok, Hit::Confirm));
             }
             if transaction || lines.len() > max {
@@ -916,9 +1046,12 @@ pub(super) fn render(
                     &ui::clip(
                         game,
                         if lines.len() > max {
-                            "Колесо — прокрутка описания"
+                            t(
+                                "Колесо — прокрутка описания",
+                                "Wheel — scroll the description",
+                            )
                         } else {
-                            "Проверьте количество и сумму"
+                            t("Проверьте количество и сумму", "Check the amount and total")
                         },
                         mw - 20.0,
                     ),
@@ -1063,15 +1196,24 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
                         s.notice = if data::auction_watch(item, cap) {
                             s.watch_edit = None;
                             if cap == 0 {
-                                "Удалено из избранного".into()
+                                t("Удалено из избранного", "Removed from favorites").into()
                             } else {
-                                format!("Порог сохранён: {} монет/шт.", economy::fmt(cap))
+                                if russian() {
+                                    format!("Порог сохранён: {} монет/шт.", economy::fmt(cap))
+                                } else {
+                                    format!("Threshold saved: {} coins/each", economy::fmt(cap))
+                                }
                             }
                         } else {
-                            "Не удалось сохранить порог · лимит 64 позиции".into()
+                            t(
+                                "Не удалось сохранить порог · лимит 64 позиции",
+                                "Could not save the threshold · limit of 64 entries",
+                            )
+                            .into()
                         };
                     } else {
-                        s.notice = "Введите цену, например 12.50".into();
+                        s.notice =
+                            t("Введите цену, например 12.50", "Enter a price, e.g. 12.50").into();
                     }
                 }
                 _ => match edit.key(

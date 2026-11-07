@@ -6,6 +6,7 @@ use crate::game::{
     claim_borders_inventory_sort as model,
     native_hooks::NativeScreenView,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::{
     hud::HudBatch,
     items::ItemStack,
@@ -16,6 +17,12 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
+fn t(russian: &'static str, english: &'static str) -> &'static str {
+    language().text(russian, english)
+}
 #[derive(Clone)]
 struct Area {
     key: String,
@@ -111,10 +118,22 @@ fn load_settings(game: &Game<'_>) {
                     s.preferences = p;
                     s.writable = true;
                 }
-                Err(e) => s.error = Some(format!("Настройки повреждены: {e}")),
+                Err(e) => {
+                    s.error = Some(if language() == Language::Russian {
+                        format!("Настройки повреждены: {e}")
+                    } else {
+                        format!("Settings are corrupted: {e}")
+                    })
+                }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => s.writable = true,
-            Err(e) => s.error = Some(format!("Не удалось прочитать настройки: {e}")),
+            Err(e) => {
+                s.error = Some(if language() == Language::Russian {
+                    format!("Не удалось прочитать настройки: {e}")
+                } else {
+                    format!("Could not read settings: {e}")
+                })
+            }
         }
         s.loaded = true;
     });
@@ -214,7 +233,7 @@ fn layout(game: &Game<'_>, screen: &NativeScreenView<'_>) -> Option<Layout> {
     });
     let player = Area {
         key: "player".into(),
-        label: "Инвентарь",
+        label: t("Инвентарь", "Inventory"),
         slots: (9..36).collect(),
         columns: 9,
     };
@@ -245,9 +264,9 @@ fn layout(game: &Game<'_>, screen: &NativeScreenView<'_>) -> Option<Layout> {
             storage_slots.len()
         ),
         label: if trusted || opted {
-            "Хранилище"
+            t("Хранилище", "Storage")
         } else {
-            "Меню сервера"
+            t("Меню сервера", "Server menu")
         },
         slots: storage_slots.clone(),
         columns: if kind == "minecraft:hopper" || game.remote.is_none() && storage_slots.len() == 5
@@ -382,7 +401,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                             [x, base_y + i as f32 * 16.0, 15.0, 15.0],
                             op.symbol(),
                             Button::Area,
-                            "Предпросмотр кнопок. Tab скрывает панель редактора.".into(),
+                            t(
+                                "Предпросмотр кнопок. Tab скрывает панель редактора.",
+                                "Button preview. Tab hides the editor panel.",
+                            )
+                            .into(),
                             false,
                         );
                     } else if p.enabled
@@ -390,9 +413,26 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         && (op == model::Operation::Sort || l.storage.is_some() && l.trusted)
                     {
                         let tip = if op == model::Operation::Sort {
-                            format!("{}: {} ({})", area.label, op.label(), p.mode.label())
+                            format!(
+                                "{}: {} ({})",
+                                area.label,
+                                op.label_in(language()),
+                                p.mode.label_in(language())
+                            )
                         } else {
-                            format!("В {}: {}. Хотбар исключён.", area.label, op.label())
+                            if language() == Language::Russian {
+                                format!(
+                                    "В {}: {}. Хотбар исключён.",
+                                    area.label,
+                                    op.label_in(language())
+                                )
+                            } else {
+                                format!(
+                                    "In {}: {}. Hotbar excluded.",
+                                    area.label,
+                                    op.label_in(language())
+                                )
+                            }
                         };
                         let active = s
                             .run
@@ -436,7 +476,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 ],
                 "E",
                 Button::Edit,
-                "Редактор сортировки [Ctrl+O]: слоты, кнопки, порядок, нажатие сквозь рамки/таблички."
+                t("Редактор сортировки [Ctrl+O]: слоты, кнопки, порядок, нажатие сквозь рамки/таблички.", "Sort editor [Ctrl+O]: slots, buttons, order, click-through frames/signs.")
                     .into(),
                 false,
             );
@@ -464,31 +504,37 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 4.0
             };
             let py = 4.0;
-            button(game,batch,screen,s,[px,py,pw,15.0],if collapsed {"Настройки [Tab]"} else {"Редактор [Tab]"},Button::Collapse,
-                "Tab: свернуть панель, чтобы выбрать любой слот. ЛКМ по слоту: исключить / вернуть.".into(),false);
+            button(game,batch,screen,s,[px,py,pw,15.0],if collapsed {t("Настройки [Tab]", "Settings [Tab]")} else {t("Редактор [Tab]", "Editor [Tab]")},Button::Collapse,
+                t("Tab: свернуть панель, чтобы выбрать любой слот. ЛКМ по слоту: исключить / вернуть.", "Tab: collapse the panel to pick any slot. LMB on a slot: exclude / restore.").into(),false);
             if !collapsed {
                 let max_rows = ((batch.height - 24.0) / 16.0).floor().max(1.0) as usize;
                 let storage = s.editor.as_ref().unwrap().storage;
                 let area = selected(&l, storage);
                 let p = s.preferences.policy(&area.key);
-                let on = |v| if v { "вкл" } else { "выкл" };
+                let on = |v| {
+                    if v {
+                        t("вкл", "on")
+                    } else {
+                        t("выкл", "off")
+                    }
+                };
                 let rows:Vec<(String,Button,String)>=vec![
-                    (format!("Область: {}",area.label),Button::Area,"Выбрать хранилище или инвентарь.".into()),
-                    (format!("Кнопки: {}",on(p.visible)),Button::Visibility,"Видимость S/F/R/T. Средняя кнопка работает и без них.".into()),
-                    (format!("Сортировка: {}",on(p.enabled)),Button::Enabled,"Разрешить операции для этой области.".into()),
-                    (p.mode.label().into(),Button::Mode,"ID → имя в языке игры → количество по убыванию.".into()),
-                    (format!("Порядок: {}",if p.columns{"столбцы"}else{"строки"}),Button::Columns,"Направление заполнения свободных слотов.".into()),
-                    ("← кнопки / → ПКМ".into(),Button::Offset(-2,0),"ЛКМ сдвигает влево, ПКМ вправо.".into()),
-                    ("↑ кнопки / ↓ ПКМ".into(),Button::Offset(0,-2),"ЛКМ сдвигает вверх, ПКМ вниз.".into()),
-                    (format!("Снять исключения ({})",p.ignored.len()),Button::Clear,"Вернуть все слоты выбранной области. Хотбар всегда защищён.".into()),
-                    ("Сбросить область".into(),Button::Default,"Вернуть стандартную раскладку выбранной области.".into()),
-                    ("Сохранить как шаблон".into(),Button::SaveDefault,"Настройки кнопок и порядка для новых контейнеров. Исключения не копируются.".into()),
-                    (format!("Сквозь рамки: {}",on(s.preferences.frames)),Button::Frames,"Открывать хранилище под обычной / светящейся рамкой. Shift сохраняет обычное действие.".into()),
-                    (format!("Сквозь таблички: {}",on(s.preferences.signs)),Button::Signs,"Открывать хранилище, на котором закреплена табличка. Shift для редактирования.".into()),
-                    (format!("Это меню: {}",if l.trusted{"разрешено"}else{"защищено"}),Button::Virtual,"Для виртуального меню сервера разрешай клики только если это хранилище. Магазины и обмены защищены.".into()),
-                    ("Отменить изменения".into(),Button::Undo,"Вернуть все настройки на момент открытия редактора.".into()),
-                    ("Отмена [Esc]".into(),Button::Cancel,"Закрыть без сохранения.".into()),
-                    ("Готово".into(),Button::Done,"Сохранить настройки и закрыть редактор.".into()),
+                    (if language()==Language::Russian{format!("Область: {}",area.label)}else{format!("Area: {}",area.label)},Button::Area,t("Выбрать хранилище или инвентарь.", "Choose storage or inventory.").into()),
+                    (if language()==Language::Russian{format!("Кнопки: {}",on(p.visible))}else{format!("Buttons: {}",on(p.visible))},Button::Visibility,t("Видимость S/F/R/T. Средняя кнопка работает и без них.", "Visibility of S/F/R/T. The middle button works without them.").into()),
+                    (if language()==Language::Russian{format!("Сортировка: {}",on(p.enabled))}else{format!("Sorting: {}",on(p.enabled))},Button::Enabled,t("Разрешить операции для этой области.", "Allow operations for this area.").into()),
+                    (p.mode.label_in(language()).into(),Button::Mode,t("ID → имя в языке игры → количество по убыванию.", "ID → name in the game language → quantity descending.").into()),
+                    (if language()==Language::Russian{format!("Порядок: {}",if p.columns{"столбцы"}else{"строки"})}else{format!("Order: {}",if p.columns{"columns"}else{"rows"})},Button::Columns,t("Направление заполнения свободных слотов.", "Fill direction for free slots.").into()),
+                    (t("← кнопки / → ПКМ", "← buttons / → RMB").into(),Button::Offset(-2,0),t("ЛКМ сдвигает влево, ПКМ вправо.", "LMB moves left, RMB moves right.").into()),
+                    (t("↑ кнопки / ↓ ПКМ", "↑ buttons / ↓ RMB").into(),Button::Offset(0,-2),t("ЛКМ сдвигает вверх, ПКМ вниз.", "LMB moves up, RMB moves down.").into()),
+                    (if language()==Language::Russian{format!("Снять исключения ({})",p.ignored.len())}else{format!("Clear exclusions ({})",p.ignored.len())},Button::Clear,t("Вернуть все слоты выбранной области. Хотбар всегда защищён.", "Restore all slots of the selected area. The hotbar is always protected.").into()),
+                    (t("Сбросить область", "Reset area").into(),Button::Default,t("Вернуть стандартную раскладку выбранной области.", "Restore the default layout of the selected area.").into()),
+                    (t("Сохранить как шаблон", "Save as template").into(),Button::SaveDefault,t("Настройки кнопок и порядка для новых контейнеров. Исключения не копируются.", "Button and order settings for new containers. Exclusions are not copied.").into()),
+                    (if language()==Language::Russian{format!("Сквозь рамки: {}",on(s.preferences.frames))}else{format!("Through frames: {}",on(s.preferences.frames))},Button::Frames,t("Открывать хранилище под обычной / светящейся рамкой. Shift сохраняет обычное действие.", "Open storage behind a normal / glow item frame. Shift keeps the normal action.").into()),
+                    (if language()==Language::Russian{format!("Сквозь таблички: {}",on(s.preferences.signs))}else{format!("Through signs: {}",on(s.preferences.signs))},Button::Signs,t("Открывать хранилище, на котором закреплена табличка. Shift для редактирования.", "Open storage that has a sign attached. Shift to edit the sign.").into()),
+                    (if language()==Language::Russian{format!("Это меню: {}",if l.trusted{"разрешено"}else{"защищено"})}else{format!("This menu: {}",if l.trusted{"allowed"}else{"protected"})},Button::Virtual,t("Для виртуального меню сервера разрешай клики только если это хранилище. Магазины и обмены защищены.", "For a virtual server menu, allow clicks only if it is storage. Shops and trades are protected.").into()),
+                    (t("Отменить изменения", "Undo changes").into(),Button::Undo,t("Вернуть все настройки на момент открытия редактора.", "Restore all settings to when the editor was opened.").into()),
+                    (t("Отмена [Esc]", "Cancel [Esc]").into(),Button::Cancel,t("Закрыть без сохранения.", "Close without saving.").into()),
+                    (t("Готово", "Done").into(),Button::Done,t("Сохранить настройки и закрыть редактор.", "Save settings and close the editor.").into()),
                 ];
                 // Split into two compact columns on short screens, without unreachable buttons.
                 let columns = rows.len().div_ceil(max_rows);
@@ -513,10 +559,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         false,
                     );
                 }
-                let hint = s
-                    .error
-                    .as_deref()
-                    .unwrap_or("ЛКМ по слоту: исключить. Хотбар защищён.");
+                let hint = s.error.as_deref().unwrap_or(t(
+                    "ЛКМ по слоту: исключить. Хотбар защищён.",
+                    "LMB on a slot: exclude. The hotbar is protected.",
+                ));
                 ui::text(
                     game,
                     batch,
@@ -678,10 +724,22 @@ fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bo
                         s.editor = None;
                         s.error = None;
                     }
-                    Err(e) => s.error = Some(format!("Не удалось сохранить: {e}")),
+                    Err(e) => {
+                        s.error = Some(if language() == Language::Russian {
+                            format!("Не удалось сохранить: {e}")
+                        } else {
+                            format!("Could not save: {e}")
+                        })
+                    }
                 }
             } else {
-                s.error = Some("Настройки не сохранены: проверь файл inventory_tools".into());
+                s.error = Some(
+                    t(
+                        "Настройки не сохранены: проверь файл inventory_tools",
+                        "Settings not saved: check the inventory_tools file",
+                    )
+                    .into(),
+                );
             }
         }
         Button::Collapse => s.editor.as_mut().unwrap().collapsed = !collapsed,
@@ -933,11 +991,17 @@ pub(super) fn frame(game: &mut Game<'_>) {
         || r.started.elapsed() > Duration::from_secs(90)
         || r.steps >= 512
     {
-        finish("Сортировка остановлена: окно изменилось или истекло время.");
+        finish(t(
+            "Сортировка остановлена: окно изменилось или истекло время.",
+            "Sorting stopped: the window changed or timed out.",
+        ));
         return;
     }
     if !r.policy.enabled || r.operation != model::Operation::Sort && !r.other_policy.enabled {
-        finish("Операции для этой области выключены.");
+        finish(t(
+            "Операции для этой области выключены.",
+            "Operations for this area are disabled.",
+        ));
         return;
     }
     let mut operations = Vec::new();
@@ -1041,18 +1105,24 @@ pub(super) fn frame(game: &mut Game<'_>) {
     });
     if pending {
         if r.last.elapsed() > Duration::from_secs(2) {
-            finish("Освободи курсор. Предметы не выбрасываются.");
+            finish(t(
+                "Освободи курсор. Предметы не выбрасываются.",
+                "Free your cursor. Items are not dropped.",
+            ));
         } else {
             state(|s| s.run = Some(r));
         }
         return;
     }
     if !valid || invalid {
-        finish("Операция остановлена: содержимое изменилось или меню ограничивает клики.");
+        finish(t(
+            "Операция остановлена: содержимое изменилось или меню ограничивает клики.",
+            "Operation stopped: contents changed or the menu restricts clicks.",
+        ));
         return;
     }
     if operations.is_empty() {
-        finish("Готово");
+        finish(t("Готово", "Done"));
         return;
     }
     if game.menu_ops(&operations) {
@@ -1062,6 +1132,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
         r.steps += 1;
         state(|s| s.run = Some(r));
     } else {
-        finish("Операция остановлена: окно недоступно.");
+        finish(t(
+            "Операция остановлена: окно недоступно.",
+            "Operation stopped: window unavailable.",
+        ));
     }
 }

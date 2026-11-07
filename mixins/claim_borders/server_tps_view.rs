@@ -45,7 +45,9 @@ pub(super) fn packet(game: &Game<'_>, packet: &horizon_protocol::packets::play::
 pub(super) fn label() -> String {
     state(|s| {
         if s.sampler.frozen {
-            "TPS: пауза".into()
+            crate::game::claim_borders_chat_view::current_language()
+                .text("TPS: пауза", "TPS: paused")
+                .into()
         } else {
             s.sampler
                 .value(s.clock.elapsed().as_millis() as u64)

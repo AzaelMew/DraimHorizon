@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 
 pub const MAX_WAYPOINTS_PER_SERVER: usize = 64;
@@ -34,12 +35,15 @@ impl MarkerKind {
         }
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Pin => "Метка",
-            Self::Home => "Дом",
-            Self::Portal => "Портал",
-            Self::Chest => "Хранилище",
-            Self::Star => "Важное",
+            Self::Pin => language.text("Метка", "Pin"),
+            Self::Home => language.text("Дом", "Home"),
+            Self::Portal => language.text("Портал", "Portal"),
+            Self::Chest => language.text("Хранилище", "Storage"),
+            Self::Star => language.text("Важное", "Important"),
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -521,6 +525,24 @@ pub fn opacity(distance: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_marker_labels_are_not_cyrillic() {
+        for kind in [
+            MarkerKind::Pin,
+            MarkerKind::Home,
+            MarkerKind::Portal,
+            MarkerKind::Chest,
+            MarkerKind::Star,
+        ] {
+            assert!(
+                !kind
+                    .label_in(Language::English)
+                    .chars()
+                    .any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё'))
+            );
+            assert_eq!(kind.label(), kind.label_in(Language::Russian));
+        }
+    }
 
     fn temp_path() -> std::path::PathBuf {
         static SERIAL: AtomicU64 = AtomicU64::new(0);

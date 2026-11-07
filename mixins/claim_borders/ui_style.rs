@@ -1,4 +1,5 @@
 // Shared presentation tokens, geometry, settings and timing. No game or GPU dependency.
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 pub const SURFACE: u32 = 0x1d2a3a;
 pub const RAISED: u32 = 0x2b3d50;
@@ -23,10 +24,13 @@ impl Accent {
         }
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Mint => "Мята",
-            Self::Lavender => "Лаванда",
-            Self::Sky => "Небо",
+            Self::Mint => language.text("Мята", "Mint"),
+            Self::Lavender => language.text("Лаванда", "Lavender"),
+            Self::Sky => language.text("Небо", "Sky"),
         }
     }
     pub fn next(self) -> Self {
@@ -484,28 +488,32 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Чат" | "Chat" => Some(Chat),
         "Эксперименты" | "Experiments" => Some(Star),
         "Торги" | "Trading" | "AH" | "Аукц." => Some(Market),
-        "Цены" => Some(Wallet),
-        "Обзор" | "Профит" | "Прибыль" => Some(Chart),
+        "Цены" | "Prices" => Some(Wallet),
+        "Обзор" | "Профит" | "Прибыль" | "Overview" | "Profit" => Some(Chart),
         "Опции" | "Настройки" | "Settings" | "E" => Some(Settings),
-        "X" | "Закрыть" | "Отклонить" | "Отмена [Esc]" => Some(Close),
+        "X" | "Закрыть" | "Close" | "Отклонить" | "Decline" | "Отмена [Esc]" | "Cancel [Esc]" => {
+            Some(Close)
+        }
         "+" => Some(Plus),
         "−" | "-" => Some(Minus),
-        "<" | "Назад" => Some(Back),
+        "<" | "Назад" | "Back" => Some(Back),
         ">" => Some(Next),
         "S" => Some(Sort),
         "F" => Some(Fill),
         "R" => Some(Restock),
         "T" => Some(Transfer),
-        "Принять" | "Готово" => Some(Check),
-        "Удалить" => Some(Trash),
-        "Обновить" => Some(Refresh),
-        "К себе" => Some(Home),
-        "Сетка" => Some(Grid),
+        "Принять" | "Accept" | "Готово" | "Done" => Some(Check),
+        "Удалить" | "Delete" => Some(Trash),
+        "Обновить" | "Refresh" => Some(Refresh),
+        "К себе" | "Center" => Some(Home),
+        "Сетка" | "Grid" => Some(Grid),
         "Рельеф" => Some(Layers),
         "Зоны" | "Мир" => Some(Map),
-        _ if label.starts_with("Высокий контраст") => Some(Eye),
-        _ if label.starts_with("Сохранить") => Some(Save),
-        _ if label.starts_with("Добавить") => Some(Plus),
+        _ if label.starts_with("Высокий контраст") || label.starts_with("High contrast") => {
+            Some(Eye)
+        }
+        _ if label.starts_with("Сохранить") || label.starts_with("Save") => Some(Save),
+        _ if label.starts_with("Добавить") || label.starts_with("Add") => Some(Plus),
         _ => None,
     }
 }

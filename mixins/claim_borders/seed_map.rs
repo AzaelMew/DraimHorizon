@@ -1,5 +1,6 @@
 // Vanilla structure catalog, persistent filters and shared map geometry.
 use super::claim_borders_map::View;
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 pub const SEED: i64 = -3292718948513116954;
 pub const DIMENSIONS: [&str; 3] = [
@@ -17,12 +18,15 @@ pub enum Group {
 }
 impl Group {
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Surface => "Суша",
-            Self::Underground => "Под землёй",
-            Self::Ocean => "Океан",
-            Self::Nether => "Незер",
-            Self::End => "Край",
+            Self::Surface => language.text("Суша", "Land"),
+            Self::Underground => language.text("Под землёй", "Underground"),
+            Self::Ocean => language.text("Океан", "Ocean"),
+            Self::Nether => language.text("Незер", "Nether"),
+            Self::End => language.text("Край", "End"),
         }
     }
     pub fn dimension(self) -> usize {
@@ -43,14 +47,21 @@ pub const GROUPS: [Group; 5] = [
 pub struct Structure {
     pub id: &'static str,
     pub label: &'static str,
+    pub label_en: &'static str,
     pub group: Group,
     pub item: &'static str,
     pub color: u32,
+}
+impl Structure {
+    pub fn label_in(&self, language: Language) -> &'static str {
+        language.text(self.label, self.label_en)
+    }
 }
 pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_plains",
         label: "Равнинная деревня",
+        label_en: "Plains Village",
         group: Group::Surface,
         item: "minecraft:bell",
         color: 0xf3cb73,
@@ -58,6 +69,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "desert_pyramid",
         label: "Пустынная пирамида",
+        label_en: "Desert Pyramid",
         group: Group::Surface,
         item: "minecraft:chiseled_sandstone",
         color: 0xe7bd75,
@@ -65,6 +77,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "jungle_pyramid",
         label: "Храм джунглей",
+        label_en: "Jungle Temple",
         group: Group::Surface,
         item: "minecraft:mossy_cobblestone",
         color: 0x78bf73,
@@ -72,6 +85,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "swamp_hut",
         label: "Хижина ведьмы",
+        label_en: "Witch Hut",
         group: Group::Surface,
         item: "minecraft:cauldron",
         color: 0xb88acb,
@@ -79,6 +93,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "igloo",
         label: "Иглу",
+        label_en: "Igloo",
         group: Group::Surface,
         item: "minecraft:snow_block",
         color: 0xd0e8ef,
@@ -86,6 +101,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "pillager_outpost",
         label: "Аванпост",
+        label_en: "Pillager Outpost",
         group: Group::Surface,
         item: "minecraft:crossbow",
         color: 0xdf8a68,
@@ -93,6 +109,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "mansion",
         label: "Лесной особняк",
+        label_en: "Woodland Mansion",
         group: Group::Surface,
         item: "minecraft:dark_oak_planks",
         color: 0x967b64,
@@ -100,6 +117,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "monument",
         label: "Океанский монумент",
+        label_en: "Ocean Monument",
         group: Group::Ocean,
         item: "minecraft:prismarine",
         color: 0x68cfc0,
@@ -107,6 +125,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "shipwreck",
         label: "Затонувший корабль",
+        label_en: "Shipwreck",
         group: Group::Ocean,
         item: "minecraft:oak_boat",
         color: 0xb89c75,
@@ -114,6 +133,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ocean_ruin_cold",
         label: "Холодные руины",
+        label_en: "Cold Ocean Ruins",
         group: Group::Ocean,
         item: "minecraft:stone_bricks",
         color: 0x78a7bb,
@@ -121,6 +141,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal",
         label: "Разрушенный портал",
+        label_en: "Ruined Portal",
         group: Group::Surface,
         item: "minecraft:obsidian",
         color: 0xc785db,
@@ -128,6 +149,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ancient_city",
         label: "Древний город",
+        label_en: "Ancient City",
         group: Group::Underground,
         item: "minecraft:sculk_shrieker",
         color: 0x54a2b4,
@@ -135,6 +157,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "trial_chambers",
         label: "Камеры испытаний",
+        label_en: "Trial Chambers",
         group: Group::Underground,
         item: "minecraft:trial_key",
         color: 0xd58c58,
@@ -142,6 +165,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "buried_treasure",
         label: "Зарытый клад",
+        label_en: "Buried Treasure",
         group: Group::Ocean,
         item: "minecraft:chest",
         color: 0xf2db6d,
@@ -149,6 +173,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "fortress",
         label: "Крепость Незера",
+        label_en: "Nether Fortress",
         group: Group::Nether,
         item: "minecraft:nether_bricks",
         color: 0xe57569,
@@ -156,6 +181,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "bastion_remnant",
         label: "Бастион",
+        label_en: "Bastion",
         group: Group::Nether,
         item: "minecraft:gilded_blackstone",
         color: 0xc1a087,
@@ -163,6 +189,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "stronghold",
         label: "Цитадель",
+        label_en: "Stronghold",
         group: Group::Underground,
         item: "minecraft:ender_eye",
         color: 0x91bab6,
@@ -170,6 +197,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "end_city",
         label: "Город Края · без корабля",
+        label_en: "End City · no ship",
         group: Group::End,
         item: "minecraft:purpur_block",
         color: 0xc29ce8,
@@ -177,6 +205,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "mineshaft",
         label: "Заброшенная шахта",
+        label_en: "Abandoned Mineshaft",
         group: Group::Underground,
         item: "minecraft:rail",
         color: 0xc3a778,
@@ -184,6 +213,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "mineshaft_mesa",
         label: "Шахта пустошей",
+        label_en: "Badlands Mineshaft",
         group: Group::Underground,
         item: "minecraft:gold_ore",
         color: 0xe1af65,
@@ -191,6 +221,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "nether_fossil",
         label: "Ископаемое Незера",
+        label_en: "Nether Fossil",
         group: Group::Nether,
         item: "minecraft:bone_block",
         color: 0xddd3bd,
@@ -198,6 +229,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "trail_ruins",
         label: "Руины троп",
+        label_en: "Trail Ruins",
         group: Group::Surface,
         item: "minecraft:brush",
         color: 0xbf9065,
@@ -205,6 +237,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_desert",
         label: "Пустынная деревня",
+        label_en: "Desert Village",
         group: Group::Surface,
         item: "minecraft:sandstone",
         color: 0xe6ca81,
@@ -212,6 +245,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_savanna",
         label: "Деревня саванны",
+        label_en: "Savanna Village",
         group: Group::Surface,
         item: "minecraft:acacia_planks",
         color: 0xc8875e,
@@ -219,6 +253,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_snowy",
         label: "Снежная деревня",
+        label_en: "Snowy Village",
         group: Group::Surface,
         item: "minecraft:white_bed",
         color: 0xcbe5ef,
@@ -226,6 +261,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "village_taiga",
         label: "Таёжная деревня",
+        label_en: "Taiga Village",
         group: Group::Surface,
         item: "minecraft:spruce_planks",
         color: 0x9b7c54,
@@ -233,6 +269,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "shipwreck_beached",
         label: "Выброшенный корабль",
+        label_en: "Beached Shipwreck",
         group: Group::Ocean,
         item: "minecraft:spruce_boat",
         color: 0xc1a37a,
@@ -240,6 +277,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ocean_ruin_warm",
         label: "Тёплые руины",
+        label_en: "Warm Ocean Ruins",
         group: Group::Ocean,
         item: "minecraft:sandstone",
         color: 0xd4be84,
@@ -247,6 +285,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_desert",
         label: "Портал пустыни",
+        label_en: "Desert Portal",
         group: Group::Surface,
         item: "minecraft:crying_obsidian",
         color: 0xd7aa79,
@@ -254,6 +293,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_jungle",
         label: "Портал джунглей",
+        label_en: "Jungle Portal",
         group: Group::Surface,
         item: "minecraft:jungle_leaves",
         color: 0x76af72,
@@ -261,6 +301,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_mountain",
         label: "Горный портал",
+        label_en: "Mountain Portal",
         group: Group::Surface,
         item: "minecraft:stone",
         color: 0xa5a4b0,
@@ -268,6 +309,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_nether",
         label: "Портал Незера",
+        label_en: "Nether Portal",
         group: Group::Nether,
         item: "minecraft:flint_and_steel",
         color: 0xe09b9f,
@@ -275,6 +317,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_ocean",
         label: "Океанский портал",
+        label_en: "Ocean Portal",
         group: Group::Ocean,
         item: "minecraft:magma_block",
         color: 0x7dacce,
@@ -282,6 +325,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "ruined_portal_swamp",
         label: "Болотный портал",
+        label_en: "Swamp Portal",
         group: Group::Surface,
         item: "minecraft:mangrove_roots",
         color: 0x92a57c,
@@ -289,6 +333,7 @@ pub const STRUCTURES: [Structure; 35] = [
     Structure {
         id: "end_city_ship",
         label: "Город с элитрами · корабль",
+        label_en: "End City · ship with elytra",
         group: Group::End,
         item: "minecraft:elytra",
         color: 0xead88a,
@@ -405,6 +450,7 @@ pub fn filter_indices(dimension: usize, group: Option<Group>, search: &str) -> V
                 && group.is_none_or(|g| s.group == g)
                 && (query.is_empty()
                     || s.label.to_lowercase().contains(&query)
+                    || s.label_en.to_lowercase().contains(&query)
                     || s.id.contains(&query))
         })
         .map(|(i, _)| i)
@@ -556,6 +602,16 @@ pub fn biome_color(id: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_labels_have_no_russian_text() {
+        let cyrillic = |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));
+        for s in STRUCTURES {
+            assert!(!cyrillic(s.label_in(Language::English)));
+        }
+        for g in GROUPS {
+            assert!(!cyrillic(g.label_in(Language::English)));
+        }
+    }
     #[test]
     fn all_vanilla_variants_and_old_filters_are_preserved() {
         let mut names = std::collections::BTreeSet::new();

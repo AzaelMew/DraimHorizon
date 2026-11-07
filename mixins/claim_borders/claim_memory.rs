@@ -3,6 +3,7 @@ use crate::game::{
     Game, claim_borders as claims, claim_borders_claim_directory as model,
     claim_borders_client as client,
 };
+use claim_borders_relay_client::translation::Language;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
@@ -58,7 +59,10 @@ fn save(s: &mut State) {
     if s.writable
         && let Err(e) = s.directory.save(&s.path, &s.scope)
     {
-        s.warning = Some(format!("[Клеймы] Кеш не сохранён: {e}"));
+        s.warning = Some(match language() {
+            Language::Russian => format!("[Клеймы] Кеш не сохранён: {e}"),
+            Language::English => format!("[Claims] Cache not saved: {e}"),
+        });
     }
 }
 pub(super) fn reset() {
@@ -198,7 +202,13 @@ pub(super) fn receive(peer: &claim_borders_relay_client::Peer, body: &str, tab: 
             .receive(peer.uuid, &peer.name, &peer.code, body, now)
         {
             Ok(true) => save(s),
-            Err(e) => s.warning = Some(format!("[Клеймы] {e}")),
+            Err(e) => {
+                s.warning = Some(format!(
+                    "{} {}",
+                    language().text("[Клеймы]", "[Claims]"),
+                    model::Directory::error_text(&e, language())
+                ))
+            }
             _ => {}
         }
     });
@@ -232,7 +242,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 Ok(d) => s.directory = d,
                 Err(e) => {
                     s.writable = false;
-                    s.warning = Some(format!("[Клеймы] Кеш повреждён: {e}"));
+                    s.warning = Some(match language() {
+                        Language::Russian => format!("[Клеймы] Кеш повреждён: {e}"),
+                        Language::English => format!("[Claims] Cache is corrupted: {e}"),
+                    });
                 }
             }
             (
@@ -316,4 +329,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
     }
+}
+
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
 }

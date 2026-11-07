@@ -3,6 +3,7 @@ use crate::game::{
     Game, claim_borders as claims, claim_borders_claim_observations as model,
     claim_borders_client as client, claim_borders_economy_persistence as disk,
 };
+use claim_borders_relay_client::translation::Language;
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
@@ -184,7 +185,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
         if let Some(e) = warning {
-            game.native_chat(&format!("[Клеймы] Наблюдения не загружены: {e}"));
+            game.native_chat(&match language() {
+                Language::Russian => format!("[Клеймы] Наблюдения не загружены: {e}"),
+                Language::English => format!("[Claims] Observations not loaded: {e}"),
+            });
         }
     }
     let peers = client::claim_peers(game);
@@ -227,7 +231,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
         (out, warning)
     });
     if let Some(e) = warning {
-        game.native_chat(&format!("[Клеймы] Не удалось сохранить наблюдения: {e}"));
+        game.native_chat(&match language() {
+            Language::Russian => format!("[Клеймы] Не удалось сохранить наблюдения: {e}"),
+            Language::English => format!("[Claims] Could not save observations: {e}"),
+        });
     }
     if let Some((code, body, revision, page)) = out
         && client::claim_send(&code, &body)
@@ -312,4 +319,8 @@ pub(super) fn action_bar(game: &Game<'_>, text: &str) {
             s.dirty |= changed;
         }
     });
+}
+
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
 }

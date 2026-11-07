@@ -158,12 +158,14 @@ pub enum PlayerRequest {
     Trade,
 }
 impl PlayerRequest {
-    pub fn command(self, name: &str) -> Result<String, String> {
+    pub fn command(self, name: &str, language: Language) -> Result<String, String> {
         if name.is_empty()
             || name.len() > 16
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
-            return Err("Недопустимый ник игрока".into());
+            return Err(language
+                .text("Недопустимый ник игрока", "Invalid player name")
+                .into());
         }
         match self {
             Self::Teleport => Ok(format!("/tpa {name}")),
@@ -172,7 +174,12 @@ impl PlayerRequest {
                     .iter()
                     .any(|verb| name.eq_ignore_ascii_case(verb)) =>
             {
-                Err("Ник совпадает с подкомандой /trade; быстрый запрос недоступен".into())
+                Err(language
+                    .text(
+                        "Ник совпадает с подкомандой /trade; быстрый запрос недоступен",
+                        "The name matches a /trade subcommand; quick request is unavailable",
+                    )
+                    .into())
             }
             Self::Trade => Ok(format!("/trade {name}")),
         }
@@ -184,15 +191,28 @@ impl PlayerRequest {
         name: &str,
         own: u128,
         online: &[(u128, String)],
+        language: Language,
     ) -> Result<String, String> {
         if uuid == own {
-            return Err("Нельзя отправить запрос самому себе".into());
+            return Err(language
+                .text(
+                    "Нельзя отправить запрос самому себе",
+                    "You cannot send a request to yourself",
+                )
+                .into());
         }
         let (_, current) = online
             .iter()
             .find(|(id, current)| *id == uuid && current.eq_ignore_ascii_case(name))
-            .ok_or("Игрок уже вышел с сервера или сменил ник")?;
-        self.command(current)
+            .ok_or_else(|| {
+                language
+                    .text(
+                        "Игрок уже вышел с сервера или сменил ник",
+                        "The player left the server or changed their name",
+                    )
+                    .to_owned()
+            })?;
+        self.command(current, language)
     }
 }
 #[derive(Clone, PartialEq)]
@@ -2062,6 +2082,7 @@ impl Menu {
             let y = 56.0 + index as f32 * step;
             out.push(widget([x, y, w, 22.0], label, Some(control), on));
         }
+
         out.push(widget(
             [x, height - 48.0, w, 14.0],
             self.language.text(
@@ -2825,9 +2846,12 @@ impl Menu {
                                 .into();
                             return None;
                         };
-                        if let Err(e) =
-                            p.set(self.priority_name.trim(), color, self.priority_pinned)
-                        {
+                        if let Err(e) = p.set_in(
+                            self.priority_name.trim(),
+                            color,
+                            self.priority_pinned,
+                            self.language,
+                        ) {
                             self.notice = e;
                             return None;
                         }
@@ -2952,7 +2976,7 @@ impl Menu {
                         .into();
                     return None;
                 }
-                if let Err(error) = kind.command(&row.name) {
+                if let Err(error) = kind.command(&row.name, self.language) {
                     self.notice = error;
                     return None;
                 }
@@ -3538,32 +3562,36 @@ mod tests {
         let online = vec![(42, "Alex".into())];
         assert_eq!(
             PlayerRequest::Teleport
-                .resolve(42, "alex", 1, &online)
+                .resolve(42, "alex", 1, &online, Language::Russian)
                 .unwrap(),
             "/tpa Alex"
         );
         assert_eq!(
             PlayerRequest::Trade
-                .resolve(42, "Alex", 1, &online)
+                .resolve(42, "Alex", 1, &online, Language::Russian)
                 .unwrap(),
             "/trade Alex"
         );
         assert!(
             PlayerRequest::Trade
-                .resolve(99, "Alex", 1, &online)
+                .resolve(99, "Alex", 1, &online, Language::Russian)
                 .is_err()
         );
         assert!(
             PlayerRequest::Trade
-                .resolve(42, "OldName", 1, &online)
+                .resolve(42, "OldName", 1, &online, Language::Russian)
                 .is_err()
         );
         assert!(
             PlayerRequest::Teleport
-                .resolve(42, "Alex", 42, &online)
+                .resolve(42, "Alex", 42, &online, Language::Russian)
                 .is_err()
         );
-        assert!(PlayerRequest::Teleport.resolve(42, "Alex", 1, &[]).is_err());
+        assert!(
+            PlayerRequest::Teleport
+                .resolve(42, "Alex", 1, &[], Language::Russian)
+                .is_err()
+        );
         for name in [
             "",
             "Alex Other",
@@ -3572,11 +3600,23 @@ mod tests {
             "Привет",
             "12345678901234567",
         ] {
-            assert!(PlayerRequest::Teleport.command(name).is_err());
-            assert!(PlayerRequest::Trade.command(name).is_err());
+            assert!(
+                PlayerRequest::Teleport
+                    .command(name, Language::Russian)
+                    .is_err()
+            );
+            assert!(
+                PlayerRequest::Trade
+                    .command(name, Language::Russian)
+                    .is_err()
+            );
         }
         for name in ["accept", "deny", "cancel", "money"] {
-            assert!(PlayerRequest::Trade.command(name).is_err());
+            assert!(
+                PlayerRequest::Trade
+                    .command(name, Language::Russian)
+                    .is_err()
+            );
         }
     }
     #[test]
@@ -4088,7 +4128,8 @@ mod tests {
             ChatSection::Spam,
         ] {
             let menu = Menu {
-                tab: Tab::Chat,
+                tab: Tab::Settings,
+                settings_section: 3,
                 chat_section: section,
                 ..Menu::default()
             };
@@ -4177,5 +4218,163 @@ mod tests {
         menu.key("key.keyboard.delete", 0);
         menu.character('#');
         assert_eq!(menu.own_claim_color, "#123ABC");
+    }
+    #[test]
+    fn english_layout_has_no_russian_text_on_any_screen() {
+        let has_cyrillic = |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));
+        let party = |i: u128, friend, pending, blocked| PartyRow {
+            uuid: i,
+            friend,
+            online: true,
+            server_online: true,
+            blocked,
+            pending,
+            name: format!("Player{i}"),
+            code: format!("CODE{i}"),
+            ..PartyRow::default()
+        };
+        let model = ViewModel {
+            language: Language::English,
+            waypoints: vec![WaypointRow {
+                id: 1,
+                name: "Home".into(),
+                detail: "x 1 y 2 z 3".into(),
+                color: 0xffcc55,
+            }],
+            party: vec![
+                party(1, true, false, false),
+                party(2, false, false, false),
+                party(3, false, true, false),
+                party(4, false, false, true),
+            ],
+            claim_rows: vec![ClaimRow {
+                dimension: "overworld".into(),
+                x: 0,
+                z: 0,
+                label: "Base".into(),
+                owner: "Alex".into(),
+                foreign: false,
+            }],
+            ..ViewModel::default()
+        };
+        let mut bad = std::collections::BTreeSet::new();
+        let mut check = |menu: &Menu, what: String| {
+            for size in [[800.0, 500.0], [240.0, 216.0]] {
+                for w in menu.layout(&model, size[0], size[1]) {
+                    if has_cyrillic(&w.text) {
+                        bad.insert(format!("{what}: {:?}", w.text));
+                    }
+                }
+            }
+        };
+        let tabs = [
+            Tab::Waypoints,
+            Tab::Party,
+            Tab::Claims,
+            Tab::Chat,
+            Tab::Experimental,
+            Tab::Settings,
+        ];
+        for tab in tabs {
+            for relay_setup in [false, true] {
+                let base = Menu {
+                    language: Language::English,
+                    tab,
+                    relay_setup,
+                    ..Menu::default()
+                };
+                check(&base, format!("{tab:?} relay_setup={relay_setup}"));
+                for selected in [Some(0), Some(1)] {
+                    let menu = Menu {
+                        selected,
+                        ..base.clone()
+                    };
+                    check(&menu, format!("{tab:?} selected={selected:?}"));
+                }
+            }
+        }
+        for filter in [
+            PartyFilter::Friends,
+            PartyFilter::Users,
+            PartyFilter::Invitations,
+            PartyFilter::Important,
+        ] {
+            let menu = Menu {
+                language: Language::English,
+                tab: Tab::Party,
+                party_filter: filter,
+                ..Menu::default()
+            };
+            check(&menu, format!("party {filter:?}"));
+        }
+        for claim_filter in 0..3 {
+            for section in [
+                ClaimsSection::Map,
+                ClaimsSection::Borders,
+                ClaimsSection::Colours,
+                ClaimsSection::Storage,
+                ClaimsSection::List,
+            ] {
+                let menu = Menu {
+                    language: Language::English,
+                    tab: Tab::Claims,
+                    claims_section: section,
+                    claim_filter,
+                    ..Menu::default()
+                };
+                check(&menu, format!("claims {section:?} filter {claim_filter}"));
+            }
+        }
+        for section in [
+            ChatSection::Appearance,
+            ChatSection::Notifications,
+            ChatSection::Spam,
+            ChatSection::Priority,
+        ] {
+            let menu = Menu {
+                language: Language::English,
+                tab: Tab::Settings,
+                settings_section: 3,
+                chat_section: section,
+                ..Menu::default()
+            };
+            check(&menu, format!("chat {section:?}"));
+        }
+        for section in 0..7u8 {
+            for page in 0..6 {
+                let menu = Menu {
+                    language: Language::English,
+                    tab: Tab::Settings,
+                    settings_section: section,
+                    settings_page: page,
+                    ..Menu::default()
+                };
+                check(&menu, format!("settings {section}/{page}"));
+            }
+        }
+        for field in [
+            Field::Name,
+            Field::Color,
+            Field::PeerCode,
+            Field::RelayUrl,
+            Field::RelayToken,
+            Field::OwnClaimColor,
+            Field::FriendClaimColor,
+            Field::PriorityName,
+            Field::PriorityColor,
+            Field::ClaimOwner,
+        ] {
+            let menu = Menu {
+                language: Language::English,
+                focus: Some(field),
+                ..Menu::default()
+            };
+            check(&menu, format!("focus {field:?}"));
+        }
+        assert!(
+            bad.is_empty(),
+            "Russian text in English layout:\n{}",
+            bad.into_iter().collect::<Vec<_>>().join("\n")
+        );
     }
 }
