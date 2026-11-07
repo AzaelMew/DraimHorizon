@@ -18,8 +18,8 @@ Use skills and subagents only when explicitly requested by the user.
 | --- | --- |
 | Cargo.toml / Cargo.lock | Runtime crate and pinned dependencies |
 | src/lib.rs | Pure modules shared by tests and native injection |
-| mixins/claim_borders/horizon-mixin.toml | Module wiring and hook definitions |
-| mixins/claim_borders/runtime.rs | Mod identity, version and verified claim state |
+| mixins/draimhorizon/horizon-mixin.toml | Module wiring and hook definitions |
+| mixins/draimhorizon/runtime.rs | Mod identity, version and verified claim state |
 | client.rs / menu.rs / menu_view.rs | Client lifecycle, menu actions and rendering |
 | chat_feed.rs / chat_view.rs / chat_archive.rs | Classification, layout and local history |
 | relay_client/src/translation.rs / outgoing_view.rs | Background providers and signed outgoing chat |
@@ -32,7 +32,7 @@ Use skills and subagents only when explicitly requested by the user.
 | tools/package_relay.py | Portable relay archive without secrets |
 | .github/workflows/ | Runtime, native-client and publication checks |
 
-Unprefixed Rust paths in the table are relative to mixins/claim_borders/.
+Unprefixed Rust paths in the table are relative to mixins/draimhorizon/.
 
 ## Version every task
 
@@ -80,7 +80,7 @@ The format is major.minor.patch.
 
 ## Verification and delivery
 
-- Rust changes require python tools/version.py check, cargo fmt --all --check, rustfmt --edition 2024 --check mixins/claim_borders/*.rs, cargo clippy --workspace --all-targets --locked -- -D warnings and cargo test --workspace --locked.
+- Rust changes require python tools/version.py check, cargo fmt --all --check, rustfmt --edition 2024 --check mixins/draimhorizon/*.rs, cargo clippy --workspace --all-targets --locked -- -D warnings and cargo test --workspace --locked.
 - Add regression tests for meaningful behavior, not implementation duplication.
 - Native adapters require applying official pinned mixins and checking the real Horizon client. Validate the final bundle with cargo horizon-mod check <artifact> --json.
 - Relay changes require its Python tests and relevant integration checks. Exclude real .env files from deployment archives and use portable archive paths.

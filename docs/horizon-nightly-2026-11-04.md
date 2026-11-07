@@ -14,7 +14,7 @@ DraimHorizons 0.15.2 предназначен для [Nightly 2026-11-04 · 67da
 
 Локально выполнены:
 
-- `cargo fmt --all --check` и `rustfmt --edition 2024 --check mixins/claim_borders/*.rs`.
+- `cargo fmt --all --check` и `rustfmt --edition 2024 --check mixins/draimhorizon/*.rs`.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`.
 - `cargo test --workspace --locked`: 168 тестов прошли, один сетевой тест провайдера перевода оставлен ignored.
 - Тесты `horizon-mixins-core` и обе регрессии индексатора из compatibility CI.

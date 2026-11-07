@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = {
     "Cargo.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
     "Cargo.lock": r'(?m)(?<=name = "claim-borders"\n)version = "(\d+\.\d+\.\d+)"$',
-    "mixins/claim_borders/horizon-mixin.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
-    "mixins/claim_borders/runtime.rs": r'(?m)^pub const VERSION: &str = "(\d+\.\d+\.\d+)";$',
+    "mixins/draimhorizon/horizon-mixin.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
+    "mixins/draimhorizon/runtime.rs": r'(?m)^pub const VERSION: &str = "(\d+\.\d+\.\d+)";$',
 }
 
 

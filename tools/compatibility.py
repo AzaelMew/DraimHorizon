@@ -32,7 +32,7 @@ def main():
             compat["source_sha256"][source] = hashlib.sha256(data).hexdigest()
         compat["horizon_revision"] = latest
         path.write_text(json.dumps(compat, indent=2) + "\n", encoding="utf-8")
-        manifest = ROOT / "mixins/claim_borders/horizon-mixin.toml"
+        manifest = ROOT / "mixins/draimhorizon/horizon-mixin.toml"
         manifest.write_text(manifest.read_text(encoding="utf-8").replace(current, latest), encoding="utf-8")
         print(f"Horizon {current[:7]} -> {latest[:7]}; apply mixins and compile the real client before release.")
     elif current != latest:

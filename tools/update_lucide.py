@@ -49,7 +49,7 @@ def geometry(entry):
 def main():
     with ThreadPoolExecutor(max_workers=8) as pool:
         entries = list(pool.map(geometry, ICONS.items()))
-    target = ROOT / "mixins/claim_borders/ui_style.rs"
+    target = ROOT / "mixins/draimhorizon/ui_style.rs"
     source = target.read_text(encoding="utf-8")
     start = source.index("/// Original outline icons") if "/// Original outline icons" in source else source.index("/// Lucide icons")
     end = source.index("pub fn icon_for", start)
@@ -62,7 +62,7 @@ def main():
     license_text = download("LICENSE")
     (ROOT / "notices/LICENSE-lucide").write_text(license_text, encoding="utf-8")
     # Ship attribution within the native archive too (Rust/TOML source format).
-    (ROOT / "mixins/claim_borders/lucide_license.rs").write_text("/*\n" + license_text + "\n*/\n", encoding="utf-8")
+    (ROOT / "mixins/draimhorizon/lucide_license.rs").write_text("/*\n" + license_text + "\n*/\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

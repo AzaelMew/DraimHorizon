@@ -2,7 +2,7 @@
 
 ## Устройство
 
-- `mixins/claim_borders/runtime.rs` — парсер ответа SMP `/claims`, кеш сеанса и построение внешнего контура. Один исходник используется standalone Cargo-библиотекой и внедряемым модулем.
+- `mixins/draimhorizon/runtime.rs` — парсер ответа SMP `/claims`, кеш сеанса и построение внешнего контура. Один исходник используется standalone Cargo-библиотекой и внедряемым модулем.
 - Остальные `.rs` в bundle — тонкие адаптеры чата, команд, отрисовки и переподключения.
 - `horizon-mixin.toml` — native hooks и точечные HEAD-инъекции; точная ревизия Horizon закреплена в `compatibility.json`.
 - Для рисования используются штатные `Gizmos` (depth-tested или `on_top`); новый GPU-пайплайн не добавляется.
@@ -14,7 +14,7 @@
 
 ```bash
 cargo fmt --all --check
-rustfmt --edition 2024 --check mixins/claim_borders/*.rs
+rustfmt --edition 2024 --check mixins/draimhorizon/*.rs
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 python3 tools/stage.py

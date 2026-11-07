@@ -16,7 +16,7 @@ Regression tests cover fractional/wide/negative-coordinate outlines, cold saved-
 
 ### Final fix verification
 
-- `cargo fmt --all --check` and `rustfmt --edition 2024 --check mixins/claim_borders/*.rs`: pass.
+- `cargo fmt --all --check` and `rustfmt --edition 2024 --check mixins/draimhorizon/*.rs`: pass.
 - `cargo clippy --all-targets --locked -- -D warnings`: pass.
 - `cargo test --locked`: **219 pass**.
 - Official pinned `tools/stage.py` and real injected `horizon-client` `cargo check --no-default-features`: pass. Native compilation reports 15 dead-code warnings; it is not a linked Performance-profile game build.

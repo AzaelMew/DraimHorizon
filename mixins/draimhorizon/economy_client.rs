@@ -326,7 +326,7 @@ pub(super) fn configure(game: &Game<'_>, key: &str, dir: i64) {
         s.pref.adjust(key, dir);
         s.pref.encode()
     });
-    game.native_set_setting(claims::ID, "economy", &raw);
+    game.native_set_setting(claims::SETTINGS_ID, "economy", &raw);
 }
 fn actions(game: &mut Game<'_>) {
     use view::Action;
@@ -565,7 +565,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let loaded = disk::load(&path, &scope)
             .and_then(|raw| raw.map(|r| model::Book::decode(&r, &scope)).transpose());
         let pref = game
-            .native_setting(claims::ID, "economy")
+            .native_setting(claims::SETTINGS_ID, "economy")
             .and_then(|r| model::Preferences::decode(&r).ok())
             .unwrap_or_default();
         let own = game.remote.as_ref().unwrap().session.name.clone();

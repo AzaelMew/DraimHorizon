@@ -1,5 +1,11 @@
 # История версий
 
+## 0.24.1
+
+- Pin current Horizon main 821426b; the mixin hook sources are unchanged.
+- Launcher now lists the mod as `draimhorizon` instead of `claim_borders`: the bundle ID, `mixins/draimhorizon/` and the artifact manifest were renamed. Horizon IDs allow only lowercase letters, digits and `_`, so `DraimHorizon` itself is not a valid ID.
+- Existing settings (DeepL key, language, chat, map, economy options) and data directories keep the legacy `claim_borders` key via `SETTINGS_ID`. Custom key bindings and the on/off state are stored by the launcher under the mod ID and reset once.
+
 ## 0.24.0
 
 - Show X/Y/Z in one styled minimap coordinate strip; allow editing all three coordinates in the X waypoint editor.

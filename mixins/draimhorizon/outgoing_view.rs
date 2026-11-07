@@ -64,7 +64,7 @@ pub(super) fn refresh_translators() {
     });
 }
 pub(super) fn enabled(game: &Game<'_>) -> bool {
-    game.native_setting(claims::ID, "chat_outgoing_en")
+    game.native_setting(claims::SETTINGS_ID, "chat_outgoing_en")
         .as_deref()
         != Some("false")
 }
@@ -480,7 +480,7 @@ pub(super) fn toggle_mouse(
     } else {
         let value = !enabled(game);
         game.native_set_setting(
-            claims::ID,
+            claims::SETTINGS_ID,
             "chat_outgoing_en",
             if value { "true" } else { "false" },
         );
