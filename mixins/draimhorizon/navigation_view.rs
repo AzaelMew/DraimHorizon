@@ -930,7 +930,13 @@ pub(super) fn tick(game: &Game<'_>) {
                                 job.phase = mining::Phase::NoTarget;
                             }
                         }
-                        s.nav.accept(answer.path);
+                        if answer.path.is_none() && s.mining.is_none() && s.nav.running {
+                            // Retry from the current position with a bounded recovery budget.
+                            // Never turn a failed plan into unbounded movement or block edits.
+                            s.nav.blocked(position);
+                        } else {
+                            s.nav.accept(answer.path);
+                        }
                     }
                 }
             }
