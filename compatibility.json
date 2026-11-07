@@ -1,6 +1,6 @@
 {
   "horizon_repository": "https://github.com/horizon-rust/horizon",
-  "horizon_revision": "c78187dffffb60f31517eadcb87413386e8ce729",
+  "horizon_revision": "1d63e0a5a37a7a708eb0b32b49bf0dfeb28ed8a9",
   "horizon_mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
   "horizon_mixins_revision": "e8cd0aa38cffef49cb2e088ef716baa107148c02",
   "mixin_schema": 6,

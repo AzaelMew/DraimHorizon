@@ -15,6 +15,11 @@ use std::{
 const ENDPOINT: &str = "https://translate.googleapis.com/translate_a/single";
 const GOOGLE_MIRROR: &str = "https://translate.google.com/translate_a/single";
 const DEEPL_FREE: &str = "https://api-free.deepl.com/v2/translate";
+#[path = "language_detector/mod.rs"]
+mod detector;
+#[path = "translation_languages.rs"]
+mod languages;
+pub use languages::{SourcePolicy, TargetLanguage};
 const RETRY: Duration = Duration::from_secs(15);
 const KEY_RETRY: Duration = Duration::from_secs(15 * 60);
 pub const DEEPL_KEY_LIMIT: usize = 256;
@@ -234,14 +239,23 @@ impl SharedDeepL {
         Some(Self { url, token })
     }
 
-    fn request(&self, text: &str, target: Language, timeout: Duration) -> Option<Translation> {
+    fn request(
+        &self,
+        text: &str,
+        target: TargetLanguage,
+        policy: SourcePolicy,
+        timeout: Duration,
+    ) -> Option<Translation> {
         if text.chars().count() > 500 {
             return None;
         }
         let deadline = Instant::now() + timeout;
         let mut ws =
             WebSocket::connect_with_deadline(&self.url, Some(&self.token), Some(deadline)).ok()?;
-        let message = serde_json::json!([target.deepl_code(), text]);
+        let message = match policy.source {
+            Some(source) => serde_json::json!([target.deepl_code(), text, source.source_code()]),
+            None => serde_json::json!([target.deepl_code(), text]),
+        };
         if Instant::now() >= deadline {
             return None;
         }
@@ -311,7 +325,16 @@ impl Providers<'_> {
         }
     }
 
-    fn translate(&mut self, job: &Job, target: Language) -> Option<Translation> {
+    #[cfg(test)]
+    fn translate(&mut self, job: &Job, target: impl Into<TargetLanguage>) -> Option<Translation> {
+        self.translate_with_policy(job, target.into(), SourcePolicy::default())
+    }
+    fn translate_with_policy(
+        &mut self,
+        job: &Job,
+        target: TargetLanguage,
+        policy: SourcePolicy,
+    ) -> Option<Translation> {
         let limit =
             Duration::from_secs(if self.deepl_key.is_some() || self.shared_deepl.is_some() {
                 4
@@ -323,7 +346,14 @@ impl Providers<'_> {
                 continue;
             }
             let timeout = job.timeout(limit)?;
-            if let Ok(text) = google_request(&self.google, url, &job.text, target.code(), timeout) {
+            if let Ok(text) = google_request_with_source(
+                &self.google,
+                url,
+                &job.text,
+                policy.google_source(),
+                target.code(),
+                timeout,
+            ) {
                 return Some(text);
             }
             *retry = Instant::now() + RETRY;
@@ -333,11 +363,19 @@ impl Providers<'_> {
         }
         let timeout = job.timeout(Duration::from_secs(5))?;
         let result = if let Some(key) = &self.deepl_key {
-            deepl_request(&self.deepl, self.deepl_url, key, &job.text, target, timeout)
+            deepl_request_with_source(
+                &self.deepl,
+                self.deepl_url,
+                key,
+                &job.text,
+                target,
+                policy.source,
+                timeout,
+            )
         } else {
             self.shared_deepl
                 .as_ref()?
-                .request(&job.text, target, timeout)
+                .request(&job.text, target, policy, timeout)
                 .ok_or(0)
         };
         match result {
@@ -361,6 +399,7 @@ pub enum Language {
     English,
 }
 impl Language {
+    #[cfg(test)]
     fn deepl_code(self) -> &'static str {
         self.text("RU", "EN-US")
     }
@@ -397,7 +436,7 @@ pub struct Translator {
     requests: SyncSender<Job>,
     results: Receiver<(u64, Option<Translation>)>,
     stop: Arc<AtomicBool>,
-    target: Language,
+    target: TargetLanguage,
 }
 impl Default for Translator {
     fn default() -> Self {
@@ -405,10 +444,22 @@ impl Default for Translator {
     }
 }
 impl Translator {
-    pub fn new(target: Language) -> Self {
+    pub fn new(target: impl Into<TargetLanguage>) -> Self {
         Self::with_deepl(target, None, None)
     }
-    pub fn with_deepl(target: Language, key: Option<String>, shared: Option<SharedDeepL>) -> Self {
+    pub fn with_deepl(
+        target: impl Into<TargetLanguage>,
+        key: Option<String>,
+        shared: Option<SharedDeepL>,
+    ) -> Self {
+        Self::with_policy(target.into(), SourcePolicy::default(), key, shared)
+    }
+    pub fn with_policy(
+        target: TargetLanguage,
+        policy: SourcePolicy,
+        key: Option<String>,
+        shared: Option<SharedDeepL>,
+    ) -> Self {
         let (tx, rx) = mpsc::sync_channel::<Job>(32);
         let (done, results) = mpsc::sync_channel(64);
         let stop = Arc::new(AtomicBool::new(false));
@@ -427,7 +478,15 @@ impl Translator {
                     };
                     let id = job.id;
                     let result = cache.get(&job.text).cloned().or_else(|| {
-                        let value = providers.translate(&job, target)?;
+                        // Skipped text (outside the common languages) returns unchanged without any request.
+                        let value = if policy.allows(&job.text) {
+                            providers.translate_with_policy(&job, target, policy)?
+                        } else {
+                            Translation {
+                                text: job.text.clone(),
+                                source_language: None,
+                            }
+                        };
                         if cache.len() >= 256
                             && let Some(old) = order.pop_front()
                         {
@@ -480,21 +539,14 @@ impl Drop for Translator {
         self.stop.store(true, Ordering::Release);
     }
 }
+/// Any non-command text with a letter is sent; providers detect the source language.
 pub fn needs_translation(text: &str) -> bool {
-    if text.trim_start().starts_with('/') {
-        return false;
-    }
-    let foreign = |c: char| c.is_alphabetic() && !('\u{0400}'..='\u{052f}').contains(&c);
-    if !text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c)) {
-        return text.chars().any(foreign);
-    }
-    text.split_whitespace()
-        .any(|word| word.chars().filter(|c| foreign(*c)).count() >= 2)
+    !text.trim_start().starts_with('/') && text.chars().any(char::is_alphabetic)
 }
 pub fn needs_english(text: &str) -> bool {
-    !text.trim_start().starts_with('/')
-        && text.chars().any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
+    needs_translation(text)
 }
+#[cfg(test)]
 fn google_request(
     agent: &ureq::Agent,
     endpoint: &str,
@@ -502,11 +554,21 @@ fn google_request(
     target: &str,
     timeout: Duration,
 ) -> Result<Translation, String> {
+    google_request_with_source(agent, endpoint, text, "auto", target, timeout)
+}
+fn google_request_with_source(
+    agent: &ureq::Agent,
+    endpoint: &str,
+    text: &str,
+    source: &str,
+    target: &str,
+    timeout: Duration,
+) -> Result<Translation, String> {
     let response = agent
         .get(endpoint)
         .timeout(timeout)
         .query("client", "gtx")
-        .query("sl", "auto")
+        .query("sl", source)
         .query("tl", target)
         .query("dt", "t")
         .query("q", text)
@@ -530,18 +592,33 @@ fn google_request(
     })
 }
 
+#[cfg(test)]
 fn deepl_request(
     agent: &ureq::Agent,
     endpoint: &str,
     key: &str,
     text: &str,
-    target: Language,
+    target: impl Into<TargetLanguage>,
     timeout: Duration,
 ) -> Result<Translation, u16> {
-    let body = serde_json::json!({
+    deepl_request_with_source(agent, endpoint, key, text, target.into(), None, timeout)
+}
+fn deepl_request_with_source(
+    agent: &ureq::Agent,
+    endpoint: &str,
+    key: &str,
+    text: &str,
+    target: TargetLanguage,
+    source: Option<TargetLanguage>,
+    timeout: Duration,
+) -> Result<Translation, u16> {
+    let mut body = serde_json::json!({
         "text": [text],
         "target_lang": target.deepl_code(),
     });
+    if let Some(source) = source {
+        body["source_lang"] = source.source_code().into();
+    }
     let response = agent
         .post(endpoint)
         .timeout(timeout)
@@ -622,16 +699,175 @@ mod tests {
                 .any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
         );
     }
+    const SAMPLES: [&str; 5] = [
+        "Hei kaikki",
+        "Cześć wszystkim",
+        "Hola amigos",
+        "こんにちは",
+        "Привіт усім",
+    ];
+    fn serve_once(body: &'static str) -> (String, thread::JoinHandle<(String, String)>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut input = Vec::new();
+            let mut byte = [0];
+            while !input.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                input.push(byte[0]);
+            }
+            let head = String::from_utf8(input).unwrap();
+            let size = head
+                .to_ascii_lowercase()
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length: ")?.parse::<usize>().ok())
+                .unwrap_or(0);
+            let mut payload = vec![0; size];
+            socket.read_exact(&mut payload).unwrap();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+            (head, String::from_utf8(payload).unwrap())
+        });
+        (format!("http://{address}/t"), worker)
+    }
+    #[test]
+    fn any_alphabetic_noncommand_text_is_eligible_for_both_targets() {
+        for text in SAMPLES {
+            assert!(Language::Russian.needs_translation(text), "{text}");
+            assert!(Language::English.needs_translation(text), "{text}");
+        }
+        assert!(Language::Russian.needs_translation("Привет"));
+        assert!(Language::English.needs_translation("Hello"));
+        for target in [Language::Russian, Language::English] {
+            assert!(!target.needs_translation("/msg Alex hello"));
+            assert!(!target.needs_translation("  /msg Alex Привет"));
+            assert!(!target.needs_translation("123 :) !!!"));
+        }
+    }
+    #[test]
+    fn explicit_input_and_all_common_outputs_reach_both_providers() {
+        for target in TargetLanguage::COMMON {
+            let (url, worker) = serve_once(r#"[[["ok","x"]]]"#);
+            let agent = ureq::AgentBuilder::new().build();
+            assert_eq!(
+                google_request_with_source(
+                    &agent,
+                    &url,
+                    "hei",
+                    "fi",
+                    target.code(),
+                    Duration::from_secs(2)
+                )
+                .unwrap()
+                .text,
+                "ok"
+            );
+            let (head, _) = worker.join().unwrap();
+            assert!(head.lines().next().unwrap().contains("sl=fi&"));
+            let (url, worker) = serve_once(r#"{"translations":[{"text":"ok"}]}"#);
+            assert_eq!(
+                deepl_request_with_source(
+                    &agent,
+                    &url,
+                    "test",
+                    "hei",
+                    target,
+                    Some(TargetLanguage::Finnish),
+                    Duration::from_secs(2)
+                )
+                .unwrap()
+                .text,
+                "ok"
+            );
+            let (_, body) = worker.join().unwrap();
+            let value: Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value["source_lang"], "FI");
+            assert_eq!(value["target_lang"], target.deepl_code());
+        }
+    }
+    #[test]
+    fn common_only_skips_unlisted_sources_without_waiting_for_network() {
+        let text = "ეს არის ქართული ტექსტი და ჩვენ ვსაუბრობთ ერთმანეთთან ქართულ ენაზე.";
+        let policy = SourcePolicy {
+            source: None,
+            common_only: true,
+        };
+        assert!(!policy.allows(text));
+        let worker = Translator::with_policy(TargetLanguage::English, policy, None, None);
+        assert!(worker.submit(42, text));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some((id, result)) = worker.poll() {
+                assert_eq!(id, 42);
+                assert_eq!(result.as_deref(), Some(text));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Skipped text must return without any provider timeout"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    #[test]
+    fn google_uses_auto_source_for_all_samples_and_targets() {
+        for target in ["ru", "en"] {
+            for text in SAMPLES {
+                let (url, worker) = serve_once(r#"[[["ok","x"]]]"#);
+                let agent = ureq::AgentBuilder::new().build();
+                assert_eq!(
+                    google_request(&agent, &url, text, target, Duration::from_secs(2))
+                        .unwrap()
+                        .text,
+                    "ok"
+                );
+                let (head, _) = worker.join().unwrap();
+                let line = head.lines().next().unwrap();
+                assert!(line.contains("sl=auto"), "{line}");
+                assert!(line.contains(&format!("tl={target}&")), "{line}");
+            }
+        }
+    }
+    #[test]
+    fn deepl_omits_source_language_for_all_samples_and_targets() {
+        for target in [Language::Russian, Language::English] {
+            for text in SAMPLES {
+                let (url, worker) = serve_once(r#"{"translations":[{"text":"ok"}]}"#);
+                let agent = ureq::AgentBuilder::new().build();
+                assert_eq!(
+                    deepl_request(&agent, &url, "k", text, target, Duration::from_secs(2))
+                        .unwrap()
+                        .text,
+                    "ok"
+                );
+                let (_, body) = worker.join().unwrap();
+                let value: Value = serde_json::from_str(&body).unwrap();
+                assert!(value.get("source_lang").is_none(), "{body}");
+                assert_eq!(value["target_lang"], target.deepl_code());
+                assert_eq!(value["text"][0], text);
+            }
+        }
+    }
     #[test]
     fn english_translation_covers_mixed_russian_but_never_commands() {
         assert!(needs_english("Привет everyone"));
-        assert!(!needs_english("Hello"));
+        assert!(needs_english("Hello"));
         assert!(!needs_english("/msg Alex Привет"));
     }
     #[test]
     fn russian_and_nonlinguistic_text_is_not_sent() {
-        assert!(!needs_translation("Привет"));
-        assert!(!needs_translation("123 :D Привет"));
+        assert!(!needs_translation("123 :) !!!"));
+        assert!(!needs_english("123 :) !!!"));
         assert!(needs_translation("hello"));
         assert!(needs_translation("Привет, how are you?"));
         assert!(!needs_translation("/msg Alex hello"));
@@ -702,7 +938,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             shared
-                .request("hello", Language::Russian, Duration::from_secs(2))
+                .request(
+                    "hello",
+                    TargetLanguage::Russian,
+                    SourcePolicy::default(),
+                    Duration::from_secs(2),
+                )
                 .as_ref()
                 .map(|value| value.text.as_str()),
             Some("Привет")

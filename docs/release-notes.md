@@ -1,8 +1,12 @@
-**DraimHorizon 0.23.1** for Horizon main c78187d (Java 26.3).
+**DraimHorizon 0.24.0** for Horizon main 1d63e0a (Java 26.3).
 
-- Official Lucide interface icons, a one-line title and a gear settings button.
-- Smaller waypoint rows; double left click your own waypoint in Seed Map to delete it.
-- One-time RU/EN Experiments warning with explicit Confirm / Decline. Accepting does not enable features.
-- Release checks reject an outdated Horizon pin.
+- Chat translation button is now a compact 39 px direction tag (for example `EN>RU`; `?` means auto-detected input) with no `:...` suffix. The chat input box starts right after it. Left click toggles outgoing translation; right click opens a full-screen **Translation languages** screen.
+- Three independent choices — **Input** (language you write in, or Auto detect), **Output** (language sent) and **Received chat** (language incoming chat is translated into) — each from 20 common languages: English, Russian, Finnish, Polish, German, French, Spanish, Italian, Portuguese, Ukrainian, Dutch, Swedish, Danish, Czech, Turkish, Arabic, Hindi, Japanese, Korean, Chinese. An explicit input is sent to Google (`sl`) and DeepL (`source_lang`).
+- First start after the update keeps the previous behaviour instead of Auto: RU interface gives `RU>EN`, EN interface gives `EN>RU`, and received chat is translated into the interface language. The result is saved once; existing choices are never overwritten.
+- **Auto-translate: common languages only** (on by default) skips text whose detected language is outside those 20, without a network request. Detection is a bundled MIT copy of whatlang 0.18; short or mixed text is approximate.
+- Translation into English no longer requires Cyrillic source text; all targets share one eligibility rule.
+- Settings are stored atomically in `translation_preferences`; an invalid file is never overwritten, the screen shows an error and keeps your selection. Esc cancels, Enter saves, and the unsent chat draft and caret are preserved.
+- Relay 1.3.0 accepts the 20 DeepL targets and an optional validated source language; older clients keep working, but the shared DeepL fallback needs this relay for non-RU/EN targets.
+- Update the Horizon pin to main 1d63e0a.
 
-The current Horizon Launcher displays `claim_borders` for GitHub-installed native mods. Its native format has no display-name field; fixing that label requires a launcher update. Existing settings and map data retain their stable ID.
+Rebuild native mods in the launcher and restart the client. Deploy relay 1.3.0 before using non-RU/EN targets through the shared DeepL relay.

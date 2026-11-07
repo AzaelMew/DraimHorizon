@@ -35,6 +35,11 @@ TRANSLATE_PATH = "/v1/translate"
 DEEPL_ENDPOINT = "https://api-free.deepl.com/v2/translate"
 TRANSLATION_BURST = 1200
 TRANSLATION_RATE = 10  # characters per second across the relay
+TRANSLATION_TARGETS = frozenset((
+    "EN-US", "RU", "FI", "PL", "DE", "FR", "ES", "IT", "PT-BR", "UK",
+    "NL", "SV", "DA", "CS", "TR", "AR", "HI", "JA", "KO", "ZH-HANS",
+))
+TRANSLATION_SOURCES = frozenset(code.split("-")[0] for code in TRANSLATION_TARGETS)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -42,10 +47,13 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def translate_deepl(key: str, text: str, target: str) -> str:
+def translate_deepl(key: str, text: str, target: str, source: str | None = None) -> str:
+    body = {"text": [text], "target_lang": target}
+    if source is not None:
+        body["source_lang"] = source
     request = Request(
         DEEPL_ENDPOINT,
-        data=json.dumps({"text": [text], "target_lang": target}, ensure_ascii=False).encode("utf-8"),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={"Authorization": "DeepL-Auth-Key " + key, "Content-Type": "application/json"},
         method="POST",
     )
@@ -145,8 +153,14 @@ class Relay:
         self.translation_active += 1
         try:
             async with asyncio.timeout(2):
-                target, text = parse(await ws.recv())
-            if (target not in ("RU", "EN-US") or not isinstance(text, str)
+                frame = parse(await ws.recv())
+            if len(frame) not in (2, 3):
+                raise ValueError("invalid translation request")
+            target, text = frame[:2]
+            source = frame[2] if len(frame) == 3 else None
+            if (not isinstance(target, str) or target not in TRANSLATION_TARGETS
+                    or (source is not None and (not isinstance(source, str) or source not in TRANSLATION_SOURCES))
+                    or not isinstance(text, str)
                     or not text.strip() or len(text) > 500 or text.lstrip().startswith("/")):
                 raise ValueError("invalid translation request")
             now = time.monotonic()
@@ -160,7 +174,8 @@ class Relay:
                 return
             self.translation_tokens -= len(text)
             try:
-                result = await asyncio.to_thread(translate_deepl, self.deepl_key, text, target)
+                args = (self.deepl_key, text, target) if source is None else (self.deepl_key, text, target, source)
+                result = await asyncio.to_thread(translate_deepl, *args)
             except HTTPError as error:
                 self.translation_retry = time.monotonic() + (900 if error.code in (401, 403, 456) else 15)
                 raise
