@@ -48,7 +48,7 @@ impl Worker {
                 while let Ok(query) = requests.recv() {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
-                    let mut read = |at| {
+                    let mut read = |at: model::Pos| {
                         let Some(chunk) = query
                             .chunks
                             .get(&(at[0].div_euclid(16), at[2].div_euclid(16)))
