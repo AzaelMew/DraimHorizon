@@ -4107,7 +4107,18 @@ impl Menu {
         }
     }
     pub fn scroll(&mut self, model: &ViewModel, height: f32, delta: f64) {
-        if !self.relay_setup && delta.is_finite() && delta != 0.0 {
+        if !delta.is_finite() || delta == 0.0 {
+            return;
+        }
+        if self.navigation_choices.is_some() {
+            self.activate(
+                model,
+                height,
+                Control::NavigationChoicesPage(if delta > 0.0 { -1 } else { 1 }),
+            );
+            return;
+        }
+        if !self.relay_setup {
             self.activate(
                 model,
                 height,
