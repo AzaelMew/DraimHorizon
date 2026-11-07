@@ -483,6 +483,7 @@ pub enum Control {
     ChatCompactMessages,
     ChatStyle,
     ChatPresence,
+    ChatPresenceStyle,
     ChatDeaths,
     ChatRepeats,
     ChatPrefix,
@@ -1851,6 +1852,16 @@ impl Menu {
                     p.presence,
                 )],
                 vec![(
+                    localized!(
+                        self.language,
+                        "Формат входов: {}",
+                        "Presence view: {}",
+                        p.presence_style.label_in(self.language)
+                    ),
+                    Control::ChatPresenceStyle,
+                    false,
+                )],
+                vec![(
                     localized!(self.language, "Смерти: {}", "Deaths: {}", self.on(p.deaths)),
                     Control::ChatDeaths,
                     p.deaths,
@@ -2786,6 +2797,11 @@ impl Menu {
             Control::ChatStyle => {
                 let mut p = model.chat_preferences;
                 p.notifications = p.notifications.next();
+                Some(Action::SetChat(p))
+            }
+            Control::ChatPresenceStyle => {
+                let mut p = model.chat_preferences;
+                p.presence_style = p.presence_style.next();
                 Some(Action::SetChat(p))
             }
             Control::ChatPresence => {
@@ -4553,6 +4569,37 @@ mod tests {
                     .iter()
                     .any(|w| w.control == Some(Control::SettingsTab(section)) && w.selected)
             );
+        }
+    }
+    #[test]
+    fn presence_format_control_changes_only_the_presence_view() {
+        use super::super::claim_borders_chat_preferences::PresenceStyle;
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Settings,
+            settings_section: 3,
+            chat_section: ChatSection::Notifications,
+            ..Menu::default()
+        };
+        for expected in [PresenceStyle::Text, PresenceStyle::Icons] {
+            let rect = menu
+                .layout(&model, 640.0, 400.0)
+                .into_iter()
+                .find(|w| w.control == Some(Control::ChatPresenceStyle))
+                .unwrap()
+                .rect;
+            let action = menu.click(
+                &model,
+                [640.0, 400.0],
+                [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0],
+            );
+            let Some(Action::SetChat(next)) = action else {
+                panic!("presence view did not produce a preference update");
+            };
+            let mut expected_preferences = model.chat_preferences;
+            expected_preferences.presence_style = expected;
+            assert_eq!(next, expected_preferences);
+            model.chat_preferences = next;
         }
     }
 }

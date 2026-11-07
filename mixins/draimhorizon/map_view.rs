@@ -79,7 +79,7 @@ pub(super) fn settings(game: &Game<'_>) -> model::Preferences {
     state(|s| {
         if !s.loaded {
             s.preferences = game
-                .native_setting(claims::ID, "claim_map")
+                .native_setting(claims::SETTINGS_ID, "claim_map")
                 .and_then(|raw| model::Preferences::decode(&raw).ok())
                 .unwrap_or_default();
             s.loaded = true;
@@ -89,7 +89,7 @@ pub(super) fn settings(game: &Game<'_>) -> model::Preferences {
 }
 pub(super) fn configure(game: &Game<'_>, preferences: model::Preferences) {
     let preferences = preferences.normalized();
-    game.native_set_setting(claims::ID, "claim_map", &preferences.encode());
+    game.native_set_setting(claims::SETTINGS_ID, "claim_map", &preferences.encode());
     state(|s| {
         if s.preferences.profile != preferences.profile
             || s.preferences.remember != preferences.remember

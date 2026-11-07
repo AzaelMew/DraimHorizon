@@ -1,6 +1,6 @@
 [mod]
-id = "claim_borders"
-version = "0.24.1"
+id = "draimhorizon"
+version = "0.25.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.

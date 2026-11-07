@@ -6,6 +6,8 @@
 
 **Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is the official Horizon Nightly `6560641` for Java 26.3.
 
+**Upgrading to 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
+
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
 ![Seed Map instructions](docs/showcase/seed-map.svg)
 ![Chat features and original-language badges](docs/showcase/chat.svg)

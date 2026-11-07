@@ -82,7 +82,9 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 pub(super) fn preferences(game: &Game<'_>) -> style::Preferences {
     state(|s| {
         if !s.loaded {
-            match std::fs::read_to_string(game.native_data_dir(claims::ID).join("appearance")) {
+            match std::fs::read_to_string(
+                game.native_data_dir(claims::SETTINGS_ID).join("appearance"),
+            ) {
                 Ok(raw) => match style::Preferences::decode(&raw) {
                     Ok(p) => {
                         s.prefs = p;
@@ -522,7 +524,7 @@ fn act(game: &Game<'_>, id: u8) {
                 s.error = Some(SettingsError::NotWritable);
                 return;
             }
-            let dir = game.native_data_dir(claims::ID);
+            let dir = game.native_data_dir(claims::SETTINGS_ID);
             let saved = std::fs::create_dir_all(&dir).and_then(|()| {
                 let path = dir.join("appearance.tmp");
                 std::fs::write(&path, s.prefs.encode())?;

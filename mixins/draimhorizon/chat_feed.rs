@@ -214,6 +214,26 @@ impl Entry {
         }
     }
 }
+/// Keep presence labels independent of translation results and preserve the original for hover/history.
+pub fn presence_summary(
+    entry: &Entry,
+    style: super::claim_borders_chat_preferences::PresenceStyle,
+    language: Language,
+) -> String {
+    use super::claim_borders_chat_preferences::PresenceStyle;
+    if style == PresenceStyle::Icons && entry.joined.is_some() {
+        return entry.name.clone();
+    }
+    let body = match entry.joined {
+        Some(false) => language.text("Отключился", "Left the server"),
+        Some(true) if entry.original == "Впервые на сервере" => {
+            language.text("Впервые на сервере", "First time on the server")
+        }
+        Some(true) => language.text("Подключился", "Joined the server"),
+        None => &entry.original,
+    };
+    format!("{} · {body}", entry.name)
+}
 /// A compact event keeps its full original in Entry for the hover card.
 pub fn event_summary(entry: &Entry, translated: bool, language: Language) -> String {
     let body = entry.display_body(translated, language);
@@ -1380,5 +1400,26 @@ mod tests {
         );
         feed.push("Steve joined the game", 2);
         assert!(!Channel::Party.shows_with_friends(&feed.entries[1], true));
+    }
+    #[test]
+    fn presence_modes_keep_name_and_original_without_a_stray_symbol_line() {
+        use super::super::claim_borders_chat_preferences::PresenceStyle;
+        let mut f = Feed::default();
+        f.push("Steve joined the game", 1);
+        f.push("Steve left the game", 20000);
+        assert_eq!(
+            presence_summary(&f.entries[0], PresenceStyle::Icons, Language::Russian),
+            "Steve"
+        );
+        assert_eq!(
+            presence_summary(&f.entries[0], PresenceStyle::Text, Language::Russian),
+            "Steve · Подключился"
+        );
+        assert_eq!(
+            presence_summary(&f.entries[1], PresenceStyle::Text, Language::English),
+            "Steve · Left the server"
+        );
+        assert_eq!(f.entries[0].original, "Подключился");
+        assert_eq!(f.entries[1].original, "Отключился");
     }
 }

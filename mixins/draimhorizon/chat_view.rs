@@ -132,7 +132,7 @@ pub(super) fn translator(
     Translator::with_policy(
         target,
         policy,
-        game.native_setting(claims::ID, DEEPL_KEY_SETTING),
+        game.native_setting(claims::SETTINGS_ID, DEEPL_KEY_SETTING),
         crate::game::claim_borders_client::translation_relay(),
     )
 }
@@ -147,7 +147,7 @@ pub(super) fn refresh_translators() {
 }
 pub(super) fn set_deepl_key(game: &Game<'_>, key: Option<&str>) -> Result<(), String> {
     let language = language(game);
-    let dir = game.native_data_dir(claims::ID);
+    let dir = game.native_data_dir(claims::SETTINGS_ID);
     let path = dir.join(DEEPL_KEY_SETTING);
     let result = if let Some(key) = key {
         if !valid_deepl_key(key) {
@@ -194,32 +194,32 @@ pub(super) fn set_deepl_key(game: &Game<'_>, key: Option<&str>) -> Result<(), St
 }
 pub(super) fn set_language(game: &Game<'_>, language: Language) {
     let _ = settings(game);
-    game.native_set_setting(claims::ID, "language", language.code());
+    game.native_set_setting(claims::SETTINGS_ID, "language", language.code());
     state(|s| s.settings.language = language);
 }
 pub(super) fn settings(game: &Game<'_>) -> Settings {
     state(|s| {
         if !s.loaded {
             s.settings.deepl_configured = game
-                .native_setting(claims::ID, DEEPL_KEY_SETTING)
+                .native_setting(claims::SETTINGS_ID, DEEPL_KEY_SETTING)
                 .as_deref()
                 .is_some_and(valid_deepl_key);
             s.settings.language = Language::from_code(
-                game.native_setting(claims::ID, "language")
+                game.native_setting(claims::SETTINGS_ID, "language")
                     .as_deref()
                     .unwrap_or_default(),
             );
             s.settings.translation = TranslationTargets::load(
-                game.native_setting(claims::ID, "chat_incoming_language")
+                game.native_setting(claims::SETTINGS_ID, "chat_incoming_language")
                     .as_deref(),
-                game.native_setting(claims::ID, "chat_outgoing_language")
+                game.native_setting(claims::SETTINGS_ID, "chat_outgoing_language")
                     .as_deref(),
                 s.settings.language,
             );
             let path = game
-                .native_data_dir(claims::ID)
+                .native_data_dir(claims::SETTINGS_ID)
                 .join("translation_preferences");
-            match game.native_setting(claims::ID, "translation_preferences") {
+            match game.native_setting(claims::SETTINGS_ID, "translation_preferences") {
                 Some(raw) => {
                     if let Ok(prefs) = TranslationTargets::decode(&raw) {
                         s.settings.translation = prefs;
@@ -231,16 +231,20 @@ pub(super) fn settings(game: &Game<'_>) -> Settings {
                     let _ = s.settings.translation.save(&path);
                 }
             }
-            s.settings.modern =
-                game.native_setting(claims::ID, "chat_modern").as_deref() != Some("false");
-            s.settings.translate =
-                game.native_setting(claims::ID, "chat_translate").as_deref() != Some("false");
+            s.settings.modern = game
+                .native_setting(claims::SETTINGS_ID, "chat_modern")
+                .as_deref()
+                != Some("false");
+            s.settings.translate = game
+                .native_setting(claims::SETTINGS_ID, "chat_translate")
+                .as_deref()
+                != Some("false");
             s.settings.preferences = game
-                .native_setting(claims::ID, "chat_preferences")
+                .native_setting(claims::SETTINGS_ID, "chat_preferences")
                 .and_then(|raw| options::Preferences::decode(&raw).ok())
                 .unwrap_or_default();
             s.priority = game
-                .native_setting(claims::ID, "chat_priority")
+                .native_setting(claims::SETTINGS_ID, "chat_priority")
                 .and_then(|r| {
                     crate::game::claim_borders_chat_priority::Preferences::decode(&r).ok()
                 })
@@ -262,7 +266,7 @@ pub(super) fn set_translation_targets(
 ) -> Result<(), String> {
     targets.save(
         &game
-            .native_data_dir(claims::ID)
+            .native_data_dir(claims::SETTINGS_ID)
             .join("translation_preferences"),
     )?;
     state(|s| {
@@ -282,7 +286,7 @@ pub(super) fn priority_configure(
     game: &Game<'_>,
     prefs: crate::game::claim_borders_chat_priority::Preferences,
 ) {
-    game.native_set_setting(claims::ID, "chat_priority", &prefs.encode());
+    game.native_set_setting(claims::SETTINGS_ID, "chat_priority", &prefs.encode());
     state(|s| s.priority = prefs);
 }
 fn priority_rule(name: &str) -> Option<crate::game::claim_borders_chat_priority::Rule> {
@@ -293,7 +297,11 @@ fn priority_rule(name: &str) -> Option<crate::game::claim_borders_chat_priority:
 }
 pub(super) fn configure(game: &Game<'_>, preferences: options::Preferences) {
     let preferences = preferences.normalized();
-    game.native_set_setting(claims::ID, "chat_preferences", &preferences.encode());
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        "chat_preferences",
+        &preferences.encode(),
+    );
     state(|s| {
         s.settings.preferences = preferences;
         s.feed.reconfigure(preferences);
@@ -309,7 +317,11 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
     } else {
         ("chat_modern", !current.modern)
     };
-    game.native_set_setting(claims::ID, key, if value { "true" } else { "false" });
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        key,
+        if value { "true" } else { "false" },
+    );
     state(|s| {
         if translation {
             s.settings.translate = value;
@@ -749,6 +761,15 @@ fn draw_card(
     metrics: options::CardMetrics,
 ) {
     let [x, y, w, h] = rect;
+    let presence = entry.kind == model::Kind::Presence;
+    let social = state(|s| {
+        s.priority
+            .rule(
+                &entry.name,
+                s.friends.contains(&entry.name.to_ascii_lowercase()),
+            )
+            .is_some()
+    });
     let color = entry
         .auction
         .map(|n| n.color())
@@ -760,6 +781,11 @@ fn draw_card(
             model::Kind::Death => 0xdfa8b5,
             _ => ui::preferences(game).accent.color(),
         });
+    let color = if presence {
+        options::presence_color(entry.joined, social)
+    } else {
+        color
+    };
     let background = ((alpha * 255.0 * opacity) as u32) << 24 | 0x151a26;
     ui::fill(game, batch, rect, background);
     ui::fill(
@@ -800,6 +826,26 @@ fn draw_card(
     let name = label(entry);
     if compact {
         if let Some(row) = rows.first() {
+            if presence {
+                if settings(game).preferences.presence_style == options::PresenceStyle::Icons
+                    && entry.joined.is_some()
+                {
+                    ui::icon_tinted(
+                        game,
+                        batch,
+                        if entry.joined == Some(true) {
+                            ui::Icon::Plus
+                        } else {
+                            ui::Icon::Minus
+                        },
+                        [tx, y + metrics.text_y - 1.0, 10.0, 10.0],
+                        ((alpha * 255.0) as u32) << 24 | color,
+                    );
+                    tx += 15.0;
+                }
+                text(game, batch, row, [tx, y + metrics.text_y], color, alpha);
+                return;
+            }
             text(
                 game,
                 batch,
@@ -921,7 +967,8 @@ fn paint_region<'a>(
             continue;
         }
         let compact = e.auction.is_none()
-            && (e.kind == model::Kind::Death
+            && (e.kind == model::Kind::Presence
+                || e.kind == model::Kind::Death
                 || !e.kind.is_chat()
                     && matches!(
                         p.notifications,
@@ -936,7 +983,11 @@ fn paint_region<'a>(
         let body = if compact {
             format!(
                 "{}{count}",
-                model::event_summary(e, context.translate, context.language)
+                if e.kind == model::Kind::Presence {
+                    model::presence_summary(e, p.presence_style, context.language)
+                } else {
+                    model::event_summary(e, context.translate, context.language)
+                }
             )
         } else if inline {
             let label = label(e);
@@ -956,7 +1007,15 @@ fn paint_region<'a>(
         } else {
             0.0
         };
-        let inset = 29.0 + badge_width;
+        let presence_mark = if e.kind == model::Kind::Presence
+            && e.joined.is_some()
+            && p.presence_style == options::PresenceStyle::Icons
+        {
+            15.0
+        } else {
+            0.0
+        };
+        let inset = 29.0 + badge_width + presence_mark;
         let mut rows = if compact {
             vec![model::single_line(&body, region[2] - inset, |s| {
                 game.native_text_width(s)

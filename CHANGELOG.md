@@ -1,5 +1,13 @@
 # История версий
 
+## 0.25.0
+
+- Presence uses one-line, direction-colored Lucide status marks before the name. Normal joins/leaves are green/red; friends and important players use cyan/lavender.
+- Add a saved Icon and name / Text presence setting. Text mode restores localized joined/left and first-visit labels.
+- Merge PR #11: launcher bundle ID is draimhorizon; old settings/data remain under claim_borders. This is a manual reinstall migration, not an in-place launcher update; custom bindings and activation state may reset.
+- Retain the official Nightly policy and verified 6560641 source; do not adopt the main snapshot from the older PR.
+
+
 ## 0.24.1
 
 - Target the official Horizon Nightly 2026-11-07 source commit 6560641, instead of Horizon main.

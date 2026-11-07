@@ -259,7 +259,7 @@ fn ensure(game: &mut Game<'_>) -> bool {
         own,
         root,
         auto_relay: game
-            .native_setting(claims::ID, "relay_autoconnect")
+            .native_setting(claims::SETTINGS_ID, "relay_autoconnect")
             .as_deref()
             != Some("false"),
         ..Client::default()
@@ -333,13 +333,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if game.native_on(claims::ID) && !state(|c| c.reconnect_initialized) {
         state(|c| c.reconnect_initialized = true);
         if game
-            .native_setting(claims::ID, "auto_reconnect_initialized")
+            .native_setting(claims::SETTINGS_ID, "auto_reconnect_initialized")
             .as_deref()
             != Some("true")
         {
             game.settings.extras.auto_reconnect = true;
             game.settings.save(&Game::options_path());
-            game.native_set_setting(claims::ID, "auto_reconnect_initialized", "true");
+            game.native_set_setting(claims::SETTINGS_ID, "auto_reconnect_initialized", "true");
         }
     }
     crate::game::claim_borders_chat_view::frame(game);
@@ -1478,7 +1478,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         menu::ViewModel {
             auto_reconnect: game.settings.extras.auto_reconnect,
             experiments_accepted: game
-                .native_setting(claims::ID, "experiments_accepted")
+                .native_setting(claims::SETTINGS_ID, "experiments_accepted")
                 .as_deref()
                 == Some("true"),
             language,
@@ -1672,7 +1672,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 c.auto_relay
             });
             game.native_set_setting(
-                claims::ID,
+                claims::SETTINGS_ID,
                 "relay_autoconnect",
                 if on { "true" } else { "false" },
             );
@@ -1713,7 +1713,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             Ok(Vec::new())
         }
         Action::AcceptExperiments => {
-            game.native_set_setting(claims::ID, "experiments_accepted", "true");
+            game.native_set_setting(claims::SETTINGS_ID, "experiments_accepted", "true");
             Ok(Vec::new())
         }
         Action::SetExperimental(prefs) => {
@@ -1742,7 +1742,11 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::ToggleAutoTrust => {
             let on = !crate::game::claim_borders_auto_trust_view::enabled(game);
-            game.native_set_setting(claims::ID, "auto_trust", if on { "true" } else { "false" });
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "auto_trust",
+                if on { "true" } else { "false" },
+            );
             Ok(vec![tr!(
                 "Авто /trust для подтверждённых друзей: {}",
                 "Auto /trust for confirmed friends: {}",
@@ -1764,7 +1768,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::ToggleOutgoing => {
             let on = !crate::game::claim_borders_outgoing_view::enabled(game);
             game.native_set_setting(
-                claims::ID,
+                claims::SETTINGS_ID,
                 "chat_outgoing_en",
                 if on { "true" } else { "false" },
             );

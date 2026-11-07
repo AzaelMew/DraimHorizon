@@ -39,10 +39,10 @@ jobs:
       - name: Format, lint and test runtime
         run: |
           python3 tools/version.py check
-          python3 -m unittest discover -s tools/tests -p "test_compatibility.py"
+          python3 -m unittest discover -s tools/tests -p "test_*.py"
           python3 tools/compatibility.py
           cargo fmt --all --check
-          rustfmt --edition 2024 --check mixins/claim_borders/*.rs
+          rustfmt --edition 2024 --check mixins/draimhorizon/*.rs
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --locked
       - name: Verify relay and encrypted client exchange

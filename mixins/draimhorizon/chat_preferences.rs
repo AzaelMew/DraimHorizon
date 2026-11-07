@@ -82,6 +82,37 @@ impl RepeatMode {
         }
     }
 }
+/// Presence is always one row; this choice is independent of the other event layouts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PresenceStyle {
+    #[default]
+    Icons,
+    Text,
+}
+impl PresenceStyle {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Icons => Self::Text,
+            Self::Text => Self::Icons,
+        }
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
+        match self {
+            Self::Icons => language.text("Значок и ник", "Icon and name"),
+            Self::Text => language.text("Текстовый", "Text"),
+        }
+    }
+}
+/// Direction takes priority over chat highlight colors. Social contacts have their own palette.
+pub fn presence_color(joined: Option<bool>, social: bool) -> u32 {
+    match (joined, social) {
+        (Some(true), false) => 0x91d5a3,
+        (Some(false), false) => 0xe59898,
+        (Some(true), true) => 0x83d6e6,
+        (Some(false), true) => 0xbba2e3,
+        (None, _) => 0xa6b4c6,
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Preferences {
     pub width: u16,
@@ -93,6 +124,7 @@ pub struct Preferences {
     pub offset_y: i16,
     pub notifications: NotificationStyle,
     pub presence: bool,
+    pub presence_style: PresenceStyle,
     pub deaths: bool,
     pub duration: u16,
     pub opacity: f32,
@@ -113,6 +145,7 @@ impl Default for Preferences {
             offset_y: 0,
             notifications: NotificationStyle::Cards,
             presence: true,
+            presence_style: PresenceStyle::Icons,
             deaths: true,
             duration: 12,
             opacity: 0.86,
@@ -149,7 +182,7 @@ impl Preferences {
         let p = self.normalized();
         json!({"schema":1,"width":p.width,"height":p.height,"scale":p.scale,"compact_messages":p.compact_messages,"placement":p.placement as u8,
             "offset_x":p.offset_x,"offset_y":p.offset_y,"notifications":p.notifications as u8,
-            "presence":p.presence,"deaths":p.deaths,"duration":p.duration,"opacity":p.opacity,
+            "presence":p.presence,"presence_style":p.presence_style as u8,"deaths":p.deaths,"duration":p.duration,"opacity":p.opacity,
             "event_width":p.event_width,"repeats":p.repeats as u8,"repeat_window":p.repeat_window,"ignore_prefix":p.ignore_prefix}).to_string()
     }
     pub fn decode(text: &str) -> Result<Self, String> {
@@ -179,6 +212,11 @@ impl Preferences {
         p.offset_x = v["offset_x"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
         p.offset_y = v["offset_y"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
         p.presence = v["presence"].as_bool().unwrap_or(true);
+        p.presence_style = if v["presence_style"].as_u64() == Some(1) {
+            PresenceStyle::Text
+        } else {
+            PresenceStyle::Icons
+        };
         p.deaths = v["deaths"].as_bool().unwrap_or(true);
         p.placement = match v["placement"].as_u64() {
             Some(1) => Placement::BottomRight,
@@ -451,5 +489,37 @@ mod tests {
         assert_eq!(hit_at(&hits, [rect[0] + 5.0, rect[1] + 5.0]), Some(7));
         assert_eq!(hit_at(&hits, [rect[0] - 1.0, rect[1] + 5.0]), None);
         assert_eq!(hit_at(&hits, [rect[0] + rect[2], rect[1] + 5.0]), None);
+    }
+    #[test]
+    fn presence_view_migrates_and_remembers_legacy_text_choice() {
+        let old =
+            Preferences::decode(r#"{"schema":1,"width":270,"presence":true,"notifications":0}"#)
+                .unwrap();
+        assert_eq!(old.presence_style, PresenceStyle::Icons);
+        assert_eq!(old.width, 270);
+        let chosen = Preferences {
+            presence_style: PresenceStyle::Text,
+            ..old
+        };
+        assert_eq!(Preferences::decode(&chosen.encode()).unwrap(), chosen);
+        assert_eq!(PresenceStyle::Icons.next(), PresenceStyle::Text);
+        assert_eq!(PresenceStyle::Text.next(), PresenceStyle::Icons);
+    }
+    #[test]
+    fn direction_and_social_contact_have_distinct_presence_colors() {
+        let colors = [
+            presence_color(Some(true), false),
+            presence_color(Some(false), false),
+            presence_color(Some(true), true),
+            presence_color(Some(false), true),
+        ];
+        for (i, a) in colors.iter().enumerate() {
+            assert!(!colors[i + 1..].contains(a));
+        }
+        let join = colors[0];
+        let leave = colors[1];
+        assert!((join >> 8 & 255) > (join >> 16 & 255));
+        assert!((leave >> 16 & 255) > (leave >> 8 & 255));
+        assert_eq!(CardMetrics::new(false, true, true).max_rows(100.0), 1);
     }
 }

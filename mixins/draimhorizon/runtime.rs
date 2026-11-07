@@ -4,9 +4,11 @@ use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-pub const ID: &str = "claim_borders";
+pub const ID: &str = "draimhorizon";
+/// Key under which settings and data were saved before the mod id became `draimhorizon`.
+pub const SETTINGS_ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizon";
-pub const VERSION: &str = "0.24.1";
+pub const VERSION: &str = "0.25.0";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 pub fn description_in(language: Language) -> &'static str {
     language.text(

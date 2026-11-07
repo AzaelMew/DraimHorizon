@@ -8,7 +8,7 @@ Use skills and subagents only when explicitly requested by the user.
 
 - Check Git status, DraimHorizon remote main and release tags. Preserve local changes before updating.
 - Read relevant symbols and bounded ranges with rg. Source and compatibility.json take precedence over old prose.
-- This is a native Rust mod for Horizon. Bundle ID is claim_borders. Distribution name is DraimHorizons. Artifacts use .hnmod.
+- This is a native Rust mod for Horizon. Bundle ID is draimhorizon. Distribution name is DraimHorizon. Settings/data namespace remains claim_borders through runtime::SETTINGS_ID; do not change it when changing the launcher identity. Artifacts use .hnmod.
 - Always use the latest **official Horizon Nightly release**: https://github.com/horizon-rust/horizon/releases/tag/nightly. Never select Horizon main, a nightly/build branch or the stable releases/latest endpoint as the target. A Nightly can include selected PRs, so its source may differ from main.
 - Resolve the official nightly tag to its full source commit SHA (peel annotated tags); keep that exact tested SHA and source hashes in compatibility.json with horizon_channel = nightly. Do not put a mutable tag or branch in horizon_revision.
 - Before every task and release run python tools/compatibility.py. If the published Nightly differs, run python tools/compatibility.py --update --horizon PATH, adapt the hooks and compile the real client. Never publish with a stale Nightly pin or silently fall back to main. Keep the independent horizon-mixins pin verified too.
@@ -20,8 +20,8 @@ Use skills and subagents only when explicitly requested by the user.
 | --- | --- |
 | Cargo.toml / Cargo.lock | Runtime crate and pinned dependencies |
 | src/lib.rs | Pure modules shared by tests and native injection |
-| mixins/claim_borders/horizon-mixin.toml | Module wiring and hook definitions |
-| mixins/claim_borders/runtime.rs | Mod identity, version and verified claim state |
+| mixins/draimhorizon/horizon-mixin.toml | Module wiring and hook definitions |
+| mixins/draimhorizon/runtime.rs | Mod identity, version and verified claim state |
 | client.rs / menu.rs / menu_view.rs | Client lifecycle, menu actions and rendering |
 | chat_feed.rs / chat_view.rs / chat_archive.rs | Classification, layout and local history |
 | relay_client/src/translation.rs / outgoing_view.rs | Background providers and signed outgoing chat |
@@ -34,7 +34,7 @@ Use skills and subagents only when explicitly requested by the user.
 | tools/package_relay.py | Portable relay archive without secrets |
 | .github/workflows/ | Runtime, native-client and publication checks |
 
-Unprefixed Rust paths in the table are relative to mixins/claim_borders/.
+Unprefixed Rust paths in the table are relative to mixins/draimhorizon/.
 
 ## Version every task
 
@@ -64,6 +64,11 @@ The format is major.minor.patch.
 - Reuse ui_style::Icon and tools/update_lucide.py; do not draw substitutes or use Unicode icon glyphs. Keep Lucide attribution with the bundle.
 - Minecraft item textures, player heads and user images are content, not interface pictograms.
 
+## Mod identity migration
+
+- Version 0.25.0 changes launcher ID from claim_borders to draimhorizon. The official launcher filters updates by the old ID, so this upgrade requires removing the old mod and reinstalling from GitHub. Do not promise an in-place update across this rename.
+- Keep native_setting/native_set_setting/native_data_dir on SETTINGS_ID, and activation/screens/key registrations on ID. Launcher removal leaves the old data directory intact. Custom bindings and activation state use the new ID and may need setting again.
+
 ## Implementation contracts
 
 - Reuse existing types, entry points and patterns. Keep changes focused and readable. Add dependencies only for a concrete need.
@@ -82,7 +87,7 @@ The format is major.minor.patch.
 
 ## Verification and delivery
 
-- Rust changes require python tools/version.py check, cargo fmt --all --check, rustfmt --edition 2024 --check mixins/claim_borders/*.rs, cargo clippy --workspace --all-targets --locked -- -D warnings and cargo test --workspace --locked.
+- Rust changes require python tools/version.py check, cargo fmt --all --check, rustfmt --edition 2024 --check mixins/draimhorizon/*.rs, cargo clippy --workspace --all-targets --locked -- -D warnings and cargo test --workspace --locked.
 - Add regression tests for meaningful behavior, not implementation duplication.
 - Native adapters require applying official pinned mixins and checking the real Horizon client. Validate the final bundle with cargo horizon-mod check <artifact> --json.
 - Relay changes require its Python tests and relevant integration checks. Exclude real .env files from deployment archives and use portable archive paths.
