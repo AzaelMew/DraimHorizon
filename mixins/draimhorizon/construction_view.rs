@@ -1,4 +1,5 @@
 // Native construction driver: ordinary digging and block use, confirmed by server acknowledgements.
+use crate::game::claim_borders_schematic as schematic;
 use crate::game::{
     Game, claim_borders as claims, claim_borders_construction as model,
     claim_borders_navigation as nav, claim_borders_navigation_view as navigation,
@@ -7,7 +8,14 @@ use std::{
     sync::{Mutex, OnceLock},
     time::Instant,
 };
+struct External {
+    request: schematic::PlacementRequest,
+    active: bool,
+    result: Option<Result<usize, schematic::PlaceError>>,
+    confirm: Vec<(nav::Pos, schematic::BlockState)>,
+}
 struct State {
+    external: Option<External>,
     job: Option<model::Job>,
     scope: String,
     placement: Option<model::Placement>,
@@ -20,6 +28,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            external: None,
             job: None,
             scope: String::new(),
             placement: None,
@@ -69,6 +78,7 @@ pub(super) fn reset() {
         s.job = None;
         if !s.placement.as_ref().is_some_and(|p| p.sequence.is_some()) {
             s.placement = None;
+            s.external = None;
         }
         s.aim = None;
     });
@@ -81,12 +91,19 @@ pub(super) fn exists() -> bool {
 }
 pub(super) fn pause() {
     state(|s| {
+        let unsent = s.placement.as_ref().is_some_and(|p| p.sequence.is_none());
         if let Some(j) = s.job.as_mut()
             && j.active
         {
             j.stop(model::Stop::Manual);
         }
         s.aim = None;
+        if let Some(external) = s.external.as_mut() {
+            external.active = false;
+            if unsent && external.result.is_none() {
+                external.result = Some(Err(schematic::PlaceError::Manual));
+            }
+        }
     });
 }
 fn stop(reason: model::Stop) {
@@ -95,6 +112,15 @@ fn stop(reason: model::Stop) {
             j.stop(reason);
         }
         s.aim = None;
+        if let Some(external) = s.external.as_mut() {
+            external.active = false;
+            external.result = Some(Err(match reason {
+                model::Stop::Material => schematic::PlaceError::Material,
+                model::Stop::Manual => schematic::PlaceError::Manual,
+                model::Stop::Timeout => schematic::PlaceError::Timeout,
+                _ => schematic::PlaceError::Unreachable,
+            }));
+        }
     });
 }
 fn material_slot(game: &Game<'_>) -> Option<usize> {
@@ -102,6 +128,68 @@ fn material_slot(game: &Game<'_>) -> Option<usize> {
         game.stack_in(*slot)
             .is_some_and(|stack| stack.count > 0 && model::material(&stack.item))
     })
+}
+fn placing(s: &State) -> bool {
+    s.external
+        .as_ref()
+        .is_some_and(|e| e.active && e.result.is_none())
+        || s.job
+            .as_ref()
+            .is_some_and(|j| j.active && j.phase == model::Phase::Placing)
+}
+pub(super) fn placement_pending() -> bool {
+    state(|s| s.placement.as_ref().is_some_and(|p| p.sequence.is_some()))
+}
+pub(super) fn external_settled() -> bool {
+    state(|s| s.auto_slot.is_none())
+}
+pub(super) fn external_result() -> Option<Result<usize, schematic::PlaceError>> {
+    state(|s| s.external.as_ref().and_then(|e| e.result))
+}
+pub(super) fn external_resume() -> bool {
+    state(|s| {
+        if let Some(e) = s.external.as_mut()
+            && s.placement.as_ref().is_some_and(|p| p.sequence.is_some())
+        {
+            e.active = true;
+            e.result = None;
+            if let Some(p) = s.placement.as_mut() {
+                p.started_ms = s.started.elapsed().as_millis() as u64;
+            }
+            true
+        } else {
+            false
+        }
+    })
+}
+pub(super) fn place_external(
+    game: &Game<'_>,
+    request: schematic::PlacementRequest,
+) -> Result<(), String> {
+    if placement_pending() {
+        return Err("waiting for placement acknowledgement".into());
+    }
+    let scope = navigation::scope(game).ok_or("no active world")?;
+    state(|s| {
+        s.scope = scope;
+        s.job = None;
+        s.placement = Some(model::Placement {
+            target: request.target,
+            anchor: None,
+            material: request.state.name.clone(),
+            sequence: None,
+            started_ms: s.started.elapsed().as_millis() as u64,
+            edge: false,
+        });
+        s.external = Some(External {
+            request,
+            active: true,
+            result: None,
+            confirm: Vec::new(),
+        });
+        s.aim = None;
+    });
+    Ok(())
 }
 pub(super) fn start(game: &Game<'_>, config: model::Config, preview: bool) -> Result<(), String> {
     let l = language();
@@ -221,12 +309,25 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn tick(game: &Game<'_>) {
+    let timeout = state(|s| {
+        s.external
+            .as_ref()
+            .is_some_and(|e| e.active && e.result.is_none())
+            && s.placement
+                .as_ref()
+                .is_some_and(|p| s.started.elapsed().as_millis() as u64 - p.started_ms > 5000)
+    });
+    if timeout {
+        stop(model::Stop::Timeout);
+    }
     if !game.native_on(claims::ID) {
         reset();
         return;
     }
     let current = navigation::scope(game);
-    if state(|s| s.job.is_some() && current.as_deref() != Some(s.scope.as_str())) {
+    if state(|s| {
+        (s.job.is_some() || s.external.is_some()) && current.as_deref() != Some(s.scope.as_str())
+    }) {
         world_reset();
         return;
     }
@@ -403,8 +504,7 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     let current = navigation::scope(game);
     state(|s| {
         if current.as_deref() != Some(s.scope.as_str()) {
-            s.original_slot = None;
-            s.auto_slot = None;
+            *s = State::default();
             return;
         }
         if let Some(auto) = s.auto_slot {
@@ -414,11 +514,11 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 }
                 s.original_slot = None;
                 s.auto_slot = None;
-            } else if !s
-                .job
-                .as_ref()
-                .is_some_and(|j| j.active && j.phase == model::Phase::Placing)
-            {
+                if let Some(e) = s.external.as_mut() {
+                    e.active = false;
+                    e.result = Some(Err(schematic::PlaceError::Manual));
+                }
+            } else if !placing(s) {
                 if let Some(original) = s.original_slot.take() {
                     game.selected = original;
                 }
@@ -431,13 +531,20 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         return false;
     }
     let data = state(|s| {
-        s.job
-            .as_ref()
-            .filter(|j| j.active && j.phase == model::Phase::Placing)
-            .zip(s.placement.as_ref())
-            .map(|(j, p)| (j.clone(), p.clone(), s.aim))
+        if !placing(s) {
+            None
+        } else {
+            s.placement.as_ref().map(|p| {
+                (
+                    s.job.clone(),
+                    p.clone(),
+                    s.aim,
+                    s.external.as_ref().map(|e| e.request.clone()),
+                )
+            })
+        }
     });
-    let Some((job, placement, last_aim)) = data else {
+    let Some((job, placement, last_aim, external)) = data else {
         return false;
     };
     if !game.native_playing() {
@@ -454,7 +561,15 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     if placement.sequence.is_some() {
         return false;
     }
-    let Some(slot) = material_slot(game) else {
+    let slot = if let Some(e) = external.as_ref() {
+        (0..9).find(|slot| {
+            game.stack_in(*slot)
+                .is_some_and(|s| s.count > 0 && s.item.as_ref() == e.item)
+        })
+    } else {
+        material_slot(game)
+    };
+    let Some(slot) = slot else {
         stop(model::Stop::Material);
         return false;
     };
@@ -491,7 +606,11 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             .res
             .facts()
             .get(game.world.block(anchor[0], anchor[1], anchor[2]));
-        if b.cell != nav::Cell::Solid || facts.block_entity {
+        if (b.cell != nav::Cell::Solid && external.is_none())
+            || matches!(b.cell, nav::Cell::Hazard | nav::Cell::Unknown)
+            || facts.block_entity
+            || game.native_block(anchor) == "minecraft:air"
+        {
             continue;
         }
         let face = delta.map(|n| -n);
@@ -516,17 +635,52 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         let Some((at, changes)) = game.remote_can_place(&hit, &stack) else {
             continue;
         };
-        if [at.x, at.y, at.z] != placement.target || changes.len() != 1 {
+        if [at.x, at.y, at.z] != placement.target
+            || changes.is_empty()
+            || (external.is_none() && changes.len() != 1)
+        {
             continue;
         }
         let placed = game.res.facts().get(changes[0].1);
-        if !placed.full_collision || placed.name.as_ref() != stack.item.as_ref() {
+        let mut confirm = Vec::new();
+        if let Some(e) = external.as_ref() {
+            if changes.len() > 4 {
+                continue;
+            }
+            let mut valid = true;
+            for (p, id) in &changes {
+                let pos = [p.x, p.y, p.z];
+                let Some(wanted) = e.allowed.get(&pos) else {
+                    valid = false;
+                    break;
+                };
+                let Some(actual) = game.pack.assets.registry.state(*id) else {
+                    valid = false;
+                    break;
+                };
+                if !wanted.matches(&actual.name, |key| {
+                    actual.properties.get(key).map(|v| v.to_string())
+                }) {
+                    valid = false;
+                    break;
+                }
+                confirm.push((pos, wanted.clone()));
+            }
+            if !valid {
+                continue;
+            }
+        } else if !placed.full_collision || placed.name.as_ref() != stack.item.as_ref() {
             continue;
         }
         state(|s| {
             if let Some(p) = s.placement.as_mut() {
                 p.anchor = Some(anchor);
-                p.material = stack.item.to_string();
+                p.material = external
+                    .as_ref()
+                    .map_or_else(|| stack.item.to_string(), |e| e.state.name.clone());
+            }
+            if let Some(e) = s.external.as_mut() {
+                e.confirm = confirm;
             }
             s.aim = Some([game.yaw, game.pitch]);
         });
@@ -537,6 +691,10 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         return false;
     };
     let position = [p.x, p.y, p.z];
+    let Some(job) = job else {
+        stop(model::Stop::Blocked);
+        return false;
+    };
     if nav::distance(position, job.edge()) < 0.08 {
         stop(model::Stop::Blocked);
         return false;
@@ -552,9 +710,7 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
 pub(super) fn sent(packet: &horizon_protocol::packets::play::Serverbound) {
     if let horizon_protocol::packets::play::Serverbound::UseItemOn(p) = packet {
         state(|s| {
-            if s.job
-                .as_ref()
-                .is_some_and(|j| j.active && j.phase == model::Phase::Placing)
+            if placing(s)
                 && let Some(place) = s.placement.as_mut()
                 && place.anchor == Some(p.pos)
                 && place.sequence.is_none()
@@ -573,6 +729,25 @@ pub(super) fn ack(game: &Game<'_>, sequence: i32) {
         let Some(p) = s.placement.as_ref() else {
             return;
         };
+        if let Some(e) = s.external.as_mut() {
+            if p.sequence.is_some_and(|seq| sequence >= seq) {
+                let ok = !e.confirm.is_empty()
+                    && e.confirm.iter().all(|(at, w)| {
+                        w.matches(&game.native_block(*at), |key| {
+                            game.native_block_property(*at, key)
+                        })
+                    });
+                e.result = Some(if ok {
+                    Ok(e.confirm.len())
+                } else {
+                    Err(schematic::PlaceError::Refused)
+                });
+                e.active = false;
+                s.placement = None;
+                s.aim = None;
+            }
+            return;
+        }
         let result = p.acknowledge(
             sequence,
             &game.native_block(p.target),

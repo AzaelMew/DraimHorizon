@@ -16,6 +16,7 @@ use std::{
 
 pub use model::Goal;
 struct Query {
+    flat: bool,
     mine: Option<(u8, Vec<model::Pos>)>,
     token: u64,
     start: model::Pos,
@@ -49,6 +50,10 @@ impl Worker {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
                     let mut read = |at: model::Pos| {
+                        if query.flat && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
+                        {
+                            return mining::Block::default();
+                        }
                         let Some(chunk) = query
                             .chunks
                             .get(&(at[0].div_euclid(16), at[2].div_euclid(16)))
@@ -112,6 +117,7 @@ impl Drop for Worker {
     }
 }
 struct State {
+    flat: bool,
     use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
@@ -127,6 +133,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            flat: false,
             use_restore: None,
             attack_restore: None,
             mining: None,
@@ -149,6 +156,7 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn reset() {
+    crate::game::claim_borders_workshop_view::reset();
     crate::game::claim_borders_construction_view::reset();
     state(|s| {
         let restore = s.attack_restore;
@@ -216,7 +224,10 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
             f.full_collision,
             f.fluid_level > 0 || f.waterlogged,
         ),
-        ore: if ore == u8::MAX {
+        ore: if let Some(crop) = crate::game::claim_borders_farming::Crop::from_code(ore) {
+            crop.block() == f.name.as_ref()
+                && crop.mature(game.native_block_property(at, "age").as_deref())
+        } else if ore == u8::MAX {
             crate::game::claim_borders_construction_view::block(game, at).diggable
         } else {
             mining::matches(ore, &f.name)
@@ -255,6 +266,68 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
 }
 pub(super) fn construction_tool(game: &Game<'_>) -> bool {
     mining_tool(game, None)
+}
+pub(super) fn workshop_walk(game: &Game<'_>, goal: model::Pos, flat: bool) -> Result<(), String> {
+    clear_construction_driver();
+    state(|s| {
+        s.scope = scope(game).ok_or("Join a world first")?;
+        s.flat = flat;
+        s.nav.begin(goal, true);
+        request(game, s)
+    })
+}
+pub(super) fn workshop_walk_result() -> Option<bool> {
+    state(|s| match s.nav.status {
+        model::Status::Arrived => Some(true),
+        model::Status::NoPath | model::Status::Stuck | model::Status::Paused => Some(false),
+        _ => None,
+    })
+}
+pub(super) fn farm_dig(
+    game: &Game<'_>,
+    target: model::Pos,
+    crop: crate::game::claim_borders_farming::Crop,
+) -> Result<(), String> {
+    if !free_slot(game) {
+        return Err(language()
+            .text("Освободите слот в инвентаре", "Free an inventory slot")
+            .into());
+    }
+    clear_construction_driver();
+    state(|s| {
+        s.scope = scope(game).ok_or("Join a world first")?;
+        s.nav.begin(target, true);
+        s.nav.status = model::Status::Mining;
+        let mut j = mining::Job::excavation(target);
+        j.ore = crop.code();
+        j.started_ms = s.started.elapsed().as_millis() as u64;
+        s.mining = Some(j);
+        Ok(())
+    })
+}
+pub(super) fn farm_result() -> Option<Result<(), crate::game::claim_borders_schematic::PlaceError>>
+{
+    use crate::game::claim_borders_schematic::PlaceError as E;
+    state(|s| {
+        match s
+            .mining
+            .as_ref()
+            .filter(|j| crate::game::claim_borders_farming::Crop::from_code(j.ore).is_some())
+        {
+            Some(j) => match j.phase {
+                mining::Phase::Done => Some(Ok(())),
+                mining::Phase::Refused => Some(Err(E::Refused)),
+                mining::Phase::Timeout => Some(Err(E::Timeout)),
+                mining::Phase::Searching | mining::Phase::NoTarget => Some(Err(E::Unreachable)),
+                _ if !j.active => Some(Err(E::Manual)),
+                _ => None,
+            },
+            None => Some(Err(E::Manual)),
+        }
+    })
+}
+pub(super) fn workshop_pending() -> bool {
+    state(|s| s.mining.as_ref().is_some_and(|j| j.awaiting_confirmation()))
 }
 pub(super) fn clear_construction_driver() {
     state(|s| {
@@ -478,6 +551,7 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
     if physical || game.right {
+        crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
     }
     let Some(player) = game.native_player() else {
@@ -514,7 +588,9 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let Some(target) = job.target else {
             return false;
         };
-        if !mining_tool(game, Some(target)) {
+        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none()
+            && !mining_tool(game, Some(target))
+        {
             job.active = false;
             job.phase = mining::Phase::Tool;
             s.nav.running = false;
@@ -641,13 +717,17 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
         .collect();
     let query = Query {
+        flat: s.flat,
         mine: s
             .mining
             .as_ref()
             .filter(|j| j.phase == mining::Phase::Searching)
             .map(|j| (j.ore, j.excluded.clone())),
         token: s.token,
-        start: model::block([player.x, player.y, player.z]),
+        start: model::standing_block(
+            [player.x, player.y, player.z],
+            &game.native_block(model::block([player.x, player.y, player.z])),
+        ),
         goal,
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
         chunks,
@@ -667,6 +747,10 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    if let Goal::Farm(config) = goal_request {
+        return crate::game::claim_borders_workshop_view::start_farm(game, config, !running);
+    }
+    crate::game::claim_borders_workshop_view::reset();
     if let Goal::Construct(config) = goal_request {
         return crate::game::claim_borders_construction_view::start(game, config, !running);
     }
@@ -689,6 +773,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
             .to_owned()
     })?;
     let goal = match goal_request {
+        Goal::Farm(_) => unreachable!(),
         Goal::Construct(_) => unreachable!(),
         Goal::Mine { .. } => unreachable!(),
         Goal::Coordinates(at) => at,
@@ -763,6 +848,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
     })
 }
 pub(super) fn pause() {
+    crate::game::claim_borders_workshop_view::pause();
     crate::game::claim_borders_construction_view::pause();
     state(|s| {
         if s.nav.running || s.mining.as_ref().is_some_and(|j| j.active) {
@@ -772,6 +858,9 @@ pub(super) fn pause() {
     });
 }
 pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
+    if crate::game::claim_borders_workshop_view::exists() {
+        return crate::game::claim_borders_workshop_view::resume(game);
+    }
     if crate::game::claim_borders_construction_view::exists() {
         return crate::game::claim_borders_construction_view::resume(game);
     }
@@ -936,6 +1025,7 @@ pub(super) fn movement(
     jump: &mut bool,
     sneak: &mut bool,
 ) {
+    crate::game::claim_borders_workshop_view::manual_movement(*forward, *strafe, *jump, *sneak);
     if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
         return;
     }
@@ -990,7 +1080,7 @@ pub(super) fn movement(
             let from = if s.nav.next > 0 {
                 s.nav.path[s.nav.next - 1]
             } else {
-                model::block(position)
+                model::standing_block(position, &game.native_block(model::block(position)))
             };
             if !model::traversable(from, next, &mut |at| live_cell(game, at)) {
                 cancel_pending(s);
@@ -1005,6 +1095,9 @@ pub(super) fn movement(
 }
 
 pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
+    if let Some(snapshot) = crate::game::claim_borders_workshop_view::snapshot() {
+        return snapshot;
+    }
     if let Some(snapshot) = crate::game::claim_borders_construction_view::snapshot() {
         return snapshot;
     }
@@ -1136,7 +1229,8 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
     if !game.native_playing()
         || game.ui.hide_gui
         || !(state(|s| s.nav.goal.is_some())
-            || crate::game::claim_borders_construction_view::exists())
+            || crate::game::claim_borders_construction_view::exists()
+            || crate::game::claim_borders_workshop_view::exists())
     {
         return;
     }

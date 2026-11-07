@@ -22,6 +22,12 @@ pub use mining as claim_borders_mining;
 #[path = "../mixins/draimhorizon/construction.rs"]
 pub mod construction;
 pub use construction as claim_borders_construction;
+#[path = "../mixins/draimhorizon/schematic.rs"]
+pub mod schematic;
+pub use schematic as claim_borders_schematic;
+#[path = "../mixins/draimhorizon/farming.rs"]
+pub mod farming;
+pub use farming as claim_borders_farming;
 
 #[path = "../mixins/draimhorizon/relay_settings.rs"]
 pub mod relay_settings;

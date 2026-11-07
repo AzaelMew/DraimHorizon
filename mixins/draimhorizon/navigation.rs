@@ -11,6 +11,7 @@ pub enum Goal {
     Follow(u128),
     Mine { ore: u8, limit: u16 },
     Construct(super::claim_borders_construction::Config),
+    Farm(super::claim_borders_farming::Config),
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;
@@ -52,7 +53,7 @@ pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
         Cell::Hazard
     } else if matches!(name, "air" | "cave_air" | "void_air") {
         Cell::Air
-    } else if full_collision {
+    } else if full_collision || matches!(name, "farmland" | "dirt_path") {
         Cell::Solid
     } else {
         Cell::Blocked
@@ -265,6 +266,15 @@ pub struct Input {
 }
 pub fn block(position: [f64; 3]) -> Pos {
     position.map(|x| x.floor() as i32)
+}
+pub fn standing_block(position: [f64; 3], inside: &str) -> Pos {
+    let mut at = block(position);
+    if matches!(inside, "minecraft:farmland" | "minecraft:dirt_path")
+        && position[1] - f64::from(at[1]) > 0.8
+    {
+        at[1] += 1;
+    }
+    at
 }
 pub fn center(at: Pos) -> [f64; 3] {
     [

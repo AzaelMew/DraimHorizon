@@ -130,6 +130,7 @@ pub enum BorderOption {
 pub struct ViewModel {
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
+    pub schematic_files: Vec<String>,
     pub navigation_paused: bool,
     pub navigation_waypoints: Vec<WaypointRow>,
     pub auto_reconnect: bool,
@@ -223,6 +224,14 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    RefreshSchematics,
+    SchematicInfo(bool),
+    LoadSchematic {
+        filename: String,
+        origin: [i32; 3],
+        rotation: u8,
+        running: bool,
+    },
     Navigate {
         goal: super::claim_borders_navigation::Goal,
         running: bool,
@@ -305,6 +314,20 @@ impl std::fmt::Debug for Action {
                 .debug_struct("Navigate")
                 .field("goal", goal)
                 .field("running", running)
+                .finish(),
+            Self::RefreshSchematics => f.write_str("RefreshSchematics"),
+            Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
+            Self::LoadSchematic {
+                filename,
+                origin,
+                rotation,
+                running,
+            } => f
+                .debug_tuple("LoadSchematic")
+                .field(filename)
+                .field(origin)
+                .field(rotation)
+                .field(running)
                 .finish(),
             Self::NavigationPause => f.write_str("NavigationPause"),
             Self::NavigationResume => f.write_str("NavigationResume"),
@@ -394,6 +417,7 @@ pub enum Tab {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
+    SchematicOrigin,
     NavigationCoordinates,
     Name,
     Color,
@@ -437,6 +461,8 @@ pub enum BaritoneMode {
     Mining,
     Tunnel,
     Bridge,
+    Farm,
+    Schematic,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -452,6 +478,19 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    FarmCrop,
+    FarmRadius,
+    FarmLimit,
+    FarmReplant,
+    FarmPreview,
+    FarmStart,
+    SchematicFile,
+    SchematicRefresh,
+    SchematicRotation,
+    SchematicPreview,
+    SchematicBuild,
+    SchematicMaterials,
+    SchematicFolder,
     ConstructDirection,
     ConstructLength,
     ConstructWidth,
@@ -581,6 +620,13 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub farm_crop: super::claim_borders_farming::Crop,
+    pub farm_radius: u8,
+    pub farm_limit: u16,
+    pub farm_replant: bool,
+    pub schematic_file: Option<String>,
+    pub schematic_origin: String,
+    pub schematic_rotation: u8,
     pub construct_direction: super::claim_borders_construction::Direction,
     pub construct_length: u16,
     pub construct_width: u8,
@@ -626,6 +672,13 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
+            farm_crop: super::claim_borders_farming::Crop::Wheat,
+            farm_radius: 6,
+            farm_limit: 16,
+            farm_replant: true,
+            schematic_file: None,
+            schematic_origin: String::new(),
+            schematic_rotation: 0,
             experiments_prompt: false,
             navigation_coordinates: String::new(),
             navigation_waypoint: None,
@@ -2162,7 +2215,7 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 12.0) / 4.0;
+            let mode_width = (w - 20.0) / 6.0;
             for (i, mode, label) in [
                 (
                     0,
@@ -2184,6 +2237,12 @@ impl Menu {
                     BaritoneMode::Bridge,
                     self.language.text("Мост", "Bridge"),
                 ),
+                (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (
+                    5,
+                    BaritoneMode::Schematic,
+                    self.language.text("Схемы", "Schematics"),
+                ),
             ] {
                 out.push(widget(
                     [x + i as f32 * (mode_width + 4.0), 80.0, mode_width, 16.0],
@@ -2195,6 +2254,109 @@ impl Menu {
             let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
             let h = (step - 2.0).min(22.0);
             if matches!(
+                self.baritone_mode,
+                BaritoneMode::Farm | BaritoneMode::Schematic
+            ) {
+                let farm = self.baritone_mode == BaritoneMode::Farm;
+                let rows: Vec<(String, Control)> = if farm {
+                    vec![
+                        (
+                            match self.farm_crop {
+                                super::claim_borders_farming::Crop::Wheat => {
+                                    self.language.text("Пшеница", "Wheat")
+                                }
+                                super::claim_borders_farming::Crop::Carrots => {
+                                    self.language.text("Морковь", "Carrots")
+                                }
+                                super::claim_borders_farming::Crop::Potatoes => {
+                                    self.language.text("Картофель", "Potatoes")
+                                }
+                                super::claim_borders_farming::Crop::Beetroot => {
+                                    self.language.text("Свёкла", "Beetroot")
+                                }
+                            }
+                            .into(),
+                            Control::FarmCrop,
+                        ),
+                        (
+                            localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
+                            Control::FarmRadius,
+                        ),
+                        (
+                            localized!(
+                                self.language,
+                                "Лимит: {} (0 = ∞)",
+                                "Limit: {} (0 = ∞)",
+                                self.farm_limit
+                            ),
+                            Control::FarmLimit,
+                        ),
+                        (
+                            localized!(
+                                self.language,
+                                "Пересадка: {}",
+                                "Replant: {}",
+                                if self.farm_replant {
+                                    self.language.text("Вкл", "On")
+                                } else {
+                                    self.language.text("Выкл", "Off")
+                                }
+                            ),
+                            Control::FarmReplant,
+                        ),
+                        (
+                            self.language.text("Просмотр", "Preview").into(),
+                            Control::FarmPreview,
+                        ),
+                        (
+                            self.language.text("Начать", "Start").into(),
+                            Control::FarmStart,
+                        ),
+                    ]
+                } else {
+                    vec![
+                        (
+                            self.schematic_file.clone().unwrap_or_else(|| {
+                                self.language.text("Выберите файл", "Select file").into()
+                            }),
+                            Control::SchematicFile,
+                        ),
+                        (
+                            self.language.text("Обновить", "Refresh").into(),
+                            Control::SchematicRefresh,
+                        ),
+                        (
+                            format!("XYZ: {}", self.schematic_origin),
+                            Control::Field(Field::SchematicOrigin),
+                        ),
+                        (
+                            format!("{}°", self.schematic_rotation * 90),
+                            Control::SchematicRotation,
+                        ),
+                        (
+                            self.language.text("Просмотр", "Preview").into(),
+                            Control::SchematicPreview,
+                        ),
+                        (
+                            self.language.text("Строить", "Build").into(),
+                            Control::SchematicBuild,
+                        ),
+                    ]
+                };
+                for (i, (label, c)) in rows.into_iter().enumerate() {
+                    out.push(widget(
+                        [
+                            x + (i % 2) as f32 * (tab_width + 4.0),
+                            100.0 + (i / 2) as f32 * step,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(c),
+                        false,
+                    ));
+                }
+            } else if matches!(
                 self.baritone_mode,
                 BaritoneMode::Tunnel | BaritoneMode::Bridge
             ) {
@@ -2447,30 +2609,47 @@ impl Menu {
                 None,
                 false,
             ));
-            out.push(widget(
-                [x, height - 30.0, w, 14.0],
-                if matches!(
-                    self.baritone_mode,
-                    BaritoneMode::Tunnel | BaritoneMode::Bridge
-                ) {
-                    self.language.text(
-                        "Пол: камень, булыжник, земля из хотбара",
-                        "Floor: stone, cobblestone or dirt from the hotbar",
-                    )
-                } else if self.baritone_mode == BaritoneMode::Mining {
-                    self.language.text(
-                        "Нужна исправная кирка и свободный слот",
-                        "A usable pickaxe and a free slot are required",
-                    )
-                } else {
-                    self.language.text(
-                        "XYZ через пробел · движение вручную ставит паузу",
-                        "Space-separated XYZ · manual movement pauses",
-                    )
-                },
-                None,
-                false,
-            ));
+            if self.baritone_mode == BaritoneMode::Schematic {
+                out.push(widget(
+                    [x, height - 30.0, tab_width, 14.0],
+                    self.language
+                        .text("Материалы → буфер", "Materials → clipboard"),
+                    Some(Control::SchematicMaterials),
+                    false,
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, height - 30.0, tab_width, 14.0],
+                    self.language
+                        .text("Путь к папке → буфер", "Folder path → clipboard"),
+                    Some(Control::SchematicFolder),
+                    false,
+                ));
+            } else {
+                out.push(widget(
+                    [x, height - 30.0, w, 14.0],
+                    if matches!(
+                        self.baritone_mode,
+                        BaritoneMode::Tunnel | BaritoneMode::Bridge
+                    ) {
+                        self.language.text(
+                            "Пол: камень, булыжник, земля из хотбара",
+                            "Floor: stone, cobblestone or dirt from the hotbar",
+                        )
+                    } else if self.baritone_mode == BaritoneMode::Mining {
+                        self.language.text(
+                            "Нужна исправная кирка и свободный слот",
+                            "A usable pickaxe and a free slot are required",
+                        )
+                    } else {
+                        self.language.text(
+                            "XYZ через пробел · движение вручную ставит паузу",
+                            "Space-separated XYZ · manual movement pauses",
+                        )
+                    },
+                    None,
+                    false,
+                ));
+            }
             return out;
         }
         let p = model.experimental;
@@ -2998,6 +3177,97 @@ impl Menu {
                         },
                     ),
                     running: control == Control::ConstructStart,
+                })
+            }
+            Control::FarmCrop => {
+                self.farm_crop = self.farm_crop.next();
+                None
+            }
+            Control::FarmRadius => {
+                self.farm_radius = match self.farm_radius {
+                    3 => 6,
+                    6 => 9,
+                    9 => 12,
+                    _ => 3,
+                };
+                None
+            }
+            Control::FarmLimit => {
+                self.farm_limit = match self.farm_limit {
+                    0 => 16,
+                    16 => 32,
+                    32 => 64,
+                    _ => 0,
+                };
+                None
+            }
+            Control::FarmReplant => {
+                self.farm_replant = !self.farm_replant;
+                None
+            }
+            Control::FarmPreview | Control::FarmStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Farm(
+                        super::claim_borders_farming::Config {
+                            crop: self.farm_crop,
+                            radius: self.farm_radius,
+                            limit: self.farm_limit,
+                            replant: self.farm_replant,
+                        },
+                    ),
+                    running: control == Control::FarmStart,
+                })
+            }
+            Control::SchematicFile => {
+                if model.schematic_files.is_empty() {
+                    return Some(Action::RefreshSchematics);
+                }
+                let i = self
+                    .schematic_file
+                    .as_ref()
+                    .and_then(|n| model.schematic_files.iter().position(|f| f == n))
+                    .map_or(0, |i| (i + 1) % model.schematic_files.len());
+                self.schematic_file = Some(model.schematic_files[i].clone());
+                None
+            }
+            Control::SchematicRefresh => Some(Action::RefreshSchematics),
+            Control::SchematicRotation => {
+                self.schematic_rotation = (self.schematic_rotation + 1) % 4;
+                None
+            }
+            Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
+            Control::SchematicFolder => Some(Action::SchematicInfo(true)),
+            Control::SchematicPreview | Control::SchematicBuild => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let Some(filename) = self.schematic_file.clone() else {
+                    self.notice = self
+                        .language
+                        .text("Сначала выберите файл", "Select a file first")
+                        .into();
+                    return None;
+                };
+                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+                let origin = <[&str; 3]>::try_from(values.as_slice())
+                    .ok()
+                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
+                    .map(|p| p.map(|v| v as i32));
+                let Some(origin) = origin else {
+                    self.notice = self.language.text("Введите X Y Z", "Enter X Y Z").into();
+                    return None;
+                };
+                Some(Action::LoadSchematic {
+                    filename,
+                    origin,
+                    rotation: self.schematic_rotation,
+                    running: control == Control::SchematicBuild,
                 })
             }
             Control::BaritoneMode(mode) => {
@@ -3770,6 +4040,7 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::SchematicOrigin => &mut self.schematic_origin,
             Field::NavigationCoordinates => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
@@ -3790,6 +4061,7 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::SchematicOrigin) => &self.schematic_origin,
             Some(Field::NavigationCoordinates) => &self.navigation_coordinates,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
@@ -3840,7 +4112,7 @@ impl Menu {
             return;
         };
         let limit = match field {
-            Field::NavigationCoordinates => 80,
+            Field::NavigationCoordinates | Field::SchematicOrigin => 80,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -3858,7 +4130,7 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
-            || (field == Field::NavigationCoordinates
+            || (matches!(field, Field::NavigationCoordinates | Field::SchematicOrigin)
                 && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
         {
             return;
@@ -3895,7 +4167,10 @@ impl Menu {
         if key == "key.keyboard.tab" {
             if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
-                && self.baritone_mode != BaritoneMode::Navigation
+                && !matches!(
+                    self.baritone_mode,
+                    BaritoneMode::Navigation | BaritoneMode::Schematic
+                )
             {
                 self.focus = None;
                 return true;
@@ -3913,7 +4188,11 @@ impl Menu {
                 if self.tab == Tab::Experimental
                     && self.experimental_section == ExperimentalSection::Baritone
                 {
-                    Field::NavigationCoordinates
+                    if self.baritone_mode == BaritoneMode::Schematic {
+                        Field::SchematicOrigin
+                    } else {
+                        Field::NavigationCoordinates
+                    }
                 } else if self.relay_setup
                     || (self.tab == Tab::Settings && self.settings_section == 1)
                 {
@@ -4716,7 +4995,7 @@ mod tests {
                         )
                     })
                     .collect();
-                assert_eq!(controls.len(), 10);
+                assert_eq!(controls.len(), 12);
                 let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
@@ -4784,7 +5063,7 @@ mod tests {
                         .collect();
                     assert_eq!(
                         controls.len(),
-                        if mode == BaritoneMode::Tunnel { 13 } else { 10 }
+                        if mode == BaritoneMode::Tunnel { 15 } else { 12 }
                     );
                     let status = rows.iter().find(|w| w.text == "Build status").unwrap();
                     for (i, a) in controls.iter().enumerate() {
@@ -5536,5 +5815,101 @@ mod tests {
             assert_eq!(next, expected_preferences);
             model.chat_preferences = next;
         }
+    }
+    #[test]
+    fn farming_and_schematic_actions_validate_and_fit() {
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            schematic_files: vec!["demo.schem".into(), "demo.litematic".into()],
+            ..Default::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            ..Default::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::FarmStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Farm(_),
+                running: true
+            })
+        ));
+        menu.activate(&model, 200.0, Control::SchematicFile);
+        assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
+        assert!(
+            menu.activate(&model, 200.0, Control::SchematicBuild)
+                .is_none()
+        );
+        for value in ["1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
+            menu.schematic_origin = value.into();
+            assert!(
+                menu.activate(&model, 200.0, Control::SchematicBuild)
+                    .is_none()
+            );
+        }
+        menu.schematic_origin = "-12 64 30".into();
+        menu.activate(&model, 200.0, Control::SchematicRotation);
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::SchematicPreview),
+            Some(Action::LoadSchematic {
+                origin: [-12, 64, 30],
+                rotation: 1,
+                running: false,
+                ..
+            })
+        ));
+        for mode in [BaritoneMode::Farm, BaritoneMode::Schematic] {
+            menu.baritone_mode = mode;
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls = rows
+                    .iter()
+                    .filter(|w| {
+                        matches!(
+                            w.control,
+                            Some(
+                                Control::FarmCrop
+                                    | Control::FarmRadius
+                                    | Control::FarmLimit
+                                    | Control::FarmReplant
+                                    | Control::FarmPreview
+                                    | Control::FarmStart
+                                    | Control::SchematicFile
+                                    | Control::SchematicRefresh
+                                    | Control::SchematicRotation
+                                    | Control::SchematicPreview
+                                    | Control::SchematicBuild
+                                    | Control::SchematicMaterials
+                                    | Control::SchematicFolder
+                                    | Control::BaritoneMode(_)
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                                    | Control::Field(Field::SchematicOrigin)
+                            )
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= height - 16.0);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
+        }
+        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.key("key.keyboard.tab", 0);
+        assert_eq!(menu.focus, Some(Field::SchematicOrigin));
+        model.experiments_accepted = false;
+        menu.experiments_prompt = false;
+        assert!(menu.activate(&model, 200.0, Control::FarmStart).is_none());
+        assert!(menu.experiments_prompt);
     }
 }

@@ -96,3 +96,10 @@ The format is major.minor.patch.
 - Distinguish unit tests, native compilation, provider smoke tests and live SMP checks. Report unavailable or unsuccessful checks.
 - During authorized deployments, preserve .env, local Compose ports, TLS and client identities. Verify health and version afterwards.
 - Finish with concise results, version, usable artifact/release link, checks and material limitations.
+
+## Farming and schematics
+
+- `farming.rs` defines crops; `schematic.rs` parses bounded NBT; `schematic_files.rs` performs background file/GZip work; `workshop_view.rs` coordinates jobs through existing navigation/mining/construction drivers.
+- Preserve mature-only harvesting, seed checks, level farm routes, dry placement validation and server acknowledgement gates. Never silently demolish schematic conflicts or synthesize direct interaction packets.
+- Keep disk/decompression work off game/render threads and recheck scope before applying worker results. Keep material requirements and NBT exclusions explicit.
+- Native support modules cannot reference external include/path sources, even in cfg(test). Put binary fixture import tests in `tests/schematic_import.rs`; use the authored fixture generator and never add extracted game assets.

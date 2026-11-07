@@ -1485,6 +1485,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         let settings = &c.visual;
         menu::ViewModel {
             navigation_players,
+            schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
             navigation_paused,
             navigation_waypoints: c
@@ -1597,6 +1598,36 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
+        Action::RefreshSchematics => {
+            crate::game::claim_borders_workshop_view::refresh(game)?;
+            Ok(Vec::new())
+        }
+        Action::SchematicInfo(folder) => {
+            use horizon_client::clipboard::Clipboard;
+            let text = if folder {
+                crate::game::claim_borders_workshop_view::folder(game)
+                    .display()
+                    .to_string()
+            } else {
+                crate::game::claim_borders_workshop_view::materials()
+            };
+            game.clipboard.set(&text);
+            Ok(Vec::new())
+        }
+        Action::LoadSchematic {
+            filename,
+            origin,
+            rotation,
+            running,
+        } => {
+            crate::game::claim_borders_workshop_view::load(
+                game, filename, origin, rotation, running,
+            )?;
+            if running {
+                game.native_mod_screen_close(claims::ID);
+            }
+            Ok(Vec::new())
+        }
         Action::Navigate { goal, running } => {
             crate::game::claim_borders_navigation_view::start(game, goal, running)?;
             if running {

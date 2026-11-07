@@ -1,6 +1,6 @@
 # Experimental navigation
 
-Open **J → Experiments → Baritone** and accept the experimental warning if prompted. Choose **Navigation**, **Mining**, **Tunnel** or **Bridge**. [Tunnel and bridge controls](construction.md).
+Open **J → Experiments → Baritone** and accept the experimental warning if prompted. Choose **Navigation**, **Mining**, **Tunnel**, **Bridge**, **Farm** or **Schematics**. [Tunnel and bridge controls](construction.md).
 
 1. Enter space-separated **X Y Z**, click **Waypoint** to cycle through saved destinations in your current dimension, or click **Player** to choose a nearby loaded player. The selectors are mutually exclusive and return to coordinate input after the last entry. Editing XYZ clears both selections. Hover a selector to read its full name.
 2. **Preview** calculates and draws a route without moving. **Go** calculates a route, closes the menu and starts walking.
@@ -22,4 +22,4 @@ The miner looks for reachable exposed ore within 16 blocks horizontally and 12 v
 
 The counter measures server-confirmed ore blocks, not dropped items. Item pickup uses ordinary game behavior. Pause/Resume preserves progress within the current session; disconnecting or changing worlds resets the task.
 
-This is an independent native Rust navigator. It does not load the Java Baritone library. Straight tunnels and floor placement are described in the construction guide; farming, schematic building and flight automation are not implemented.
+This is an independent native Rust navigator. It does not load the Java Baritone library. Straight tunnels and floor placement are described in the construction guide; [Farming and schematic building](automation.md) have their own controls and limits. Flight automation is not implemented.

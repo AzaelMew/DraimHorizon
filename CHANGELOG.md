@@ -1,5 +1,14 @@
 # История версий
 
+## 0.28.0
+
+- Add Baritone > Farm: choose wheat, carrots, potatoes or beetroot, radius 3–12, harvest limit or continuous operation, and optional replanting. Harvest only mature crops, count server-confirmed breaks, and plant empty farmland with seeds from the hotbar.
+- Add Baritone > Schematics: import Sponge/WorldEdit .schem v2/v3 and Litematica .litematic v4–v7, including signed and multiple regions. Select integer XYZ origin and 0/90/180/270 rotation, preview up to 256 nearby block outlines, copy the material list, and build from hotbar items.
+- Decode bounded GZip/NBT imports on an idle worker. Reject path traversal, oversized files/regions, malformed palettes and versions newer than the client. Ignore entities and block-entity NBT.
+- Reuse normal movement, attack and use input. Check each dry placement against expected states and confirm all affected cells after the server acknowledgement; pause on conflicts, unavailable material, manual input, refusals or timeouts. Do not demolish occupied schematic cells.
+- Keep farm routes level to avoid automatic jump instructions. Preserve pending acknowledgements across pause/resume, restore the original hotbar selection, and discard jobs/import results on account/world changes.
+- Keep the official Nightly 2ebf00a pin and existing settings/data namespace.
+
 ## 0.27.0
 
 - Add Baritone Tunnel and Bridge modes with cardinal direction, length, preview, pause/resume and stop. Tunnels support widths 1–3, heights 2–3 and optional floor filling.
