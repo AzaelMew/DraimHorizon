@@ -3,6 +3,7 @@ use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_input as input,
     claim_borders_ui_view as ui, native_hooks::NativeScreenView,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::{clipboard::Clipboard, hud::HudBatch, items::ItemStack};
 use std::{
     collections::BTreeSet,
@@ -141,7 +142,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         let mut shown = if has {
             s.text.value.clone()
         } else {
-            "Поиск предмета".into()
+            {
+                if crate::game::claim_borders_chat_view::current_language() == Language::Russian {
+                    "Поиск предмета"
+                } else {
+                    "Search items"
+                }
+            }
+            .into()
         };
         if s.focus {
             shown = s.text.value[..s.text.cursor].to_owned() + "│" + &s.text.value[s.text.cursor..];
@@ -182,10 +190,17 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             ui::tooltip(
                 game,
                 batch,
-                &format!(
-                    "Поиск по названию и ID · Ctrl+F · Найдено {} из {} слотов",
-                    s.found, s.total
-                ),
+                &if crate::game::claim_borders_chat_view::current_language() == Language::Russian {
+                    format!(
+                        "Поиск по названию и ID · Ctrl+F · Найдено {} из {} слотов",
+                        s.found, s.total
+                    )
+                } else {
+                    format!(
+                        "Search by name and ID · Ctrl+F · Found {} of {} slots",
+                        s.found, s.total
+                    )
+                },
                 screen.mouse,
             );
         }

@@ -98,6 +98,10 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 pub(super) fn language(game: &Game<'_>) -> Language {
     settings(game).language
 }
+/// Cached UI language for code that has no `Game` handle; defaults to Russian until settings load.
+pub(super) fn current_language() -> Language {
+    state(|s| s.settings.language)
+}
 pub(super) fn translator(game: &Game<'_>, target: Language) -> Translator {
     Translator::with_deepl(
         target,
@@ -482,18 +486,27 @@ fn main_entry(entry: &model::Entry, p: options::Preferences) -> bool {
 }
 pub(super) fn reply(game: &mut Game<'_>, body: &str) {
     if body.is_empty() {
-        game.native_chat("Использование /r <текст> или /reply <текст>");
+        game.native_chat(language(game).text(
+            "Использование /r <текст> или /reply <текст>",
+            "Usage: /r <text> or /reply <text>",
+        ));
         return;
     }
     let Some(name) =
         state(|s| s.feed.last_whisper_sender.clone()).filter(|_| game.remote.is_some())
     else {
-        game.native_chat("В этом подключении ещё не было входящих ЛС.");
+        game.native_chat(language(game).text(
+            "В этом подключении ещё не было входящих ЛС.",
+            "No incoming whispers in this connection yet.",
+        ));
         return;
     };
     let message = format!("/msg {name} {body}");
     if message.encode_utf16().count() > 256 {
-        game.native_chat("Слишком длинное личное сообщение.");
+        game.native_chat(language(game).text(
+            "Слишком длинное личное сообщение.",
+            "The private message is too long.",
+        ));
         return;
     }
     game.send_chat(&message);
@@ -543,11 +556,11 @@ pub(super) fn complete_nickname(game: &mut Game<'_>, key: winit::keyboard::KeyCo
 }
 fn label(entry: &model::Entry) -> Cow<'_, str> {
     if let Some(notice) = entry.auction {
-        notice.label().into()
+        notice.label_in(current_language()).into()
     } else if let model::Kind::Whisper(direction) = entry.kind {
-        format!("{} {}", direction.label(), entry.name).into()
+        format!("{} {}", direction.label_in(current_language()), entry.name).into()
     } else if entry.name.is_empty() {
-        "Система".into()
+        current_language().text("Система", "System").into()
     } else {
         entry.name.as_str().into()
     }
@@ -727,7 +740,7 @@ fn draw_card(
         let prefix = format!(
             "{name}{}: ",
             if entry.show_original {
-                " [ориг.]"
+                current_language().text(" [ориг.]", " [orig.]")
             } else {
                 ""
             }
@@ -756,13 +769,20 @@ fn draw_card(
             text(
                 game,
                 batch,
-                "ОРИГ",
+                current_language().text("ОРИГ", "ORIG"),
                 [x + w - 29.0, y + 4.0],
                 0x7e899f,
                 alpha,
             );
         } else if entry.translated.is_some() && !focused {
-            text(game, batch, "RU", [x + w - 17.0, y + 4.0], 0x7e899f, alpha);
+            text(
+                game,
+                batch,
+                current_language().text("RU", "EN"),
+                [x + w - 17.0, y + 4.0],
+                0x7e899f,
+                alpha,
+            );
         }
         for (i, row) in rows.iter().enumerate() {
             text(
@@ -1042,10 +1062,16 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     let mut region = layout.main;
     let mut tab_hits = Vec::new();
     if focused && region[3] >= 34.0 {
+        let language = current_language();
         let width = region[2] / 4.0;
         let mouse = game.native_cursor().map(|n| n / layout.scale);
         for (i, tab) in model::Channel::TABS.into_iter().enumerate() {
-            let label = ["Все", "ЛС", "Пати", "Торги"][i];
+            let label = [
+                language.text("Все", "All"),
+                language.text("ЛС", "DM"),
+                language.text("Пати", "Party"),
+                language.text("Торги", "Trade"),
+            ][i];
             let caption = match unread[i] {
                 0 => label.to_owned(),
                 1..=99 => format!("{label} {}", unread[i]),

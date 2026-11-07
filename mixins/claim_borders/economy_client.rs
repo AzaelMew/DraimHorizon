@@ -4,6 +4,7 @@ use crate::game::{
     claim_borders_economy as model, claim_borders_economy_persistence as disk,
     claim_borders_economy_scan as scan, claim_borders_economy_view as view,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::{items::ItemStack, menu::Input};
 use horizon_world::nbt::Tag;
 use std::{
@@ -12,6 +13,73 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
+/// Status line kept language-neutral so switching language re-renders it.
+#[derive(Clone, Debug, Default)]
+pub enum Message {
+    #[default]
+    None,
+    StoppedByCommand,
+    StoppedByInput,
+    ConfirmSale,
+    PlainItemOnly,
+    Cache(String),
+    MenuNotOpened,
+    ScanFinished,
+    ScanStopped(scan::Stop),
+    MenuNotRecognized,
+    ScanHint,
+}
+impl Message {
+    pub fn text(&self, language: Language) -> String {
+        match self {
+            Self::None => String::new(),
+            Self::Cache(e) => match language {
+                Language::Russian => format!("Кеш экономики: {e}"),
+                Language::English => format!("Economy cache: {e}"),
+            },
+            Self::ScanStopped(why) => why.label_in(language).into(),
+            other => match other {
+                Self::StoppedByCommand => language.text(
+                    "Сканирование остановлено командой игрока",
+                    "Scan stopped by player command",
+                ),
+                Self::StoppedByInput => language.text(
+                    "Сканирование остановлено вводом игрока",
+                    "Scan stopped by player input",
+                ),
+                Self::ConfirmSale => language.text(
+                    "Проверьте предмет, количество и цену; отправка только после подтверждения",
+                    "Check the item, quantity and price; nothing is sent until you confirm",
+                ),
+                Self::PlainItemOnly => language.text(
+                    "Market принимает только обычный предмет без данных и повреждений",
+                    "Market accepts only a plain, undamaged item with no custom data",
+                ),
+                Self::MenuNotOpened => language.text(
+                    "Сервер не открыл запрошенное меню",
+                    "Server did not open the requested menu",
+                ),
+                Self::ScanFinished => language.text(
+                    "Обход завершён: данные — снимок просмотренных страниц",
+                    "Scan finished: data is a snapshot of the viewed pages",
+                ),
+                Self::MenuNotRecognized => language.text(
+                    "Нет распознанного меню market / AH; обход остановлен",
+                    "No recognised market / AH menu; scan stopped",
+                ),
+                Self::ScanHint => language.text(
+                    "Сканер: только навигация, ручной ввод остановит обход",
+                    "Scanner: navigation only; manual input stops the scan",
+                ),
+                _ => "",
+            }
+            .into(),
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Hand {
     pub item: String,
@@ -21,7 +89,7 @@ pub struct Hand {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Status {
-    pub message: String,
+    pub message: Message,
     pub hand: Option<Hand>,
     pub sidebar: Vec<(String, String)>,
     pub scanning: bool,
@@ -197,7 +265,7 @@ pub(super) fn command(command: &str) {
             s.status.scanning = false;
             s.auto_cycle = false;
             s.opening = None;
-            s.status.message = "Сканирование остановлено командой игрока".into();
+            s.status.message = Message::StoppedByCommand;
         }
         s.replies.manual(command);
         if matches!(
@@ -219,7 +287,7 @@ pub(super) fn cancel_scan() {
             s.scanner.stop();
             s.return_scan = false;
             s.status.scanning = false;
-            s.status.message = "Сканирование остановлено вводом игрока".into();
+            s.status.message = Message::StoppedByInput;
         }
     });
 }
@@ -313,7 +381,14 @@ fn actions(game: &mut Game<'_>) {
             Action::Scan(kind) => {
                 let enabled = read(|_, p, _, _| p.flag("enabled"));
                 if !enabled {
-                    view::notice("Сначала включите модуль экономики".into());
+                    view::notice(
+                        language()
+                            .text(
+                                "Сначала включите модуль экономики",
+                                "Enable the economy module first",
+                            )
+                            .into(),
+                    );
                     continue;
                 }
                 start_scan(game, kind, false);
@@ -335,10 +410,9 @@ fn actions(game: &mut Game<'_>) {
                 state(|s| {
                     s.status.sale = held.filter(|h| h.plain);
                     s.status.message = if s.status.sale.is_some() {
-                        "Проверьте предмет, количество и цену; отправка только после подтверждения"
-                            .into()
+                        Message::ConfirmSale
                     } else {
-                        "Market принимает только обычный предмет без данных и повреждений".into()
+                        Message::PlainItemOnly
                     };
                 });
             }
@@ -365,7 +439,12 @@ fn actions(game: &mut Game<'_>) {
                     request(game, "sell hand".into(), false);
                 } else {
                     view::notice(
-                        "Предмет или цена изменились: обновите данные и повторите проверку".into(),
+                        language()
+                            .text(
+                                "Предмет или цена изменились: обновите данные и повторите проверку",
+                                "The item or price changed: refresh the data and check again",
+                            )
+                            .into(),
                     );
                 }
             }
@@ -504,7 +583,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 Ok(None) => {}
                 Err(e) => {
                     s.writable = false;
-                    s.status.message = format!("Кеш экономики: {e}");
+                    s.status.message = Message::Cache(e.to_string());
                 }
             }
         });
@@ -663,7 +742,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     s.auto_cycle = false;
                     s.return_scan = false;
                     s.opening = None;
-                    s.status.message = "Сервер не открыл запрошенное меню".into();
+                    s.status.message = Message::MenuNotOpened;
                     false
                 } else {
                     false
@@ -683,8 +762,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         s.nav_last = now;
                     }
                     scan::Step::Finished => {
-                        s.status.message =
-                            "Обход завершён: данные — снимок просмотренных страниц".into();
+                        s.status.message = Message::ScanFinished;
                         s.status.scanning = false;
                         if page.family == scan::Kind::Auction {
                             let generation = s.book.generation;
@@ -695,7 +773,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         s.return_scan = false;
                     }
                     scan::Step::Stopped(why) => {
-                        s.status.message = why;
+                        s.status.message = Message::ScanStopped(why);
                         s.status.scanning = false;
                         s.return_scan = false;
                     }
@@ -706,11 +784,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
             s.scanner.stop();
             s.status.scanning = false;
             s.return_scan = false;
-            s.status.message = "Нет распознанного меню market / AH; обход остановлен".into();
+            s.status.message = Message::MenuNotRecognized;
         }
         if let Some(w) = &s.worker {
             while let Ok(error) = w.errors.try_recv() {
-                s.status.message = format!("Кеш экономики: {error}");
+                s.status.message = Message::Cache(error.to_string());
                 s.writable = false;
             }
         }
@@ -803,7 +881,7 @@ fn start_scan(game: &mut Game<'_>, kind: scan::Kind, automatic: bool) {
         s.scanner.start(kind, now);
         s.status.scanning = true;
         s.status.pages = 0;
-        s.status.message = "Сканер: только навигация, ручной ввод остановит обход".into();
+        s.status.message = Message::ScanHint;
         s.return_scan = true;
         s.seen_pages.clear();
         if kind == scan::Kind::Auction {

@@ -1,5 +1,6 @@
 // Persistent, owner-key-bound land directory. All-or-nothing paged announcements.
 use super::claim_borders::{Claim, parse_claims};
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -8,6 +9,8 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+/// Error code for a changed owner key; shown via `Directory::error_text`.
+pub const KEY_CHANGED: &str = "owner key changed";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
     pub name: String,
@@ -158,6 +161,19 @@ impl Directory {
             })
             .collect())
     }
+    /// Display text for an error returned by `receive`; unknown errors pass through.
+    pub fn error_text(error: &str, language: Language) -> String {
+        if error == KEY_CHANGED {
+            language
+                .text(
+                    "Ключ владельца приватных территорий изменился; обновите кеш игроков в Клеймах.",
+                    "The private claim owner's key changed; refresh the player cache in Claims.",
+                )
+                .into()
+        } else {
+            error.into()
+        }
+    }
     pub fn receive(
         &mut self,
         uuid: u128,
@@ -174,10 +190,7 @@ impl Directory {
             .get(&uuid)
             .is_some_and(|r| !r.key.is_empty() && r.key != key)
         {
-            return Err(
-                "Ключ владельца приватных территорий изменился; обновите кеш игроков в Клеймах."
-                    .into(),
-            );
+            return Err(KEY_CHANGED.into());
         }
         let value: Value =
             serde_json::from_str(body.strip_prefix("[DHC1] ").ok_or("invalid protocol")?)
@@ -375,6 +388,12 @@ pub fn confirmation(text: &str) -> Option<(bool, i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_key_change_text_is_not_cyrillic() {
+        let text = Directory::error_text(KEY_CHANGED, Language::English);
+        assert!(!text.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё')));
+        assert_eq!(Directory::error_text("x", Language::English), "x");
+    }
     fn claim(x: i32) -> Claim {
         Claim {
             dimension: "minecraft:overworld".into(),

@@ -3,6 +3,7 @@ use crate::game::{
     Game, claim_borders as claims, claim_borders_experimental as model,
     claim_borders_ore_worker as worker,
 };
+use claim_borders_relay_client::translation::Language;
 use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -16,7 +17,21 @@ struct State {
     requested: Option<worker::Key>,
     marks: Vec<model::Mark>,
     last: Instant,
-    status: String,
+    status: Status,
+}
+// Status kept as data so it is localized when drawn, not when produced.
+#[derive(Clone)]
+enum Status {
+    Off,
+    Preparing,
+    OffAfterWorldChange,
+    Computing,
+    Reading,
+    Result { prediction: bool, blocks: usize },
+    Error(String),
+}
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
 }
 impl Default for State {
     fn default() -> Self {
@@ -29,7 +44,7 @@ impl Default for State {
             requested: None,
             marks: Vec::new(),
             last: Instant::now() - Duration::from_secs(5),
-            status: "Подсветка выключена".into(),
+            status: Status::Off,
         }
     }
 }
@@ -63,12 +78,58 @@ pub(super) fn configure(game: &Game<'_>, prefs: model::Preferences) {
         s.marks.clear();
         if !prefs.allowed {
             s.active = false;
-            s.status = "Подсветка выключена".into();
+            s.status = Status::Off;
         }
     });
 }
 pub(super) fn status() -> String {
-    state(|s| s.status.clone())
+    let status = state(|s| s.status.clone());
+    let language = language();
+    match status {
+        Status::Off => language.text("Подсветка выключена", "Highlight off").into(),
+        Status::Preparing => language
+            .text("Подготовка подсветки…", "Preparing highlight…")
+            .into(),
+        Status::OffAfterWorldChange => language
+            .text(
+                "Подсветка выключена после смены мира",
+                "Highlight turned off after world change",
+            )
+            .into(),
+        Status::Computing => language
+            .text("Расчёт генерации сида…", "Computing seed generation…")
+            .into(),
+        Status::Reading => language
+            .text("Чтение загруженных чанков…", "Reading loaded chunks…")
+            .into(),
+        Status::Result { prediction, blocks } => {
+            let source = if prediction {
+                language.text("Прогноз сида (1 чанк)", "Seed prediction (1 chunk)")
+            } else {
+                language.text("Загруженные чанки", "Loaded chunks")
+            };
+            match language {
+                Language::Russian => format!("{source}: {blocks} блоков · O — выключить"),
+                Language::English => format!("{source}: {blocks} blocks · O — turn off"),
+            }
+        }
+        Status::Error(e) => {
+            let e = if e == worker::UNSUPPORTED_DIMENSION {
+                language
+                    .text(
+                        "Прогноз доступен только для обычного мира и Незера",
+                        "Prediction works only in the Overworld and the Nether",
+                    )
+                    .to_owned()
+            } else {
+                e
+            };
+            match language {
+                Language::Russian => format!("Ошибка эксперимента: {e}"),
+                Language::English => format!("Experiment error: {e}"),
+            }
+        }
+    }
 }
 pub(super) fn reset() {
     state(|s| {
@@ -77,7 +138,7 @@ pub(super) fn reset() {
         s.requested = None;
         s.marks.clear();
         s.scope.clear();
-        s.status = "Подсветка выключена".into();
+        s.status = Status::Off;
     });
 }
 pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
@@ -90,7 +151,10 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
         return;
     }
     if !settings(game).allowed {
-        game.native_chat("[Эксперименты] Сначала разрешите подсветку руд в J → Эксперименты.");
+        game.native_chat(language().text(
+            "[Эксперименты] Сначала разрешите подсветку руд в J → Эксперименты.",
+            "[Experiments] First allow ore highlighting in J → Experiments.",
+        ));
         return;
     }
     let on = state(|s| {
@@ -99,17 +163,21 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
         s.requested = None;
         s.marks.clear();
         s.status = if s.active {
-            "Подготовка подсветки…"
+            Status::Preparing
         } else {
-            "Подсветка выключена"
-        }
-        .into();
+            Status::Off
+        };
         s.active
     });
-    game.native_chat(if on {
-        "[Эксперименты] Подсветка руд включена. Прогноз по сиду не гарантирует наличие блока."
-    } else {
-        "[Эксперименты] Подсветка руд выключена."
+    game.native_chat(match (on, language()) {
+        (true, Language::Russian) => {
+            "[Эксперименты] Подсветка руд включена. Прогноз по сиду не гарантирует наличие блока."
+        }
+        (true, Language::English) => {
+            "[Experiments] Ore highlight on. Seed prediction does not guarantee the block exists."
+        }
+        (false, Language::Russian) => "[Эксперименты] Подсветка руд выключена.",
+        (false, Language::English) => "[Experiments] Ore highlight off.",
     });
 }
 pub(super) fn frame(game: &Game<'_>) {
@@ -155,7 +223,7 @@ pub(super) fn frame(game: &Game<'_>) {
             s.worker = None;
             s.requested = None;
             s.marks.clear();
-            s.status = "Подсветка выключена после смены мира".into();
+            s.status = Status::OffAfterWorldChange;
         }
         s.scope = scope.clone();
         if !s.active {
@@ -172,18 +240,11 @@ pub(super) fn frame(game: &Game<'_>) {
         if let Some(result) = s.worker.as_ref().and_then(worker::Handle::take) {
             if s.requested.as_ref() == Some(&result.key) {
                 s.status = result.error.map_or_else(
-                    || {
-                        format!(
-                            "{}: {} блоков · O — выключить",
-                            if prefs.prediction {
-                                "Прогноз сида (1 чанк)"
-                            } else {
-                                "Загруженные чанки"
-                            },
-                            result.marks.len()
-                        )
+                    || Status::Result {
+                        prediction: prefs.prediction,
+                        blocks: result.marks.len(),
                     },
-                    |e| format!("Ошибка эксперимента: {e}"),
+                    Status::Error,
                 );
                 s.marks = result.marks;
             }
@@ -200,7 +261,7 @@ pub(super) fn frame(game: &Game<'_>) {
             ) {
                 Ok(w) => s.worker = Some(w),
                 Err(e) => {
-                    s.status = e;
+                    s.status = Status::Error(e);
                     s.active = false;
                     return;
                 }
@@ -220,11 +281,10 @@ pub(super) fn frame(game: &Game<'_>) {
         s.last = Instant::now();
         s.requested = Some(key.clone());
         s.status = if prefs.prediction {
-            "Расчёт генерации сида…"
+            Status::Computing
         } else {
-            "Чтение загруженных чанков…"
-        }
-        .into();
+            Status::Reading
+        };
         s.worker.as_ref().unwrap().query(worker::Query {
             key,
             player: [player.x, player.y, player.z],

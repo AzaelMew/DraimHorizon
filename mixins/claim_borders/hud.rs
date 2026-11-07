@@ -73,7 +73,14 @@ pub(super) fn draw(
                         })
                     })
                     .unwrap_or(marker.distance);
-                let text = format!("{distance:.0} м");
+                let text = match crate::game::claim_borders_chat_view::current_language() {
+                    claim_borders_relay_client::translation::Language::Russian => {
+                        format!("{distance:.0} м")
+                    }
+                    claim_borders_relay_client::translation::Language::English => {
+                        format!("{distance:.0} m")
+                    }
+                };
                 let width = game.native_text_width(&text) + 8.0;
                 let left = (x + 6.0 - width / 2.0).clamp(1.0, (batch.width - width - 1.0).max(1.0));
                 let top = (y + 15.0).min(batch.height - 13.0);

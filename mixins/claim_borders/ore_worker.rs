@@ -11,6 +11,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
 };
+/// Error code mapped to localized text by the view.
+pub const UNSUPPORTED_DIMENSION: &str = "unsupported_dimension";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Key {
     pub scope: String,
@@ -176,7 +178,7 @@ fn predict(
         q.key.dimension.as_str(),
         "minecraft:overworld" | "minecraft:the_nether"
     ) {
-        return Err("Прогноз доступен только для обычного мира и Незера".into());
+        return Err(UNSUPPORTED_DIMENSION.into());
     }
     if !generators.contains_key(&q.key.dimension) {
         let data =

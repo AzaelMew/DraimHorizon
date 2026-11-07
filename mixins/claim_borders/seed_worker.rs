@@ -239,7 +239,7 @@ impl Engine {
                     })
                     .collect();
                 for (x, biome) in worker.noise_biomes(&quarts).into_iter().enumerate() {
-                    let biome = biome.ok_or("генератор не вернул биом")?;
+                    let biome = biome.ok_or("generator returned no biome")?;
                     let rgb = if query.preferences.biomes {
                         model::biome_color(&biome)
                     } else {

@@ -1,4 +1,5 @@
 // Shared presentation tokens, geometry, settings and timing. No game or GPU dependency.
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 pub const SURFACE: u32 = 0x1d2a3a;
 pub const RAISED: u32 = 0x2b3d50;
@@ -23,10 +24,13 @@ impl Accent {
         }
     }
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Mint => "Мята",
-            Self::Lavender => "Лаванда",
-            Self::Sky => "Небо",
+            Self::Mint => language.text("Мята", "Mint"),
+            Self::Lavender => language.text("Лаванда", "Lavender"),
+            Self::Sky => language.text("Небо", "Sky"),
         }
     }
     pub fn next(self) -> Self {
@@ -45,6 +49,33 @@ pub struct Preferences {
     pub contrast: bool,
     pub accent: Accent,
 }
+
+#[derive(Debug)]
+pub enum PreferencesError {
+    TooLarge,
+    UnknownSchema,
+    InvalidJson(serde_json::Error),
+}
+
+impl PreferencesError {
+    pub fn text(&self, language: Language) -> String {
+        match self {
+            Self::TooLarge => language
+                .text(
+                    "Файл оформления слишком большой",
+                    "Appearance file is too large",
+                )
+                .into(),
+            Self::UnknownSchema => language
+                .text("Неизвестная версия оформления", "Unknown appearance schema")
+                .into(),
+            Self::InvalidJson(error) => format!(
+                "{}: {error}",
+                language.text("Файл оформления повреждён", "Appearance file is corrupted")
+            ),
+        }
+    }
+}
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -61,13 +92,13 @@ impl Preferences {
         json!({"schema":1,"opacity":self.opacity,"motion":self.motion,"shadows":self.shadows,"contrast":self.contrast,
         "accent":match self.accent{Accent::Mint=>0,Accent::Lavender=>1,Accent::Sky=>2}}).to_string()
     }
-    pub fn decode(raw: &str) -> Result<Self, String> {
+    pub fn decode(raw: &str) -> Result<Self, PreferencesError> {
         if raw.len() > 4096 {
-            return Err("Файл оформления слишком большой".into());
+            return Err(PreferencesError::TooLarge);
         }
-        let v: Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(raw).map_err(PreferencesError::InvalidJson)?;
         if v["schema"].as_u64() != Some(1) {
-            return Err("Неизвестная версия оформления".into());
+            return Err(PreferencesError::UnknownSchema);
         }
         Ok(Self {
             opacity: v["opacity"].as_u64().unwrap_or(84).clamp(50, 98) as u8,
@@ -484,28 +515,32 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Чат" | "Chat" => Some(Chat),
         "Эксперименты" | "Experiments" => Some(Star),
         "Торги" | "Trading" | "AH" | "Аукц." => Some(Market),
-        "Цены" => Some(Wallet),
-        "Обзор" | "Профит" | "Прибыль" => Some(Chart),
+        "Цены" | "Prices" => Some(Wallet),
+        "Обзор" | "Профит" | "Прибыль" | "Overview" | "Profit" => Some(Chart),
         "Опции" | "Настройки" | "Settings" | "E" => Some(Settings),
-        "X" | "Закрыть" | "Отклонить" | "Отмена [Esc]" => Some(Close),
+        "X" | "Закрыть" | "Close" | "Отклонить" | "Decline" | "Отмена [Esc]" | "Cancel [Esc]" => {
+            Some(Close)
+        }
         "+" => Some(Plus),
         "−" | "-" => Some(Minus),
-        "<" | "Назад" => Some(Back),
+        "<" | "Назад" | "Back" => Some(Back),
         ">" => Some(Next),
         "S" => Some(Sort),
         "F" => Some(Fill),
         "R" => Some(Restock),
         "T" => Some(Transfer),
-        "Принять" | "Готово" => Some(Check),
-        "Удалить" => Some(Trash),
-        "Обновить" => Some(Refresh),
-        "К себе" => Some(Home),
-        "Сетка" => Some(Grid),
+        "Принять" | "Accept" | "Готово" | "Done" => Some(Check),
+        "Удалить" | "Delete" => Some(Trash),
+        "Обновить" | "Refresh" => Some(Refresh),
+        "К себе" | "Center" => Some(Home),
+        "Сетка" | "Grid" => Some(Grid),
         "Рельеф" => Some(Layers),
         "Зоны" | "Мир" => Some(Map),
-        _ if label.starts_with("Высокий контраст") => Some(Eye),
-        _ if label.starts_with("Сохранить") => Some(Save),
-        _ if label.starts_with("Добавить") => Some(Plus),
+        _ if label.starts_with("Высокий контраст") || label.starts_with("High contrast") => {
+            Some(Eye)
+        }
+        _ if label.starts_with("Сохранить") || label.starts_with("Save") => Some(Save),
+        _ if label.starts_with("Добавить") || label.starts_with("Add") => Some(Plus),
         _ => None,
     }
 }
@@ -564,7 +599,20 @@ mod tests {
         };
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
         assert!(Preferences::decode("{}").is_err());
-        assert!(Preferences::decode(r#"{"schema":99}"#).is_err());
+        let unknown_schema = Preferences::decode(r#"{"schema":99}"#).unwrap_err();
+        assert_eq!(
+            unknown_schema.text(Language::Russian),
+            "Неизвестная версия оформления"
+        );
+        assert_eq!(
+            unknown_schema.text(Language::English),
+            "Unknown appearance schema"
+        );
+        let oversized = Preferences::decode(&" ".repeat(4097)).unwrap_err();
+        assert_eq!(
+            oversized.text(Language::English),
+            "Appearance file is too large"
+        );
         assert_eq!(
             Preferences::decode(r#"{"schema":1,"opacity":999}"#)
                 .unwrap()

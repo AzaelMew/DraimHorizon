@@ -470,10 +470,13 @@ pub fn origin(value: f64) -> i32 {
     ((value.floor() as i32).div_euclid(16)) * 16
 }
 pub fn dimension_label(value: &str) -> &str {
+    dimension_label_in(value, Language::Russian)
+}
+pub fn dimension_label_in(value: &str, language: Language) -> &str {
     match value {
-        "minecraft:overworld" => "Обычный мир",
-        "minecraft:the_nether" => "Незер",
-        "minecraft:the_end" => "Край",
+        "minecraft:overworld" => language.text("Обычный мир", "Overworld"),
+        "minecraft:the_nether" => language.text("Незер", "Nether"),
+        "minecraft:the_end" => language.text("Край", "End"),
         _ => value,
     }
 }
@@ -631,6 +634,17 @@ pub fn paint_aspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_dimension_labels_have_no_russian_text() {
+        for d in [
+            "minecraft:overworld",
+            "minecraft:the_nether",
+            "minecraft:the_end",
+        ] {
+            let t = dimension_label_in(d, Language::English);
+            assert!(!t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)));
+        }
+    }
     #[test]
     fn live_minimap_tracks_exact_height_instead_of_the_saved_band() {
         for y in [-5, -4, 65, 66, 75] {

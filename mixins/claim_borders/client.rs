@@ -5,8 +5,106 @@ use crate::game::{
     claim_borders_menu_view as menu_view, claim_borders_overlay as overlay,
     claim_borders_party as party, claim_borders_relay_settings as relay_settings,
     claim_borders_visualization as visualization, claim_borders_waypoints as waypoints,
+    native_hooks::NativeMod,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use claim_borders_relay_client::translation::Language;
+
+pub(super) fn native_mod(language: Language) -> NativeMod {
+    NativeMod {
+        id: claims::ID.into(),
+        title: format!("{} {}", claims::NAME, claims::VERSION),
+        description: claims::description_in(language).into(),
+        keys: vec![
+            [
+                "ore_experiment".into(),
+                language
+                    .text("Эксперименты: подсветка руд", "Experiments: ore highlight")
+                    .into(),
+                crate::game::claim_borders_experimental::DEFAULT_KEY.into(),
+            ],
+            [
+                "trades".into(),
+                language
+                    .text("DraimHorizons: Торги", "DraimHorizons: Trades")
+                    .into(),
+                "key.keyboard.b".into(),
+            ],
+            [
+                "waypoint".into(),
+                language
+                    .text(
+                        "DraimHorizons: метка у себя",
+                        "DraimHorizons: waypoint here",
+                    )
+                    .into(),
+                "key.keyboard.x".into(),
+            ],
+            [
+                "map".into(),
+                language
+                    .text("Seed Map · три измерения", "Seed Map · three dimensions")
+                    .into(),
+                "key.keyboard.m".into(),
+            ],
+            [
+                "menu".into(),
+                language
+                    .text("DraimHorizons: открыть меню", "DraimHorizons: open menu")
+                    .into(),
+                "key.keyboard.j".into(),
+            ],
+            [
+                "zoom".into(),
+                language
+                    .text("DraimHorizons: зум камеры", "DraimHorizons: camera zoom")
+                    .into(),
+                crate::game::claim_borders_camera_zoom::DEFAULT_KEY.into(),
+            ],
+        ],
+    }
+}
+
+fn language() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
+/// Localized `format!` for text created outside a `Game` context (Russian / English).
+macro_rules! tr {
+    ($russian:literal, $english:literal $(, $arg:expr)* $(,)?) => {
+        match language() {
+            Language::Russian => format!($russian $(, $arg)*),
+            Language::English => format!($english $(, $arg)*),
+        }
+    };
+}
+
+/// Relay status kept language-neutral so switching language re-renders it.
+#[derive(Clone)]
+enum NetStatus {
+    Off,
+    Connecting,
+    Connected,
+    Lost(String),
+    Text(String),
+}
+impl NetStatus {
+    fn text(&self) -> String {
+        match self {
+            Self::Off => tr!("Relay отключён", "Relay disconnected"),
+            Self::Connecting => tr!(
+                "Подключение к WebSocket relay…",
+                "Connecting to WebSocket relay…"
+            ),
+            Self::Connected => tr!("WebSocket подключён · E2E", "WebSocket connected · E2E"),
+            Self::Lost(reason) => tr!(
+                "Нет связи с relay: {reason}",
+                "No relay connection: {reason}"
+            ),
+            Self::Text(text) => text.clone(),
+        }
+    }
+}
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -44,7 +142,7 @@ struct Client {
     manual_off: bool,
     last_auto: u64,
     avatars: BTreeMap<u128, String>,
-    network_status: String,
+    network_status: NetStatus,
     peers: Vec<websocket::Peer>,
     pending_codes: BTreeMap<u128, String>,
     cached_territories: Vec<claims::Claim>,
@@ -86,7 +184,7 @@ impl Default for Client {
             manual_off: false,
             last_auto: 0,
             avatars: BTreeMap::new(),
-            network_status: "Relay отключён".into(),
+            network_status: NetStatus::Off,
             peers: Vec::new(),
             pending_codes: BTreeMap::new(),
             cached_territories: Vec::new(),
@@ -260,7 +358,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             if auto {
                 state(|c| c.last_auto = now(c).max(1));
                 if let Err(error) = start_network(game) {
-                    state(|c| c.network_status = error);
+                    state(|c| c.network_status = NetStatus::Text(error));
                 }
             }
             poll_network(game);
@@ -349,7 +447,7 @@ pub(super) fn map_snapshot(game: &Game<'_>) -> crate::game::claim_borders_map::S
                 dimension: claim.dimension,
                 x: claim.x,
                 z: claim.z,
-                owner: "Вы".into(),
+                owner: tr!("Вы", "You"),
                 own: true,
                 foreign: false,
             })
@@ -725,7 +823,7 @@ pub(super) fn tick(game: &mut Game<'_>) {
                 } else if c.controls.len() < 32 {
                     c.controls.push_front(frame);
                 }
-                c.network_status = error;
+                c.network_status = NetStatus::Text(error);
             }
         });
     }
@@ -947,7 +1045,10 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             "on" | "connect" => {
                 start_network(game)?;
                 crate::game::claim_borders_chat_view::refresh_translators();
-                Ok(vec!["[Party] Подключение к WebSocket relay.".into()])
+                Ok(vec![tr!(
+                    "[Party] Подключение к WebSocket relay.",
+                    "[Party] Connecting to WebSocket relay."
+                )])
             }
             "off" => {
                 state(|c| {
@@ -955,9 +1056,15 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                     c.manual_off = true;
                 });
                 crate::game::claim_borders_chat_view::refresh_translators();
-                Ok(vec!["[Party] Relay отключён.".into()])
+                Ok(vec![tr!(
+                    "[Party] Relay отключён.",
+                    "[Party] Relay disconnected."
+                )])
             }
-            _ => Err("/party relay on|off. URL настраивается в меню M → Party → Relay.".into()),
+            _ => Err(tr!(
+                "/party relay on|off. URL настраивается в меню M → Party → Relay.",
+                "/party relay on|off. The URL is set in the M menu → Party → Relay."
+            )),
         };
     }
     if action == "sync" && args.len() == 1 {
@@ -967,10 +1074,10 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             c.last_claims.clear();
             c.pages.clear();
         });
-        return Ok(vec![
-            "[Party] Обновляются ваши приваты с сервера; обмен с друзьями идёт только через relay."
-                .into(),
-        ]);
+        return Ok(vec![tr!(
+            "[Party] Обновляются ваши приваты с сервера; обмен с друзьями идёт только через relay.",
+            "[Party] Refreshing your claims from the server; sharing with friends goes through the relay only."
+        )]);
     }
     let tab = cached_online(game);
     state(|c| {
@@ -979,20 +1086,25 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
         if action == "list" && args.len() == 1 {
             let mut lines = vec![format!(
                 "[Party] {}. Ваш код: {}",
-                c.network_status, c.own_code
+                c.network_status.text(),
+                c.own_code
             )];
             lines.extend(p.friends().iter().map(|f| format!("[Party] {}", f.name)));
             lines.extend(p.pending(time).iter().map(|f| {
-                format!(
-                    "[Party] Приглашение {}. Примите его в M → Пати → Приглашения.",
-                    f.name
+                let name = &f.name;
+                tr!(
+                    "[Party] Приглашение {name}. Примите его в M → Пати → Приглашения.",
+                    "[Party] Invitation {name}. Accept it in M → Friends → Invitations."
                 )
             }));
             return Ok(lines);
         }
         if matches!(action, "invite" | "add" | "accept" | "remove" | "delete") && args.len() == 2 {
             if c.controls.len() >= 32 {
-                return Err("Очередь занята. Повторите действие чуть позже.".into());
+                return Err(tr!(
+                    "Очередь занята. Повторите действие чуть позже.",
+                    "The queue is full. Try again shortly."
+                ));
             }
             let removing = matches!(action, "remove" | "delete");
             let (uuid, name, code) = if removing {
@@ -1000,7 +1112,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                     .friends()
                     .into_iter()
                     .find(|f| f.name.eq_ignore_ascii_case(args[1]))
-                    .ok_or("Друг не найден.")?;
+                    .ok_or(tr!("Друг не найден.", "Friend not found."))?;
                 let code = c
                     .pins
                     .as_ref()
@@ -1010,7 +1122,10 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                 (f.uuid, f.name, code)
             } else {
                 if !c.connected {
-                    return Err("Сначала подключитесь к relay в меню.".into());
+                    return Err(tr!(
+                        "Сначала подключитесь к relay в меню.",
+                        "Connect to the relay in the menu first."
+                    ));
                 }
                 let code = args[1].trim().to_ascii_lowercase();
                 let matches: Vec<_> = c
@@ -1019,44 +1134,61 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                     .filter(|peer| peer.code == code || peer.name.eq_ignore_ascii_case(&code))
                     .collect();
                 if matches.len() != 1 {
-                    return Err(
-                        "Выбери одного доступного игрока из списка пользователей мода.".into(),
-                    );
+                    return Err(tr!(
+                        "Выбери одного доступного игрока из списка пользователей мода.",
+                        "Pick exactly one available player from the mod users list."
+                    ));
                 }
                 let peer = matches[0];
                 if c.peers.iter().filter(|p| p.uuid == peer.uuid).count() != 1 {
-                    return Err(
-                        "Для игрока обнаружено несколько ключей. Дождитесь переподключения.".into(),
-                    );
+                    return Err(tr!(
+                        "Для игрока обнаружено несколько ключей. Дождитесь переподключения.",
+                        "Several keys were found for this player. Wait for them to reconnect."
+                    ));
                 }
                 let code = peer.code.clone();
                 if !tab
                     .iter()
                     .any(|(id, name)| *id == peer.uuid && name.eq_ignore_ascii_case(&peer.name))
                 {
-                    return Err("Друг не найден в онлайн-списке игрового сервера.".into());
+                    return Err(tr!(
+                        "Друг не найден в онлайн-списке игрового сервера.",
+                        "Friend not found in the game server's online list."
+                    ));
                 }
                 (peer.uuid, peer.name.clone(), code)
             };
             if uuid == c.own {
-                return Err("Нельзя пригласить себя.".into());
+                return Err(tr!(
+                    "Нельзя пригласить себя.",
+                    "You cannot invite yourself."
+                ));
             }
             let mut candidate = p.clone();
             let mut pins = c
                 .pins
                 .as_ref()
-                .ok_or("Хранилище доверенных ключей недоступно.")?
+                .ok_or(tr!(
+                    "Хранилище доверенных ключей недоступно.",
+                    "Trusted key storage is unavailable."
+                ))?
                 .clone();
             let frames = match action {
                 "invite" | "add" => {
                     if pins.get(&c.scope, uuid).is_some_and(|old| old != code) {
-                        return Err("Ключ игрока изменился. Удалите прежнюю дружбу и подтвердите новое приглашение.".into());
+                        return Err(tr!(
+                            "Ключ игрока изменился. Удалите прежнюю дружбу и подтвердите новое приглашение.",
+                            "The player's key changed. Remove the old friendship and confirm the new invitation."
+                        ));
                     }
                     candidate.invite(uuid, &name, time)?
                 }
                 "accept" => {
                     if c.pending_codes.get(&uuid) != Some(&code) {
-                        return Err("Приглашение не соответствует выбранному игроку.".into());
+                        return Err(tr!(
+                            "Приглашение не соответствует выбранному игроку.",
+                            "The invitation does not match the selected player."
+                        ));
                     }
                     let frames = candidate.accept(uuid, time)?;
                     pins.pin(&c.scope, uuid, &code)?;
@@ -1084,10 +1216,10 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
             c.controls.extend(frames);
             return Ok(vec![format!("[Party] {action}: {name}")]);
         }
-        Ok(vec![
-            "[Party] /party relay on|off | invite НИК | accept НИК | remove НИК | list | sync"
-                .into(),
-        ])
+        Ok(vec![tr!(
+            "[Party] /party relay on|off | invite НИК | accept НИК | remove НИК | list | sync",
+            "[Party] /party relay on|off | invite NAME | accept NAME | remove NAME | list | sync"
+        )])
     })
 }
 
@@ -1348,7 +1480,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             language,
             waypoints,
             party: rows,
-            relay: c.network_status.clone(),
+            relay: c.network_status.text(),
             relay_url: c
                 .network_settings
                 .as_ref()
@@ -1447,6 +1579,20 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetLanguage(language) => {
             crate::game::claim_borders_chat_view::set_language(game, language);
+            if let Some(row) = game
+                .settings
+                .mods
+                .installed
+                .iter_mut()
+                .find(|row| row.id == claims::ID)
+                && let Some(page) = &mut row.native
+            {
+                let info = native_mod(language);
+                row.description = info.description;
+                page.keys = info.keys;
+            }
+            // Transient feedback from earlier actions is already formatted in the old language.
+            state(|c| c.menu_feedback.clear());
             Ok(Vec::new())
         }
         Action::AddWaypoint { name, color } => {
@@ -1462,12 +1608,12 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::Decline { uuid } => state(|c| {
             let time = now(c);
             if c.controls.len() >= 32 {
-                return Err("Очередь занята".into());
+                return Err(tr!("Очередь занята", "The queue is full"));
             }
             let frames = c
                 .party
                 .as_mut()
-                .ok_or("Пати недоступна")?
+                .ok_or(tr!("Пати недоступна", "Friends are unavailable"))?
                 .decline(uuid, time)?;
             c.controls.extend(frames);
             Ok(Vec::new())
@@ -1476,22 +1622,35 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             let own = game
                 .remote
                 .as_ref()
-                .ok_or("Запрос доступен только на сервере")?
+                .ok_or(tr!(
+                    "Запрос доступен только на сервере",
+                    "Requests are only available on a server"
+                ))?
                 .profile();
-            let command = kind.resolve(uuid, &name, own, &online(game))?;
+            let command = kind.resolve(uuid, &name, own, &online(game), language())?;
             if !game.chat_abilities().send_commands {
-                return Err("Отправка команд отключена в настройках чата".into());
+                return Err(tr!(
+                    "Отправка команд отключена в настройках чата",
+                    "Sending commands is disabled in chat settings"
+                ));
             }
-            game.native_send_chat(&command)
-                .map_err(|e| format!("Не удалось отправить запрос: {e}"))?;
+            game.native_send_chat(&command).map_err(|e| {
+                tr!(
+                    "Не удалось отправить запрос: {e}",
+                    "Failed to send the request: {e}"
+                )
+            })?;
             game.native_mod_screen_close(claims::ID);
             menu_view::reset();
-            game.native_chat(&format!(
-                "[Друзья] {} для {name} отправлен.",
-                match kind {
-                    menu::PlayerRequest::Teleport => "Запрос телепортации",
-                    menu::PlayerRequest::Trade => "Запрос обмена",
-                }
+            let what = match (kind, language()) {
+                (menu::PlayerRequest::Teleport, Language::Russian) => "Запрос телепортации",
+                (menu::PlayerRequest::Trade, Language::Russian) => "Запрос обмена",
+                (menu::PlayerRequest::Teleport, Language::English) => "Teleport request",
+                (menu::PlayerRequest::Trade, Language::English) => "Trade request",
+            };
+            game.native_chat(&tr!(
+                "[Друзья] {what} для {name} отправлен.",
+                "[Friends] {what} sent to {name}."
             ));
             Ok(Vec::new())
         }
@@ -1521,13 +1680,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::RelayConnect => party_command(game, &["relay", "on"]),
         Action::ConfigureRelay { url, access_token } => {
             configure_network(url, access_token, false)?;
-            Ok(vec![
-                "Настройки relay сохранены. Нажмите «Подключить».".into(),
-            ])
+            Ok(vec![tr!(
+                "Настройки relay сохранены. Нажмите «Подключить».",
+                "Relay settings saved. Press Connect."
+            )])
         }
         Action::ClearRelayToken => {
             configure_network(String::new(), None, true)?;
-            Ok(vec!["Токен relay удалён.".into()])
+            Ok(vec![tr!("Токен relay удалён.", "Relay token removed.")])
         }
         Action::OpenMap => {
             let source = map_snapshot(game);
@@ -1570,15 +1730,23 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::ToggleAutoTrust => {
             let on = !crate::game::claim_borders_auto_trust_view::enabled(game);
             game.native_set_setting(claims::ID, "auto_trust", if on { "true" } else { "false" });
-            Ok(vec![format!(
+            Ok(vec![tr!(
                 "Авто /trust для подтверждённых друзей: {}",
-                if on { "вкл." } else { "выкл." }
+                "Auto /trust for confirmed friends: {}",
+                if on {
+                    language().text("вкл.", "on")
+                } else {
+                    language().text("выкл.", "off")
+                }
             )])
         }
         Action::ClearClaimCache => {
             crate::game::claim_borders_claim_memory::clear_others();
             crate::game::claim_borders_claim_observations_view::clear();
-            Ok(vec!["Кеш приватов игроков сброшен; онлайн-игроки передадут свои данные при переподключении.".into()])
+            Ok(vec![tr!(
+                "Кеш приватов игроков сброшен; онлайн-игроки передадут свои данные при переподключении.",
+                "Player claims cache cleared; online players will resend their data when they reconnect."
+            )])
         }
         Action::ToggleOutgoing => {
             let on = !crate::game::claim_borders_outgoing_view::enabled(game);
@@ -1610,7 +1778,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::RefreshClaims => {
             if game.remote.is_none() {
-                return Err("Обновление приватных территорий доступно на сервере.".into());
+                return Err(tr!(
+                    "Обновление приватных территорий доступно на сервере.",
+                    "Claims can only be refreshed on a server."
+                ));
             }
             claims::with_state(|s| s.begin_refresh());
             game.send_unattended_command("claims");
@@ -1618,17 +1789,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 c.last_claims.clear();
                 c.pages.clear();
             });
-            Ok(vec![
-                "Запрошены ваши приваты с сервера; после ответа они передаются друзьям.".into(),
-            ])
+            Ok(vec![tr!(
+                "Запрошены ваши приваты с сервера; после ответа они передаются друзьям.",
+                "Your claims were requested from the server; they are shared with friends after the reply."
+            )])
         }
         Action::SetClaims(settings) => {
             state(|c| {
                 if !c.visual_writable {
-                    return Err(
-                        "Файл настроек повреждён. Исправьте visualization.json перед сохранением."
-                            .to_owned(),
-                    );
+                    return Err(tr!(
+                        "Файл настроек повреждён. Исправьте visualization.json перед сохранением.",
+                        "The settings file is corrupted. Fix visualization.json before saving."
+                    ));
                 }
                 let mut next = c.visual.clone();
                 next.own_visible = settings.own_visible;
@@ -1643,21 +1815,24 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                     160.0 => 160,
                     256.0 => 256,
                     512.0 => 512,
-                    _ => return Err("Некорректная дальность.".into()),
+                    _ => return Err(tr!("Некорректная дальность.", "Invalid distance.")),
                 };
                 next.span = match settings.height {
                     16.0 => visualization::Span::Near16,
                     32.0 => visualization::Span::Near32,
                     64.0 => visualization::Span::Near64,
                     384.0 => visualization::Span::FullHeight,
-                    _ => return Err("Некорректная высота.".into()),
+                    _ => return Err(tr!("Некорректная высота.", "Invalid height.")),
                 };
                 next.save(&c.root.join("visualization.json"))?;
                 c.visual = next;
                 Ok(())
             })?;
             claims::with_state(|s| s.enabled = settings.enabled);
-            Ok(vec!["Настройки границ сохранены.".into()])
+            Ok(vec![tr!(
+                "Настройки границ сохранены.",
+                "Border settings saved."
+            )])
         }
         Action::Close => {
             game.native_mod_screen_close(claims::ID);
@@ -1700,7 +1875,7 @@ fn stop_network(c: &mut Client) {
     c.network = None;
     c.relay = Relay::Off;
     c.connected = false;
-    c.network_status = "Relay отключён".into();
+    c.network_status = NetStatus::Off;
     c.peers.clear();
     c.pending_codes.clear();
     c.controls.clear();
@@ -1720,7 +1895,10 @@ fn configure_network(url: String, token: Option<String>, clear_token: bool) -> R
         let mut settings = c
             .network_settings
             .as_ref()
-            .ok_or("Файл relay.json недоступен; исправьте его перед настройкой.")?
+            .ok_or(tr!(
+                "Файл relay.json недоступен; исправьте его перед настройкой.",
+                "relay.json is unavailable; fix it before configuring."
+            ))?
             .clone();
         if clear_token {
             settings.access_token = None;
@@ -1754,10 +1932,10 @@ pub(super) fn translation_relay() -> Option<claim_borders_relay_client::translat
 
 fn start_network(game: &mut Game<'_>) -> Result<(), String> {
     let tab = cached_online(game);
-    let remote = game
-        .remote
-        .as_ref()
-        .ok_or("Relay работает после входа на игровой сервер.")?;
+    let remote = game.remote.as_ref().ok_or(tr!(
+        "Relay работает после входа на игровой сервер.",
+        "The relay works after joining a game server."
+    ))?;
     let uuid = remote.profile();
     let name = tab
         .iter()
@@ -1767,19 +1945,26 @@ fn start_network(game: &mut Game<'_>) -> Result<(), String> {
     let realm = websocket::realm_id(&remote.session.address);
     state(|c| {
         if c.network.is_some() {
-            return Err(
-                "Relay уже подключается или подключён. Для смены адреса отключите его.".into(),
-            );
+            return Err(tr!(
+                "Relay уже подключается или подключён. Для смены адреса отключите его.",
+                "The relay is already connecting or connected. Disconnect it to change the address."
+            ));
         }
         if c.pins.is_none() || c.party.is_none() {
-            return Err("Хранилище пати или проверенных ключей недоступно.".into());
+            return Err(tr!(
+                "Хранилище пати или проверенных ключей недоступно.",
+                "Friends or trusted key storage is unavailable."
+            ));
         }
-        let settings = c
-            .network_settings
-            .as_ref()
-            .ok_or("Настройки relay недоступны.")?;
+        let settings = c.network_settings.as_ref().ok_or(tr!(
+            "Настройки relay недоступны.",
+            "Relay settings are unavailable."
+        ))?;
         if settings.url.is_empty() {
-            return Err("Укажите URL своего relay в M → Party → Настроить relay.".into());
+            return Err(tr!(
+                "Укажите URL своего relay в M → Party → Настроить relay.",
+                "Set your relay URL in M → Party → Configure relay."
+            ));
         }
         let handle = websocket::Handle::spawn(websocket::Config {
             url: settings.url.clone(),
@@ -1793,7 +1978,7 @@ fn start_network(game: &mut Game<'_>) -> Result<(), String> {
         c.network = Some(handle);
         c.relay = Relay::WebSocket;
         c.connected = false;
-        c.network_status = "Подключение к WebSocket relay…".into();
+        c.network_status = NetStatus::Connecting;
         Ok(())
     })
 }
@@ -1903,14 +2088,23 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
         }
         c.controls.extend(frames);
         if kind == "n" {
-            Some(format!("{} отклонил приглашение", peer.name))
+            Some(tr!(
+                "{} отклонил приглашение",
+                "{} declined the invitation",
+                peer.name
+            ))
         } else if invited {
-            Some(format!(
+            Some(tr!(
                 "Приглашение от {}. Откройте M → Пати → Приглашения.",
+                "Invitation from {}. Open M → Friends → Invitations.",
                 peer.name
             ))
         } else if changed {
-            Some(format!("Список друзей обновлён: {}", peer.name))
+            Some(tr!(
+                "Список друзей обновлён: {}",
+                "Friends list updated: {}",
+                peer.name
+            ))
         } else {
             None
         }
@@ -1943,7 +2137,7 @@ fn poll_network(game: &mut Game<'_>) {
                 state(|c| {
                     c.connected = true;
                     c.own_code = code;
-                    c.network_status = "WebSocket подключён · E2E".into();
+                    c.network_status = NetStatus::Connected;
                     c.controls.clear();
                     c.pages.clear();
                     c.last_hello.clear();
@@ -1986,7 +2180,7 @@ fn poll_network(game: &mut Game<'_>) {
             }
             websocket::Event::Disconnected { reason } => state(|c| {
                 c.connected = false;
-                c.network_status = format!("Нет связи с relay: {reason}");
+                c.network_status = NetStatus::Lost(reason);
                 c.peers.clear();
                 c.controls.clear();
                 c.pages.clear();
@@ -2000,7 +2194,9 @@ fn poll_network(game: &mut Game<'_>) {
                     p.disconnect();
                 }
             }),
-            websocket::Event::Notice { message } => state(|c| c.network_status = message),
+            websocket::Event::Notice { message } => {
+                state(|c| c.network_status = NetStatus::Text(message))
+            }
         }
     }
 }
@@ -2051,14 +2247,22 @@ pub(super) fn add_map_waypoint(
     position: [f64; 3],
 ) -> Result<(), String> {
     if !ensure(game) {
-        return Err("Мир ещё не готов".into());
+        return Err(tr!("Мир ещё не готов", "The world is not ready yet"));
     }
-    let name = format!("Метка {:.0} {:.0}", position[0], position[2]);
+    let name = tr!(
+        "Метка {:.0} {:.0}",
+        "Waypoint {:.0} {:.0}",
+        position[0],
+        position[2]
+    );
     state(|c| {
         let mut store = c
             .waypoints
             .as_ref()
-            .ok_or("Хранилище меток недоступно")?
+            .ok_or(tr!(
+                "Хранилище меток недоступно",
+                "Waypoint storage is unavailable"
+            ))?
             .clone();
         store
             .add(&c.scope, dimension, &name, position, 0xffcc66)
@@ -2104,7 +2308,10 @@ pub(super) fn save_own_waypoint(
         let mut next = c
             .waypoints
             .as_ref()
-            .ok_or("Хранилище меток недоступно")?
+            .ok_or(tr!(
+                "Хранилище меток недоступно",
+                "Waypoint storage is unavailable"
+            ))?
             .clone();
         let id = match id {
             Some(id) => {
@@ -2132,7 +2339,10 @@ pub(super) fn delete_own_waypoint(id: u64) -> Result<(), String> {
         let mut next = c
             .waypoints
             .as_ref()
-            .ok_or("Хранилище меток недоступно")?
+            .ok_or(tr!(
+                "Хранилище меток недоступно",
+                "Waypoint storage is unavailable"
+            ))?
             .clone();
         next.remove(&c.scope, id).map_err(|e| e.to_string())?;
         next.save(&c.root.join("waypoints.json"))

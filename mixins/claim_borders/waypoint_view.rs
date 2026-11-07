@@ -68,6 +68,9 @@ pub(super) fn reset() {
 pub(super) fn quick() -> bool {
     state(|s| s.quick)
 }
+fn language() -> claim_borders_relay_client::translation::Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
 pub(super) fn editing() -> bool {
     state(|s| s.draft.is_some())
 }
@@ -80,7 +83,7 @@ pub(super) fn open_create(dimension: String, position: [f64; 3], quick: bool) {
             id: None,
             dimension,
             position,
-            name: TextInput::new("Новая метка".into()),
+            name: TextInput::new(language().text("Новая метка", "New waypoint").into()),
             color: TextInput::new("#FFCC55".into()),
             kind: model::MarkerKind::Pin,
             focus: false,
@@ -143,9 +146,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if let Some(action) = action {
         let deleting = matches!(&action, Action::Delete(_));
         let result = match action {
-            Action::Delete(id) => {
-                client::delete_own_waypoint(id).map(|()| "Метка удалена".to_owned())
-            }
+            Action::Delete(id) => client::delete_own_waypoint(id).map(|()| {
+                language()
+                    .text("Метка удалена", "Waypoint deleted")
+                    .to_owned()
+            }),
             Action::Save(d) => model::parse_color(&d.color.value)
                 .map_err(|e| e.to_string())
                 .and_then(|color| {
@@ -158,7 +163,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         d.kind,
                     )
                 })
-                .map(|_| "Метка сохранена".into()),
+                .map(|_| language().text("Метка сохранена", "Waypoint saved").into()),
             Action::Close => Ok(String::new()),
         };
         let close = state(|s| match result {
@@ -174,7 +179,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
             }
             Err(e) => {
-                s.error = format!("Не удалось сохранить: {e}");
+                s.error = format!(
+                    "{}: {e}",
+                    language().text("Не удалось сохранить", "Could not save")
+                );
                 false
             }
         });

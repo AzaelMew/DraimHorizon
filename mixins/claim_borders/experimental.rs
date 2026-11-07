@@ -182,6 +182,16 @@ pub fn edges(mark: &Mark) -> Vec<([f64; 3], [f64; 3])> {
 mod tests {
     use super::*;
     #[test]
+    fn english_ore_labels_are_not_cyrillic() {
+        for ore in ORES {
+            assert!(
+                !ore.label_en
+                    .chars()
+                    .any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё'))
+            );
+        }
+    }
+    #[test]
     fn default_never_activates_and_settings_roundtrip() {
         let p = Preferences::default();
         assert!(!p.allowed && !p.prediction);

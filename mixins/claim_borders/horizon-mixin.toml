@@ -1,6 +1,6 @@
 [mod]
 id = "claim_borders"
-version = "0.22.4"
+version = "0.22.5"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -87,6 +87,7 @@ kind = "HEAD"
 target = "horizon_client::game::native_hooks::Game<'_>::native_mods"
 helper = "list.rs"
 bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
   { name = "mods", ty = "&mut Vec<crate::game::native_hooks::NativeMod>", value = "&mut *mods" },
 ]
 

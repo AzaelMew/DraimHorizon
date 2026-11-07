@@ -57,7 +57,8 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
     if text.is_empty() || text.starts_with('/') || !game.chat_abilities().allows(&text) {
         return false;
     }
-    let target = crate::game::claim_borders_chat_view::language(game).other();
+    let ui_language = crate::game::claim_borders_chat_view::language(game);
+    let target = ui_language.other();
     let translate = enabled(game) && target.needs_translation(&text);
     let current = scope(game).unwrap();
     let result = state(|s| {
@@ -75,7 +76,7 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
             .get_or_insert_with(Instant::now)
             .elapsed()
             .as_millis() as u64;
-        let id = match s.queue.push(&text, now, translate) {
+        let id = match s.queue.push_in(&text, now, translate, ui_language) {
             Ok(id) => id,
             Err(e) => return Some(Err(e)),
         };

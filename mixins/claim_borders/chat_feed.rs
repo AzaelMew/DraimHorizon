@@ -61,9 +61,12 @@ impl Tabs {
 }
 impl Whisper {
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Incoming => "ЛС от",
-            Self::Outgoing => "ЛС для",
+            Self::Incoming => language.text("ЛС от", "DM from"),
+            Self::Outgoing => language.text("ЛС для", "DM to"),
         }
     }
 }
@@ -75,9 +78,12 @@ pub enum AuctionNotice {
 }
 impl AuctionNotice {
     pub fn label(self) -> &'static str {
+        self.label_in(Language::Russian)
+    }
+    pub fn label_in(self, language: Language) -> &'static str {
         match self {
-            Self::Listed => "Аукцион · лот выставлен",
-            Self::Sold => "Аукцион · ваш лот продан",
+            Self::Listed => language.text("Аукцион · лот выставлен", "Auction · lot listed"),
+            Self::Sold => language.text("Аукцион · ваш лот продан", "Auction · your lot sold"),
         }
     }
     pub fn color(self) -> u32 {
@@ -208,7 +214,7 @@ impl Entry {
 pub fn event_summary(entry: &Entry, translated: bool, language: Language) -> String {
     let body = entry.display_body(translated, language);
     if let Some(notice) = entry.auction {
-        return format!("{} · {body}", notice.label());
+        return format!("{} · {body}", notice.label_in(language));
     }
     if entry.kind != Kind::Death {
         return format!("{} · {}", entry.name, body);
@@ -236,29 +242,29 @@ pub fn event_summary(entry: &Entry, translated: bool, language: Language) -> Str
         }
     }
     let reason = if lower.contains("drown") || lower.contains("утону") {
-        "Утонул"
+        language.text("Утонул", "Drowned")
     } else if lower.contains("lava") || lower.contains("лав") {
-        "Лава"
+        language.text("Лава", "Lava")
     } else if lower.contains("fell")
         || lower.contains("ground")
         || lower.contains("упал")
         || lower.contains("разбил")
     {
-        "Падение"
+        language.text("Падение", "Fall")
     } else if lower.contains("burn")
         || lower.contains("flame")
         || lower.contains("fire")
         || lower.contains("сгор")
     {
-        "Огонь"
+        language.text("Огонь", "Fire")
     } else if lower.contains("explod")
         || lower.contains("blown")
         || lower.contains("blew up")
         || lower.contains("взорва")
     {
-        "Взрыв"
+        language.text("Взрыв", "Explosion")
     } else {
-        "Погиб"
+        language.text("Погиб", "Died")
     };
     format!("{} · {reason}", entry.name)
 }
@@ -1073,6 +1079,34 @@ mod tests {
         assert!(!f.entries.iter().any(|e| e.auction.is_some()));
     }
 
+    #[test]
+    fn english_event_labels_are_not_cyrillic() {
+        let cyrillic = |s: &str| s.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё'));
+        let mut feed = Feed::default();
+        feed.push("Steve joined for the first time: welcome!", 1);
+        feed.push("Steve left the game", 20_000);
+        feed.push("Steve joined the game", 40_000);
+        for e in &feed.entries {
+            assert!(!cyrillic(&event_summary(e, false, Language::English)));
+            assert_eq!(e.display_body(false, Language::Russian), e.original);
+        }
+        for line in [
+            "Alex drowned",
+            "Alex tried to swim in lava",
+            "Alex fell from a high place",
+            "Alex burned to death",
+            "Alex blew up",
+            "Alex died",
+        ] {
+            let mut f = Feed::default();
+            f.push(line, 0);
+            assert!(!cyrillic(&event_summary(
+                &f.entries[0],
+                false,
+                Language::English
+            )));
+        }
+    }
     #[test]
     fn compact_events_remain_one_line_and_preserve_the_original() {
         let mut feed = Feed::default();

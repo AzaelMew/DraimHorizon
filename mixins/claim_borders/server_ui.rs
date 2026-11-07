@@ -4,8 +4,20 @@ use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_economy_client as data,
     claim_borders_economy_view::label,
 };
+use claim_borders_relay_client::translation::Language;
 use horizon_client::hud::HudBatch;
 use std::sync::atomic::{AtomicUsize, Ordering};
+macro_rules! tr {
+    ($ru:literal, $en:literal $(, $arg:expr)* $(,)?) => {
+        match crate::game::claim_borders_chat_view::current_language() {
+            Language::Russian => format!($ru $(, $arg)*),
+            Language::English => format!($en $(, $arg)*),
+        }
+    };
+}
+fn lang() -> Language {
+    crate::game::claim_borders_chat_view::current_language()
+}
 static PAGE: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn page(game: &Game<'_>, key: &str) -> bool {
     if game.native_on(claims::ID)
@@ -137,15 +149,17 @@ pub(super) fn sidebar(
             ));
         }
         performance.push((
-            format!(
+            tr!(
                 "Онлайн  {}",
+                "Online  {}",
                 value(&["Online", "Онлайн"]).unwrap_or_else(|| "—".into())
             ),
             0xdce5ed,
         ));
         performance.push((
-            format!(
+            tr!(
                 "В игре  {}",
+                "Playtime  {}",
                 value(&["Playtime", "Время игры"]).unwrap_or("—".into())
             ),
             0xdce5ed,
@@ -155,12 +169,15 @@ pub(super) fn sidebar(
             batch,
             corners,
             p,
-            "СЕРВЕР · КЛИЕНТ",
+            lang().text("СЕРВЕР · КЛИЕНТ", "SERVER · CLIENT"),
             ui::Icon::Signal,
             &performance,
             "performance",
         );
-        let mut economy = vec![(format!("Баланс  {} монет", money(book.balance)), 0xf0d68a)];
+        let mut economy = vec![(
+            tr!("Баланс  {} монет", "Balance  {} coins", money(book.balance)),
+            0xf0d68a,
+        )];
         let richest: Vec<_> = status
             .sidebar
             .iter()
@@ -171,7 +188,10 @@ pub(super) fn sidebar(
             .take(3)
             .collect();
         if !richest.is_empty() && batch.height >= 230.0 {
-            economy.push(("Богатейшие игроки".into(), 0x9aacc0));
+            economy.push((
+                lang().text("Богатейшие игроки", "Richest players").into(),
+                0x9aacc0,
+            ));
             for (k, v) in richest {
                 let budget = p.get("sidebar_width") as f32 - 28.0 - game.native_text_width(v);
                 economy.push((
@@ -185,7 +205,7 @@ pub(super) fn sidebar(
             batch,
             corners,
             p,
-            "ЭКОНОМИКА",
+            lang().text("ЭКОНОМИКА", "ECONOMY"),
             ui::Icon::Wallet,
             &economy,
             "economy",
@@ -248,9 +268,13 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             ui::preferences(game).accent.color(),
         );
         let title = if columns == 1 {
-            format!("Игроки · {}", players.len())
+            tr!("Игроки · {}", "Players · {}", players.len())
         } else {
-            format!("DraimHorizons · {} онлайн", players.len())
+            tr!(
+                "DraimHorizons · {} онлайн",
+                "DraimHorizons · {} online",
+                players.len()
+            )
         };
         label(
             game,
@@ -281,7 +305,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             label(
                 game,
                 batch,
-                "ИГРОК",
+                lang().text("ИГРОК", "PLAYER"),
                 [left + 14.0, y + 27.0],
                 cw - 57.0,
                 0x8da5b8,
@@ -290,7 +314,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 label(
                     game,
                     batch,
-                    "мс",
+                    lang().text("мс", "ms"),
                     [left + cw - 25.0, y + 27.0],
                     24.0,
                     0x8da5b8,
@@ -355,7 +379,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 let d =
                     ((me.x - pos[0]).powi(2) + (me.y - pos[1]).powi(2) + (me.z - pos[2]).powi(2))
                         .sqrt();
-                distance = format!("{d:.0}м");
+                distance = tr!("{:.0}м", "{:.0}m", d);
             }
             let dw = if distance.is_empty() {
                 0.0
@@ -408,7 +432,12 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             label(
                 game,
                 batch,
-                &format!("PgUp / PgDn  ·  Страница {}/{}", page + 1, pages),
+                &tr!(
+                    "PgUp / PgDn  ·  Страница {}/{}",
+                    "PgUp / PgDn  ·  Page {}/{}",
+                    page + 1,
+                    pages
+                ),
                 [x + 10.0, y + height - 10.0],
                 width - 20.0,
                 0x8da5b8,

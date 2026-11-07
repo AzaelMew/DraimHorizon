@@ -1,4 +1,5 @@
 // Exact author-name rules; pinned messages never execute server commands.
+use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,14 +28,33 @@ impl Default for Preferences {
 }
 impl Preferences {
     pub fn set(&mut self, name: &str, color: u32, pinned: bool) -> Result<(), String> {
+        self.set_in(name, color, pinned, Language::Russian)
+    }
+    pub fn set_in(
+        &mut self,
+        name: &str,
+        color: u32,
+        pinned: bool,
+        language: Language,
+    ) -> Result<(), String> {
         if name.is_empty()
             || name.len() > 16
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
-            return Err("Нужен точный ник игрока (до 16 символов)".into());
+            return Err(language
+                .text(
+                    "Нужен точный ник игрока (до 16 символов)",
+                    "An exact player name is required (up to 16 characters)",
+                )
+                .into());
         }
         if self.rules.len() >= 64 && !self.rules.contains_key(&name.to_ascii_lowercase()) {
-            return Err("Не больше 64 важных игроков".into());
+            return Err(language
+                .text(
+                    "Не больше 64 важных игроков",
+                    "At most 64 important players",
+                )
+                .into());
         }
         self.rules.insert(
             name.to_ascii_lowercase(),
@@ -93,6 +113,19 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_errors_are_not_cyrillic() {
+        let mut p = Preferences::default();
+        let e = p
+            .set_in("bad name", 0, true, Language::English)
+            .unwrap_err();
+        assert!(!e.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё')));
+        for i in 0..64 {
+            p.set(&format!("p{i}"), 0, true).unwrap();
+        }
+        let e = p.set_in("extra", 0, true, Language::English).unwrap_err();
+        assert!(!e.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё')));
+    }
     #[test]
     fn legacy_opt_out_cannot_hide_friends() {
         let p = Preferences::decode(r#"{"schema":1,"rules":[],"friends":false}"#).unwrap();

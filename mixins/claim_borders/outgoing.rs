@@ -1,4 +1,5 @@
 // Translation changes text only. The native adapter sends it as signed chat, never a command.
+use claim_borders_relay_client::translation::Language;
 use std::collections::VecDeque;
 pub const WAIT_MS: u64 = 15_000;
 #[derive(Clone, Debug)]
@@ -15,8 +16,20 @@ pub struct Queue {
 }
 impl Queue {
     pub fn push(&mut self, text: &str, now: u64, translate: bool) -> Result<u64, &'static str> {
+        self.push_in(text, now, translate, Language::Russian)
+    }
+    pub fn push_in(
+        &mut self,
+        text: &str,
+        now: u64,
+        translate: bool,
+        language: Language,
+    ) -> Result<u64, &'static str> {
         if self.messages.len() >= 8 {
-            return Err("Очередь перевода заполнена. Сообщение осталось в истории ввода.");
+            return Err(language.text(
+                "Очередь перевода заполнена. Сообщение осталось в истории ввода.",
+                "Translation queue is full. The message stays in the input history.",
+            ));
         }
         self.next = self.next.wrapping_add(1).max(1);
         let id = self.next;
@@ -92,6 +105,15 @@ pub fn split(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_queue_error_is_not_cyrillic() {
+        let mut q = Queue::default();
+        for _ in 0..8 {
+            q.push_in("a", 0, true, Language::English).unwrap();
+        }
+        let e = q.push_in("a", 0, true, Language::English).unwrap_err();
+        assert!(!e.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё')));
+    }
     #[test]
     fn preserves_order_and_times_out_without_losing_original() {
         let mut q = Queue::default();

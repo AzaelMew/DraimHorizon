@@ -1,12 +1,19 @@
 // Shared by the standalone test library and the injected Horizon client module.
+use claim_borders_relay_client::translation::Language;
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizons";
-pub const VERSION: &str = "0.22.4";
+pub const VERSION: &str = "0.22.5";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
+pub fn description_in(language: Language) -> &'static str {
+    language.text(
+        DESCRIPTION,
+        "M: friends, map, chat. B: trades. J: map, X: waypoint. /horizonmenu",
+    )
+}
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
 const WORLD_LIMIT: i32 = 30_000_000;
@@ -245,6 +252,11 @@ pub fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn english_description_is_not_cyrillic() {
+        let text = description_in(Language::English);
+        assert!(!text.chars().any(|c| matches!(c, 'А'..='я' | 'Ё' | 'ё')));
+    }
     const SCREENSHOT: &str = "Your chunks (4 of 4): overworld at x -1904 z 48; overworld at x -1904 z 64; overworld at x -1920 z 48; overworld at x -1936 z 48";
 
     fn loaded(text: &str) -> State {
