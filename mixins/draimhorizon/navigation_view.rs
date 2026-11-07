@@ -943,11 +943,17 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.pending && s.last_query.elapsed() > Duration::from_secs(5) {
             cancel_pending(s);
-            s.nav.running = false;
-            s.nav.status = model::Status::NoPath;
             if let Some(job) = s.mining.as_mut() {
                 job.active = false;
                 job.phase = mining::Phase::Timeout;
+                s.nav.running = false;
+                s.nav.status = model::Status::NoPath;
+            } else if s.nav.running {
+                // A delayed worker response is not proof that the destination is unreachable.
+                // Retry a bounded number of times without reusing the stale snapshot.
+                s.nav.blocked(position);
+            } else {
+                s.nav.status = model::Status::NoPath;
             }
         }
         if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !game.native_playing()
