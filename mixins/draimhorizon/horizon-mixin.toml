@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.25.0"
+version = "0.26.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -12,6 +12,31 @@ id = "runtime"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders"
 source = "runtime.rs"
+
+[[module]]
+id = "navigation"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_navigation"
+source = "navigation.rs"
+
+[[module]]
+id = "navigation-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_navigation_view"
+source = "navigation_view.rs"
+
+[[injection]]
+id = "navigation-input"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_movement_input"
+helper = "navigation_input_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "self" },
+  { name = "forward", ty = "&mut f32", value = "&mut *forward" },
+  { name = "strafe", ty = "&mut f32", value = "&mut *strafe" },
+  { name = "jump", ty = "&mut bool", value = "&mut *jump" },
+  { name = "sneak", ty = "&mut bool", value = "&mut *sneak" },
+]
 
 [[module]]
 id = "camera-zoom"

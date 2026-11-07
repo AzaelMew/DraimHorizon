@@ -6,12 +6,16 @@ pub mod overlay;
 pub mod party;
 #[path = "../mixins/draimhorizon/waypoints.rs"]
 pub mod waypoints;
+pub use waypoints as claim_borders_waypoints;
 
 #[path = "../mixins/draimhorizon/visualization.rs"]
 pub mod visualization;
 
 #[path = "../mixins/draimhorizon/menu.rs"]
 pub mod menu;
+#[path = "../mixins/draimhorizon/navigation.rs"]
+pub mod navigation;
+pub use navigation as claim_borders_navigation;
 
 #[path = "../mixins/draimhorizon/relay_settings.rs"]
 pub mod relay_settings;

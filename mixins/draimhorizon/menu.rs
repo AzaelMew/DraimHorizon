@@ -128,6 +128,9 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub navigation_status: String,
+    pub navigation_paused: bool,
+    pub navigation_waypoints: Vec<WaypointRow>,
     pub auto_reconnect: bool,
     pub experiments_accepted: bool,
     pub language: Language,
@@ -219,6 +222,13 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    Navigate {
+        goal: super::claim_borders_navigation::Goal,
+        running: bool,
+    },
+    NavigationPause,
+    NavigationResume,
+    NavigationStop,
     ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
@@ -290,6 +300,14 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Navigate { goal, running } => f
+                .debug_struct("Navigate")
+                .field("goal", goal)
+                .field("running", running)
+                .finish(),
+            Self::NavigationPause => f.write_str("NavigationPause"),
+            Self::NavigationResume => f.write_str("NavigationResume"),
+            Self::NavigationStop => f.write_str("NavigationStop"),
             Self::SetDeepLKey(_) => f.write_str("SetDeepLKey([redacted])"),
             Self::SetLanguage(language) => f.debug_tuple("SetLanguage").field(language).finish(),
             Self::PlayerRequest { kind, uuid, name } => f
@@ -375,6 +393,7 @@ pub enum Tab {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
+    NavigationCoordinates,
     Name,
     Color,
     PeerCode,
@@ -404,6 +423,12 @@ pub enum ChatSection {
     DeepL,
     Priority,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ExperimentalSection {
+    #[default]
+    Ores,
+    Baritone,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
     Width,
@@ -418,6 +443,13 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    NavigationWaypoint,
+    NavigationPreview,
+    NavigationStart,
+    NavigationPause,
+    NavigationResume,
+    NavigationStop,
+    ExperimentalTab(ExperimentalSection),
     ToggleReconnect,
     SettingsTab(u8),
     ConfirmExperiments,
@@ -527,7 +559,10 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub navigation_coordinates: String,
+    pub navigation_waypoint: Option<u64>,
     pub experiments_prompt: bool,
+    pub experimental_section: ExperimentalSection,
     deepl_key: String,
     pub language: Language,
     pub tab: Tab,
@@ -561,6 +596,9 @@ impl Default for Menu {
     fn default() -> Self {
         Self {
             experiments_prompt: false,
+            navigation_coordinates: String::new(),
+            navigation_waypoint: None,
+            experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
@@ -2067,6 +2105,108 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
+        let tab_width = (w - 4.0) * 0.5;
+        for (index, section, label) in [
+            (
+                0,
+                ExperimentalSection::Ores,
+                self.language.text("Руды", "Ores"),
+            ),
+            (1, ExperimentalSection::Baritone, "Baritone"),
+        ] {
+            out.push(widget(
+                [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
+                label,
+                Some(Control::ExperimentalTab(section)),
+                self.experimental_section == section,
+            ));
+        }
+        if self.experimental_section == ExperimentalSection::Baritone {
+            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+            let h = (step - 2.0).min(22.0);
+            let waypoint = self
+                .navigation_waypoint
+                .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+            out.push(widget(
+                [x, 82.0, w, h],
+                format!("XYZ: {}", self.navigation_coordinates),
+                Some(Control::Field(Field::NavigationCoordinates)),
+                self.focus == Some(Field::NavigationCoordinates),
+            ));
+            out.push(widget(
+                [x, 82.0 + step, w, h],
+                localized!(
+                    self.language,
+                    "Метка: {}",
+                    "Waypoint: {}",
+                    waypoint.map_or(self.language.text("выбрать", "select"), |w| w
+                        .name
+                        .as_str())
+                ),
+                Some(Control::NavigationWaypoint),
+                waypoint.is_some(),
+            ));
+            for (index, label, control) in [
+                (
+                    0,
+                    self.language.text("Просмотр", "Preview"),
+                    Control::NavigationPreview,
+                ),
+                (
+                    1,
+                    self.language.text("Идти", "Go"),
+                    Control::NavigationStart,
+                ),
+            ] {
+                out.push(widget(
+                    [
+                        x + index as f32 * (tab_width + 4.0),
+                        82.0 + step * 2.0,
+                        tab_width,
+                        h,
+                    ],
+                    label,
+                    Some(control),
+                    false,
+                ));
+            }
+            out.push(widget(
+                [x, 82.0 + step * 3.0, tab_width, h],
+                if model.navigation_paused {
+                    self.language.text("Продолжить", "Resume")
+                } else {
+                    self.language.text("Пауза", "Pause")
+                },
+                Some(if model.navigation_paused {
+                    Control::NavigationResume
+                } else {
+                    Control::NavigationPause
+                }),
+                false,
+            ));
+            out.push(widget(
+                [x + tab_width + 4.0, 82.0 + step * 3.0, tab_width, h],
+                self.language.text("Остановить", "Stop"),
+                Some(Control::NavigationStop),
+                false,
+            ));
+            out.push(widget(
+                [x, height - 48.0, w, 14.0],
+                &model.navigation_status,
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x, height - 30.0, w, 14.0],
+                self.language.text(
+                    "XYZ через пробел · движение вручную ставит паузу",
+                    "Space-separated XYZ · manual movement pauses",
+                ),
+                None,
+                false,
+            ));
+            return out;
+        }
         let p = model.experimental;
         let selected = usize::from(p.selected);
         for (index, (label, control, on)) in [
@@ -2130,9 +2270,14 @@ impl Menu {
         .into_iter()
         .enumerate()
         {
-            let step = ((height - 126.0) / 3.0).clamp(24.0, 28.0);
-            let y = 56.0 + index as f32 * step;
-            out.push(widget([x, y, w, 22.0], label, Some(control), on));
+            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+            let y = 82.0 + index as f32 * step;
+            out.push(widget(
+                [x, y, w, (step - 2.0).min(22.0)],
+                label,
+                Some(control),
+                on,
+            ));
         }
 
         out.push(widget(
@@ -2540,6 +2685,66 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::NavigationWaypoint => {
+                let index = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().position(|w| w.id == id));
+                let next = index.map_or(0, |i| i + 1);
+                self.navigation_waypoint = model.navigation_waypoints.get(next).map(|w| w.id);
+                self.focus = None;
+                if model.navigation_waypoints.is_empty() {
+                    self.notice = self
+                        .language
+                        .text(
+                            "Нет меток в текущем измерении",
+                            "No waypoints in this dimension",
+                        )
+                        .into();
+                }
+                None
+            }
+            Control::NavigationPreview | Control::NavigationStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let goal = if let Some(id) = self.navigation_waypoint {
+                    super::claim_borders_navigation::Goal::Waypoint(id)
+                } else {
+                    let values: Vec<_> = self.navigation_coordinates.split_whitespace().collect();
+                    let position = if let Ok(values) = <[&str; 3]>::try_from(values.as_slice()) {
+                        super::claim_borders_waypoints::parse_coordinates(values).ok()
+                    } else {
+                        None
+                    };
+                    let Some(position) = position else {
+                        self.notice = self
+                            .language
+                            .text(
+                                "Введите X Y Z, например: 120 64 -350",
+                                "Enter X Y Z, for example: 120 64 -350",
+                            )
+                            .into();
+                        return None;
+                    };
+                    super::claim_borders_navigation::Goal::Coordinates(
+                        super::claim_borders_navigation::block(position),
+                    )
+                };
+                self.focus = None;
+                Some(Action::Navigate {
+                    goal,
+                    running: control == Control::NavigationStart,
+                })
+            }
+            Control::NavigationPause => Some(Action::NavigationPause),
+            Control::NavigationResume => Some(Action::NavigationResume),
+            Control::NavigationStop => Some(Action::NavigationStop),
+            Control::ExperimentalTab(section) => {
+                self.experimental_section = section;
+                self.focus = None;
+                None
+            }
             Control::Language => Some(Action::SetLanguage(self.language.other())),
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
@@ -3192,6 +3397,10 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::NavigationCoordinates => {
+                self.navigation_waypoint = None;
+                &mut self.navigation_coordinates
+            }
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
@@ -3207,6 +3416,7 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::NavigationCoordinates) => &self.navigation_coordinates,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -3256,6 +3466,7 @@ impl Menu {
             return;
         };
         let limit = match field {
+            Field::NavigationCoordinates => 80,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -3273,6 +3484,8 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
+            || (field == Field::NavigationCoordinates
+                && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
         {
             return;
         }
@@ -3316,7 +3529,13 @@ impl Menu {
                 return true;
             }
             self.focus = Some(
-                if self.relay_setup || (self.tab == Tab::Settings && self.settings_section == 1) {
+                if self.tab == Tab::Experimental
+                    && self.experimental_section == ExperimentalSection::Baritone
+                {
+                    Field::NavigationCoordinates
+                } else if self.relay_setup
+                    || (self.tab == Tab::Settings && self.settings_section == 1)
+                {
                     if self.focus == Some(Field::RelayUrl) {
                         Field::RelayToken
                     } else {
@@ -3900,6 +4119,172 @@ mod tests {
             let hint = rows.iter().find(|r| r.text.starts_with("O —")).unwrap();
             let last = controls.last().unwrap();
             assert!(last.rect[1] + last.rect[3] <= hint.rect[1]);
+        }
+    }
+
+    #[test]
+    fn experimental_tabs_preserve_ore_preferences_without_starting_automation() {
+        let model = ViewModel::default();
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Experimental,
+                language,
+                ..Menu::default()
+            };
+            for section in [ExperimentalSection::Baritone, ExperimentalSection::Ores] {
+                for height in [200.0, 216.0, 500.0] {
+                    let rows = menu.layout(&model, 360.0, height);
+                    let tab = rows
+                        .iter()
+                        .find(|row| row.control == Some(Control::ExperimentalTab(section)))
+                        .unwrap();
+                    let mouse = [
+                        tab.rect[0] + tab.rect[2] * 0.5,
+                        tab.rect[1] + tab.rect[3] * 0.5,
+                    ];
+                    assert!(menu.click(&model, [360.0, height], mouse).is_none());
+                    assert_eq!(menu.experimental_section, section);
+                    let rows = menu.layout(&model, 360.0, height);
+                    assert_eq!(
+                        rows.iter()
+                            .filter(|row| row.control == Some(Control::ExperimentalAllowed))
+                            .count(),
+                        usize::from(section == ExperimentalSection::Ores)
+                    );
+                    assert!(
+                        rows.iter()
+                            .any(|row| row.control == Some(Control::ExperimentalTab(section))
+                                && row.selected)
+                    );
+                    assert!(!model.experimental.allowed && !model.experimental.prediction);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn navigation_validates_coordinates_and_requires_experiment_consent() {
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            navigation_coordinates: "-0.2 64 120".into(),
+            ..Menu::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationPreview),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Coordinates([-1, 64, 120]),
+                running: false
+            })
+        ));
+        for text in [
+            "",
+            "1 2",
+            "NaN 64 1",
+            "1 64 inf",
+            "30000001 64 0",
+            "1 64 0 5",
+        ] {
+            menu.navigation_coordinates = text.into();
+            assert!(
+                menu.activate(&model, 200.0, Control::NavigationStart)
+                    .is_none()
+            );
+            assert!(!menu.notice.is_empty());
+        }
+        model.experiments_accepted = false;
+        menu.navigation_coordinates = "1 64 0".into();
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationStart)
+                .is_none()
+        );
+        assert!(menu.experiments_prompt);
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationResume)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn navigation_waypoint_selection_and_manual_edit_are_separate_targets() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            navigation_waypoints: vec![WaypointRow {
+                id: 41,
+                name: "Home".into(),
+                detail: String::new(),
+                color: 0,
+            }],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu::default();
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationWaypoint)
+                .is_none()
+        );
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Waypoint(41),
+                running: true
+            })
+        ));
+        menu.focus = Some(Field::NavigationCoordinates);
+        menu.character('1');
+        assert_eq!(menu.navigation_waypoint, None);
+        assert_eq!(menu.navigation_coordinates, "1");
+    }
+
+    #[test]
+    fn navigation_controls_fit_both_languages_in_compact_panels() {
+        for language in [Language::Russian, Language::English] {
+            let menu = Menu {
+                tab: Tab::Experimental,
+                experimental_section: ExperimentalSection::Baritone,
+                language,
+                ..Menu::default()
+            };
+            let model = ViewModel {
+                navigation_status: "Navigation status".into(),
+                ..ViewModel::default()
+            };
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls: Vec<_> = rows
+                    .iter()
+                    .filter(|w| {
+                        matches!(
+                            w.control,
+                            Some(
+                                Control::Field(Field::NavigationCoordinates)
+                                    | Control::NavigationWaypoint
+                                    | Control::NavigationPreview
+                                    | Control::NavigationStart
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                            )
+                        )
+                    })
+                    .collect();
+                assert_eq!(controls.len(), 6);
+                let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
         }
     }
 

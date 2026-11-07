@@ -1314,6 +1314,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     };
     let ids: Vec<_> = tab.iter().map(|(id, _)| *id).collect();
     let borders_enabled = claims::with_state(|s| s.enabled);
+    let (navigation_status, navigation_paused) =
+        crate::game::claim_borders_navigation_view::snapshot(game);
+    let dimension = game.native_player().map(|p| p.dimension);
     state(|c| {
         let time = now(c);
         let waypoints = c
@@ -1476,6 +1479,25 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            navigation_status,
+            navigation_paused,
+            navigation_waypoints: c
+                .waypoints
+                .as_ref()
+                .map(|store| {
+                    store
+                        .all(&c.scope)
+                        .iter()
+                        .filter(|w| Some(w.dimension.as_str()) == dimension)
+                        .map(|w| menu::WaypointRow {
+                            id: w.id,
+                            name: w.name.clone(),
+                            detail: String::new(),
+                            color: w.color,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             auto_reconnect: game.settings.extras.auto_reconnect,
             experiments_accepted: game
                 .native_setting(claims::SETTINGS_ID, "experiments_accepted")
@@ -1569,6 +1591,26 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
+        Action::Navigate { goal, running } => {
+            crate::game::claim_borders_navigation_view::start(game, goal, running)?;
+            if running {
+                game.native_mod_screen_close(claims::ID);
+            }
+            Ok(Vec::new())
+        }
+        Action::NavigationPause => {
+            crate::game::claim_borders_navigation_view::pause();
+            Ok(Vec::new())
+        }
+        Action::NavigationResume => {
+            crate::game::claim_borders_navigation_view::resume(game)?;
+            game.native_mod_screen_close(claims::ID);
+            Ok(Vec::new())
+        }
+        Action::NavigationStop => {
+            crate::game::claim_borders_navigation_view::reset();
+            Ok(Vec::new())
+        }
         Action::SetDeepLKey(key) => {
             crate::game::claim_borders_chat_view::set_deepl_key(game, key.as_deref())?;
             let language = crate::game::claim_borders_chat_view::language(game);

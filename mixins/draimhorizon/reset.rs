@@ -1,5 +1,6 @@
 // Clear before disconnect/reconnect, even when the mod was disabled in settings.
 fn claim_borders_reset() {
+    crate::game::claim_borders_navigation_view::reset();
     crate::game::claim_borders_waypoint_view::reset();
     crate::game::claim_borders_inventory_search_view::reset();
     crate::game::claim_borders_ui_view::reset();

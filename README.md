@@ -2,7 +2,7 @@
 
 ![DraimHorizons — native tools for Horizon SMP](docs/features.svg)
 
-[Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md)
+[Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md) · [Experimental navigation](docs/navigation.md)
 
 **Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is the official Horizon Nightly `6560641` for Java 26.3.
 

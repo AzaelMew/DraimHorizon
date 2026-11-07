@@ -1,5 +1,19 @@
 # История версий
 
+## 0.26.0
+
+- Add an experimental native walking navigator in the Baritone tab: enter XYZ or select a waypoint in the current dimension, preview a route, start, pause, resume and stop.
+- Calculate bounded A* segments on a background worker using snapshots of loaded server chunks. Render the remaining route and a localized HUD status with distance.
+- Walk and jump up one full block using normal movement input. Avoid unknown terrain, hazardous blocks, unsupported shapes and drops greater than one block.
+- Pause on manual movement, open screens, live route changes and stalls. Cancel pending work and clear the destination on disconnect, dimension/account/world changes or mod disable.
+- This is an independent Rust navigator, not the Java Baritone library. Mining, placing, following, farming, schematics and flight are not included.
+
+## 0.25.1
+
+- Split experimental settings into Ores and Baritone tabs in Russian and English, including compact layouts.
+- Preserve ore settings and the existing consent gate. Switching tabs never enables highlighting.
+- Baritone is an informational placeholder; movement automation is not integrated in this build.
+
 ## 0.25.0
 
 - Presence uses one-line, direction-colored Lucide status marks before the name. Normal joins/leaves are green/red; friends and important players use cyan/lavender.

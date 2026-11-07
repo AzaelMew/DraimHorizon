@@ -1,10 +1,11 @@
-**DraimHorizon 0.25.0** for official Horizon Nightly 2026-11-07 - 6560641 (Java 26.3).
+**DraimHorizon 0.26.0** for official Horizon Nightly 2026-11-07 - 6560641 (Java 26.3).
 
-**Upgrade requires a reinstall:** remove `claim_borders` in Horizon Launcher, install `https://github.com/DraimCiDo/DraimHorizon` again, then rebuild native mods. The new bundle ID is `draimhorizon`; the launcher cannot update the old ID into the new one. Do not keep both versions installed. Keep the data folder: settings, waypoints, friends and history reuse `claim_borders`. Reapply custom key bindings and activation preferences if needed.
+- J > Experiments > Baritone: enter X Y Z or select a saved waypoint in the current dimension.
+- Preview a route without moving, or Go to start walking. Pause, Resume and Stop are available in the same tab.
+- A bounded background planner uses loaded server chunks. The world line shows the current segment; the HUD shows status and straight-line distance.
+- Manual movement and open screens pause navigation. Route changes and stalls also pause; reconnecting or changing worlds clears the destination.
+- First walking implementation: full blocks, one-block jumps/descents. Partial shapes, fluids and hazards are obstacles. Mining, placement, following, farming, building and flight are not included.
 
-- Single-line presence cards with official Lucide + / minus marks before player names.
-- Green joins, red leaves; cyan joins and lavender leaves for friends and important players.
-- Settings > Chat > Notifications > Presence view switches between Icon and name and the localized Text view.
-- Includes PR #11 with the identity/storage separation, checked against the official Nightly rather than main.
+This is an independent native navigator, not an integration of the Java Baritone library. See docs/navigation.md for controls and limitations.
 
-The shared DeepL service requirements from 0.24.0 are unchanged (service 1.3.0 for all new language/source settings).
+The bundle ID remains draimhorizon; settings and saved data remain under claim_borders. Users upgrading from claim_borders must reinstall the mod once.

@@ -8,6 +8,7 @@ fn claim_borders_render(game: &crate::game::Game<'_>, gizmos: &mut horizon_clien
         return;
     }
     crate::game::claim_borders_ore_view::render(game, gizmos);
+    crate::game::claim_borders_navigation_view::render(game, gizmos);
     if game.title.is_some() || game.ui.hide_gui || !m::with_state(|state| state.enabled) {
         return;
     }
