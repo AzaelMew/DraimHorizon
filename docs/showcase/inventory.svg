@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img">
+<title>Find it. Sort it. Open it.</title>
+<style>text{font-family:system-ui,Segoe UI,sans-serif;fill:#eaf0ff}.step{font-size:19px;fill:#bfcee6}.small{font-size:15px;fill:#a6b7dc}.sample{font-size:18px;fill:#d5e3fa}</style>
+<rect width="1120" height="340" rx="22" fill="#121b30"/>
+<path d="M25 30V310" stroke="#a99bff" stroke-width="3"/>
+<text x="52" y="47" class="small">CTRL+F · CTRL+O</text>
+<text x="52" y="92" font-size="34" font-weight="750">Find it. Sort it. Open it.</text>
+<rect x="664" y="32" width="424" height="276" rx="16" fill="#202d47" stroke="#405377"/>
+<text x="688" y="61" class="small">FEATURE DIAGRAM</text>
+<circle cx="60" cy="135" r="3" fill="#a99bff"/><text x="76" y="141" class="step">Search item names in an open inventory.</text>
+<circle cx="60" cy="178" r="3" fill="#a99bff"/><text x="76" y="184" class="step">Sort supported inventories and real containers.</text>
+<circle cx="60" cy="221" r="3" fill="#a99bff"/><text x="76" y="227" class="step">Customize controls and excluded slots with Ctrl+O.</text>
+<circle cx="60" cy="264" r="3" fill="#a99bff"/><text x="76" y="270" class="step">Right-click through a sign or frame to its container.</text>
+<text x="688" y="107" class="sample">SEARCH + SORT</text>
+<path d="M688 123H1064" stroke="#34445f"/>
+<text x="688" y="157" class="sample">Matching slots · configurable regions</text>
+<path d="M688 173H1064" stroke="#34445f"/>
+<text x="688" y="207" class="sample">ORDINARY SERVER INTERACTIONS</text>
+<path d="M688 223H1064" stroke="#34445f"/>
+<text x="688" y="257" class="sample">Shift + right-click uses the decoration normally</text>
+</svg>

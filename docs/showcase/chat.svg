@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img">
+<title>Follow the conversation.</title>
+<style>text{font-family:system-ui,Segoe UI,sans-serif;fill:#eaf0ff}.step{font-size:19px;fill:#bfcee6}.small{font-size:15px;fill:#a6b7dc}.sample{font-size:18px;fill:#d5e3fa}</style>
+<rect width="1120" height="340" rx="22" fill="#121b30"/>
+<path d="M25 30V310" stroke="#a99bff" stroke-width="3"/>
+<text x="52" y="47" class="small">J → SETTINGS → CHAT</text>
+<text x="52" y="92" font-size="34" font-weight="750">Follow the conversation.</text>
+<rect x="664" y="32" width="424" height="276" rx="16" fill="#202d47" stroke="#405377"/>
+<text x="688" y="61" class="small">FEATURE DIAGRAM</text>
+<circle cx="60" cy="135" r="3" fill="#a99bff"/><text x="76" y="141" class="step">Use All, DM, Friends and Trading channels.</text>
+<circle cx="60" cy="178" r="3" fill="#a99bff"/><text x="76" y="184" class="step">Click a translated message to reveal the original.</text>
+<circle cx="60" cy="221" r="3" fill="#a99bff"/><text x="76" y="227" class="step">Read the gray source-language tag at the end.</text>
+<circle cx="60" cy="264" r="3" fill="#a99bff"/><text x="76" y="270" class="step">Compact spacing keeps the same readable font.</text>
+<text x="688" y="107" class="sample">Alex: Meet at the portal?     EN</text>
+<path d="M688 123H1064" stroke="#34445f"/>
+<text x="688" y="157" class="sample">You: Встречаемся у портала?     RU</text>
+<path d="M688 173H1064" stroke="#34445f"/>
+<text x="688" y="207" class="sample">Hola, ¿dónde está la base?     ES</text>
+<path d="M688 223H1064" stroke="#34445f"/>
+<text x="688" y="257" class="sample">Ambiguous text uses ?? until detected.</text>
+</svg>

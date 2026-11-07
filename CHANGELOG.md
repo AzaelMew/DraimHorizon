@@ -1,6 +1,12 @@
 # История версий
 
-## 0.22.7 (unreleased / не опубликовано)
+## 0.23.0
+
+- Gray original-language badges appear after chat and private messages in normal and compact layouts. Provider detection refines the local estimate, and unknown text uses ??.
+- README now explains each feature visually with instructions and real chat examples.
+- Expanded AGENTS.md and added a synchronized major/minor/patch version manager. Every tracked change requires a version increment.
+
+## 0.22.7
 
 ### English
 - Seed Map searches wide views progressively in cached 1024-block tiles instead of dropping whole structure sets or stopping at 512 candidates. The 2 km landscape view is fully covered; progress is shown while new tiles load. POI clustering is world-aligned and type-specific, so panning does not arbitrarily swap a village for a mineshaft icon.

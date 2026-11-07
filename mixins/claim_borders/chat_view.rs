@@ -764,6 +764,19 @@ fn draw_card(
                 text(game, batch, row, [tx, line_y], 0xe7eaf2, alpha);
             }
         }
+        if let Some(last) = rows.last() {
+            text(
+                game,
+                batch,
+                entry.source_language.as_deref().unwrap_or("??"),
+                [
+                    tx + game.native_text_width(last) + 4.0,
+                    y + metrics.text_y + (rows.len() - 1) as f32 * 10.0,
+                ],
+                0x8b95a5,
+                alpha,
+            );
+        }
     } else {
         text(game, batch, &name, [tx, y + metrics.header_y], color, alpha);
         if entry.show_original {
@@ -862,7 +875,12 @@ fn paint_region<'a>(
                 e.display_body(context.translate, context.language)
             )
         };
-        let inset = 29.0;
+        let badge_width = if e.kind.is_chat() {
+            game.native_text_width(e.source_language.as_deref().unwrap_or("??")) + 4.0
+        } else {
+            0.0
+        };
+        let inset = 29.0 + badge_width;
         let mut rows = if compact {
             vec![model::single_line(&body, region[2] - inset, |s| {
                 game.native_text_width(s)
@@ -883,7 +901,9 @@ fn paint_region<'a>(
         if rows.len() > max_rows {
             rows.truncate(max_rows);
             if let Some(last) = rows.last_mut() {
-                last.push('…');
+                *last = model::single_line(&format!("{last}…"), region[2] - inset, |s| {
+                    game.native_text_width(s)
+                });
             }
         }
         let h = metrics.height(rows.len());
@@ -971,9 +991,14 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             let worker = s
                 .translator
                 .get_or_insert_with(|| translator(game, language));
-            while let Some((id, value)) = worker.poll() {
+            while let Some((id, value)) = worker.poll_translation() {
                 if let Some(value) = value {
-                    s.feed.translate(id, value, language);
+                    if let Some(entry) = s.feed.entries.iter_mut().find(|e| e.id == id)
+                        && value.source_language.is_some()
+                    {
+                        entry.source_language = value.source_language;
+                    }
+                    s.feed.translate(id, value.text, language);
                     s.translation_failed_at = None;
                     s.retry.remove(&id);
                 } else {

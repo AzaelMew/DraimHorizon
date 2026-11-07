@@ -163,6 +163,7 @@ fn trade_notice(line: &str) -> bool {
         || line == "Your trade request is withdrawn."
 }
 use claim_borders_relay_client::translation::Language;
+use claim_borders_relay_client::translation::{detect_source_language, source_language};
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -174,6 +175,7 @@ pub struct Entry {
     pub channel: Channel,
     pub name: String,
     pub original: String,
+    pub source_language: Option<String>,
     pub translated: Option<String>,
     pub translation_language: Language,
     pub at: u64,
@@ -669,6 +671,10 @@ impl Feed {
             kind,
             channel,
             name,
+            source_language: kind
+                .is_chat()
+                .then(|| detect_source_language(&body))
+                .flatten(),
             original: body,
             translated: None,
             translation_language: Language::default(),
@@ -700,6 +706,7 @@ impl Feed {
             "channel": e.channel as u8,
             "auction": e.auction.map(|a| match a { AuctionNotice::Listed => "listed", AuctionNotice::Sold => "sold" }),
             "name": e.name, "original": e.original, "translated": e.translated,
+            "source_language": e.source_language,
             "translation_language": e.translation_language.code(),
             "joined": e.joined, "repetitions": e.repetitions,
             "show_original": e.show_original, "raw": e.raw,
@@ -764,6 +771,14 @@ impl Feed {
                 kind,
                 channel,
                 name: string("name", 256)?,
+                source_language: if kind.is_chat() {
+                    row["source_language"]
+                        .as_str()
+                        .and_then(source_language)
+                        .or_else(|| row["original"].as_str().and_then(detect_source_language))
+                } else {
+                    None
+                },
                 original: string("original", 2048)?,
                 translated,
                 translation_language: Language::from_code(
@@ -949,6 +964,7 @@ mod tests {
         assert!(!live.entries.back().unwrap().archived);
         assert!(live.entries[0].archived && live.entries[0].show_original);
         assert_eq!(live.entries[0].translated.as_deref(), Some("привет"));
+        assert_eq!(live.entries[0].source_language.as_deref(), Some("EN"));
         let fresh = live.push_with("<Alex> hello", 4, p).unwrap();
         assert_ne!(fresh, live.entries[0].id);
         assert_eq!(live.entries.len(), 4);

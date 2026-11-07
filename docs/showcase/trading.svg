@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img">
+<title>Keep useful prices close.</title>
+<style>text{font-family:system-ui,Segoe UI,sans-serif;fill:#eaf0ff}.step{font-size:19px;fill:#bfcee6}.small{font-size:15px;fill:#a6b7dc}.sample{font-size:18px;fill:#d5e3fa}</style>
+<rect width="1120" height="340" rx="22" fill="#121b30"/>
+<path d="M25 30V310" stroke="#a99bff" stroke-width="3"/>
+<text x="52" y="47" class="small">B → TRADING TOOLS</text>
+<text x="52" y="92" font-size="34" font-weight="750">Keep useful prices close.</text>
+<rect x="664" y="32" width="424" height="276" rx="16" fill="#202d47" stroke="#405377"/>
+<text x="688" y="61" class="small">FEATURE DIAGRAM</text>
+<circle cx="60" cy="135" r="3" fill="#a99bff"/><text x="76" y="141" class="step">Browse custom auction and market views.</text>
+<circle cx="60" cy="178" r="3" fill="#a99bff"/><text x="76" y="184" class="step">Watch item prices and keep auction favorites.</text>
+<circle cx="60" cy="221" r="3" fill="#a99bff"/><text x="76" y="227" class="step">Compare recorded prices and profit estimates.</text>
+<circle cx="60" cy="264" r="3" fill="#a99bff"/><text x="76" y="270" class="step">Choose balance, held-item price and HUD settings.</text>
+<text x="688" y="107" class="sample">AUCTION + MARKET</text>
+<path d="M688 123H1064" stroke="#34445f"/>
+<text x="688" y="157" class="sample">Favorites · observed prices · history</text>
+<path d="M688 173H1064" stroke="#34445f"/>
+<text x="688" y="207" class="sample">INFORMED DECISIONS</text>
+<path d="M688 223H1064" stroke="#34445f"/>
+<text x="688" y="257" class="sample">Estimates depend on current server data</text>
+</svg>

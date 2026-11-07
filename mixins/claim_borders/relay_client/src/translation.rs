@@ -23,6 +23,203 @@ pub fn valid_deepl_key(key: &str) -> bool {
     !key.is_empty() && key.len() <= DEEPL_KEY_LIMIT && key.bytes().all(|b| b.is_ascii_graphic())
 }
 
+pub fn source_language(code: &str) -> Option<String> {
+    let code = code.split(['-', '_']).next()?.to_ascii_lowercase();
+    if !(2..=3).contains(&code.len()) || !code.bytes().all(|b| b.is_ascii_lowercase()) {
+        return None;
+    }
+    let codes = [
+        ("eng", "en"),
+        ("rus", "ru"),
+        ("spa", "es"),
+        ("por", "pt"),
+        ("ita", "it"),
+        ("fra", "fr"),
+        ("deu", "de"),
+        ("ukr", "uk"),
+        ("ara", "ar"),
+        ("jpn", "ja"),
+        ("cmn", "zh"),
+        ("heb", "he"),
+        ("pol", "pl"),
+        ("kor", "ko"),
+        ("nob", "nb"),
+        ("dan", "da"),
+        ("swe", "sv"),
+        ("fin", "fi"),
+        ("tur", "tr"),
+        ("nld", "nl"),
+        ("hun", "hu"),
+        ("ces", "cs"),
+        ("ell", "el"),
+        ("bul", "bg"),
+        ("bel", "be"),
+        ("ron", "ro"),
+        ("slv", "sl"),
+        ("hrv", "hr"),
+        ("srp", "sr"),
+        ("mkd", "mk"),
+        ("lit", "lt"),
+        ("lav", "lv"),
+        ("est", "et"),
+        ("vie", "vi"),
+        ("hin", "hi"),
+        ("ben", "bn"),
+        ("kat", "ka"),
+        ("yid", "yi"),
+        ("amh", "am"),
+        ("jav", "jv"),
+        ("mar", "mr"),
+        ("kan", "kn"),
+        ("tam", "ta"),
+        ("urd", "ur"),
+        ("tha", "th"),
+        ("guj", "gu"),
+        ("uzb", "uz"),
+        ("pan", "pa"),
+        ("aze", "az"),
+        ("ind", "id"),
+        ("tel", "te"),
+        ("pes", "fa"),
+        ("mal", "ml"),
+        ("ori", "or"),
+        ("mya", "my"),
+        ("nep", "ne"),
+        ("sin", "si"),
+        ("khm", "km"),
+        ("tuk", "tk"),
+        ("aka", "ak"),
+        ("zul", "zu"),
+        ("sna", "sn"),
+        ("afr", "af"),
+        ("lat", "la"),
+        ("slk", "sk"),
+        ("cat", "ca"),
+        ("tgl", "tl"),
+        ("hye", "hy"),
+        ("cym", "cy"),
+        ("epo", "eo"),
+        ("iw", "he"),
+    ];
+    Some(
+        codes
+            .iter()
+            .find(|(from, _)| *from == code)
+            .map_or(code.as_str(), |(_, to)| *to)
+            .to_ascii_uppercase(),
+    )
+}
+
+pub fn detect_source_language(text: &str) -> Option<String> {
+    let letters: String = text.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.is_empty() {
+        return None;
+    }
+    let script = [
+        ("JA", '\u{3040}', '\u{30ff}'),
+        ("KO", '\u{ac00}', '\u{d7af}'),
+        ("ZH", '\u{4e00}', '\u{9fff}'),
+        ("AR", '\u{0600}', '\u{06ff}'),
+        ("HE", '\u{0590}', '\u{05ff}'),
+        ("EL", '\u{0370}', '\u{03ff}'),
+        ("HI", '\u{0900}', '\u{097f}'),
+        ("TH", '\u{0e00}', '\u{0e7f}'),
+    ];
+    for (code, from, to) in script {
+        if letters.chars().any(|c| (from..=to).contains(&c)) {
+            return Some(code.into());
+        }
+    }
+    if letters
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
+    {
+        return Some(
+            if letters.contains(['і', 'ї', 'є', 'ґ']) {
+                "UK"
+            } else if letters.contains('ў') {
+                "BE"
+            } else {
+                "RU"
+            }
+            .into(),
+        );
+    }
+    let lower = text.to_lowercase();
+    let words: Vec<_> = lower
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let vocabularies = [
+        (
+            "EN",
+            &[
+                "hello", "hi", "hey", "thanks", "thank", "please", "the", "where", "what", "you",
+                "your", "with", "have", "this", "there",
+            ][..],
+        ),
+        (
+            "ES",
+            &[
+                "hola", "gracias", "buenos", "buenas", "donde", "dónde", "quiero", "tengo",
+                "estoy", "está", "estás", "ustedes", "vosotros",
+            ],
+        ),
+        (
+            "FR",
+            &[
+                "bonjour", "salut", "merci", "avec", "vous", "pour", "suis", "cette", "dans",
+                "votre",
+            ],
+        ),
+        (
+            "DE",
+            &[
+                "hallo", "danke", "bitte", "nicht", "ich", "und", "haben", "mein", "deine", "ist",
+            ],
+        ),
+        (
+            "PT",
+            &[
+                "olá", "obrigado", "obrigada", "você", "vocês", "estou", "tenho", "quero",
+            ],
+        ),
+        (
+            "IT",
+            &[
+                "ciao",
+                "grazie",
+                "buongiorno",
+                "sono",
+                "dove",
+                "questo",
+                "voglio",
+            ],
+        ),
+    ];
+    let mut best = None;
+    let mut count = 0;
+    for (code, vocabulary) in vocabularies {
+        let score = words
+            .iter()
+            .filter(|word| vocabulary.contains(word))
+            .count();
+        if score > count {
+            best = Some(code);
+            count = score;
+        } else if score == count {
+            best = None;
+        }
+    }
+    best.map(str::to_owned)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Translation {
+    pub text: String,
+    pub source_language: Option<String>,
+}
+
 pub struct SharedDeepL {
     url: Url,
     token: String,
@@ -37,7 +234,7 @@ impl SharedDeepL {
         Some(Self { url, token })
     }
 
-    fn request(&self, text: &str, target: Language, timeout: Duration) -> Option<String> {
+    fn request(&self, text: &str, target: Language, timeout: Duration) -> Option<Translation> {
         if text.chars().count() > 500 {
             return None;
         }
@@ -56,7 +253,10 @@ impl SharedDeepL {
                     .then(|| value[1].as_str())
                     .flatten()
                     .filter(|s| !s.trim().is_empty() && s.len() <= 8192)
-                    .map(str::to_owned);
+                    .map(|text| Translation {
+                        text: text.to_owned(),
+                        source_language: value[2].as_str().and_then(source_language),
+                    });
             }
         }
         None
@@ -111,7 +311,7 @@ impl Providers<'_> {
         }
     }
 
-    fn translate(&mut self, job: &Job, target: Language) -> Option<String> {
+    fn translate(&mut self, job: &Job, target: Language) -> Option<Translation> {
         let limit =
             Duration::from_secs(if self.deepl_key.is_some() || self.shared_deepl.is_some() {
                 4
@@ -195,7 +395,7 @@ impl Language {
 }
 pub struct Translator {
     requests: SyncSender<Job>,
-    results: Receiver<(u64, Option<String>)>,
+    results: Receiver<(u64, Option<Translation>)>,
     stop: Arc<AtomicBool>,
     target: Language,
 }
@@ -268,6 +468,10 @@ impl Translator {
             .is_ok()
     }
     pub fn poll(&self) -> Option<(u64, Option<String>)> {
+        self.poll_translation()
+            .map(|(id, value)| (id, value.map(|v| v.text)))
+    }
+    pub fn poll_translation(&self) -> Option<(u64, Option<Translation>)> {
         self.results.try_recv().ok()
     }
 }
@@ -297,7 +501,7 @@ fn google_request(
     text: &str,
     target: &str,
     timeout: Duration,
-) -> Result<String, String> {
+) -> Result<Translation, String> {
     let response = agent
         .get(endpoint)
         .timeout(timeout)
@@ -320,7 +524,10 @@ fn google_request(
     if output.is_empty() {
         return Err("empty translation".into());
     }
-    Ok(output)
+    Ok(Translation {
+        text: output,
+        source_language: value[2].as_str().and_then(source_language),
+    })
 }
 
 fn deepl_request(
@@ -330,7 +537,7 @@ fn deepl_request(
     text: &str,
     target: Language,
     timeout: Duration,
-) -> Result<String, u16> {
+) -> Result<Translation, u16> {
     let body = serde_json::json!({
         "text": [text],
         "target_lang": target.deepl_code(),
@@ -345,11 +552,16 @@ fn deepl_request(
             ureq::Error::Status(status, _) => status,
             ureq::Error::Transport(_) => 0,
         })?;
-    read_response(response)
-        .as_ref()
-        .and_then(|value| value["translations"][0]["text"].as_str())
+    let value = read_response(response).ok_or(0u16)?;
+    value["translations"][0]["text"]
+        .as_str()
         .filter(|value| !value.trim().is_empty() && value.len() <= 8192)
-        .map(str::to_owned)
+        .map(|text| Translation {
+            text: text.to_owned(),
+            source_language: value["translations"][0]["detected_source_language"]
+                .as_str()
+                .and_then(source_language),
+        })
         .ok_or(0)
 }
 
@@ -369,6 +581,26 @@ fn read_response(response: ureq::Response) -> Option<Value> {
 mod tests {
     use super::*;
     #[test]
+    fn source_language_codes_and_local_estimates_preserve_uncertainty() {
+        assert_eq!(source_language("en-US").as_deref(), Some("EN"));
+        assert_eq!(source_language("es").as_deref(), Some("ES"));
+        assert!(source_language("<script>").is_none());
+        assert_eq!(
+            detect_source_language("Привет, где портал?").as_deref(),
+            Some("RU")
+        );
+        assert_eq!(
+            detect_source_language("hello, where is the base?").as_deref(),
+            Some("EN")
+        );
+        assert_eq!(
+            detect_source_language("hola, dónde está la base?").as_deref(),
+            Some("ES")
+        );
+        assert!(detect_source_language("123 :3").is_none());
+        assert!(detect_source_language("x").is_none());
+    }
+    #[test]
     #[ignore = "Public provider smoke test; sends only a fixed greeting"]
     fn public_provider_translates_fixed_greeting() {
         let agent = ureq::AgentBuilder::new()
@@ -385,6 +617,7 @@ mod tests {
         .unwrap();
         assert!(
             value
+                .text
                 .chars()
                 .any(|c| ('\u{0400}'..='\u{052f}').contains(&c))
         );
@@ -470,7 +703,8 @@ mod tests {
         assert_eq!(
             shared
                 .request("hello", Language::Russian, Duration::from_secs(2))
-                .as_deref(),
+                .as_ref()
+                .map(|value| value.text.as_str()),
             Some("Привет")
         );
         server.join().unwrap();
@@ -538,15 +772,24 @@ mod tests {
             deadline: None,
         };
         assert_eq!(
-            providers.translate(&job, Language::English).as_deref(),
+            providers
+                .translate(&job, Language::English)
+                .as_ref()
+                .map(|value| value.text.as_str()),
             Some("Google")
         );
         assert_eq!(
-            providers.translate(&job, Language::English).as_deref(),
+            providers
+                .translate(&job, Language::English)
+                .as_ref()
+                .map(|value| value.text.as_str()),
             Some("Mirror")
         );
         assert_eq!(
-            providers.translate(&job, Language::English).as_deref(),
+            providers
+                .translate(&job, Language::English)
+                .as_ref()
+                .map(|value| value.text.as_str()),
             Some("DeepL")
         );
         assert_eq!(providers.translate(&job, Language::English), None);
@@ -591,15 +834,20 @@ mod tests {
             let agent = ureq::AgentBuilder::new()
                 .timeout(Duration::from_secs(2))
                 .build();
+            let result = google_request(
+                &agent,
+                &format!("http://{address}/translate"),
+                "hello&tl=en",
+                target,
+                Duration::from_secs(2),
+            )
+            .unwrap();
             assert_eq!(
-                google_request(
-                    &agent,
-                    &format!("http://{address}/translate"),
-                    "hello&tl=en",
-                    target,
-                    Duration::from_secs(2),
-                )
-                .unwrap(),
+                result.source_language.as_deref(),
+                Some(if target == "ru" { "EN" } else { "RU" })
+            );
+            assert_eq!(
+                result.text,
                 if target == "ru" {
                     "Привет"
                 } else {

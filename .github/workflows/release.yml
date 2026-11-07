@@ -38,6 +38,7 @@ jobs:
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
       - name: Format, lint and test runtime
         run: |
+          python3 tools/version.py check
           cargo fmt --all --check
           rustfmt --edition 2024 --check mixins/claim_borders/*.rs
           cargo clippy --workspace --all-targets --locked -- -D warnings

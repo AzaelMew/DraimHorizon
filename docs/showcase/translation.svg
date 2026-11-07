@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img">
+<title>Speak across languages.</title>
+<style>text{font-family:system-ui,Segoe UI,sans-serif;fill:#eaf0ff}.step{font-size:19px;fill:#bfcee6}.small{font-size:15px;fill:#a6b7dc}.sample{font-size:18px;fill:#d5e3fa}</style>
+<rect width="1120" height="340" rx="22" fill="#121b30"/>
+<path d="M25 30V310" stroke="#a99bff" stroke-width="3"/>
+<text x="52" y="47" class="small">RU / EN · GOOGLE + OPTIONAL DEEPL</text>
+<text x="52" y="92" font-size="34" font-weight="750">Speak across languages.</text>
+<rect x="664" y="32" width="424" height="276" rx="16" fill="#202d47" stroke="#405377"/>
+<text x="688" y="61" class="small">FEATURE DIAGRAM</text>
+<circle cx="60" cy="135" r="3" fill="#a99bff"/><text x="76" y="141" class="step">Choose RU or EN next to Settings in the J menu.</text>
+<circle cx="60" cy="178" r="3" fill="#a99bff"/><text x="76" y="184" class="step">RU mode translates incoming text to Russian.</text>
+<circle cx="60" cy="221" r="3" fill="#a99bff"/><text x="76" y="227" class="step">EN mode translates incoming text to English.</text>
+<circle cx="60" cy="264" r="3" fill="#a99bff"/><text x="76" y="270" class="step">Outgoing chat translates into the opposite language.</text>
+<text x="688" y="107" class="sample">GOOGLE → DEEPL BACKUP</text>
+<path d="M688 123H1064" stroke="#34445f"/>
+<text x="688" y="157" class="sample">Save a personal key in Chat → DeepL</text>
+<path d="M688 173H1064" stroke="#34445f"/>
+<text x="688" y="207" class="sample">SHARE A PRIVATE RELAY</text>
+<path d="M688 223H1064" stroke="#34445f"/>
+<text x="688" y="257" class="sample">One server key · friends use the relay token</text>
+</svg>
