@@ -464,6 +464,24 @@ mod tests {
         assert_eq!(n.follow.as_ref().unwrap().uuid, 42);
     }
     #[test]
+    fn missing_route_retries_with_a_bounded_budget() {
+        let mut n = Navigator::default();
+        n.begin([12, 0, 0], true);
+        for _ in 0..3 {
+            n.blocked([0.5, 0., 0.5]);
+            assert!(n.running);
+            assert_eq!(n.status, Status::Waiting);
+            assert!(n.path.is_empty());
+        }
+        n.blocked([0.5, 0., 0.5]);
+        assert!(!n.running);
+        assert_eq!(n.status, Status::Stuck);
+        n.begin([12, 0, 0], false);
+        n.accept(None);
+        assert!(!n.running);
+        assert_eq!(n.status, Status::NoPath);
+    }
+    #[test]
     fn changed_terrain_reroutes_and_recovery_has_a_budget() {
         let wall = |at: Pos| {
             if at[0] == 1 && at[2] == 0 && (0..=2).contains(&at[1]) {
