@@ -590,9 +590,9 @@ pub(super) fn settings_render(
         style::TEXT,
         false,
     );
-    let language = language();
-    let error = state(|s| s.error.as_ref().map(|error| error.text(language)));
-    let hint = error.as_deref().unwrap_or(language.text(
+    let lang = language();
+    let error = state(|s| s.error.as_ref().map(|error| error.text(lang)));
+    let hint = error.as_deref().unwrap_or(lang.text(
         "Единый стиль меню, карты, HUD и инвентаря",
         "One style for menus, map, HUD and inventory",
     ));
@@ -608,7 +608,6 @@ pub(super) fn settings_render(
         },
         false,
     );
-    let lang = language();
     let on = |v| {
         if v {
             lang.text("Вкл.", "On")
