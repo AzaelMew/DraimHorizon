@@ -22,17 +22,16 @@ pub struct Query {
     pub dimension: usize,
     pub preferences: model::Preferences,
 }
-#[derive(Clone)]
-pub struct Mark {
-    pub id: String,
-    pub position: [f64; 2],
-}
+pub use model::Mark;
 #[derive(Clone)]
 pub struct Panel {
     pub pixels: Vec<u8>,
     pub biomes: Vec<String>,
     pub marks: Vec<Mark>,
     pub limited: bool,
+    pub searching: bool,
+    pub searched: usize,
+    pub total: usize,
 }
 pub struct Image {
     pub query: Query,
@@ -95,7 +94,15 @@ impl Handle {
                             error: Some(error),
                         },
                     };
-                    inbox.0.lock().unwrap_or_else(|e| e.into_inner()).output = Some(image);
+                    let mut pending = inbox.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if pending.stop || pending.generation != generation {
+                        continue;
+                    }
+                    if image.panel.as_ref().is_some_and(|p| p.searching) && pending.query.is_none()
+                    {
+                        pending.query = Some(image.query.clone());
+                    }
+                    pending.output = Some(image);
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -134,6 +141,7 @@ struct Engine {
     sets: StructureRegistry,
     members: BTreeMap<String, Vec<String>>,
     cached: [Option<(View, f32, model::Preferences, Panel)>; 3],
+    structure_tiles: model::StructureTiles,
 }
 impl Engine {
     fn load(dir: &std::path::Path, registry: &'static BlockRegistry) -> Result<Self, String> {
@@ -183,6 +191,7 @@ impl Engine {
             sets,
             members,
             cached: std::array::from_fn(|_| None),
+            structure_tiles: model::StructureTiles::default(),
         })
     }
     fn render(
@@ -203,6 +212,7 @@ impl Engine {
             && *v == view
             && *a == aspect
             && p.same_layers(&query.preferences)
+            && !panel.searching
         {
             return Ok((panel.clone(), catalog));
         }
@@ -266,34 +276,71 @@ impl Engine {
                 }
             }
         }
+        let area = model::search_tiles(view, aspect).ok_or("invalid structure-search view")?;
+        let enabled = query.preferences.structures != 0;
+        let missing: Vec<_> = area
+            .tiles
+            .iter()
+            .copied()
+            .filter(|at| enabled && !self.structure_tiles.contains(i, *at))
+            .collect();
+        let started = std::time::Instant::now();
+        let mut scanned = 0;
+        for at in missing.iter().copied() {
+            if canceled() {
+                return Err("canceled".into());
+            }
+            if scanned >= 8
+                || scanned > 0 && started.elapsed() >= std::time::Duration::from_millis(30)
+            {
+                break;
+            }
+            let marks = self.scan_tile(i, at, canceled)?;
+            self.structure_tiles.insert(i, at, marks, &area.tiles)?;
+            scanned += 1;
+        }
+        let panel = Panel {
+            pixels,
+            biomes,
+            marks: self
+                .structure_tiles
+                .marks(i, view, aspect, &query.preferences),
+            limited: enabled && area.limited,
+            searching: scanned < missing.len(),
+            searched: area.tiles.len() - missing.len() + scanned,
+            total: area.tiles.len(),
+        };
+        self.cached[i] = Some((view, aspect, query.preferences.clone(), panel.clone()));
+        self.workers[i].release();
+        Ok((panel, catalog))
+    }
+    fn scan_tile(
+        &mut self,
+        i: usize,
+        tile: (i32, i32),
+        canceled: &impl Fn() -> bool,
+    ) -> Result<Vec<Mark>, String> {
+        let view = model::tile_view(tile);
+        let worker = &mut self.workers[i];
         let mut candidates = BTreeSet::new();
-        let mut limited = false;
         let rings = Rings::new();
         let in_view = |x: i32, z: i32| {
-            let at = view.pixel_aspect(
-                [f64::from(x * 16 + 8), f64::from(z * 16 + 8)],
-                128.0,
-                aspect,
-            );
-            at[0] >= -2.0 && at[1] >= -2.0 && at[0] <= 130.0 && at[1] <= 130.0
+            let side = model::SEARCH_TILE_BLOCKS / 16;
+            x.div_euclid(side) == tile.0 && z.div_euclid(side) == tile.1
         };
         for set in &self.sets.sets {
             let relevant = self.members.get(&set.name).is_some_and(|entries| {
                 entries.iter().any(|id| {
-                    (query.preferences.shows(id)
-                        || (id == "minecraft:end_city" && query.preferences.shows("end_city_ship")))
-                        && model::structure_index(id)
-                            .is_some_and(|n| model::STRUCTURES[n].group.dimension() == i)
+                    model::structure_index(id)
+                        .is_some_and(|n| model::STRUCTURES[n].group.dimension() == i)
                 })
             });
             if !relevant {
                 continue;
             }
             if let Some(spacing) = set.spacing() {
-                let Some((lo, hi)) = model::region_bounds(view, aspect, spacing) else {
-                    limited = true;
-                    continue;
-                };
+                let (lo, hi) = model::region_bounds(view, 1.0, spacing)
+                    .ok_or("invalid structure-search tile")?;
                 for rz in lo[1]..=hi[1] {
                     if canceled() {
                         return Err("canceled".into());
@@ -314,11 +361,7 @@ impl Engine {
                         {
                             continue;
                         }
-                        if candidates.len() < 512 {
-                            candidates.insert((at.x, at.z));
-                        } else {
-                            limited = true;
-                        }
+                        candidates.insert((at.x, at.z));
                     }
                 }
             } else {
@@ -327,11 +370,7 @@ impl Engine {
                 }
                 for at in worker.ring_positions(&set.name).unwrap_or_default() {
                     if in_view(at.x, at.z) {
-                        if candidates.len() < 512 {
-                            candidates.insert((at.x, at.z));
-                        } else {
-                            limited = true;
-                        }
+                        candidates.insert((at.x, at.z));
                     }
                 }
             }
@@ -355,7 +394,9 @@ impl Engine {
                 } else {
                     &start.name
                 };
-                if query.preferences.shows(id) {
+                if model::structure_index(id)
+                    .is_some_and(|n| model::STRUCTURES[n].group.dimension() == i)
+                {
                     marks.push(Mark {
                         id: id.to_owned(),
                         position: [f64::from(x * 16 + 8), f64::from(z * 16 + 8)],
@@ -363,14 +404,6 @@ impl Engine {
                 }
             }
         }
-        let panel = Panel {
-            pixels,
-            biomes,
-            marks,
-            limited,
-        };
-        self.cached[i] = Some((view, aspect, query.preferences.clone(), panel.clone()));
-        worker.release();
-        Ok((panel, catalog))
+        Ok(marks)
     }
 }
