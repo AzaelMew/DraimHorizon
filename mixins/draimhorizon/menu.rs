@@ -2372,32 +2372,18 @@ impl Menu {
                     false,
                 ));
                 if self.baritone_mode == BaritoneMode::Tunnel {
-                    let third = (w - 8.0) / 3.0;
-                    for (i, label, control, on) in [
+                    for (i, (label, control, on)) in [
                         (
-                            0,
-                            localized!(
-                                self.language,
-                                "Ширина: {}",
-                                "Width: {}",
-                                self.construct_width
-                            ),
+                            localized!(self.language, "Ширина: {}", "Width: {}", self.construct_width),
                             Control::ConstructWidth,
                             false,
                         ),
                         (
-                            1,
-                            localized!(
-                                self.language,
-                                "Высота: {}",
-                                "Height: {}",
-                                self.construct_height
-                            ),
+                            localized!(self.language, "Высота: {}", "Height: {}", self.construct_height),
                             Control::ConstructHeight,
                             false,
                         ),
                         (
-                            2,
                             localized!(
                                 self.language,
                                 "Пол: {}",
@@ -2411,9 +2397,12 @@ impl Menu {
                             Control::ConstructFloor,
                             self.construct_floor,
                         ),
-                    ] {
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
                         out.push(widget(
-                            [x + i as f32 * (third + 4.0), 100.0 + step, third, h],
+                            [x, 100.0 + (i + 1) as f32 * step, w, h],
                             label,
                             Some(control),
                             on,
@@ -2445,7 +2434,7 @@ impl Menu {
                     out.push(widget(
                         [
                             x + i as f32 * (tab_width + 4.0),
-                            100.0 + 2.0 * step,
+                            100.0 + if self.baritone_mode == BaritoneMode::Tunnel { 4.0 } else { 2.0 } * step,
                             tab_width,
                             h,
                         ],
