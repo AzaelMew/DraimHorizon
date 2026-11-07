@@ -751,7 +751,8 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
         return crate::game::claim_borders_workshop_view::start_farm(game, config, !running);
     }
     crate::game::claim_borders_workshop_view::reset();
-    if let Goal::Construct(config) = goal_request {
+    if let Goal::Construct(mut config) = goal_request {
+        config.direction = crate::game::claim_borders_construction::Direction::from_yaw(game.yaw);
         return crate::game::claim_borders_construction_view::start(game, config, !running);
     }
     crate::game::claim_borders_construction_view::reset();
