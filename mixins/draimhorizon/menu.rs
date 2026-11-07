@@ -2360,8 +2360,9 @@ impl Menu {
                 self.baritone_mode,
                 BaritoneMode::Tunnel | BaritoneMode::Bridge
             ) {
+                let compact_tunnel = self.baritone_mode == BaritoneMode::Tunnel && height < 270.0;
                 out.push(widget(
-                    [x, 100.0, w, h],
+                    [x, 100.0, if compact_tunnel { tab_width } else { w }, h],
                     localized!(
                         self.language,
                         "Длина: {}",
@@ -2412,12 +2413,11 @@ impl Menu {
                     .enumerate()
                     {
                         out.push(widget(
-                            [
-                                x,
-                                100.0 + (i + 1) as f32 * step,
-                                w,
-                                h,
-                            ],
+                            if compact_tunnel {
+                                [x + ((i + 1) % 2) as f32 * (tab_width + 4.0), 100.0 + ((i + 1) / 2) as f32 * step, tab_width, h]
+                            } else {
+                                [x, 100.0 + (i + 1) as f32 * step, w, h]
+                            },
                             label,
                             Some(control),
                             on,
@@ -2449,7 +2449,9 @@ impl Menu {
                     out.push(widget(
                         [
                             x + i as f32 * (tab_width + 4.0),
-                            100.0 + if self.baritone_mode == BaritoneMode::Tunnel {
+                            100.0 + if compact_tunnel {
+                                2.0
+                            } else if self.baritone_mode == BaritoneMode::Tunnel {
                                 4.0
                             } else {
                                 2.0
@@ -2578,7 +2580,7 @@ impl Menu {
                     ));
                 }
             }
-            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel {
+            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel && height >= 270.0 {
                 100.0 + step * 5.0
             } else {
                 100.0 + step * 3.0
