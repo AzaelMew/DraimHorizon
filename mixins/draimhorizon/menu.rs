@@ -2362,7 +2362,12 @@ impl Menu {
             ) {
                 out.push(widget(
                     [x, 100.0, w, h],
-                    localized!(self.language, "Длина: {}", "Length: {}", self.construct_length),
+                    localized!(
+                        self.language,
+                        "Длина: {}",
+                        "Length: {}",
+                        self.construct_length
+                    ),
                     Some(Control::ConstructLength),
                     false,
                 ));
