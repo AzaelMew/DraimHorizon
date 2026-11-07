@@ -377,19 +377,7 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
                 blocks_per_pixel: image.query.render.bpp as f32,
             };
             let aspect = image.query.render.aspect as f32;
-            let mut pixels = image.pixels;
-            model::paint_aspect(
-                &mut pixels,
-                size,
-                model::View {
-                    center: actual.center,
-                    blocks_per_pixel: actual.blocks_per_pixel * 128.0 / size as f32,
-                },
-                &request.dimension,
-                &request.source,
-                request.preferences,
-                aspect,
-            );
+            let pixels = image.pixels;
             if let Some(rect) = game
                 .gui
                 .atlas
@@ -428,6 +416,7 @@ pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
             full: request.full,
             browse_saved_layer: request.preferences.layer == model::Layer::Cave
                 && request.dimension != request.source.dimension,
+            refresh: request.refresh,
         });
     }
     true

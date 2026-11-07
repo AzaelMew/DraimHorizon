@@ -216,6 +216,7 @@ pub(in crate::game) struct Request {
     pub full: bool,
     pub aspect: f32,
     pub draw: bool,
+    pub refresh: bool,
 }
 pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
     if !game.native_on(claims::ID) || game.title.is_some() || game.native_player().is_none() {
@@ -248,6 +249,10 @@ pub(in crate::game) fn request(game: &Game<'_>) -> Option<Request> {
                 1.0
             },
             draw: (s.open && !seed_active) || (!s.open && p.minimap && !game.ui.hide_gui),
+            refresh: s
+                .published
+                .as_ref()
+                .is_none_or(|(dim, _, _)| dim != &s.dimension),
         })
     })
 }
@@ -906,6 +911,9 @@ pub(super) fn render(
     );
     let (actual, aspect) = (view, rect[2] / rect[3]);
     if let Some(source) = source {
+        for overlay in model::overlay_rects(actual, &dimension, &source, p, rect) {
+            game.native_fill(batch, overlay.rect, overlay.color);
+        }
         map_marks(
             game, batch, &source, &dimension, actual, rect, p, true, aspect,
         );

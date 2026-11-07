@@ -397,7 +397,7 @@ impl Store {
     }
     pub fn compose(&mut self, c: &Context, spec: &Render) -> Result<Vec<u8>, String> {
         let id = self.catalog(c)?;
-        let size = spec.size.clamp(64, 512);
+        let size = spec.size.clamp(64, 768);
         let mut image = vec![0; size * size * 4];
         for y in 0..size {
             for x in 0..size {
@@ -409,7 +409,7 @@ impl Store {
         let span = 128.0 * spec.bpp;
         let step = span / size as f64;
         if !span.is_finite()
-            || !(0.25..=524288.0).contains(&spec.bpp)
+            || !(0.25..=786432.0).contains(&spec.bpp)
             || !spec.aspect.is_finite()
             || !(0.1..=32.0).contains(&spec.aspect)
             || !spec
@@ -436,9 +436,38 @@ impl Store {
                     && z < low[1] + span
             })
             .collect();
+        // Keep the visible detailed working set within the 24-region LRU,
+        // leaving room for neighbour halos and incoming exploration.
+        let precise = step < 8.0 && (regions.len() <= 18 || !c.persistent);
         for at in regions {
             let key = (id.clone(), at);
-            let precise = step < 8.0;
+            // Copy only the two height borders before loading the current region.
+            // Neighbour loads may evict it; never retain references across load().
+            let mut west = [None; REGION as usize];
+            let mut north = [None; REGION as usize];
+            if precise && spec.shading {
+                for (neighbour, vertical, edge) in [
+                    ((at.0 - 1, at.1), true, &mut west),
+                    ((at.0, at.1 - 1), false, &mut north),
+                ] {
+                    if !self.catalogs[&id].regions.contains(&neighbour) {
+                        continue;
+                    }
+                    if let Err(e) = self.load(&id, neighbour) {
+                        self.warning = Some(e);
+                        continue;
+                    }
+                    let region = &self.cache[&(id.clone(), neighbour)];
+                    for (i, value) in edge.iter_mut().enumerate() {
+                        let (x, z) = if vertical {
+                            (at.0 * REGION - 1, at.1 * REGION + i as i32)
+                        } else {
+                            (at.0 * REGION + i as i32, at.1 * REGION - 1)
+                        };
+                        *value = region.column(x, z).filter(|p| p.0 & 0x7f != 0).map(|p| p.1);
+                    }
+                }
+            }
             let summary;
             if precise {
                 if let Err(e) = self.load(&id, at) {
@@ -523,7 +552,23 @@ impl Store {
                     if (wx.div_euclid(REGION), wz.div_euclid(REGION)) != at {
                         continue;
                     }
-                    let rgba = r.and_then(|r| shade(r, wx, wz, &self.palette, spec.shading));
+                    let rgba = r.and_then(|r| {
+                        shade_column(
+                            |x, z| {
+                                if x == at.0 * REGION - 1 {
+                                    west[z.rem_euclid(REGION) as usize].map(|h| (1, h, 0, 0))
+                                } else if z == at.1 * REGION - 1 {
+                                    north[x.rem_euclid(REGION) as usize].map(|h| (1, h, 0, 0))
+                                } else {
+                                    r.column(x, z)
+                                }
+                            },
+                            wx,
+                            wz,
+                            &self.palette,
+                            spec.shading,
+                        )
+                    });
                     if let Some(color) = rgba {
                         let i = (y * size + x) * 4;
                         image[i..i + 4].copy_from_slice(&color);
@@ -542,9 +587,6 @@ pub struct Render {
     pub size: usize,
     pub shading: bool,
 }
-fn shade(r: &Region, x: i32, z: i32, palette: &[u32], shading: bool) -> Option<[u8; 4]> {
-    shade_column(|x, z| r.column(x, z), x, z, palette, shading)
-}
 fn shade_column(
     column: impl Fn(i32, i32) -> Option<(u8, i16, u8, u32)>,
     x: i32,
@@ -560,16 +602,12 @@ fn shade_column(
     let color = if rgb != 0 { rgb } else { *palette.get(id)? };
     let mut brightness = 1.0f32;
     if shading {
-        let north = if z.rem_euclid(REGION) > 0 {
-            column(x, z - 1).map_or(h, |p| p.1)
-        } else {
-            h
-        };
-        let west = if x.rem_euclid(REGION) > 0 {
-            column(x - 1, z).map_or(h, |p| p.1)
-        } else {
-            h
-        };
+        let north = column(x, z - 1)
+            .filter(|p| p.0 & 0x7f != 0)
+            .map_or(h, |p| p.1);
+        let west = column(x - 1, z)
+            .filter(|p| p.0 & 0x7f != 0)
+            .map_or(h, |p| p.1);
         brightness = (1.0
             + f32::from(h.saturating_sub(north).clamp(-12, 12)) * 0.065
             + f32::from(h.saturating_sub(west).clamp(-12, 12)) * 0.045)
@@ -761,6 +799,79 @@ mod tests {
         image[((size / 2) * size + size / 2) * 4..((size / 2) * size + size / 2) * 4 + 4]
             .try_into()
             .unwrap()
+    }
+    #[test]
+    fn shading_is_continuous_across_saved_region_boundaries() {
+        for axis in 0..2 {
+            for boundary in [-256, 0, 256] {
+                let dir = Dir::new();
+                let c = context();
+                let mut store = Store::new(dir.0.clone(), vec![0, 0x808080]);
+                for chunk in (boundary / 16 - 1)..=(boundary / 16) {
+                    let mut t = tile(1, 0);
+                    for z in 0..16 {
+                        for x in 0..16 {
+                            let along = chunk * 16 + if axis == 0 { x } else { z };
+                            t.height[(z * 16 + x) as usize] = (1000 - along) as i16;
+                        }
+                    }
+                    let at = if axis == 0 { (chunk, 0) } else { (0, chunk) };
+                    store.insert(&c, at, t).unwrap();
+                }
+                store.flush().unwrap();
+                // Exercise cold neighbours as well as the in-memory path.
+                drop(store);
+                let mut store = Store::new(dir.0.clone(), vec![0, 0x808080]);
+                let mut center = [8.0; 2];
+                center[axis] = f64::from(boundary);
+                let image = store
+                    .compose(
+                        &c,
+                        &Render {
+                            center,
+                            bpp: 0.5,
+                            aspect: 1.0,
+                            size: 64,
+                            shading: true,
+                        },
+                    )
+                    .unwrap();
+                let channel = |i: usize| {
+                    let (x, z) = if axis == 0 { (i, 32) } else { (32, i) };
+                    image[(z * 64 + x) * 4]
+                };
+                assert_eq!(channel(31), channel(32), "axis={axis} boundary={boundary}");
+                assert_eq!(channel(32), channel(33));
+                assert!(channel(32) < 128, "slope should still be shaded");
+            }
+        }
+    }
+    #[test]
+    fn wide_explored_views_do_not_thrash_the_detailed_region_cache() {
+        let dir = Dir::new();
+        let c = context();
+        let mut store = Store::new(dir.0.clone(), palette());
+        for z in -4..4 {
+            for x in -4..4 {
+                store.insert(&c, (x * 16, z * 16), tile(1, 64)).unwrap();
+            }
+        }
+        store.flush().unwrap();
+        drop(store);
+        let mut store = Store::new(dir.0.clone(), palette());
+        let spec = Render {
+            center: [0.0, 0.0],
+            bpp: 16.0,
+            aspect: 1.0,
+            size: 512,
+            shading: true,
+        };
+        let image = store.compose(&c, &spec).unwrap();
+        assert!(image.as_chunks::<4>().0.contains(&[0x66, 0x99, 0x44, 255]));
+        assert!(
+            store.cache.is_empty(),
+            "wide views should use checked overviews, not decode/evict all 64 regions"
+        );
     }
     #[test]
     fn explored_negative_chunks_survive_restart_and_zoom_out() {
