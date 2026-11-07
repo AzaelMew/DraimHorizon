@@ -5152,6 +5152,8 @@ mod tests {
             ..Menu::default()
         };
         menu.activate(&model, 200.0, Control::NavigationPlayer);
+        assert_eq!(menu.navigation_choices, Some(true));
+        menu.activate(&model, 200.0, Control::NavigationPlayerChoice(0));
         assert_eq!(menu.navigation_waypoint, None);
         assert_eq!(menu.navigation_player, Some(71));
         assert!(matches!(
@@ -5162,6 +5164,7 @@ mod tests {
             })
         ));
         menu.activate(&model, 200.0, Control::NavigationPlayer);
+        menu.activate(&model, 200.0, Control::NavigationPlayerChoice(1));
         assert_eq!(menu.navigation_player, Some(82));
         menu.focus = Some(Field::NavigationCoordinates);
         menu.character('2');
