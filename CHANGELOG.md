@@ -1,5 +1,16 @@
 # История версий
 
+## 0.24.0
+
+- Show X/Y/Z in one styled minimap coordinate strip; allow editing all three coordinates in the X waypoint editor.
+- Use compact + / minus presence events while retaining their original server text.
+- Include ordinary messages from friends and important players in the Friends chat view, without moving messages out of other tabs.
+- Enable auto reconnect on first use, with a saved toggle, Horizon's countdown, cancellation and bounded backoff. Do not reconnect after manual exit or permanent access/authentication refusals.
+- Use top settings tabs, centered language controls and a centered Experiments confirmation with Lucide warning/check icons and soft action colors.
+- Require official Lucide UI and documentation icons in AGENTS.md.
+- Refresh Horizon compatibility to 1d63e0a.
+
+
 ## 0.23.1
 
 - Target current Horizon main c78187d; prevent release with a stale source pin.

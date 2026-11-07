@@ -14,11 +14,37 @@ use std::{
 struct Draft {
     id: Option<u64>,
     dimension: String,
-    position: [f64; 3],
+    coordinates: [TextInput; 3],
     name: TextInput,
     color: TextInput,
     kind: model::MarkerKind,
-    focus: bool,
+    focus: usize,
+}
+impl Draft {
+    fn input(&mut self) -> &mut TextInput {
+        match self.focus {
+            0 => &mut self.name,
+            1 => &mut self.color,
+            i => &mut self.coordinates[(i - 2).min(2)],
+        }
+    }
+    fn limit(&self) -> usize {
+        match self.focus {
+            0 => 48,
+            1 => 7,
+            _ => 24,
+        }
+    }
+    fn insert(&mut self, text: &str) {
+        let limit = self.limit();
+        self.input().insert(text, limit);
+    }
+    fn position(&self) -> Result<[f64; 3], model::WaypointError> {
+        model::parse_coordinates(self.coordinates.each_ref().map(|v| v.value.as_str()))
+    }
+}
+fn coordinate_inputs(position: [f64; 3]) -> [TextInput; 3] {
+    position.map(|value| TextInput::new(value.to_string()))
 }
 #[derive(Clone, Copy)]
 enum Hit {
@@ -29,6 +55,7 @@ enum Hit {
     Create,
     Name,
     Color,
+    Coordinate(usize),
     Kind,
     Swatch(u32),
     Save,
@@ -82,11 +109,11 @@ pub(super) fn open_create(dimension: String, position: [f64; 3], quick: bool) {
         s.draft = Some(Draft {
             id: None,
             dimension,
-            position,
+            coordinates: coordinate_inputs(position),
             name: TextInput::new(language().text("Новая метка", "New waypoint").into()),
             color: TextInput::new("#FFCC55".into()),
             kind: model::MarkerKind::Pin,
-            focus: false,
+            focus: 0,
         });
         if let Some(d) = s.draft.as_mut() {
             d.name.anchor = Some(0);
@@ -135,11 +162,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let text = game.clipboard.get();
         state(|s| {
             if let Some(d) = s.draft.as_mut() {
-                if d.focus {
-                    d.color.insert(&text, 7);
-                } else {
-                    d.name.insert(&text, 48);
-                }
+                d.insert(&text);
             }
         });
     }
@@ -151,13 +174,17 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     .text("Метка удалена", "Waypoint deleted")
                     .to_owned()
             }),
-            Action::Save(d) => model::parse_color(&d.color.value)
+            Action::Save(d) => d
+                .position()
+                .and_then(|position| {
+                    model::parse_color(&d.color.value).map(|color| (position, color))
+                })
                 .map_err(|e| e.to_string())
-                .and_then(|color| {
+                .and_then(|(position, color)| {
                     client::save_own_waypoint(
                         d.id,
                         &d.dimension,
-                        d.position,
+                        position,
                         &d.name.value,
                         color,
                         d.kind,
@@ -469,7 +496,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             false,
         );
         let name = [x + 12., y + 34., w - 24., 21.];
-        field(game, batch, name, &d.name, !d.focus);
+        field(game, batch, name, &d.name, d.focus == 0);
         s.hits.push((name, Hit::Name));
         button(
             game,
@@ -493,42 +520,32 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             ),
             Hit::Kind,
         );
-        ui::text(
-            game,
-            batch,
-            language.text("Цвет метки", "Waypoint color"),
-            [x + 12., y + 93.],
-            0x9aacc0,
-            false,
-        );
         for (i, color) in [
             0xffcc55, 0xa4d3c9, 0xa6c9e5, 0xbcb8e3, 0xdfa8b5, 0xa2d0b7, 0xffffff, 0xff8866,
         ]
         .into_iter()
         .enumerate()
         {
-            let r = [x + 12. + i as f32 * 23., y + 106., 18., 17.];
+            let r = [x + 12. + i as f32 * 23., y + 90., 18., 17.];
             ui::rounded(game, batch, r, 3., 0xff000000 | color);
             s.hits.push((r, Hit::Swatch(color)));
         }
-        let color = [x + 12., y + 130., w - 24., 20.];
-        field(game, batch, color, &d.color, d.focus);
+        let color = [x + 12., y + 112., w - 24., 20.];
+        field(game, batch, color, &d.color, d.focus == 1);
         s.hits.push((color, Hit::Color));
+        for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+            let cw = (w - 24.0) / 3.0;
+            let left = x + 12.0 + i as f32 * cw;
+            ui::text(game, batch, axis, [left, y + 146.0], 0x9aacc0, false);
+            let r = [left + 12.0, y + 140.0, cw - 16.0, 21.0];
+            field(game, batch, r, &d.coordinates[i], d.focus == i + 2);
+            s.hits.push((r, Hit::Coordinate(i)));
+        }
         ui::text(
             game,
             batch,
-            &ui::clip(
-                game,
-                &format!(
-                    "{} · {:.0} {:.0} {:.0}",
-                    world(&d.dimension),
-                    d.position[0],
-                    d.position[1],
-                    d.position[2]
-                ),
-                w - 24.,
-            ),
-            [x + 12., y + 157.],
+            &world(&d.dimension),
+            [x + 12.0, y + 162.0],
             0x9aacc0,
             false,
         );
@@ -573,11 +590,11 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
                 s.draft = Some(Draft {
                     id: Some(id),
                     dimension: w.dimension.clone(),
-                    position: w.position,
+                    coordinates: coordinate_inputs(w.position),
                     name: TextInput::new(w.name.clone()),
                     color: TextInput::new(format!("#{:06X}", w.color)),
                     kind: w.kind,
-                    focus: false,
+                    focus: 0,
                 });
             }
         }
@@ -608,22 +625,27 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
                 s.draft = Some(Draft {
                     id: None,
                     dimension: p.dimension.into(),
-                    position: [p.x, p.y, p.z],
+                    coordinates: coordinate_inputs([p.x, p.y, p.z]),
                     name: TextInput::new(language.text("Новая метка", "New waypoint").into()),
                     color: TextInput::new("#FFCC55".into()),
                     kind: model::MarkerKind::Pin,
-                    focus: false,
+                    focus: 0,
                 });
             }
         }
         Hit::Name => {
             if let Some(d) = s.draft.as_mut() {
-                d.focus = false;
+                d.focus = 0;
             }
         }
         Hit::Color => {
             if let Some(d) = s.draft.as_mut() {
-                d.focus = true;
+                d.focus = 1;
+            }
+        }
+        Hit::Coordinate(i) => {
+            if let Some(d) = s.draft.as_mut() {
+                d.focus = i + 2;
             }
         }
         Hit::Kind => {
@@ -641,6 +663,13 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
                 if d.name.value.trim().is_empty() {
                     s.error = language
                         .text("Введите название метки", "Enter a waypoint name")
+                        .into();
+                } else if d.position().is_err() {
+                    s.error = language
+                        .text(
+                            "Проверьте X/Y/Z и границы мира",
+                            "Check X/Y/Z and world bounds",
+                        )
                         .into();
                 } else if model::parse_color(&d.color.value).is_err() {
                     s.error = language
@@ -717,12 +746,12 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         "key.keyboard.enter" => choose(game, s, Hit::Save),
         "key.keyboard.tab" => {
             if let Some(d) = s.draft.as_mut() {
-                d.focus = !d.focus;
+                d.focus = (d.focus + 1) % 5;
             }
         }
         _ => {
             if let Some(d) = s.draft.as_mut() {
-                let input = if d.focus { &mut d.color } else { &mut d.name };
+                let input = d.input();
                 match input.key(
                     key,
                     game.modifiers.control_key(),
@@ -753,11 +782,7 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) -> bool {
     if !game.modifiers.control_key() {
         state(|s| {
             if let Some(d) = s.draft.as_mut() {
-                if d.focus {
-                    d.color.insert(&c.to_string(), 7);
-                } else {
-                    d.name.insert(&c.to_string(), 48);
-                }
+                d.insert(&c.to_string());
             }
         });
     }

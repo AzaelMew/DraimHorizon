@@ -128,6 +128,7 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub auto_reconnect: bool,
     pub experiments_accepted: bool,
     pub language: Language,
     pub waypoints: Vec<WaypointRow>,
@@ -218,6 +219,7 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
     SetLanguage(Language),
@@ -306,6 +308,7 @@ impl std::fmt::Debug for Action {
                 .field(z)
                 .finish(),
             Self::SetMap(p) => f.debug_tuple("SetMap").field(p).finish(),
+            Self::ToggleReconnect => f.write_str("ToggleReconnect"),
             Self::AcceptExperiments => f.write_str("AcceptExperiments"),
             Self::SetExperimental(p) => f.debug_tuple("SetExperimental").field(p).finish(),
             Self::SetPriority(p) => f.debug_tuple("SetPriority").field(p).finish(),
@@ -415,6 +418,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    ToggleReconnect,
+    SettingsTab(u8),
     ConfirmExperiments,
     DeclineExperiments,
     SaveDeepLKey,
@@ -719,7 +724,7 @@ impl Menu {
     fn experiments_dialog(&self, width: f32, height: f32) -> Vec<Widget> {
         let w = (width - 32.0).clamp(200.0, 460.0);
         let x = (width - w) * 0.5;
-        let y = (height - 144.0) * 0.5;
+        let y = (height - 184.0) * 0.5;
         let lines = match self.language {
             Language::Russian => [
                 "Экспериментальные функции",
@@ -741,7 +746,7 @@ impl Menu {
             .enumerate()
             .map(|(i, text)| {
                 widget(
-                    [x + 10.0, y + 10.0 + i as f32 * 18.0, w - 20.0, 18.0],
+                    [x + 10.0, y + 44.0 + i as f32 * 16.0, w - 20.0, 18.0],
                     text,
                     None,
                     false,
@@ -749,7 +754,7 @@ impl Menu {
             })
             .collect();
         out.push(widget(
-            [x + 10.0, y + 110.0, (w - 30.0) * 0.5, 24.0],
+            [x + 10.0, y + 150.0, (w - 30.0) * 0.5, 24.0],
             self.language.text("Подтвердить", "Confirm"),
             Some(Control::ConfirmExperiments),
             false,
@@ -757,7 +762,7 @@ impl Menu {
         out.push(widget(
             [
                 x + 20.0 + (w - 30.0) * 0.5,
-                y + 110.0,
+                y + 150.0,
                 (w - 30.0) * 0.5,
                 24.0,
             ],
@@ -1091,85 +1096,49 @@ impl Menu {
     ) -> Vec<Widget> {
         let titles = [
             self.language.text("Основное", "General"),
-            self.language
-                .text("Связь и друзья", "Connections and friends"),
-            self.language.text("Карта и приваты", "Map and claims"),
+            self.language.text("Связь", "Network"),
+            self.language.text("Карта", "Map"),
             self.language.text("Чат", "Chat"),
             self.language.text("Торги", "Trading"),
             "TAB",
-            "Scoreboard",
+            "HUD",
         ];
-        out.push(widget(
-            [x, 56.0, 24.0, 18.0],
-            "←",
-            Some(Control::SettingsSection(-1)),
-            false,
-        ));
-        out.push(widget(
-            [x + 28.0, 56.0, w - 56.0, 18.0],
-            titles[self.settings_section as usize],
-            None,
-            false,
-        ));
-        out.push(widget(
-            [x + w - 24.0, 56.0, 24.0, 18.0],
-            "→",
-            Some(Control::SettingsSection(1)),
-            false,
-        ));
+        let columns = 7_usize;
+        let rows = titles.len().div_ceil(columns);
+        let body_top = 56.0 + rows as f32 * 22.0 + 4.0;
+        for (i, title) in titles.into_iter().enumerate() {
+            out.push(widget(
+                [
+                    x + (i % columns) as f32 * w / columns as f32,
+                    56.0 + (i / columns) as f32 * 22.0,
+                    w / columns as f32 - 3.0,
+                    20.0,
+                ],
+                title,
+                Some(Control::SettingsTab(i as u8)),
+                self.settings_section == i as u8,
+            ));
+        }
         let mut inner = match self.settings_section {
             0 => {
-                let mut v = Vec::new();
-                for (i, (label, control)) in [
-                    (
-                        self.language
-                            .text("Оформление интерфейса", "Interface appearance"),
-                        Control::Appearance,
+                out.push(widget(
+                    [x, body_top, w, 22.0],
+                    self.language
+                        .text("Оформление интерфейса", "Interface appearance"),
+                    Some(Control::Appearance),
+                    false,
+                ));
+                out.push(widget(
+                    [x, body_top + 28.0, w, 22.0],
+                    localized!(
+                        self.language,
+                        "Авто-реконнект: {}",
+                        "Auto reconnect: {}",
+                        self.on(model.auto_reconnect)
                     ),
-                    (
-                        self.language.text(
-                            "Связь, relay и Auto Trust",
-                            "Connection, relay and Auto Trust",
-                        ),
-                        Control::SettingsSection(1),
-                    ),
-                    (
-                        self.language
-                            .text("Карта, границы и память", "Map, borders and storage"),
-                        Control::SettingsSection(2),
-                    ),
-                    (
-                        self.language
-                            .text("Чат и уведомления", "Chat and notifications"),
-                        Control::SettingsSection(3),
-                    ),
-                    (
-                        self.language.text("Торги", "Trading"),
-                        Control::SettingsSection(4),
-                    ),
-                    ("TAB", Control::SettingsSection(5)),
-                    ("Scoreboard", Control::SettingsSection(6)),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    v.push(widget(
-                        [
-                            x,
-                            80.0 + i as f32 * ((height - 112.0) / 7.0).min(28.0),
-                            w,
-                            ((height - 112.0) / 7.0).min(26.0) - 2.0,
-                        ],
-                        label,
-                        Some(if i > 0 {
-                            Control::SettingsSection((i as i8).min(6))
-                        } else {
-                            control
-                        }),
-                        false,
-                    ));
-                }
-                out.extend(v);
+                    Some(Control::ToggleReconnect),
+                    model.auto_reconnect,
+                ));
                 return out;
             }
             1 => {
@@ -1199,11 +1168,11 @@ impl Menu {
                         _ => setting.group == 5,
                     })
                     .collect();
-                let per = (((height - 136.0) / 22.0).floor() as usize).max(1);
+                let per = (((height - body_top - 56.0) / 22.0).floor() as usize).max(1);
                 let pages = settings.len().div_ceil(per).max(1);
                 let page = self.settings_page.min(pages - 1);
                 for (i, setting) in settings.into_iter().skip(page * per).take(per).enumerate() {
-                    let y = 80.0 + i as f32 * 22.0;
+                    let y = body_top + i as f32 * 22.0;
                     out.push(widget(
                         [x, y, w - 48.0, 20.0],
                         format!(
@@ -1247,9 +1216,9 @@ impl Menu {
             .iter()
             .map(|widget| widget.rect[1] + widget.rect[3])
             .fold(80.0_f32, f32::max);
-        let scale = ((height - 108.0) / (bottom - 54.0).max(1.0)).min(1.0);
+        let scale = ((height - body_top - 28.0) / (bottom - 54.0).max(1.0)).min(1.0);
         for widget in &mut inner {
-            widget.rect[1] = 80.0 + (widget.rect[1] - 54.0).max(0.0) * scale;
+            widget.rect[1] = body_top + (widget.rect[1] - 54.0).max(0.0) * scale;
             widget.rect[3] *= scale;
         }
         out.extend(inner);
@@ -2563,6 +2532,17 @@ impl Menu {
             Control::Language => Some(Action::SetLanguage(self.language.other())),
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
+            Control::ToggleReconnect => Some(Action::ToggleReconnect),
+            Control::SettingsTab(section) => {
+                self.settings_section = section.min(6);
+                self.settings_page = 0;
+                self.focus = None;
+                self.deepl_key.clear();
+                if self.settings_section == 1 {
+                    self.relay_url = model.relay_url.clone();
+                }
+                None
+            }
             Control::SettingsSection(dir) => {
                 self.deepl_key.clear();
                 self.settings_section = (self.settings_section as i8 + dir).rem_euclid(7) as u8;
@@ -2574,7 +2554,7 @@ impl Menu {
                 None
             }
             Control::SettingsPage(dir) => {
-                let per = (((height - 136.0) / 22.0).floor() as usize).max(1);
+                let per = (((height - 138.0) / 22.0).floor() as usize).max(1);
                 let count = super::claim_borders_economy::SETTINGS
                     .iter()
                     .filter(|s| match self.settings_section {
@@ -4545,5 +4525,34 @@ mod tests {
         reopened.activate(&accepted, 400.0, Control::Tab(Tab::Experimental));
         assert!(!reopened.experiments_prompt);
         assert_eq!(reopened.tab, Tab::Experimental);
+    }
+    #[test]
+    fn settings_tabs_jump_to_sections_and_reset_editor_focus() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Settings,
+            ..Menu::default()
+        };
+        for section in 0..7 {
+            menu.settings_page = 10;
+            let rect = menu
+                .layout(&model, 320.0, 240.0)
+                .into_iter()
+                .find(|w| w.control == Some(Control::SettingsTab(section)))
+                .unwrap()
+                .rect;
+            menu.click(
+                &model,
+                [320.0, 240.0],
+                [rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0],
+            );
+            assert_eq!(menu.settings_section, section);
+            assert_eq!(menu.settings_page, 0);
+            assert!(
+                menu.layout(&model, 320.0, 240.0)
+                    .iter()
+                    .any(|w| w.control == Some(Control::SettingsTab(section)) && w.selected)
+            );
+        }
     }
 }

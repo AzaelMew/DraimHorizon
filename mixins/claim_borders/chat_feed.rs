@@ -36,6 +36,10 @@ impl Channel {
     pub fn shows(self, entry: &Entry) -> bool {
         self == Self::All || entry.channel == self
     }
+    /// Friends is a view of existing chat, not a replacement for DM/trade channels.
+    pub fn shows_with_friends(self, entry: &Entry, important: bool) -> bool {
+        self.shows(entry) || self == Self::Party && important && entry.kind.is_chat()
+    }
 }
 #[derive(Default)]
 pub struct Tabs {
@@ -187,14 +191,11 @@ pub struct Entry {
     raw: String,
 }
 impl Entry {
-    pub fn display_body(&self, translated: bool, language: Language) -> &str {
+    pub fn display_body(&self, translated: bool, _language: Language) -> &str {
         if self.kind == Kind::Presence {
             match self.joined {
-                Some(false) => language.text("Отключился", "Left the server"),
-                Some(true) if self.original == "Впервые на сервере" => {
-                    language.text("Впервые на сервере", "First time on the server")
-                }
-                Some(true) => language.text("Подключился", "Joined the server"),
+                Some(false) => "−",
+                Some(true) => "+",
                 None => &self.original,
             }
         } else {
@@ -1161,7 +1162,10 @@ mod tests {
         feed.push("Steve joined the game", 40_000);
         for e in &feed.entries {
             assert!(!cyrillic(&event_summary(e, false, Language::English)));
-            assert_eq!(e.display_body(false, Language::Russian), e.original);
+            assert_eq!(
+                e.display_body(false, Language::Russian),
+                if e.joined == Some(false) { "−" } else { "+" }
+            );
         }
         for line in [
             "Alex drowned",
@@ -1200,10 +1204,7 @@ mod tests {
         feed.push("Steve joined for the first time: welcome!", 2);
         assert_eq!(feed.entries.len(), 1);
         assert_eq!(feed.entries[0].original, "Впервые на сервере");
-        assert_eq!(
-            feed.entries[0].display_body(false, Language::English),
-            "First time on the server"
-        );
+        assert_eq!(feed.entries[0].display_body(false, Language::English), "+");
         feed.push("Steve left the game", 3);
         feed.push("Steve joined the game", 4);
         assert_eq!(feed.entries.len(), 3);
@@ -1341,10 +1342,7 @@ mod tests {
             p,
         );
         assert_eq!(f.entries[0].kind, Kind::Presence);
-        assert_eq!(
-            f.entries[0].display_body(false, Language::English),
-            "Joined the server"
-        );
+        assert_eq!(f.entries[0].display_body(false, Language::English), "+");
         f.push_with("Steve joined for the first time: welcome!", 1, p);
         assert_eq!(f.entries.len(), 1);
         f.push_component(
@@ -1355,12 +1353,30 @@ mod tests {
         );
         f.push_component("Steve was burned to a crisp whilst fighting Zombie",&serde_json::json!({"translate":"death.attack.onFire.player","with":["Steve","Zombie"]}),3,p);
         assert_eq!(f.entries[1].kind, Kind::Presence);
-        assert_eq!(
-            f.entries[1].display_body(false, Language::English),
-            "Left the server"
-        );
+        assert_eq!(f.entries[1].display_body(false, Language::English), "−");
         assert_eq!(f.entries[2].kind, Kind::Death);
         assert_eq!(classify("Steve покинул игру").0, Kind::Presence);
         assert_eq!(classify("Steve был убит зомби").0, Kind::Death);
+    }
+    #[test]
+    fn friends_view_includes_existing_important_chat_without_changing_other_tabs() {
+        let mut feed = Feed::default();
+        feed.push("<Alex> hello", 1);
+        let entry = &feed.entries[0];
+        let mut priority = super::super::claim_borders_chat_priority::Preferences::default();
+        assert!(
+            !Channel::Party.shows_with_friends(entry, priority.rule(&entry.name, false).is_some())
+        );
+        priority.set("aLeX", 0x77d9b0, false).unwrap();
+        assert!(
+            Channel::Party.shows_with_friends(entry, priority.rule(&entry.name, false).is_some())
+        );
+        assert!(Channel::All.shows(entry));
+        assert_eq!(entry.channel, Channel::All);
+        assert!(
+            Channel::Party.shows_with_friends(entry, priority.rule(&entry.name, true).is_some())
+        );
+        feed.push("Steve joined the game", 2);
+        assert!(!Channel::Party.shows_with_friends(&feed.entries[1], true));
     }
 }

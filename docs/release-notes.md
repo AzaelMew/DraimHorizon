@@ -1,8 +1,9 @@
-**DraimHorizon 0.23.1** for Horizon main c78187d (Java 26.3).
+**DraimHorizon 0.24.0** for Horizon 1d63e0a (Java 26.3).
 
-- Official Lucide interface icons, a one-line title and a gear settings button.
-- Smaller waypoint rows; double left click your own waypoint in Seed Map to delete it.
-- One-time RU/EN Experiments warning with explicit Confirm / Decline. Accepting does not enable features.
-- Release checks reject an outdated Horizon pin.
+- Compact one-line X/Y/Z strip and editable coordinates in the X waypoint editor.
+- Friends chat also shows regular messages from friends and important players.
+- + / minus presence notifications, centered language control and top settings tabs.
+- One-time Experiments confirmation with a red outline, Lucide warning icon and soft green/red actions.
+- Auto reconnect defaults on, keeps Horizon's countdown/cancel and five backed-off attempts; manual exit and permanent access refusals stop retries. Toggle in General settings.
 
-The current Horizon Launcher displays `claim_borders` for GitHub-installed native mods. Its native format has no display-name field; fixing that label requires a launcher update. Existing settings and map data retain their stable ID.
+GitHub native-mod names still require the separate launcher patch. PR #10 remains a separate, unmerged translation-language feature.

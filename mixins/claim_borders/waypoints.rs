@@ -498,6 +498,18 @@ fn validate_color(color: u32) -> Result<(), WaypointError> {
     Ok(())
 }
 
+/// Parse edited X/Y/Z as finite coordinates within the same bounds as saved markers.
+pub fn parse_coordinates(values: [&str; 3]) -> Result<[f64; 3], WaypointError> {
+    let mut position = [0.0; 3];
+    for (i, value) in values.into_iter().enumerate() {
+        position[i] = value
+            .trim()
+            .parse()
+            .map_err(|_| WaypointError::Invalid("Invalid coordinate."))?;
+    }
+    validate_position(position)?;
+    Ok(position)
+}
 pub fn parse_color(value: &str) -> Result<u32, WaypointError> {
     let value = value.strip_prefix('#').unwrap_or(value);
     if value.len() != 6 || !value.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -747,5 +759,22 @@ mod tests {
         assert_eq!(new.all("test")[0].kind, MarkerKind::Portal);
         assert!(store.update("test", 7, "", 0, MarkerKind::Star).is_err());
         assert_eq!(store.all("test")[0].name, "Portal");
+    }
+    #[test]
+    fn edited_coordinates_reject_nonfinite_and_out_of_world_values() {
+        assert_eq!(
+            parse_coordinates([" -1898 ", "60", "63"]).unwrap(),
+            [-1898.0, 60.0, 63.0]
+        );
+        for invalid in [
+            ["NaN", "64", "0"],
+            ["inf", "64", "0"],
+            ["30000001", "64", "0"],
+            ["0", "2049", "0"],
+            ["", "64", "0"],
+            ["/tp", "64", "0"],
+        ] {
+            assert!(parse_coordinates(invalid).is_err());
+        }
     }
 }

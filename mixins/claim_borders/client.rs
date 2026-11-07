@@ -35,8 +35,8 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                 "waypoint".into(),
                 language
                     .text(
-                        "DraimHorizons: метка у себя",
-                        "DraimHorizons: waypoint here",
+                        "DraimHorizon: метка / координаты",
+                        "DraimHorizon: waypoint / coordinates",
                     )
                     .into(),
                 "key.keyboard.x".into(),
@@ -116,6 +116,7 @@ enum Relay {
 }
 
 struct Client {
+    reconnect_initialized: bool,
     scope: String,
     own: u128,
     root: PathBuf,
@@ -158,6 +159,7 @@ struct Client {
 impl Default for Client {
     fn default() -> Self {
         Self {
+            reconnect_initialized: false,
             scope: String::new(),
             own: 0,
             root: PathBuf::new(),
@@ -328,6 +330,18 @@ pub(super) fn reset() {
 }
 
 pub(super) fn frame(game: &mut Game<'_>) {
+    if game.native_on(claims::ID) && !state(|c| c.reconnect_initialized) {
+        state(|c| c.reconnect_initialized = true);
+        if game
+            .native_setting(claims::ID, "auto_reconnect_initialized")
+            .as_deref()
+            != Some("true")
+        {
+            game.settings.extras.auto_reconnect = true;
+            game.settings.save(&Game::options_path());
+            game.native_set_setting(claims::ID, "auto_reconnect_initialized", "true");
+        }
+    }
     crate::game::claim_borders_chat_view::frame(game);
     crate::game::claim_borders_ore_view::frame(game);
     crate::game::claim_borders_auto_trust_view::frame(game);
@@ -1462,6 +1476,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            auto_reconnect: game.settings.extras.auto_reconnect,
             experiments_accepted: game
                 .native_setting(claims::ID, "experiments_accepted")
                 .as_deref()
@@ -1690,6 +1705,11 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetMap(preferences) => {
             crate::game::claim_borders_map_view::configure(game, preferences);
+            Ok(Vec::new())
+        }
+        Action::ToggleReconnect => {
+            game.settings.extras.auto_reconnect = !game.settings.extras.auto_reconnect;
+            game.settings.save(&Game::options_path());
             Ok(Vec::new())
         }
         Action::AcceptExperiments => {

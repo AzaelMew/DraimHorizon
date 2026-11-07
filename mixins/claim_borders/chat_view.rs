@@ -88,6 +88,23 @@ impl Default for State {
         }
     }
 }
+impl State {
+    fn friend_message(&self, entry: &model::Entry) -> bool {
+        entry.kind.is_chat()
+            && self
+                .priority
+                .rule(
+                    &entry.name,
+                    self.friends.contains(&entry.name.to_ascii_lowercase()),
+                )
+                .is_some()
+    }
+    fn shows(&self, entry: &model::Entry) -> bool {
+        self.tabs
+            .selected
+            .shows_with_friends(entry, self.friend_message(entry))
+    }
+}
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
     f(&mut STATE
@@ -429,7 +446,7 @@ fn capture_inner(
                 .entries
                 .iter()
                 .rev()
-                .filter(|e| main_entry(e, preferences) && s.tabs.selected.shows(e))
+                .filter(|e| main_entry(e, preferences) && s.shows(e))
                 .nth(s.feed.scroll)
                 .map(|e| e.id)
         } else {
@@ -450,7 +467,12 @@ fn capture_inner(
             && (entry.channel != model::Channel::Whisper
                 || game.ui.chat.shows(horizon_client::chat::ChatSource::Player))
         {
-            s.tabs.record(entry.channel);
+            let channel = entry.channel;
+            let friend = s.friend_message(entry);
+            s.tabs.record(channel);
+            if friend && channel != model::Channel::Party {
+                s.tabs.record(model::Channel::Party);
+            }
         }
         if let Some(anchor) = anchor {
             if let Some(position) = s
@@ -458,7 +480,7 @@ fn capture_inner(
                 .entries
                 .iter()
                 .rev()
-                .filter(|e| main_entry(e, preferences) && s.tabs.selected.shows(e))
+                .filter(|e| main_entry(e, preferences) && s.shows(e))
                 .position(|e| e.id == anchor)
             {
                 if position > 0 {
@@ -587,7 +609,7 @@ pub(super) fn scroll(
             .feed
             .entries
             .iter()
-            .filter(|e| main_entry(e, s.settings.preferences) && s.tabs.selected.shows(e))
+            .filter(|e| main_entry(e, s.settings.preferences) && s.shows(e))
             .count();
         if amount > 0.0 {
             s.feed.scroll = (s.feed.scroll + 3).min(count.saturating_sub(1));
@@ -1077,10 +1099,22 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     };
     let mut hits = Vec::new();
     let start = batch.vertices.len();
+    let important_names: HashSet<String> = state(|s| {
+        s.friends
+            .iter()
+            .cloned()
+            .chain(s.priority.rules.keys().cloned())
+            .collect()
+    });
     let main = entries
         .iter()
         .rev()
-        .filter(|e| main_entry(e, p) && channel.shows(e) && (show_players || !e.kind.is_chat()))
+        .filter(|e| {
+            main_entry(e, p)
+                && channel
+                    .shows_with_friends(e, important_names.contains(&e.name.to_ascii_lowercase()))
+                && (show_players || !e.kind.is_chat())
+        })
         .skip(if focused { scroll } else { 0 });
     let mut region = layout.main;
     let mut tab_hits = Vec::new();

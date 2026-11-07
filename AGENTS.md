@@ -56,6 +56,12 @@ The format is major.minor.patch.
 - Relay service version is separate, in relay/dhrelay/__init__.py. Bump it when deployed relay behavior changes and update its healthcheck tests.
 - Bumping a version does not authorize commit, push, release or deployment. Perform those when requested. A release task includes monitoring CI and checking published assets.
 
+## Icons
+
+- All project interface and documentation pictograms must use official Lucide icons: https://lucide.dev/icons/.
+- Reuse ui_style::Icon and tools/update_lucide.py; do not draw substitutes or use Unicode icon glyphs. Keep Lucide attribution with the bundle.
+- Minecraft item textures, player heads and user images are content, not interface pictograms.
+
 ## Implementation contracts
 
 - Reuse existing types, entry points and patterns. Keep changes focused and readable. Add dependencies only for a concrete need.

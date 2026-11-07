@@ -179,16 +179,26 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         if s.menu.experiments_prompt {
             ui::fill(game, batch, screen.rect, 0xcc080b12);
             let w = (screen.rect[2] - 32.0).clamp(200.0, 460.0);
-            ui::fill(
+            let r = [
+                (screen.rect[2] - w) * 0.5,
+                (screen.rect[3] - 184.0) * 0.5,
+                w,
+                184.0,
+            ];
+            ui::rounded(game, batch, r, 7.0, 0xffd58c98);
+            ui::rounded(
                 game,
                 batch,
-                [
-                    (screen.rect[2] - w) * 0.5,
-                    (screen.rect[3] - 144.0) * 0.5,
-                    w,
-                    144.0,
-                ],
+                [r[0] + 1.5, r[1] + 1.5, w - 3.0, 181.0],
+                6.0,
                 0xff181c28,
+            );
+            ui::icon(
+                game,
+                batch,
+                ui::Icon::Warning,
+                [r[0] + (w - 22.0) * 0.5, r[1] + 12.0, 22.0, 22.0],
+                0xe7a1aa,
             );
         }
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
@@ -247,6 +257,47 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     },
                 });
             }
+            if s.menu.experiments_prompt {
+                if let Some(control) = widget.control {
+                    let confirm = control == model::Control::ConfirmExperiments;
+                    let color = if confirm { 0xa2d0b7 } else { 0xdfa8b5 };
+                    ui::rounded(game, batch, widget.rect, 4.0, 0x35000000 | color);
+                    let tw = game.native_text_width(&widget.text);
+                    let left = x + (w - tw - 17.0) * 0.5;
+                    ui::icon(
+                        game,
+                        batch,
+                        if confirm {
+                            ui::Icon::Check
+                        } else {
+                            ui::Icon::Close
+                        },
+                        [left, y + (h - 11.0) * 0.5, 11.0, 11.0],
+                        color,
+                    );
+                    ui::text(
+                        game,
+                        batch,
+                        &widget.text,
+                        [left + 17.0, y + (h - 8.0) * 0.5],
+                        color,
+                        false,
+                    );
+                } else {
+                    ui::text(
+                        game,
+                        batch,
+                        &widget.text,
+                        [
+                            x + (w - game.native_text_width(&widget.text)) * 0.5,
+                            y + (h - 8.0) * 0.5,
+                        ],
+                        0xe3ebf3,
+                        false,
+                    );
+                }
+                continue;
+            }
             if widget.control.is_some() {
                 ui::button_base(
                     game,
@@ -256,6 +307,47 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     widget.selected,
                     screen.mouse,
                 );
+            }
+            if let Some(model::Control::SettingsTab(section)) = widget.control
+                && w < 60.0
+            {
+                let icon = [
+                    ui::Icon::Settings,
+                    ui::Icon::Signal,
+                    ui::Icon::Map,
+                    ui::Icon::Chat,
+                    ui::Icon::Market,
+                    ui::Icon::People,
+                    ui::Icon::Layers,
+                ][usize::from(section.min(6))];
+                ui::icon(
+                    game,
+                    batch,
+                    icon,
+                    [x + (w - 12.0) * 0.5, y + (h - 12.0) * 0.5, 12.0, 12.0],
+                    ui::preferences(game).accent.color(),
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
+                }
+                continue;
+            }
+            if widget.control == Some(model::Control::Language)
+                || matches!(widget.control, Some(model::Control::SettingsTab(_)))
+            {
+                let text = ui::clip(game, &widget.text, w - 6.0);
+                ui::text(
+                    game,
+                    batch,
+                    &text,
+                    [
+                        x + (w - game.native_text_width(&text)) * 0.5,
+                        y + (h - 8.0) * 0.5,
+                    ],
+                    0xe3ebf3,
+                    false,
+                );
+                continue;
             }
             if widget.control == Some(model::Control::Tab(model::Tab::Settings)) {
                 ui::icon(

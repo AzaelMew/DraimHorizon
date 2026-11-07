@@ -522,28 +522,26 @@ pub(super) fn hud(
         true,
     );
     if p.coordinates {
-        let (x, y) = corners.place(corner(p.corner), p.size as f32, 11.0);
-        label(
+        let text = format!(
+            "X {:.0}  ·  Y {:.0}  ·  Z {:.0}",
+            source.player[0].floor(),
+            source.player[1].floor(),
+            source.player[2].floor()
+        );
+        let width = (game.native_text_width(&text) + 14.0).min(batch.width - 12.0);
+        let (x, y) = corners.place(corner(p.corner), width, 18.0);
+        ui::rounded(game, batch, [x, y, width, 16.0], 4.0, 0xe0182230);
+        ui::fill(
             game,
             batch,
-            &format!(
-                "X {:.0}  Z {:.0}",
-                source.player[0].floor(),
-                source.player[2].floor()
-            ),
-            [x, y],
-            p.size as f32,
-            0xe0e7f0,
+            [x + 5.0, y + 4.0, 2.0, 8.0],
+            0xff000000 | ui::preferences(game).accent.color(),
         );
-        let (x, y) = corners.place(corner(p.corner), p.size as f32, 11.0);
-        label(
-            game,
-            batch,
-            &format!("Y {:.0}", source.player[1].floor()),
-            [x, y],
-            p.size as f32,
-            0xe0e7f0,
-        );
+        let scale = ((width - 14.0) / game.native_text_width(&text).max(1.0)).min(1.0);
+        let start = batch.vertices.len();
+        let at = [x + 10.0, y + (16.0 - 8.0 * scale) * 0.5];
+        ui::text(game, batch, &text, at, 0xe0e7f0, false);
+        batch.scale_since(start, at[0], at[1], scale, scale);
     }
 }
 pub(super) fn label(

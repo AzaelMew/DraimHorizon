@@ -13,7 +13,7 @@ from svgpathtools import Line, svgstr2paths
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "53fab88ff9d1b48f4704b5b5b560d6b4d560bf4c"
 BASE = f"https://raw.githubusercontent.com/lucide-icons/lucide/{REVISION}"
-ICONS = dict(Search="search", Portal="door-open", Chest="archive", Star="star",
+ICONS = dict(Warning="triangle-exclamation-point", Search="search", Portal="door-open", Chest="archive", Star="star",
              Pin="map-pin", People="users", Map="map", Chat="message-square",
              Market="store", Close="x", Settings="settings", Plus="plus",
              Minus="minus", Back="chevron-left", Next="chevron-right", Check="check",

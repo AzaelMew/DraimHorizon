@@ -95,3 +95,6 @@ pub use chat_feed as claim_borders_chat_feed;
 #[path = "../mixins/claim_borders/chat_archive.rs"]
 pub mod chat_archive;
 pub use chat_archive as claim_borders_chat_archive;
+
+#[path = "../mixins/claim_borders/reconnect.rs"]
+pub mod reconnect;
