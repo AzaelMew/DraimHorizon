@@ -1,17 +1,114 @@
 [mod]
 id = "draimhorizon"
-version = "0.25.0"
+version = "0.28.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "6560641ba51a452f6bc2407baa4eb1b3be517ca8"
+horizon_revision = "2ebf00a0281c592f79191e76fce0e7d522c6f425"
 
 [[module]]
 id = "runtime"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders"
 source = "runtime.rs"
+
+[[module]]
+id = "navigation"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_navigation"
+source = "navigation.rs"
+
+[[module]]
+id = "mining"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_mining"
+source = "mining.rs"
+
+[[module]]
+id = "schematic"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic"
+source = "schematic.rs"
+
+[[module]]
+id = "farming"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_farming"
+source = "farming.rs"
+
+[[module]]
+id = "schematic-files"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_files"
+source = "schematic_files.rs"
+
+[[module]]
+id = "workshop-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_workshop_view"
+source = "workshop_view.rs"
+
+[[module]]
+id = "construction"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_construction"
+source = "construction.rs"
+
+[[module]]
+id = "construction-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_construction_view"
+source = "construction_view.rs"
+
+[[injection]]
+id = "mining-attack"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_handle_input"
+helper = "mining_attack_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "mining-attack-reset"
+kind = "RETURN"
+target = "horizon_client::game::remote::Game<'_>::remote_handle_input"
+helper = "mining_attack_end_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "mining-ack"
+kind = "RETURN"
+target = "horizon_client::game::remote::Game<'_>::end_predictions"
+helper = "mining_ack_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "sequence", ty = "i32", value = "sequence" },
+]
+
+[[module]]
+id = "navigation-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_navigation_view"
+source = "navigation_view.rs"
+
+[[injection]]
+id = "navigation-input"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_movement_input"
+helper = "navigation_input_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "self" },
+  { name = "forward", ty = "&mut f32", value = "&mut *forward" },
+  { name = "strafe", ty = "&mut f32", value = "&mut *strafe" },
+  { name = "jump", ty = "&mut bool", value = "&mut *jump" },
+  { name = "sneak", ty = "&mut bool", value = "&mut *sneak" },
+]
 
 [[module]]
 id = "camera-zoom"

@@ -1,0 +1,28 @@
+# Tunnels and bridges
+
+Open **J → Experiments → Baritone** and choose **Tunnel** or **Bridge**. Both modes use actual loaded terrain and ordinary client actions; the server decides whether a break or placement succeeds.
+
+## Tunnel
+
+- Hold a suitable pickaxe with durability remaining and keep an inventory slot free.
+- Choose North, East, South or West; a length of 1, 8, 16, 32 or 64; width 1–3; and height 2–3.
+- **Floor** enables filling missing floor blocks from the hotbar. Leave it off to stop at gaps. Width two extends one column to the left of the central lane.
+- **Preview** shows the direction and length without acting. **Start** clears each section from top to bottom, confirms each break with the server, then advances.
+
+The floor under the player is not excavated. Containers, unbreakable blocks, falling blocks above the cut, liquids and unavailable chunks stop the task. Unsupported partial block shapes also stop progress.
+
+## Bridge and floor placement
+
+Bridge creates a one-block-wide, level passage in the selected direction. It fills gaps and walks across existing solid floor; it does not clear walls. Choose a length, put suitable blocks in the hotbar and click **Start**.
+
+Allowed materials are cobblestone, cobbled deepslate, stone, deepslate, dirt, netherrack, andesite, granite, diorite and stone bricks. Sand, gravel, containers and interactive or hazardous blocks are not selected.
+
+The driver selects a material slot temporarily. It checks a real support face, reach, entity obstruction and the client's dry placement result. Where needed, it approaches the platform edge while sneaking. It waits for the server acknowledgement before walking onto the placed floor. Without a usable support face, materials or confirmation it stops.
+
+Automatic slot selection is restored afterwards if the player has not chosen another slot manually. Changing slots manually during placement pauses the task and preserves the player's choice.
+
+## Pause and reset
+
+Movement, jump, sneak, attack/use, opening a screen or moving the camera during placement pauses construction. **Resume** preserves completed distance and waits for in-flight confirmations. After moving away from the passage, start a new task instead of resuming from a distant position. **Stop** cancels the task. Reconnecting or changing worlds/accounts clears it.
+
+The first implementation uses full blocks and a straight level passage. It does not build arbitrary schematics, stairs, towers, farms or fluid-clearing structures. Item pickup remains the ordinary game's behavior.

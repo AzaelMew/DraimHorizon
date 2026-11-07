@@ -1,10 +1,9 @@
-**DraimHorizon 0.25.0** for official Horizon Nightly 2026-11-07 - 6560641 (Java 26.3).
+**DraimHorizon 0.28.0** for official Horizon Nightly 2026-11-07 — 2ebf00a (Java 26.3).
 
-**Upgrade requires a reinstall:** remove `claim_borders` in Horizon Launcher, install `https://github.com/DraimCiDo/DraimHorizon` again, then rebuild native mods. The new bundle ID is `draimhorizon`; the launcher cannot update the old ID into the new one. Do not keep both versions installed. Keep the data folder: settings, waypoints, friends and history reuse `claim_borders`. Reapply custom key bindings and activation preferences if needed.
+- **Farm:** mature wheat, carrots, potatoes and beetroot, bounded area, confirmed harvest limit or continuous operation, optional hotbar replanting, preview and pause/resume.
+- **Schematics:** Sponge/WorldEdit `.schem` and Litematica `.litematic`, XYZ origin, quarter-turn rotation, outline preview, material list and confirmed building from hotbar items.
+- Bounded background imports, normal game interactions, level farm routes and cancellation on account/world changes. Stop on occupied cells, missing supplies, server refusal or timeout.
 
-- Single-line presence cards with official Lucide + / minus marks before player names.
-- Green joins, red leaves; cyan joins and lavender leaves for friends and important players.
-- Settings > Chat > Notifications > Presence view switches between Icon and name and the localized Text view.
-- Includes PR #11 with the identity/storage separation, checked against the official Nightly rather than main.
+[Controls, supported formats and limits](automation.md). No demolition, scaffolding, supply fetching or block-entity NBT placement. This remains experimental and requires live server testing.
 
-The shared DeepL service requirements from 0.24.0 are unchanged (service 1.3.0 for all new language/source settings).
+Includes existing navigation, following, mining, tunneling and bridges. Bundle ID remains `draimhorizon`; existing settings/data remain under `claim_borders`.

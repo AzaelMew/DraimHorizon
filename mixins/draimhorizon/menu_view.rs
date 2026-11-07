@@ -332,8 +332,38 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 }
                 continue;
             }
+            if let Some(model::Control::BaritoneMode(mode)) = widget.control
+                && w < 56.0
+            {
+                let icon = match mode {
+                    model::BaritoneMode::Navigation => ui::Icon::Map,
+                    model::BaritoneMode::Mining => ui::Icon::Search,
+                    model::BaritoneMode::Tunnel => ui::Icon::Layers,
+                    model::BaritoneMode::Bridge => ui::Icon::Fill,
+                    model::BaritoneMode::Farm => ui::Icon::Restock,
+                    model::BaritoneMode::Schematic => ui::Icon::Home,
+                };
+                ui::icon(
+                    game,
+                    batch,
+                    icon,
+                    [x + (w - 12.0) * 0.5, y + (h - 12.0) * 0.5, 12.0, 12.0],
+                    ui::preferences(game).accent.color(),
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
+                }
+                continue;
+            }
             if widget.control == Some(model::Control::Language)
-                || matches!(widget.control, Some(model::Control::SettingsTab(_)))
+                || matches!(
+                    widget.control,
+                    Some(
+                        model::Control::SettingsTab(_)
+                            | model::Control::ExperimentalTab(_)
+                            | model::Control::BaritoneMode(_)
+                    )
+                )
             {
                 let text = ui::clip(game, &widget.text, w - 6.0);
                 ui::text(
@@ -457,6 +487,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     w -= 14.0;
                 }
             }
+            if hover
+                && matches!(
+                    widget.control,
+                    Some(model::Control::NavigationWaypoint | model::Control::NavigationPlayer)
+                )
+            {
+                request_tip = Some(widget.text.clone());
+            }
             let color = if widget.muted {
                 0x8995a5
             } else if widget.selected {
@@ -478,6 +516,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         s.menu.text()[..cursor].to_owned()
                     };
                     let (ru, en) = match s.menu.focus {
+                        Some(model::Field::SchematicOrigin) => ("XYZ: ", "XYZ: "),
+                        Some(model::Field::NavigationCoordinates) => ("XYZ: ", "XYZ: "),
                         Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
                         Some(model::Field::Name) => ("Имя: ", "Name: "),
                         Some(model::Field::Color | model::Field::PriorityColor) => {

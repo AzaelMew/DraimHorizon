@@ -128,6 +128,11 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub navigation_players: Vec<(u128, String)>,
+    pub navigation_status: String,
+    pub schematic_files: Vec<String>,
+    pub navigation_paused: bool,
+    pub navigation_waypoints: Vec<WaypointRow>,
     pub auto_reconnect: bool,
     pub experiments_accepted: bool,
     pub language: Language,
@@ -219,6 +224,21 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    RefreshSchematics,
+    SchematicInfo(bool),
+    LoadSchematic {
+        filename: String,
+        origin: [i32; 3],
+        rotation: u8,
+        running: bool,
+    },
+    Navigate {
+        goal: super::claim_borders_navigation::Goal,
+        running: bool,
+    },
+    NavigationPause,
+    NavigationResume,
+    NavigationStop,
     ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
@@ -290,6 +310,28 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Navigate { goal, running } => f
+                .debug_struct("Navigate")
+                .field("goal", goal)
+                .field("running", running)
+                .finish(),
+            Self::RefreshSchematics => f.write_str("RefreshSchematics"),
+            Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
+            Self::LoadSchematic {
+                filename,
+                origin,
+                rotation,
+                running,
+            } => f
+                .debug_tuple("LoadSchematic")
+                .field(filename)
+                .field(origin)
+                .field(rotation)
+                .field(running)
+                .finish(),
+            Self::NavigationPause => f.write_str("NavigationPause"),
+            Self::NavigationResume => f.write_str("NavigationResume"),
+            Self::NavigationStop => f.write_str("NavigationStop"),
             Self::SetDeepLKey(_) => f.write_str("SetDeepLKey([redacted])"),
             Self::SetLanguage(language) => f.debug_tuple("SetLanguage").field(language).finish(),
             Self::PlayerRequest { kind, uuid, name } => f
@@ -375,6 +417,8 @@ pub enum Tab {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
+    SchematicOrigin,
+    NavigationCoordinates,
     Name,
     Color,
     PeerCode,
@@ -404,6 +448,22 @@ pub enum ChatSection {
     DeepL,
     Priority,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ExperimentalSection {
+    #[default]
+    Ores,
+    Baritone,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum BaritoneMode {
+    #[default]
+    Navigation,
+    Mining,
+    Tunnel,
+    Bridge,
+    Farm,
+    Schematic,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
     Width,
@@ -418,6 +478,39 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    FarmCrop,
+    FarmRadius,
+    FarmLimit,
+    FarmReplant,
+    FarmPreview,
+    FarmStart,
+    SchematicFile,
+    SchematicRefresh,
+    SchematicRotation,
+    SchematicPreview,
+    SchematicBuild,
+    SchematicMaterials,
+    SchematicFolder,
+    ConstructDirection,
+    ConstructLength,
+    ConstructWidth,
+    ConstructHeight,
+    ConstructFloor,
+    ConstructPreview,
+    ConstructStart,
+    BaritoneMode(BaritoneMode),
+    MiningOre,
+    MiningLimit,
+    MiningPreview,
+    MiningStart,
+    NavigationPlayer,
+    NavigationWaypoint,
+    NavigationPreview,
+    NavigationStart,
+    NavigationPause,
+    NavigationResume,
+    NavigationStop,
+    ExperimentalTab(ExperimentalSection),
     ToggleReconnect,
     SettingsTab(u8),
     ConfirmExperiments,
@@ -527,7 +620,26 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    pub farm_crop: super::claim_borders_farming::Crop,
+    pub farm_radius: u8,
+    pub farm_limit: u16,
+    pub farm_replant: bool,
+    pub schematic_file: Option<String>,
+    pub schematic_origin: String,
+    pub schematic_rotation: u8,
+    pub construct_direction: super::claim_borders_construction::Direction,
+    pub construct_length: u16,
+    pub construct_width: u8,
+    pub construct_height: u8,
+    pub construct_floor: bool,
+    pub baritone_mode: BaritoneMode,
+    pub mining_ore: u8,
+    pub mining_limit: u16,
+    pub navigation_player: Option<u128>,
+    pub navigation_coordinates: String,
+    pub navigation_waypoint: Option<u64>,
     pub experiments_prompt: bool,
+    pub experimental_section: ExperimentalSection,
     deepl_key: String,
     pub language: Language,
     pub tab: Tab,
@@ -560,7 +672,26 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
+            farm_crop: super::claim_borders_farming::Crop::Wheat,
+            farm_radius: 6,
+            farm_limit: 16,
+            farm_replant: true,
+            schematic_file: None,
+            schematic_origin: String::new(),
+            schematic_rotation: 0,
             experiments_prompt: false,
+            navigation_coordinates: String::new(),
+            navigation_waypoint: None,
+            navigation_player: None,
+            baritone_mode: BaritoneMode::Navigation,
+            mining_ore: 0,
+            mining_limit: 16,
+            construct_direction: super::claim_borders_construction::Direction::North,
+            construct_length: 16,
+            construct_width: 1,
+            construct_height: 2,
+            construct_floor: false,
+            experimental_section: ExperimentalSection::default(),
             deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
@@ -2067,6 +2198,460 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
+        let tab_width = (w - 4.0) * 0.5;
+        for (index, section, label) in [
+            (
+                0,
+                ExperimentalSection::Ores,
+                self.language.text("Руды", "Ores"),
+            ),
+            (1, ExperimentalSection::Baritone, "Baritone"),
+        ] {
+            out.push(widget(
+                [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
+                label,
+                Some(Control::ExperimentalTab(section)),
+                self.experimental_section == section,
+            ));
+        }
+        if self.experimental_section == ExperimentalSection::Baritone {
+            let mode_width = (w - 20.0) / 6.0;
+            for (i, mode, label) in [
+                (
+                    0,
+                    BaritoneMode::Navigation,
+                    self.language.text("Навигация", "Navigation"),
+                ),
+                (
+                    1,
+                    BaritoneMode::Mining,
+                    self.language.text("Добыча", "Mining"),
+                ),
+                (
+                    2,
+                    BaritoneMode::Tunnel,
+                    self.language.text("Тоннель", "Tunnel"),
+                ),
+                (
+                    3,
+                    BaritoneMode::Bridge,
+                    self.language.text("Мост", "Bridge"),
+                ),
+                (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (
+                    5,
+                    BaritoneMode::Schematic,
+                    self.language.text("Схемы", "Schematics"),
+                ),
+            ] {
+                out.push(widget(
+                    [x + i as f32 * (mode_width + 4.0), 80.0, mode_width, 16.0],
+                    label,
+                    Some(Control::BaritoneMode(mode)),
+                    self.baritone_mode == mode,
+                ));
+            }
+            let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
+            let h = (step - 2.0).min(22.0);
+            if matches!(
+                self.baritone_mode,
+                BaritoneMode::Farm | BaritoneMode::Schematic
+            ) {
+                let farm = self.baritone_mode == BaritoneMode::Farm;
+                let rows: Vec<(String, Control)> = if farm {
+                    vec![
+                        (
+                            match self.farm_crop {
+                                super::claim_borders_farming::Crop::Wheat => {
+                                    self.language.text("Пшеница", "Wheat")
+                                }
+                                super::claim_borders_farming::Crop::Carrots => {
+                                    self.language.text("Морковь", "Carrots")
+                                }
+                                super::claim_borders_farming::Crop::Potatoes => {
+                                    self.language.text("Картофель", "Potatoes")
+                                }
+                                super::claim_borders_farming::Crop::Beetroot => {
+                                    self.language.text("Свёкла", "Beetroot")
+                                }
+                            }
+                            .into(),
+                            Control::FarmCrop,
+                        ),
+                        (
+                            localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
+                            Control::FarmRadius,
+                        ),
+                        (
+                            localized!(
+                                self.language,
+                                "Лимит: {} (0 = ∞)",
+                                "Limit: {} (0 = ∞)",
+                                self.farm_limit
+                            ),
+                            Control::FarmLimit,
+                        ),
+                        (
+                            localized!(
+                                self.language,
+                                "Пересадка: {}",
+                                "Replant: {}",
+                                if self.farm_replant {
+                                    self.language.text("Вкл", "On")
+                                } else {
+                                    self.language.text("Выкл", "Off")
+                                }
+                            ),
+                            Control::FarmReplant,
+                        ),
+                        (
+                            self.language.text("Просмотр", "Preview").into(),
+                            Control::FarmPreview,
+                        ),
+                        (
+                            self.language.text("Начать", "Start").into(),
+                            Control::FarmStart,
+                        ),
+                    ]
+                } else {
+                    vec![
+                        (
+                            self.schematic_file.clone().unwrap_or_else(|| {
+                                self.language.text("Выберите файл", "Select file").into()
+                            }),
+                            Control::SchematicFile,
+                        ),
+                        (
+                            self.language.text("Обновить", "Refresh").into(),
+                            Control::SchematicRefresh,
+                        ),
+                        (
+                            format!("XYZ: {}", self.schematic_origin),
+                            Control::Field(Field::SchematicOrigin),
+                        ),
+                        (
+                            format!("{}°", self.schematic_rotation * 90),
+                            Control::SchematicRotation,
+                        ),
+                        (
+                            self.language.text("Просмотр", "Preview").into(),
+                            Control::SchematicPreview,
+                        ),
+                        (
+                            self.language.text("Строить", "Build").into(),
+                            Control::SchematicBuild,
+                        ),
+                    ]
+                };
+                for (i, (label, c)) in rows.into_iter().enumerate() {
+                    out.push(widget(
+                        [
+                            x + (i % 2) as f32 * (tab_width + 4.0),
+                            100.0 + (i / 2) as f32 * step,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(c),
+                        false,
+                    ));
+                }
+            } else if matches!(
+                self.baritone_mode,
+                BaritoneMode::Tunnel | BaritoneMode::Bridge
+            ) {
+                use super::claim_borders_construction::Direction;
+                let direction = match self.construct_direction {
+                    Direction::North => self.language.text("Север", "North"),
+                    Direction::East => self.language.text("Восток", "East"),
+                    Direction::South => self.language.text("Юг", "South"),
+                    Direction::West => self.language.text("Запад", "West"),
+                };
+                out.push(widget(
+                    [x, 100.0, tab_width, h],
+                    direction,
+                    Some(Control::ConstructDirection),
+                    false,
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Длина: {}",
+                        "Length: {}",
+                        self.construct_length
+                    ),
+                    Some(Control::ConstructLength),
+                    false,
+                ));
+                if self.baritone_mode == BaritoneMode::Tunnel {
+                    let third = (w - 8.0) / 3.0;
+                    for (i, label, control, on) in [
+                        (
+                            0,
+                            localized!(
+                                self.language,
+                                "Ширина: {}",
+                                "Width: {}",
+                                self.construct_width
+                            ),
+                            Control::ConstructWidth,
+                            false,
+                        ),
+                        (
+                            1,
+                            localized!(
+                                self.language,
+                                "Высота: {}",
+                                "Height: {}",
+                                self.construct_height
+                            ),
+                            Control::ConstructHeight,
+                            false,
+                        ),
+                        (
+                            2,
+                            localized!(
+                                self.language,
+                                "Пол: {}",
+                                "Floor: {}",
+                                if self.construct_floor {
+                                    self.language.text("да", "on")
+                                } else {
+                                    self.language.text("нет", "off")
+                                }
+                            ),
+                            Control::ConstructFloor,
+                            self.construct_floor,
+                        ),
+                    ] {
+                        out.push(widget(
+                            [x + i as f32 * (third + 4.0), 100.0 + step, third, h],
+                            label,
+                            Some(control),
+                            on,
+                        ));
+                    }
+                } else {
+                    out.push(widget(
+                        [x, 100.0 + step, w, h],
+                        self.language.text(
+                            "Блоки для пола — из хотбара",
+                            "Floor blocks are taken from the hotbar",
+                        ),
+                        None,
+                        false,
+                    ));
+                }
+                for (i, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::ConstructPreview,
+                    ),
+                    (
+                        1,
+                        self.language.text("Начать", "Start"),
+                        Control::ConstructStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + i as f32 * (tab_width + 4.0),
+                            100.0 + 2.0 * step,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            } else if self.baritone_mode == BaritoneMode::Mining {
+                let ore = &experimental::ORES
+                    [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    localized!(
+                        self.language,
+                        "Руда: {}",
+                        "Ore: {}",
+                        self.language.text(ore.label, ore.label_en)
+                    ),
+                    Some(Control::MiningOre),
+                    false,
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, w, h],
+                    localized!(self.language, "Блоков: {}", "Blocks: {}", self.mining_limit),
+                    Some(Control::MiningLimit),
+                    false,
+                ));
+                for (i, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::MiningPreview,
+                    ),
+                    (
+                        1,
+                        self.language.text("Добывать", "Mine"),
+                        Control::MiningStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + i as f32 * (tab_width + 4.0),
+                            100.0 + step * 2.0,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            } else {
+                let waypoint = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+                let player = self.navigation_player.and_then(|id| {
+                    model
+                        .navigation_players
+                        .iter()
+                        .find(|(uuid, _)| *uuid == id)
+                });
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    format!("XYZ: {}", self.navigation_coordinates),
+                    Some(Control::Field(Field::NavigationCoordinates)),
+                    self.focus == Some(Field::NavigationCoordinates),
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Метка: {}",
+                        "Waypoint: {}",
+                        waypoint.map_or(self.language.text("выбрать", "select"), |w| w
+                            .name
+                            .as_str())
+                    ),
+                    Some(Control::NavigationWaypoint),
+                    waypoint.is_some(),
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, 100.0 + step, tab_width, h],
+                    localized!(
+                        self.language,
+                        "Игрок: {}",
+                        "Player: {}",
+                        player.map_or(
+                            self.language.text("выбрать", "select"),
+                            |(_, name)| name.as_str()
+                        )
+                    ),
+                    Some(Control::NavigationPlayer),
+                    player.is_some(),
+                ));
+                for (index, label, control) in [
+                    (
+                        0,
+                        self.language.text("Просмотр", "Preview"),
+                        Control::NavigationPreview,
+                    ),
+                    (
+                        1,
+                        if self.navigation_player.is_some() {
+                            self.language.text("Следовать", "Follow")
+                        } else {
+                            self.language.text("Идти", "Go")
+                        },
+                        Control::NavigationStart,
+                    ),
+                ] {
+                    out.push(widget(
+                        [
+                            x + index as f32 * (tab_width + 4.0),
+                            100.0 + step * 2.0,
+                            tab_width,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+            }
+            out.push(widget(
+                [x, 100.0 + step * 3.0, tab_width, h],
+                if model.navigation_paused {
+                    self.language.text("Продолжить", "Resume")
+                } else {
+                    self.language.text("Пауза", "Pause")
+                },
+                Some(if model.navigation_paused {
+                    Control::NavigationResume
+                } else {
+                    Control::NavigationPause
+                }),
+                false,
+            ));
+            out.push(widget(
+                [x + tab_width + 4.0, 100.0 + step * 3.0, tab_width, h],
+                self.language.text("Остановить", "Stop"),
+                Some(Control::NavigationStop),
+                false,
+            ));
+            out.push(widget(
+                [x, height - 48.0, w, 14.0],
+                &model.navigation_status,
+                None,
+                false,
+            ));
+            if self.baritone_mode == BaritoneMode::Schematic {
+                out.push(widget(
+                    [x, height - 30.0, tab_width, 14.0],
+                    self.language
+                        .text("Материалы → буфер", "Materials → clipboard"),
+                    Some(Control::SchematicMaterials),
+                    false,
+                ));
+                out.push(widget(
+                    [x + tab_width + 4.0, height - 30.0, tab_width, 14.0],
+                    self.language
+                        .text("Путь к папке → буфер", "Folder path → clipboard"),
+                    Some(Control::SchematicFolder),
+                    false,
+                ));
+            } else {
+                out.push(widget(
+                    [x, height - 30.0, w, 14.0],
+                    if matches!(
+                        self.baritone_mode,
+                        BaritoneMode::Tunnel | BaritoneMode::Bridge
+                    ) {
+                        self.language.text(
+                            "Пол: камень, булыжник, земля из хотбара",
+                            "Floor: stone, cobblestone or dirt from the hotbar",
+                        )
+                    } else if self.baritone_mode == BaritoneMode::Mining {
+                        self.language.text(
+                            "Нужна исправная кирка и свободный слот",
+                            "A usable pickaxe and a free slot are required",
+                        )
+                    } else {
+                        self.language.text(
+                            "XYZ через пробел · движение вручную ставит паузу",
+                            "Space-separated XYZ · manual movement pauses",
+                        )
+                    },
+                    None,
+                    false,
+                ));
+            }
+            return out;
+        }
         let p = model.experimental;
         let selected = usize::from(p.selected);
         for (index, (label, control, on)) in [
@@ -2130,9 +2715,14 @@ impl Menu {
         .into_iter()
         .enumerate()
         {
-            let step = ((height - 126.0) / 3.0).clamp(24.0, 28.0);
-            let y = 56.0 + index as f32 * step;
-            out.push(widget([x, y, w, 22.0], label, Some(control), on));
+            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+            let y = 82.0 + index as f32 * step;
+            out.push(widget(
+                [x, y, w, (step - 2.0).min(22.0)],
+                label,
+                Some(control),
+                on,
+            ));
         }
 
         out.push(widget(
@@ -2540,6 +3130,264 @@ impl Menu {
             .ok()
             .filter(|_| self.color.trim().trim_start_matches('#').len() == 6);
         match control {
+            Control::ConstructDirection => {
+                self.construct_direction = self.construct_direction.next();
+                None
+            }
+            Control::ConstructLength => {
+                let values = [1, 8, 16, 32, 64];
+                let i = values
+                    .iter()
+                    .position(|v| *v == self.construct_length)
+                    .unwrap_or(0);
+                self.construct_length = values[(i + 1) % values.len()];
+                None
+            }
+            Control::ConstructWidth => {
+                self.construct_width = self.construct_width % 3 + 1;
+                None
+            }
+            Control::ConstructHeight => {
+                self.construct_height = if self.construct_height == 2 { 3 } else { 2 };
+                None
+            }
+            Control::ConstructFloor => {
+                self.construct_floor = !self.construct_floor;
+                None
+            }
+            Control::ConstructPreview | Control::ConstructStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let bridge = self.baritone_mode == BaritoneMode::Bridge;
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Construct(
+                        super::claim_borders_construction::Config {
+                            kind: if bridge {
+                                super::claim_borders_construction::Kind::Bridge
+                            } else {
+                                super::claim_borders_construction::Kind::Tunnel
+                            },
+                            direction: self.construct_direction,
+                            width: if bridge { 1 } else { self.construct_width },
+                            height: if bridge { 2 } else { self.construct_height },
+                            length: self.construct_length,
+                            fill_floor: bridge || self.construct_floor,
+                        },
+                    ),
+                    running: control == Control::ConstructStart,
+                })
+            }
+            Control::FarmCrop => {
+                self.farm_crop = self.farm_crop.next();
+                None
+            }
+            Control::FarmRadius => {
+                self.farm_radius = match self.farm_radius {
+                    3 => 6,
+                    6 => 9,
+                    9 => 12,
+                    _ => 3,
+                };
+                None
+            }
+            Control::FarmLimit => {
+                self.farm_limit = match self.farm_limit {
+                    0 => 16,
+                    16 => 32,
+                    32 => 64,
+                    _ => 0,
+                };
+                None
+            }
+            Control::FarmReplant => {
+                self.farm_replant = !self.farm_replant;
+                None
+            }
+            Control::FarmPreview | Control::FarmStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Farm(
+                        super::claim_borders_farming::Config {
+                            crop: self.farm_crop,
+                            radius: self.farm_radius,
+                            limit: self.farm_limit,
+                            replant: self.farm_replant,
+                        },
+                    ),
+                    running: control == Control::FarmStart,
+                })
+            }
+            Control::SchematicFile => {
+                if model.schematic_files.is_empty() {
+                    return Some(Action::RefreshSchematics);
+                }
+                let i = self
+                    .schematic_file
+                    .as_ref()
+                    .and_then(|n| model.schematic_files.iter().position(|f| f == n))
+                    .map_or(0, |i| (i + 1) % model.schematic_files.len());
+                self.schematic_file = Some(model.schematic_files[i].clone());
+                None
+            }
+            Control::SchematicRefresh => Some(Action::RefreshSchematics),
+            Control::SchematicRotation => {
+                self.schematic_rotation = (self.schematic_rotation + 1) % 4;
+                None
+            }
+            Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
+            Control::SchematicFolder => Some(Action::SchematicInfo(true)),
+            Control::SchematicPreview | Control::SchematicBuild => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let Some(filename) = self.schematic_file.clone() else {
+                    self.notice = self
+                        .language
+                        .text("Сначала выберите файл", "Select a file first")
+                        .into();
+                    return None;
+                };
+                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+                let origin = <[&str; 3]>::try_from(values.as_slice())
+                    .ok()
+                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
+                    .map(|p| p.map(|v| v as i32));
+                let Some(origin) = origin else {
+                    self.notice = self.language.text("Введите X Y Z", "Enter X Y Z").into();
+                    return None;
+                };
+                Some(Action::LoadSchematic {
+                    filename,
+                    origin,
+                    rotation: self.schematic_rotation,
+                    running: control == Control::SchematicBuild,
+                })
+            }
+            Control::BaritoneMode(mode) => {
+                self.baritone_mode = mode;
+                self.focus = None;
+                None
+            }
+            Control::MiningOre => {
+                self.mining_ore = (self.mining_ore + 1) % experimental::ORES.len() as u8;
+                None
+            }
+            Control::MiningLimit => {
+                let limits = [1, 8, 16, 32, 64];
+                let at = limits
+                    .iter()
+                    .position(|n| *n == self.mining_limit)
+                    .unwrap_or(0);
+                self.mining_limit = limits[(at + 1) % limits.len()];
+                None
+            }
+            Control::MiningPreview | Control::MiningStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                Some(Action::Navigate {
+                    goal: super::claim_borders_navigation::Goal::Mine {
+                        ore: self.mining_ore,
+                        limit: self.mining_limit,
+                    },
+                    running: control == Control::MiningStart,
+                })
+            }
+            Control::NavigationPlayer => {
+                let next = self
+                    .navigation_player
+                    .and_then(|id| {
+                        model
+                            .navigation_players
+                            .iter()
+                            .position(|(uuid, _)| *uuid == id)
+                    })
+                    .map_or(0, |i| i + 1);
+                self.navigation_player = model.navigation_players.get(next).map(|(uuid, _)| *uuid);
+                self.navigation_waypoint = None;
+                self.focus = None;
+                if model.navigation_players.is_empty() {
+                    self.notice = self
+                        .language
+                        .text(
+                            "Поблизости нет загруженных игроков",
+                            "No loaded players nearby",
+                        )
+                        .into();
+                }
+                None
+            }
+            Control::NavigationWaypoint => {
+                self.navigation_player = None;
+                let index = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().position(|w| w.id == id));
+                let next = index.map_or(0, |i| i + 1);
+                self.navigation_waypoint = model.navigation_waypoints.get(next).map(|w| w.id);
+                self.focus = None;
+                if model.navigation_waypoints.is_empty() {
+                    self.notice = self
+                        .language
+                        .text(
+                            "Нет меток в текущем измерении",
+                            "No waypoints in this dimension",
+                        )
+                        .into();
+                }
+                None
+            }
+            Control::NavigationPreview | Control::NavigationStart => {
+                if !model.experiments_accepted {
+                    self.experiments_prompt = true;
+                    return None;
+                }
+                let goal = if let Some(id) = self.navigation_player {
+                    super::claim_borders_navigation::Goal::Follow(id)
+                } else if let Some(id) = self.navigation_waypoint {
+                    super::claim_borders_navigation::Goal::Waypoint(id)
+                } else {
+                    let values: Vec<_> = self.navigation_coordinates.split_whitespace().collect();
+                    let position = if let Ok(values) = <[&str; 3]>::try_from(values.as_slice()) {
+                        super::claim_borders_waypoints::parse_coordinates(values).ok()
+                    } else {
+                        None
+                    };
+                    let Some(position) = position else {
+                        self.notice = self
+                            .language
+                            .text(
+                                "Введите X Y Z, например: 120 64 -350",
+                                "Enter X Y Z, for example: 120 64 -350",
+                            )
+                            .into();
+                        return None;
+                    };
+                    super::claim_borders_navigation::Goal::Coordinates(
+                        super::claim_borders_navigation::block(position),
+                    )
+                };
+                self.focus = None;
+                Some(Action::Navigate {
+                    goal,
+                    running: control == Control::NavigationStart,
+                })
+            }
+            Control::NavigationPause => Some(Action::NavigationPause),
+            Control::NavigationResume => Some(Action::NavigationResume),
+            Control::NavigationStop => Some(Action::NavigationStop),
+            Control::ExperimentalTab(section) => {
+                self.experimental_section = section;
+                self.focus = None;
+                None
+            }
             Control::Language => Some(Action::SetLanguage(self.language.other())),
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
@@ -3192,6 +4040,12 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::SchematicOrigin => &mut self.schematic_origin,
+            Field::NavigationCoordinates => {
+                self.navigation_waypoint = None;
+                self.navigation_player = None;
+                &mut self.navigation_coordinates
+            }
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
@@ -3207,6 +4061,8 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::SchematicOrigin) => &self.schematic_origin,
+            Some(Field::NavigationCoordinates) => &self.navigation_coordinates,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -3256,6 +4112,7 @@ impl Menu {
             return;
         };
         let limit = match field {
+            Field::NavigationCoordinates | Field::SchematicOrigin => 80,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -3273,6 +4130,8 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
+            || (matches!(field, Field::NavigationCoordinates | Field::SchematicOrigin)
+                && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
         {
             return;
         }
@@ -3306,6 +4165,16 @@ impl Menu {
             return false;
         }
         if key == "key.keyboard.tab" {
+            if self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Baritone
+                && !matches!(
+                    self.baritone_mode,
+                    BaritoneMode::Navigation | BaritoneMode::Schematic
+                )
+            {
+                self.focus = None;
+                return true;
+            }
             if self.tab == Tab::Settings
                 && self.settings_section == 3
                 && self.chat_section == ChatSection::DeepL
@@ -3316,7 +4185,17 @@ impl Menu {
                 return true;
             }
             self.focus = Some(
-                if self.relay_setup || (self.tab == Tab::Settings && self.settings_section == 1) {
+                if self.tab == Tab::Experimental
+                    && self.experimental_section == ExperimentalSection::Baritone
+                {
+                    if self.baritone_mode == BaritoneMode::Schematic {
+                        Field::SchematicOrigin
+                    } else {
+                        Field::NavigationCoordinates
+                    }
+                } else if self.relay_setup
+                    || (self.tab == Tab::Settings && self.settings_section == 1)
+                {
                     if self.focus == Some(Field::RelayUrl) {
                         Field::RelayToken
                     } else {
@@ -3901,6 +4780,341 @@ mod tests {
             let last = controls.last().unwrap();
             assert!(last.rect[1] + last.rect[3] <= hint.rect[1]);
         }
+    }
+
+    #[test]
+    fn experimental_tabs_preserve_ore_preferences_without_starting_automation() {
+        let model = ViewModel::default();
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Experimental,
+                language,
+                ..Menu::default()
+            };
+            for section in [ExperimentalSection::Baritone, ExperimentalSection::Ores] {
+                for height in [200.0, 216.0, 500.0] {
+                    let rows = menu.layout(&model, 360.0, height);
+                    let tab = rows
+                        .iter()
+                        .find(|row| row.control == Some(Control::ExperimentalTab(section)))
+                        .unwrap();
+                    let mouse = [
+                        tab.rect[0] + tab.rect[2] * 0.5,
+                        tab.rect[1] + tab.rect[3] * 0.5,
+                    ];
+                    assert!(menu.click(&model, [360.0, height], mouse).is_none());
+                    assert_eq!(menu.experimental_section, section);
+                    let rows = menu.layout(&model, 360.0, height);
+                    assert_eq!(
+                        rows.iter()
+                            .filter(|row| row.control == Some(Control::ExperimentalAllowed))
+                            .count(),
+                        usize::from(section == ExperimentalSection::Ores)
+                    );
+                    assert!(
+                        rows.iter()
+                            .any(|row| row.control == Some(Control::ExperimentalTab(section))
+                                && row.selected)
+                    );
+                    assert!(!model.experimental.allowed && !model.experimental.prediction);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn navigation_validates_coordinates_and_requires_experiment_consent() {
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            navigation_coordinates: "-0.2 64 120".into(),
+            ..Menu::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationPreview),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Coordinates([-1, 64, 120]),
+                running: false
+            })
+        ));
+        for text in [
+            "",
+            "1 2",
+            "NaN 64 1",
+            "1 64 inf",
+            "30000001 64 0",
+            "1 64 0 5",
+        ] {
+            menu.navigation_coordinates = text.into();
+            assert!(
+                menu.activate(&model, 200.0, Control::NavigationStart)
+                    .is_none()
+            );
+            assert!(!menu.notice.is_empty());
+        }
+        model.experiments_accepted = false;
+        menu.navigation_coordinates = "1 64 0".into();
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationStart)
+                .is_none()
+        );
+        assert!(menu.experiments_prompt);
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationResume)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn navigation_waypoint_selection_and_manual_edit_are_separate_targets() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            navigation_waypoints: vec![WaypointRow {
+                id: 41,
+                name: "Home".into(),
+                detail: String::new(),
+                color: 0,
+            }],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu::default();
+        assert!(
+            menu.activate(&model, 200.0, Control::NavigationWaypoint)
+                .is_none()
+        );
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Waypoint(41),
+                running: true
+            })
+        ));
+        menu.focus = Some(Field::NavigationCoordinates);
+        menu.character('1');
+        assert_eq!(menu.navigation_waypoint, None);
+        assert_eq!(menu.navigation_coordinates, "1");
+    }
+
+    #[test]
+    fn navigation_controls_fit_both_languages_in_compact_panels() {
+        for language in [Language::Russian, Language::English] {
+            let menu = Menu {
+                tab: Tab::Experimental,
+                experimental_section: ExperimentalSection::Baritone,
+                language,
+                ..Menu::default()
+            };
+            let model = ViewModel {
+                navigation_status: "Navigation status".into(),
+                ..ViewModel::default()
+            };
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls: Vec<_> = rows
+                    .iter()
+                    .filter(|w| {
+                        matches!(
+                            w.control,
+                            Some(
+                                Control::Field(Field::NavigationCoordinates)
+                                    | Control::NavigationWaypoint
+                                    | Control::NavigationPlayer
+                                    | Control::NavigationPreview
+                                    | Control::NavigationStart
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                            )
+                        )
+                    })
+                    .collect();
+                assert_eq!(controls.len(), 7);
+                let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mining_controls_are_explicit_and_fit_compact_panels() {
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Experimental,
+                experimental_section: ExperimentalSection::Baritone,
+                baritone_mode: BaritoneMode::Mining,
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel {
+                navigation_status: "Mining status".into(),
+                experiments_accepted: true,
+                ..ViewModel::default()
+            };
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::MiningPreview),
+                Some(Action::Navigate {
+                    goal: super::super::claim_borders_navigation::Goal::Mine { ore: 0, limit: 16 },
+                    running: false
+                })
+            ));
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::MiningStart),
+                Some(Action::Navigate { running: true, .. })
+            ));
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls: Vec<_> = rows
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r.control,
+                            Some(
+                                Control::MiningOre
+                                    | Control::MiningLimit
+                                    | Control::MiningPreview
+                                    | Control::MiningStart
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                                    | Control::BaritoneMode(_)
+                            )
+                        )
+                    })
+                    .collect();
+                assert_eq!(controls.len(), 12);
+                let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
+            model.experiments_accepted = false;
+            assert!(menu.activate(&model, 200.0, Control::MiningStart).is_none());
+            assert!(menu.experiments_prompt);
+        }
+    }
+
+    #[test]
+    fn construction_modes_validate_consent_and_compact_geometry() {
+        for language in [Language::Russian, Language::English] {
+            for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
+                let mut menu = Menu {
+                    tab: Tab::Experimental,
+                    experimental_section: ExperimentalSection::Baritone,
+                    baritone_mode: mode,
+                    language,
+                    ..Menu::default()
+                };
+                let mut model = ViewModel {
+                    navigation_status: "Build status".into(),
+                    experiments_accepted: true,
+                    ..ViewModel::default()
+                };
+                assert!(matches!(
+                    menu.activate(&model, 200.0, Control::ConstructPreview),
+                    Some(Action::Navigate {
+                        goal: super::super::claim_borders_navigation::Goal::Construct(_),
+                        running: false
+                    })
+                ));
+                for height in [200., 216., 300., 500.] {
+                    let rows = menu.layout(&model, 360., height);
+                    let controls: Vec<_> = rows
+                        .iter()
+                        .filter(|w| {
+                            matches!(
+                                w.control,
+                                Some(
+                                    Control::ConstructDirection
+                                        | Control::ConstructLength
+                                        | Control::ConstructWidth
+                                        | Control::ConstructHeight
+                                        | Control::ConstructFloor
+                                        | Control::ConstructPreview
+                                        | Control::ConstructStart
+                                        | Control::BaritoneMode(_)
+                                        | Control::NavigationPause
+                                        | Control::NavigationResume
+                                        | Control::NavigationStop
+                                )
+                            )
+                        })
+                        .collect();
+                    assert_eq!(
+                        controls.len(),
+                        if mode == BaritoneMode::Tunnel { 15 } else { 12 }
+                    );
+                    let status = rows.iter().find(|w| w.text == "Build status").unwrap();
+                    for (i, a) in controls.iter().enumerate() {
+                        assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
+                        for b in controls.iter().skip(i + 1) {
+                            assert!(
+                                a.rect[0] + a.rect[2] <= b.rect[0]
+                                    || b.rect[0] + b.rect[2] <= a.rect[0]
+                                    || a.rect[1] + a.rect[3] <= b.rect[1]
+                                    || b.rect[1] + b.rect[3] <= a.rect[1]
+                            );
+                        }
+                    }
+                }
+                model.experiments_accepted = false;
+                assert!(
+                    menu.activate(&model, 200., Control::ConstructStart)
+                        .is_none()
+                );
+                assert!(menu.experiments_prompt);
+            }
+        }
+    }
+
+    #[test]
+    fn navigation_follow_selection_is_by_uuid_and_coordinate_edits_clear_it() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            navigation_players: vec![(71, "Alice".into()), (82, "Bob".into())],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            navigation_waypoint: Some(7),
+            ..Menu::default()
+        };
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        assert_eq!(menu.navigation_waypoint, None);
+        assert_eq!(menu.navigation_player, Some(71));
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::NavigationStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Follow(71),
+                running: true
+            })
+        ));
+        menu.activate(&model, 200.0, Control::NavigationPlayer);
+        assert_eq!(menu.navigation_player, Some(82));
+        menu.focus = Some(Field::NavigationCoordinates);
+        menu.character('2');
+        assert_eq!(menu.navigation_player, None);
+        assert_eq!(menu.navigation_coordinates, "2");
     }
 
     use super::*;
@@ -4601,5 +5815,101 @@ mod tests {
             assert_eq!(next, expected_preferences);
             model.chat_preferences = next;
         }
+    }
+    #[test]
+    fn farming_and_schematic_actions_validate_and_fit() {
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            schematic_files: vec!["demo.schem".into(), "demo.litematic".into()],
+            ..Default::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            ..Default::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::FarmStart),
+            Some(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Farm(_),
+                running: true
+            })
+        ));
+        menu.activate(&model, 200.0, Control::SchematicFile);
+        assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
+        assert!(
+            menu.activate(&model, 200.0, Control::SchematicBuild)
+                .is_none()
+        );
+        for value in ["1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
+            menu.schematic_origin = value.into();
+            assert!(
+                menu.activate(&model, 200.0, Control::SchematicBuild)
+                    .is_none()
+            );
+        }
+        menu.schematic_origin = "-12 64 30".into();
+        menu.activate(&model, 200.0, Control::SchematicRotation);
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::SchematicPreview),
+            Some(Action::LoadSchematic {
+                origin: [-12, 64, 30],
+                rotation: 1,
+                running: false,
+                ..
+            })
+        ));
+        for mode in [BaritoneMode::Farm, BaritoneMode::Schematic] {
+            menu.baritone_mode = mode;
+            for height in [200.0, 216.0, 300.0, 500.0] {
+                let rows = menu.layout(&model, 360.0, height);
+                let controls = rows
+                    .iter()
+                    .filter(|w| {
+                        matches!(
+                            w.control,
+                            Some(
+                                Control::FarmCrop
+                                    | Control::FarmRadius
+                                    | Control::FarmLimit
+                                    | Control::FarmReplant
+                                    | Control::FarmPreview
+                                    | Control::FarmStart
+                                    | Control::SchematicFile
+                                    | Control::SchematicRefresh
+                                    | Control::SchematicRotation
+                                    | Control::SchematicPreview
+                                    | Control::SchematicBuild
+                                    | Control::SchematicMaterials
+                                    | Control::SchematicFolder
+                                    | Control::BaritoneMode(_)
+                                    | Control::NavigationPause
+                                    | Control::NavigationResume
+                                    | Control::NavigationStop
+                                    | Control::Field(Field::SchematicOrigin)
+                            )
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                for (i, a) in controls.iter().enumerate() {
+                    assert!(a.rect[1] + a.rect[3] <= height - 16.0);
+                    for b in controls.iter().skip(i + 1) {
+                        assert!(
+                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                || b.rect[1] + b.rect[3] <= a.rect[1]
+                        );
+                    }
+                }
+            }
+        }
+        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.key("key.keyboard.tab", 0);
+        assert_eq!(menu.focus, Some(Field::SchematicOrigin));
+        model.experiments_accepted = false;
+        menu.experiments_prompt = false;
+        assert!(menu.activate(&model, 200.0, Control::FarmStart).is_none());
+        assert!(menu.experiments_prompt);
     }
 }

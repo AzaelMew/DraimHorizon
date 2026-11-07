@@ -1,5 +1,42 @@
 # История версий
 
+## 0.28.0
+
+- Add Baritone > Farm: choose wheat, carrots, potatoes or beetroot, radius 3–12, harvest limit or continuous operation, and optional replanting. Harvest only mature crops, count server-confirmed breaks, and plant empty farmland with seeds from the hotbar.
+- Add Baritone > Schematics: import Sponge/WorldEdit .schem v2/v3 and Litematica .litematic v4–v7, including signed and multiple regions. Select integer XYZ origin and 0/90/180/270 rotation, preview up to 256 nearby block outlines, copy the material list, and build from hotbar items.
+- Decode bounded GZip/NBT imports on an idle worker. Reject path traversal, oversized files/regions, malformed palettes and versions newer than the client. Ignore entities and block-entity NBT.
+- Reuse normal movement, attack and use input. Check each dry placement against expected states and confirm all affected cells after the server acknowledgement; pause on conflicts, unavailable material, manual input, refusals or timeouts. Do not demolish occupied schematic cells.
+- Keep farm routes level to avoid automatic jump instructions. Preserve pending acknowledgements across pause/resume, restore the original hotbar selection, and discard jobs/import results on account/world changes.
+- Keep the official Nightly 2ebf00a pin and existing settings/data namespace.
+
+## 0.27.0
+
+- Add Baritone Tunnel and Bridge modes with cardinal direction, length, preview, pause/resume and stop. Tunnels support widths 1–3, heights 2–3 and optional floor filling.
+- Clear tunnel sections from top to bottom using ordinary digging and server acknowledgements. Stop at fluids, unloaded terrain, falling blocks, containers, unbreakable blocks or unsuitable tools.
+- Build a one-block-wide floor from suitable full blocks in the hotbar. Approach the edge while sneaking, validate the clicked support face and a dry placement preview, then wait for the server before walking onto the new floor.
+- Restore the original hotbar slot after automatic placement while respecting manual slot changes. Keep pending confirmations through pause/resume and cancel construction on world/account changes.
+- Keep the official Nightly 2ebf00a pin, existing navigation/following/ore mining and saved user data.
+
+## 0.26.0
+
+- Target the latest official Horizon Nightly 2026-11-07 source 2ebf00a, with refreshed source hashes and native validation.
+- Add Baritone > Mining: choose an ore and a 1–64 block limit, preview or mine reachable exposed ore from loaded chunks. Use ordinary attack processing and count only server-confirmed block changes.
+- Mining checks the held pickaxe, remaining durability, a free inventory slot, actual reach and entity obstruction. Avoid support under the player, adjacent fluids and falling blocks above the ore; stop on server rejection or timeout.
+
+- Add an experimental native walking navigator in the Baritone tab: enter XYZ or select a waypoint in the current dimension, preview a route, start, pause, resume and stop.
+- Calculate bounded A* segments on a background worker using snapshots of loaded server chunks. Render the remaining route and a localized HUD status with distance.
+- Walk and jump up one full block using normal movement input. Avoid unknown terrain, hazardous blocks, unsupported shapes and drops greater than one block.
+- Follow a nearby loaded player by UUID, maintain a short distance and replan as the player moves. Stop moving immediately when the target disappears; stop following after a 10-second loss and require Resume.
+- Replan automatically when terrain changes or movement stalls, with at most three recovery attempts near one location. Wait for landing before planning another segment.
+- Pause on manual movement and open screens. Cancel pending work and clear the destination on disconnect, dimension/account/world changes or mod disable.
+- This is an independent Rust navigator, not the Java Baritone library. Block placement, tunneling, farming, schematics and flight are not included.
+
+## 0.25.1
+
+- Split experimental settings into Ores and Baritone tabs in Russian and English, including compact layouts.
+- Preserve ore settings and the existing consent gate. Switching tabs never enables highlighting.
+- Baritone is an informational placeholder; movement automation is not integrated in this build.
+
 ## 0.25.0
 
 - Presence uses one-line, direction-colored Lucide status marks before the name. Normal joins/leaves are green/red; friends and important players use cyan/lavender.
