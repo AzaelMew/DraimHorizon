@@ -5039,6 +5039,7 @@ mod tests {
                     experiments_accepted: true,
                     ..ViewModel::default()
                 };
+                assert!(menu.construct_floor, "tunnel floor must be enabled by default");
                 assert!(matches!(
                     menu.activate(&model, 200.0, Control::ConstructPreview),
                     Some(Action::Navigate {
