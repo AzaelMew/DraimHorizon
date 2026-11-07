@@ -505,6 +505,8 @@ pub enum Control {
     MiningStart,
     NavigationPlayer,
     NavigationWaypoint,
+    NavigationPlayerChoice(usize),
+    NavigationWaypointChoice(usize),
     NavigationPreview,
     NavigationStart,
     NavigationPause,
@@ -638,6 +640,7 @@ pub struct Menu {
     pub navigation_player: Option<u128>,
     pub navigation_coordinates: String,
     pub navigation_waypoint: Option<u64>,
+    pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     deepl_key: String,
@@ -682,6 +685,7 @@ impl Default for Menu {
             experiments_prompt: false,
             navigation_coordinates: String::new(),
             navigation_waypoint: None,
+            navigation_choices: None,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
             mining_ore: 0,
@@ -849,6 +853,39 @@ impl Menu {
                         nav_step - 4.0
                     },
                 ];
+            }
+        }
+        if self.tab == Tab::Experimental && self.baritone_mode == BaritoneMode::Navigation {
+            if let Some(players) = self.navigation_choices {
+                let anchor = widgets.iter().find(|w| w.control == Some(if players {
+                    Control::NavigationPlayer
+                } else {
+                    Control::NavigationWaypoint
+                }));
+                if let Some(anchor) = anchor {
+                    let rect = anchor.rect;
+                    let entries = if players {
+                        model.navigation_players.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>()
+                    } else {
+                        model.navigation_waypoints.iter().map(|w| w.name.as_str()).collect::<Vec<_>>()
+                    };
+                    let count = entries.len().min(8);
+                    let item_h = 20.0;
+                    let menu_h = count.max(1) as f32 * item_h;
+                    let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
+                        rect[1] + rect[3]
+                    } else {
+                        (rect[1] - menu_h).max(8.0)
+                    };
+                    for i in 0..count {
+                        widgets.push(widget(
+                            [rect[0], top + i as f32 * item_h, rect[2], item_h],
+                            entries[i],
+                            Some(if players { Control::NavigationPlayerChoice(i) } else { Control::NavigationWaypointChoice(i) }),
+                            false,
+                        ));
+                    }
+                }
             }
         }
         widgets
@@ -3310,46 +3347,31 @@ impl Menu {
                 })
             }
             Control::NavigationPlayer => {
-                let next = self
-                    .navigation_player
-                    .and_then(|id| {
-                        model
-                            .navigation_players
-                            .iter()
-                            .position(|(uuid, _)| *uuid == id)
-                    })
-                    .map_or(0, |i| i + 1);
-                self.navigation_player = model.navigation_players.get(next).map(|(uuid, _)| *uuid);
-                self.navigation_waypoint = None;
+                self.navigation_choices = if self.navigation_choices == Some(true) { None } else { Some(true) };
                 self.focus = None;
-                if model.navigation_players.is_empty() {
-                    self.notice = self
-                        .language
-                        .text(
-                            "Поблизости нет загруженных игроков",
-                            "No loaded players nearby",
-                        )
-                        .into();
-                }
                 None
             }
             Control::NavigationWaypoint => {
-                self.navigation_player = None;
-                let index = self
-                    .navigation_waypoint
-                    .and_then(|id| model.navigation_waypoints.iter().position(|w| w.id == id));
-                let next = index.map_or(0, |i| i + 1);
-                self.navigation_waypoint = model.navigation_waypoints.get(next).map(|w| w.id);
+                self.navigation_choices = if self.navigation_choices == Some(false) { None } else { Some(false) };
                 self.focus = None;
-                if model.navigation_waypoints.is_empty() {
-                    self.notice = self
-                        .language
-                        .text(
-                            "Нет меток в текущем измерении",
-                            "No waypoints in this dimension",
-                        )
-                        .into();
+                None
+            }
+            Control::NavigationPlayerChoice(index) => {
+                if let Some((uuid, _)) = model.navigation_players.get(index) {
+                    self.navigation_player = Some(*uuid);
+                    self.navigation_waypoint = None;
                 }
+                self.navigation_choices = None;
+                self.focus = None;
+                None
+            }
+            Control::NavigationWaypointChoice(index) => {
+                if let Some(waypoint) = model.navigation_waypoints.get(index) {
+                    self.navigation_waypoint = Some(waypoint.id);
+                    self.navigation_player = None;
+                }
+                self.navigation_choices = None;
+                self.focus = None;
                 None
             }
             Control::NavigationPreview | Control::NavigationStart => {
