@@ -2360,7 +2360,7 @@ impl Menu {
                 self.baritone_mode,
                 BaritoneMode::Tunnel | BaritoneMode::Bridge
             ) {
-                let compact_tunnel = self.baritone_mode == BaritoneMode::Tunnel && height < 270.0;
+                let compact_tunnel = self.baritone_mode == BaritoneMode::Tunnel && height < 320.0;
                 out.push(widget(
                     [x, 100.0, if compact_tunnel { tab_width } else { w }, h],
                     localized!(
@@ -2586,7 +2586,7 @@ impl Menu {
                     ));
                 }
             }
-            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel && height >= 270.0 {
+            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel && height >= 320.0 {
                 100.0 + step * 5.0
             } else {
                 100.0 + step * 3.0
