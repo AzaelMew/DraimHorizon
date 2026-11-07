@@ -1,8 +1,9 @@
-**DraimHorizons 0.22.3** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
+**DraimHorizons 0.22.4** for **Horizon Nightly 2026-11-05 · f319701** (Java 26.3).
 
-- Switch the J menu between Russian and English. English mode translates incoming chat to English and outgoing chat to Russian.
-- Google can fall back to DeepL when a local API key is configured. See the [setup instructions](https://github.com/DraimCiDo/DraimHorizon/blob/v0.22.3/README.md).
-- Add or remove Important players by nickname from Friends, even when they are offline.
-- 3D claim borders start disabled. Enable them with `/claimborders on` or in the map settings.
+- A private relay can provide a shared DeepL fallback. Keep the DeepL key on the server and give friends only the relay address and access token.
+- Personal DeepL keys can be added or removed under J → Settings → Chat → DeepL.
+- Google endpoint failover is faster. Join, leave and first-visit labels follow the selected language locally.
+
+Update the relay to 1.2.0 and set `RELAY_DEEPL_API_KEY` in its server environment to enable shared translation. [Relay setup](https://github.com/DraimCiDo/DraimHorizon/blob/v0.22.4/relay/README.md)
 
 Rebuild native mods in the launcher after updating.

@@ -59,11 +59,9 @@ struct State {
     suppress: Option<(char, Instant)>,
 }
 fn editor() -> edit::Menu {
-    edit::Menu {
-        focus: Some(edit::Field::Name),
-        name: String::new(),
-        ..edit::Menu::default()
-    }
+    let mut menu = edit::Menu::default();
+    menu.focus = Some(edit::Field::Name);
+    menu
 }
 impl Default for State {
     fn default() -> Self {

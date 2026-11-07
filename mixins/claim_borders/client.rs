@@ -946,6 +946,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
         return match args[1] {
             "on" | "connect" => {
                 start_network(game)?;
+                crate::game::claim_borders_chat_view::refresh_translators();
                 Ok(vec!["[Party] Подключение к WebSocket relay.".into()])
             }
             "off" => {
@@ -953,6 +954,7 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
                     stop_network(c);
                     c.manual_off = true;
                 });
+                crate::game::claim_borders_chat_view::refresh_translators();
                 Ok(vec!["[Party] Relay отключён.".into()])
             }
             _ => Err("/party relay on|off. URL настраивается в меню M → Party → Relay.".into()),
@@ -1379,6 +1381,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             status: c.menu_feedback.clone(),
             chat_modern: chat.modern,
             chat_translate: chat.translate,
+            deepl_configured: chat.deepl_configured,
             chat_outgoing: crate::game::claim_borders_outgoing_view::enabled(game),
             chat_preferences: chat.preferences,
             priority,
@@ -1430,6 +1433,18 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
+        Action::SetDeepLKey(key) => {
+            crate::game::claim_borders_chat_view::set_deepl_key(game, key.as_deref())?;
+            let language = crate::game::claim_borders_chat_view::language(game);
+            Ok(vec![
+                if key.is_some() {
+                    language.text("Ключ DeepL обновлён.", "DeepL key updated.")
+                } else {
+                    language.text("Ключ DeepL удалён.", "DeepL key removed.")
+                }
+                .into(),
+            ])
+        }
         Action::SetLanguage(language) => {
             crate::game::claim_borders_chat_view::set_language(game, language);
             Ok(Vec::new())
@@ -1498,6 +1513,9 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "relay_autoconnect",
                 if on { "true" } else { "false" },
             );
+            if on {
+                crate::game::claim_borders_chat_view::refresh_translators();
+            }
             Ok(Vec::new())
         }
         Action::RelayConnect => party_command(game, &["relay", "on"]),
@@ -1715,7 +1733,22 @@ fn configure_network(url: String, token: Option<String>, clear_token: bool) -> R
         settings.save(&c.root.join("relay.json"))?;
         stop_network(c);
         c.network_settings = Some(settings);
-        Ok(())
+        Ok::<_, String>(())
+    })?;
+    crate::game::claim_borders_chat_view::refresh_translators();
+    Ok(())
+}
+
+pub(super) fn translation_relay() -> Option<claim_borders_relay_client::translation::SharedDeepL> {
+    state(|c| {
+        if c.manual_off {
+            return None;
+        }
+        let settings = c.network_settings.as_ref()?;
+        claim_borders_relay_client::translation::SharedDeepL::new(
+            &settings.url,
+            settings.access_token.clone()?,
+        )
     })
 }
 

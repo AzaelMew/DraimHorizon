@@ -344,7 +344,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
                     let cursor = s.menu.cursor();
                     let prefix_len = s.menu.text()[..cursor].chars().count();
-                    let shown = if s.menu.focus == Some(model::Field::RelayToken) {
+                    let secret = matches!(
+                        s.menu.focus,
+                        Some(model::Field::RelayToken | model::Field::DeepLKey)
+                    );
+                    let shown = if secret {
                         "*".repeat(prefix_len)
                     } else {
                         s.menu.text()[..cursor].to_owned()
@@ -359,10 +363,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Some(model::Field::FriendClaimColor) => ("Друзья: ", "Friends: "),
                         Some(model::Field::PeerCode) => ("Код друга: ", "Friend code: "),
                         Some(model::Field::PriorityName) => ("Ник: ", "Name: "),
+                        Some(model::Field::DeepLKey) => ("Ключ: ", "Key: "),
                         _ => ("", ""),
                     };
                     let label = s.menu.language.text(ru, en);
-                    let rest = if s.menu.focus == Some(model::Field::RelayToken) {
+                    let rest = if secret {
                         "*".repeat(s.menu.text()[cursor..].chars().count())
                     } else {
                         s.menu.text()[cursor..].to_owned()
@@ -407,7 +412,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     let caret_x = x + 4.0 + game.native_text_width(&text[..caret]);
                     let value = s.menu.text();
                     let measure = |part: &str| {
-                        if s.menu.focus == Some(model::Field::RelayToken) {
+                        if matches!(
+                            s.menu.focus,
+                            Some(model::Field::RelayToken | model::Field::DeepLKey)
+                        ) {
                             game.native_text_width(&"*".repeat(part.chars().count()))
                         } else {
                             game.native_text_width(part)

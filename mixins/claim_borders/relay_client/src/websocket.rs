@@ -83,6 +83,23 @@ pub(crate) struct WebSocket {
 }
 impl WebSocket {
     pub fn connect(url: &Url, token: Option<&str>) -> Result<Self> {
+        Self::connect_with_deadline(url, token, None)
+    }
+    pub fn connect_with_deadline(
+        url: &Url,
+        token: Option<&str>,
+        deadline: Option<Instant>,
+    ) -> Result<Self> {
+        let timeout = |limit: Duration| -> Result<Duration> {
+            let time = deadline.map_or(limit, |end| {
+                end.saturating_duration_since(Instant::now()).min(limit)
+            });
+            if time.is_zero() {
+                Err("WebSocket connection timed out".into())
+            } else {
+                Ok(time)
+            }
+        };
         let addresses: Vec<_> = (url.host.as_str(), url.port)
             .to_socket_addrs()
             .map_err(|e| e.to_string())?
@@ -92,15 +109,15 @@ impl WebSocket {
         }
         let mut tcp = None;
         for address in addresses.into_iter().take(8) {
-            if let Ok(s) = TcpStream::connect_timeout(&address, Duration::from_secs(5)) {
+            if let Ok(s) = TcpStream::connect_timeout(&address, timeout(Duration::from_secs(5))?) {
                 tcp = Some(s);
                 break;
             }
         }
         let tcp = tcp.ok_or("connection failed")?;
-        tcp.set_read_timeout(Some(Duration::from_secs(5)))
+        tcp.set_read_timeout(Some(timeout(Duration::from_secs(5))?))
             .map_err(|e| e.to_string())?;
-        tcp.set_write_timeout(Some(Duration::from_secs(5)))
+        tcp.set_write_timeout(Some(timeout(Duration::from_secs(5))?))
             .map_err(|e| e.to_string())?;
         let timeout_handle = tcp.try_clone().map_err(|e| e.to_string())?;
         let mut io: Box<dyn Io> = if url.tls {
@@ -136,7 +153,7 @@ impl WebSocket {
         write!(io,"GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n{}\r\n",url.path,host,key,authorization).map_err(|e|e.to_string())?;
         io.flush().map_err(|e| e.to_string())?;
         let mut header = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + timeout(Duration::from_secs(10))?;
         while !header.ends_with(b"\r\n\r\n") {
             if Instant::now() >= deadline {
                 return Err("WebSocket upgrade timeout".into());

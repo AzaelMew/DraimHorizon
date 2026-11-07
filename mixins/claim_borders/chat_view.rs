@@ -3,7 +3,7 @@ use crate::game::claim_borders_ui_view as ui;
 use crate::game::claim_borders_chat_archive as archive;
 use crate::game::claim_borders_chat_preferences as options;
 use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
-use claim_borders_relay_client::translation::{Language, Translator};
+use claim_borders_relay_client::translation::{Language, Translator, valid_deepl_key};
 use horizon_client::{
     hud::{HudBatch, rgba},
     text::Text,
@@ -11,11 +11,16 @@ use horizon_client::{
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    fs,
+    io::{ErrorKind, Write},
     sync::{Mutex, OnceLock},
     time::Instant,
 };
+const TRANSLATION_RETRY_MS: u64 = 15_000;
+const DEEPL_KEY_SETTING: &str = "deepl_api_key";
 #[derive(Clone, Copy)]
 pub(super) struct Settings {
+    pub deepl_configured: bool,
     pub language: Language,
     pub modern: bool,
     pub translate: bool,
@@ -39,7 +44,7 @@ struct State {
     translation_language: Language,
     requested: HashSet<u64>,
     retry: HashMap<u64, (u64, u8)>,
-    translation_failed: bool,
+    translation_failed_at: Option<u64>,
     heads: HashMap<String, (u128, String)>,
     hits: Vec<options::Hit>,
     hit_viewport: [f32; 2],
@@ -62,6 +67,7 @@ impl Default for State {
             nickname_query: None,
             started: Instant::now(),
             settings: Settings {
+                deepl_configured: false,
                 language: Language::default(),
                 modern: true,
                 translate: true,
@@ -72,7 +78,7 @@ impl Default for State {
             translation_language: Language::default(),
             requested: HashSet::new(),
             retry: HashMap::new(),
-            translation_failed: false,
+            translation_failed_at: None,
             heads: HashMap::new(),
             hits: Vec::new(),
             hit_viewport: [0.0, 0.0],
@@ -93,7 +99,67 @@ pub(super) fn language(game: &Game<'_>) -> Language {
     settings(game).language
 }
 pub(super) fn translator(game: &Game<'_>, target: Language) -> Translator {
-    Translator::with_deepl(target, game.native_setting(claims::ID, "deepl_api_key"))
+    Translator::with_deepl(
+        target,
+        game.native_setting(claims::ID, DEEPL_KEY_SETTING),
+        crate::game::claim_borders_client::translation_relay(),
+    )
+}
+pub(super) fn refresh_translators() {
+    state(|s| {
+        s.translator = None;
+        s.requested.clear();
+        s.retry.clear();
+        s.translation_failed_at = None;
+    });
+    crate::game::claim_borders_outgoing_view::refresh_translators();
+}
+pub(super) fn set_deepl_key(game: &Game<'_>, key: Option<&str>) -> Result<(), String> {
+    let language = language(game);
+    let dir = game.native_data_dir(claims::ID);
+    let path = dir.join(DEEPL_KEY_SETTING);
+    let result = if let Some(key) = key {
+        if !valid_deepl_key(key) {
+            return Err(language
+                .text("Неверный формат ключа DeepL.", "Invalid DeepL key format.")
+                .into());
+        }
+        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+        (|| {
+            fs::create_dir_all(&dir)?;
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp)?;
+            let written = file.write_all(key.as_bytes());
+            drop(file);
+            let replaced = written.and_then(|()| fs::rename(&temp, &path));
+            if replaced.is_err() {
+                let _ = fs::remove_file(&temp);
+            }
+            replaced
+        })()
+    } else {
+        match fs::remove_file(&path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    };
+    result.map_err(|_| {
+        language
+            .text(
+                "Не удалось изменить локальный ключ DeepL.",
+                "Could not update the local DeepL key.",
+            )
+            .to_owned()
+    })?;
+    state(|s| s.settings.deepl_configured = key.is_some());
+    refresh_translators();
+    Ok(())
 }
 pub(super) fn set_language(game: &Game<'_>, language: Language) {
     let _ = settings(game);
@@ -103,6 +169,10 @@ pub(super) fn set_language(game: &Game<'_>, language: Language) {
 pub(super) fn settings(game: &Game<'_>) -> Settings {
     state(|s| {
         if !s.loaded {
+            s.settings.deepl_configured = game
+                .native_setting(claims::ID, DEEPL_KEY_SETTING)
+                .as_deref()
+                .is_some_and(valid_deepl_key);
             s.settings.language = Language::from_code(
                 game.native_setting(claims::ID, "language")
                     .as_deref()
@@ -172,7 +242,7 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
                 s.translator = None;
                 s.requested.clear();
                 s.retry.clear();
-                s.translation_failed = false;
+                s.translation_failed_at = None;
             }
         } else {
             s.settings.modern = value;
@@ -305,7 +375,7 @@ pub(super) fn reset() {
         s.heads.clear();
         s.translator = None;
         s.retry.clear();
-        s.translation_failed = false;
+        s.translation_failed_at = None;
     });
 }
 pub(super) fn capture_content(
@@ -708,6 +778,7 @@ fn draw_card(
 }
 #[derive(Clone, Copy)]
 struct PaintContext {
+    language: Language,
     preferences: options::Preferences,
     layout: options::Layout,
     now: u64,
@@ -753,16 +824,22 @@ fn paint_region<'a>(
             String::new()
         };
         let body = if compact {
-            format!("{}{count}", model::event_summary(e, context.translate))
+            format!(
+                "{}{count}",
+                model::event_summary(e, context.translate, context.language)
+            )
         } else if inline {
             let label = label(e);
             format!(
                 "{label}{}: {}{count}",
                 if e.show_original { " [ориг.]" } else { "" },
-                e.body(context.translate)
+                e.display_body(context.translate, context.language)
             )
         } else {
-            format!("{}{count}", e.body(context.translate))
+            format!(
+                "{}{count}",
+                e.display_body(context.translate, context.language)
+            )
         };
         let inset = 29.0;
         let mut rows = if compact {
@@ -871,7 +948,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 s.translator = None;
                 s.requested.clear();
                 s.retry.clear();
-                s.translation_failed = false;
+                s.translation_failed_at = None;
             }
             let worker = s
                 .translator
@@ -879,14 +956,14 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             while let Some((id, value)) = worker.poll() {
                 if let Some(value) = value {
                     s.feed.translate(id, value, language);
-                    s.translation_failed = false;
+                    s.translation_failed_at = None;
                     s.retry.remove(&id);
                 } else {
                     s.requested.remove(&id);
                     let attempts = s.retry.get(&id).map_or(1, |(_, n)| n.saturating_add(1));
-                    s.retry
-                        .insert(id, (now + 15_000 * (1u64 << attempts.min(4)), attempts));
-                    s.translation_failed = true;
+                    let delay = TRANSLATION_RETRY_MS << attempts.saturating_sub(1).min(3);
+                    s.retry.insert(id, (now + delay, attempts));
+                    s.translation_failed_at = Some(now);
                 }
             }
             for e in s.feed.entries.iter().rev().take(64) {
@@ -947,6 +1024,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         });
     }
     let context = PaintContext {
+        language,
         preferences: p,
         layout,
         now,
@@ -1041,7 +1119,11 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 ui::tooltip(
                     game,
                     batch,
-                    &format!("{} · {}", e.name, e.body(context.translate)),
+                    &format!(
+                        "{} · {}",
+                        e.name,
+                        e.display_body(context.translate, context.language)
+                    ),
                     mouse,
                 );
             }
@@ -1055,10 +1137,13 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             let status = state(|s| {
                 if !config.translate {
                     language.text("RU: выкл.", "EN: off")
-                } else if s.translation_failed {
+                } else if s
+                    .translation_failed_at
+                    .is_some_and(|failed| now.saturating_sub(failed) < TRANSLATION_RETRY_MS)
+                {
                     language.text(
-                        "RU: сервис недоступен · повтор автоматически",
-                        "EN: service unavailable · retrying",
+                        "RU: последний перевод не удался",
+                        "EN: last translation failed",
                     )
                 } else {
                     language.text("RU: автоперевод", "EN: auto-translate")

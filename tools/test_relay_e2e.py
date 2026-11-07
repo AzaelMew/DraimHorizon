@@ -16,6 +16,7 @@ def main():
         port = sock.getsockname()[1]
     env = os.environ.copy()
     env['RELAY_ACCESS_TOKEN'] = ''
+    env['RELAY_DEEPL_API_KEY'] = ''
     env['DH_RELAY_E2E_URL'] = f'ws://127.0.0.1:{port}/v1/relay'
     log = ROOT / 'target/relay-e2e.log'
     log.parent.mkdir(exist_ok=True)

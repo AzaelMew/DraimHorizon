@@ -6,4 +6,6 @@
 
 **Install** — Use **Install from GitHub** in Horizon Launcher and enter `https://github.com/DraimCiDo/DraimHorizon`. Rebuild native mods after installing or updating. Targets Horizon Nightly `f319701` (Java 26.3).
 
-**Optional DeepL backup** — Put your own key in `horizon-mods/.horizon-mod-data/claim_borders/deepl_api_key` inside the game directory, then restart Horizon. The file should contain only the key. [DeepL setup](https://developers.deepl.com/docs/getting-started/quickstart)
+**Optional DeepL backup** — In Horizon, open **J → Settings → Chat → DeepL**, paste your personal API key and click **Save**. [Get a DeepL key](https://developers.deepl.com/docs/getting-started/quickstart)
+
+**Share DeepL with friends** — Set the key once on your [private relay](relay/README.md#общий-резервный-перевод-deepl).

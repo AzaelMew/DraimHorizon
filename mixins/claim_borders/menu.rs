@@ -1,6 +1,7 @@
 use super::claim_borders_chat_preferences::Preferences;
 use super::claim_borders_chat_priority as priority;
 pub use claim_borders_relay_client::translation::Language;
+use claim_borders_relay_client::translation::{DEEPL_KEY_LIMIT, valid_deepl_key};
 
 macro_rules! localized {
     ($language:expr, $russian:literal, $english:literal $(, $arg:expr)* $(,)?) => {
@@ -141,6 +142,7 @@ pub struct ViewModel {
     pub chat_modern: bool,
     pub chat_translate: bool,
     pub chat_outgoing: bool,
+    pub deepl_configured: bool,
     pub priority: priority::Preferences,
     pub experimental: experimental::Preferences,
     pub experimental_status: String,
@@ -195,6 +197,7 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    SetDeepLKey(Option<String>),
     SetLanguage(Language),
     AddWaypoint {
         name: String,
@@ -263,6 +266,7 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SetDeepLKey(_) => f.write_str("SetDeepLKey([redacted])"),
             Self::SetLanguage(language) => f.debug_tuple("SetLanguage").field(language).finish(),
             Self::PlayerRequest { kind, uuid, name } => f
                 .debug_struct("PlayerRequest")
@@ -350,6 +354,7 @@ pub enum Field {
     PeerCode,
     RelayUrl,
     RelayToken,
+    DeepLKey,
     OwnClaimColor,
     FriendClaimColor,
     PriorityName,
@@ -370,6 +375,7 @@ pub enum ChatSection {
     Appearance,
     Notifications,
     Spam,
+    DeepL,
     Priority,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -386,6 +392,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    SaveDeepLKey,
+    RemoveDeepLKey,
     Language,
     SettingsSection(i8),
     SettingsPage(i8),
@@ -487,6 +495,7 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
+    deepl_key: String,
     pub language: Language,
     pub tab: Tab,
     pub settings_section: u8,
@@ -518,6 +527,7 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
+            deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
             settings_section: 0,
@@ -1616,16 +1626,66 @@ impl Menu {
                 ChatSection::Spam,
                 self.language.text("Антиспам", "Anti-spam"),
             ),
+            (ChatSection::DeepL, "DeepL"),
         ]
         .into_iter()
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 3.0, 56.0, w / 3.0 - 3.0, 18.0],
+                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
                 label,
                 Some(Control::ChatSection(section)),
                 self.chat_section == section,
             ));
+        }
+        if self.chat_section == ChatSection::DeepL {
+            let language = self.language;
+            let masked = "*".repeat(self.deepl_key.len());
+            let status = if !self.notice.is_empty() {
+                &self.notice
+            } else if model.deepl_configured {
+                language.text("Ключ сохранён", "Key saved")
+            } else {
+                language.text("Ключ не настроен", "No key configured")
+            };
+            out.extend([
+                widget(
+                    [x, 80.0, w, 18.0],
+                    language.text(
+                        "DeepL используется при сбое Google",
+                        "DeepL is used when Google fails",
+                    ),
+                    None,
+                    false,
+                ),
+                widget(
+                    [x, 102.0, w, 20.0],
+                    if masked.is_empty() {
+                        language
+                            .text("Вставь ключ DeepL", "Paste your DeepL key")
+                            .into()
+                    } else {
+                        masked
+                    },
+                    Some(Control::Field(Field::DeepLKey)),
+                    self.focus == Some(Field::DeepLKey),
+                ),
+                widget(
+                    [x, 126.0, w / 2.0 - 3.0, 20.0],
+                    language.text("Сохранить", "Save"),
+                    Some(Control::SaveDeepLKey),
+                    false,
+                ),
+                widget(
+                    [x + w / 2.0, 126.0, w / 2.0, 20.0],
+                    language.text("Удалить ключ", "Remove key"),
+                    Some(Control::RemoveDeepLKey),
+                    false,
+                ),
+                widget([x, 151.0, w, 16.0], status, None, false),
+                widget([x, 169.0, w, 16.0], &model.status, None, false),
+            ]);
+            return out;
         }
         let p = model.chat_preferences;
         let pair = |field: ChatOption, name: &str, value: String| {
@@ -1643,6 +1703,7 @@ impl Menu {
             ]
         };
         let rows = match self.chat_section {
+            ChatSection::DeepL => unreachable!("DeepL has a separate editor"),
             ChatSection::Appearance => vec![
                 vec![
                     (
@@ -2398,6 +2459,7 @@ impl Menu {
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
             Control::SettingsSection(dir) => {
+                self.deepl_key.clear();
                 self.settings_section = (self.settings_section as i8 + dir).rem_euclid(7) as u8;
                 self.settings_page = 0;
                 self.focus = None;
@@ -2602,8 +2664,28 @@ impl Menu {
             }
 
             Control::ChatSection(section) => {
+                self.deepl_key.clear();
+                self.focus = None;
                 self.chat_section = section;
                 None
+            }
+            Control::SaveDeepLKey => {
+                if !valid_deepl_key(&self.deepl_key) {
+                    self.notice = self
+                        .language
+                        .text("Введите ключ DeepL", "Enter a DeepL key")
+                        .into();
+                    return None;
+                }
+                self.focus = None;
+                Some(Action::SetDeepLKey(Some(std::mem::take(
+                    &mut self.deepl_key,
+                ))))
+            }
+            Control::RemoveDeepLKey => {
+                self.deepl_key.clear();
+                self.focus = None;
+                Some(Action::SetDeepLKey(None))
             }
             Control::ChatReset => Some(Action::SetChat(Preferences::default())),
             Control::ChatPlacement => {
@@ -2771,6 +2853,7 @@ impl Menu {
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
             Control::Tab(t) => {
+                self.deepl_key.clear();
                 self.tab = t;
                 self.page = 0;
                 self.selected = None;
@@ -3002,6 +3085,7 @@ impl Menu {
             Field::PeerCode => &mut self.peer_code,
             Field::RelayUrl => &mut self.relay_url,
             Field::RelayToken => &mut self.access_token,
+            Field::DeepLKey => &mut self.deepl_key,
             Field::OwnClaimColor => &mut self.own_claim_color,
             Field::FriendClaimColor => &mut self.friend_claim_color,
         })
@@ -3016,6 +3100,7 @@ impl Menu {
             Some(Field::PeerCode) => &self.peer_code,
             Some(Field::RelayUrl) => &self.relay_url,
             Some(Field::RelayToken) => &self.access_token,
+            Some(Field::DeepLKey) => &self.deepl_key,
             Some(Field::OwnClaimColor) => &self.own_claim_color,
             Some(Field::FriendClaimColor) => &self.friend_claim_color,
             None => "",
@@ -3030,6 +3115,9 @@ impl Menu {
         cursor.min(anchor)..cursor.max(anchor)
     }
     pub fn selected_text(&self) -> String {
+        if self.focus == Some(Field::DeepLKey) {
+            return String::new();
+        }
         self.text()[self.selection()].to_owned()
     }
     pub fn delete_selection(&mut self) {
@@ -3060,6 +3148,7 @@ impl Menu {
             Field::PeerCode => 24,
             Field::RelayUrl => 2048,
             Field::RelayToken => 1024,
+            Field::DeepLKey => DEEPL_KEY_LIMIT,
         };
         if (matches!(
             field,
@@ -3068,6 +3157,7 @@ impl Menu {
             || (field == Field::PriorityName && !(c.is_ascii_alphanumeric() || c == '_'))
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
+            || (field == Field::DeepLKey && !c.is_ascii_graphic())
         {
             return;
         }
@@ -3086,6 +3176,7 @@ impl Menu {
     pub fn key(&mut self, key: &str, modifiers: u32) -> bool {
         if key == "key.keyboard.escape" {
             self.access_token.clear();
+            self.deepl_key.clear();
             if self.relay_setup {
                 self.relay_setup = false;
                 self.focus = None;
@@ -3094,6 +3185,15 @@ impl Menu {
             return false;
         }
         if key == "key.keyboard.tab" {
+            if self.tab == Tab::Settings
+                && self.settings_section == 3
+                && self.chat_section == ChatSection::DeepL
+            {
+                self.focus = Some(Field::DeepLKey);
+                self.caret = usize::MAX;
+                self.anchor = None;
+                return true;
+            }
             self.focus = Some(
                 if self.relay_setup || (self.tab == Tab::Settings && self.settings_section == 1) {
                     if self.focus == Some(Field::RelayUrl) {
@@ -3206,6 +3306,44 @@ impl Menu {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deepl_settings_mask_the_key_and_offer_save_and_remove() {
+        let mut menu = Menu {
+            tab: Tab::Settings,
+            settings_section: 3,
+            ..Menu::default()
+        };
+        let model = ViewModel::default();
+        let size = [240.0, 216.0];
+        let click = |menu: &mut Menu, control| {
+            let [x, y, w, h] = menu
+                .layout(&model, size[0], size[1])
+                .into_iter()
+                .find(|widget| widget.control == Some(control))
+                .unwrap()
+                .rect;
+            menu.click(&model, size, [x + w / 2.0, y + h / 2.0])
+        };
+        let key = "test-key:fx";
+        click(&mut menu, Control::ChatSection(ChatSection::DeepL));
+        click(&mut menu, Control::Field(Field::DeepLKey));
+        menu.paste(key);
+        menu.key("key.keyboard.a", 2);
+        assert!(menu.selected_text().is_empty());
+        assert!(
+            menu.layout(&model, size[0], size[1])
+                .iter()
+                .all(|widget| !widget.text.contains(key))
+        );
+        let action = click(&mut menu, Control::SaveDeepLKey).unwrap();
+        assert!(!format!("{action:?}").contains(key));
+        assert!(matches!(action, Action::SetDeepLKey(Some(saved)) if saved == key));
+        assert!(menu.deepl_key.is_empty());
+        assert!(matches!(
+            click(&mut menu, Control::RemoveDeepLKey),
+            Some(Action::SetDeepLKey(None))
+        ));
+    }
     #[test]
     fn language_button_sits_next_to_settings_and_reverses_translation() {
         let mut model = ViewModel {

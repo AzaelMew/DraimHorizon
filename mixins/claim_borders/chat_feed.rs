@@ -179,6 +179,20 @@ pub struct Entry {
     raw: String,
 }
 impl Entry {
+    pub fn display_body(&self, translated: bool, language: Language) -> &str {
+        if self.kind == Kind::Presence {
+            match self.joined {
+                Some(false) => language.text("Отключился", "Left the server"),
+                Some(true) if self.original == "Впервые на сервере" => {
+                    language.text("Впервые на сервере", "First time on the server")
+                }
+                Some(true) => language.text("Подключился", "Joined the server"),
+                None => &self.original,
+            }
+        } else {
+            self.body(translated)
+        }
+    }
     pub fn has_translation(&self, language: Language) -> bool {
         self.translated.is_some() && self.translation_language == language
     }
@@ -191,8 +205,8 @@ impl Entry {
     }
 }
 /// A compact event keeps its full original in Entry for the hover card.
-pub fn event_summary(entry: &Entry, translated: bool) -> String {
-    let body = entry.body(translated);
+pub fn event_summary(entry: &Entry, translated: bool, language: Language) -> String {
+    let body = entry.display_body(translated, language);
     if let Some(notice) = entry.auction {
         return format!("{} · {body}", notice.label());
     }
@@ -1064,8 +1078,9 @@ mod tests {
         let mut feed = Feed::default();
         feed.push("Alex was slain by Steve using a sword", 0);
         let e = &feed.entries[0];
-        assert_eq!(event_summary(e, false), "Alex ← Steve");
-        let shown = single_line(&event_summary(e, false), 8.0, |s| s.chars().count() as f32);
+        let summary = event_summary(e, false, Language::Russian);
+        assert_eq!(summary, "Alex ← Steve");
+        let shown = single_line(&summary, 8.0, |s| s.chars().count() as f32);
         assert!(!shown.contains('\n'));
         assert!(shown.chars().count() <= 8);
         assert!(shown.ends_with('…'));
@@ -1078,6 +1093,10 @@ mod tests {
         feed.push("Steve joined for the first time: welcome!", 2);
         assert_eq!(feed.entries.len(), 1);
         assert_eq!(feed.entries[0].original, "Впервые на сервере");
+        assert_eq!(
+            feed.entries[0].display_body(false, Language::English),
+            "First time on the server"
+        );
         feed.push("Steve left the game", 3);
         feed.push("Steve joined the game", 4);
         assert_eq!(feed.entries.len(), 3);
@@ -1181,9 +1200,13 @@ mod tests {
             0,
             p,
         );
+        assert_eq!(f.entries[0].kind, Kind::Presence);
+        assert_eq!(
+            f.entries[0].display_body(false, Language::English),
+            "Joined the server"
+        );
         f.push_with("Steve joined for the first time: welcome!", 1, p);
         assert_eq!(f.entries.len(), 1);
-        assert_eq!(f.entries[0].kind, Kind::Presence);
         f.push_component(
             "Steve покинул игру",
             &serde_json::json!({"translate":"multiplayer.player.left","with":["Steve"]}),
@@ -1192,6 +1215,10 @@ mod tests {
         );
         f.push_component("Steve was burned to a crisp whilst fighting Zombie",&serde_json::json!({"translate":"death.attack.onFire.player","with":["Steve","Zombie"]}),3,p);
         assert_eq!(f.entries[1].kind, Kind::Presence);
+        assert_eq!(
+            f.entries[1].display_body(false, Language::English),
+            "Left the server"
+        );
         assert_eq!(f.entries[2].kind, Kind::Death);
         assert_eq!(classify("Steve покинул игру").0, Kind::Presence);
         assert_eq!(classify("Steve был убит зомби").0, Kind::Death);

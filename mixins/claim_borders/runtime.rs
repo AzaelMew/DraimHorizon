@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizons";
-pub const VERSION: &str = "0.22.3";
+pub const VERSION: &str = "0.22.4";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;

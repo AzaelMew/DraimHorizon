@@ -1,4 +1,4 @@
-"""In-memory authenticated WebSocket routing; no payload inspection or persistence."""
+"""In-memory WebSocket routing and optional, token-protected translation."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,8 @@ import re
 import secrets
 import signal
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -29,6 +31,32 @@ AUTH_PREFIX = b"DHRelay-auth-v1\0"
 HEX = re.compile(r"[0-9a-f]+\Z")
 NAME = re.compile(r"[A-Za-z0-9_]{1,16}\Z")
 MAX_FRAME = 16384
+TRANSLATE_PATH = "/v1/translate"
+DEEPL_ENDPOINT = "https://api-free.deepl.com/v2/translate"
+TRANSLATION_BURST = 1200
+TRANSLATION_RATE = 10  # characters per second across the relay
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def translate_deepl(key: str, text: str, target: str) -> str:
+    request = Request(
+        DEEPL_ENDPOINT,
+        data=json.dumps({"text": [text], "target_lang": target}, ensure_ascii=False).encode("utf-8"),
+        headers={"Authorization": "DeepL-Auth-Key " + key, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with build_opener(NoRedirect()).open(request, timeout=4) as response:
+        data = response.read(65537)
+    if len(data) > 65536:
+        raise ValueError("response too large")
+    result = json.loads(data)["translations"][0]["text"]
+    if not isinstance(result, str) or not result.strip() or len(result.encode("utf-8")) > 8192:
+        raise ValueError("invalid translation")
+    return result
 
 
 def hex_bytes(value: object, length: int) -> bytes:
@@ -76,8 +104,16 @@ class Peer:
 
 class Relay:
     def __init__(self, access_token: str = "", limits: Limits = Limits(),
-                 trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128"):
+                 trusted_proxy_cidrs: str = "127.0.0.0/8,::1/128", deepl_key: str = ""):
         self.access_token = access_token
+        if deepl_key and (not access_token or len(deepl_key) > 256
+                          or not all(33 <= ord(c) <= 126 for c in deepl_key)):
+            raise ValueError("DeepL requires a valid local key and RELAY_ACCESS_TOKEN")
+        self.deepl_key = deepl_key
+        self.translation_active = 0
+        self.translation_tokens = TRANSLATION_BURST
+        self.translation_updated = time.monotonic()
+        self.translation_retry = 0.0
         self.trusted_proxies = tuple(ipaddress.ip_network(value.strip(), strict=True)
                                      for value in trusted_proxy_cidrs.split(",") if value.strip())
         self.limits = limits
@@ -90,7 +126,10 @@ class Relay:
     async def process_request(self, connection, request):
         if request.path == "/healthz":
             return connection.respond(HTTPStatus.OK, encode(["ok", __version__]) + "\n")
-        if request.path != "/v1/relay":
+        if request.path == TRANSLATE_PATH:
+            if not self.deepl_key or not self.access_token:
+                return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
+        elif request.path != "/v1/relay":
             return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
         if self.access_token:
             values = request.headers.get_all("Authorization")
@@ -98,6 +137,45 @@ class Relay:
             if len(values) != 1 or not hmac.compare_digest(values[0].encode(), expected):
                 return connection.respond(HTTPStatus.UNAUTHORIZED, "unauthorized\n")
         return None
+
+    async def translate(self, ws: ServerConnection):
+        if self.translation_active >= 4 or time.monotonic() < self.translation_retry:
+            await ws.send(encode(["error"]))
+            return
+        self.translation_active += 1
+        try:
+            async with asyncio.timeout(2):
+                target, text = parse(await ws.recv())
+            if (target not in ("RU", "EN-US") or not isinstance(text, str)
+                    or not text.strip() or len(text) > 500 or text.lstrip().startswith("/")):
+                raise ValueError("invalid translation request")
+            now = time.monotonic()
+            self.translation_tokens = min(
+                TRANSLATION_BURST,
+                self.translation_tokens + (now - self.translation_updated) * TRANSLATION_RATE,
+            )
+            self.translation_updated = now
+            if len(text) > self.translation_tokens:
+                await ws.send(encode(["error"]))
+                return
+            self.translation_tokens -= len(text)
+            try:
+                result = await asyncio.to_thread(translate_deepl, self.deepl_key, text, target)
+            except HTTPError as error:
+                self.translation_retry = time.monotonic() + (900 if error.code in (401, 403, 456) else 15)
+                raise
+            except (URLError, OSError, ValueError, KeyError, IndexError, TypeError):
+                self.translation_retry = time.monotonic() + 15
+                raise
+            reply = encode(["ok", result])
+            await ws.send(reply if len(reply.encode("utf-8")) <= MAX_FRAME else encode(["error"]))
+        except ConnectionClosed:
+            pass
+        except (URLError, OSError, ValueError, KeyError, IndexError, TypeError):
+            with suppress(ConnectionClosed):
+                await ws.send(encode(["error"]))
+        finally:
+            self.translation_active -= 1
 
     def offer(self, peer: Peer, frame: list):
         try:
@@ -144,6 +222,9 @@ class Relay:
             return address
 
     async def handler(self, ws: ServerConnection):
+        if ws.request.path == TRANSLATE_PATH:
+            await self.translate(ws)
+            return
         ip = self.client_ip(ws)
         if ((self.limits.total > 0 and self.connections >= self.limits.total)
                 or (self.limits.ip > 0 and self.ips[ip] >= self.limits.ip)):
@@ -237,7 +318,8 @@ async def run(host: str, port: int):
                     rate=float(os.environ.get("RELAY_RATE", "0")))
     relay = Relay(os.environ.get("RELAY_ACCESS_TOKEN", ""), limits=limits,
                   trusted_proxy_cidrs=os.environ.get("RELAY_TRUSTED_PROXY_CIDRS",
-                                                     "127.0.0.0/8,::1/128"))
+                                                     "127.0.0.0/8,::1/128"),
+                  deepl_key=os.environ.get("RELAY_DEEPL_API_KEY", "").strip())
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

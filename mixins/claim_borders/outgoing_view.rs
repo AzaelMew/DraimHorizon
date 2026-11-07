@@ -26,6 +26,20 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 pub(super) fn reset() {
     state(|s| *s = State::default());
 }
+pub(super) fn refresh_translators() {
+    state(|s| {
+        for worker in [s.russian.take(), s.english.take()].into_iter().flatten() {
+            while let Some((id, result)) = worker.poll() {
+                s.queue.complete(id, result);
+            }
+        }
+        for message in &mut s.queue.messages {
+            if message.result.is_none() {
+                message.result = Some(None);
+            }
+        }
+    });
+}
 pub(super) fn enabled(game: &Game<'_>) -> bool {
     game.native_setting(claims::ID, "chat_outgoing_en")
         .as_deref()

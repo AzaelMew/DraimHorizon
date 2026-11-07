@@ -19,7 +19,7 @@ with output.open('wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw
     with tarfile.open(fileobj=compressed, mode='w') as archive:
         for path in sorted(files):
             data = path.read_bytes()
-            info = tarfile.TarInfo(str(path.relative_to(root)))
+            info = tarfile.TarInfo(path.relative_to(root).as_posix())
             info.size = len(data)
             info.mode = 0o644
             info.mtime = 0
