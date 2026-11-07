@@ -5,10 +5,66 @@ use crate::game::{
     claim_borders_menu_view as menu_view, claim_borders_overlay as overlay,
     claim_borders_party as party, claim_borders_relay_settings as relay_settings,
     claim_borders_visualization as visualization, claim_borders_waypoints as waypoints,
+    native_hooks::NativeMod,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use claim_borders_relay_client::translation::Language;
+
+pub(super) fn native_mod(language: Language) -> NativeMod {
+    NativeMod {
+        id: claims::ID.into(),
+        title: format!("{} {}", claims::NAME, claims::VERSION),
+        description: claims::description_in(language).into(),
+        keys: vec![
+            [
+                "ore_experiment".into(),
+                language
+                    .text("Эксперименты: подсветка руд", "Experiments: ore highlight")
+                    .into(),
+                crate::game::claim_borders_experimental::DEFAULT_KEY.into(),
+            ],
+            [
+                "trades".into(),
+                language
+                    .text("DraimHorizons: Торги", "DraimHorizons: Trades")
+                    .into(),
+                "key.keyboard.b".into(),
+            ],
+            [
+                "waypoint".into(),
+                language
+                    .text(
+                        "DraimHorizons: метка у себя",
+                        "DraimHorizons: waypoint here",
+                    )
+                    .into(),
+                "key.keyboard.x".into(),
+            ],
+            [
+                "map".into(),
+                language
+                    .text("Seed Map · три измерения", "Seed Map · three dimensions")
+                    .into(),
+                "key.keyboard.m".into(),
+            ],
+            [
+                "menu".into(),
+                language
+                    .text("DraimHorizons: открыть меню", "DraimHorizons: open menu")
+                    .into(),
+                "key.keyboard.j".into(),
+            ],
+            [
+                "zoom".into(),
+                language
+                    .text("DraimHorizons: зум камеры", "DraimHorizons: camera zoom")
+                    .into(),
+                crate::game::claim_borders_camera_zoom::DEFAULT_KEY.into(),
+            ],
+        ],
+    }
+}
 
 fn language() -> Language {
     crate::game::claim_borders_chat_view::current_language()
@@ -1523,6 +1579,20 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SetLanguage(language) => {
             crate::game::claim_borders_chat_view::set_language(game, language);
+            if let Some(row) = game
+                .settings
+                .mods
+                .installed
+                .iter_mut()
+                .find(|row| row.id == claims::ID)
+                && let Some(page) = &mut row.native
+            {
+                let info = native_mod(language);
+                row.description = info.description;
+                page.keys = info.keys;
+            }
+            // Transient feedback from earlier actions is already formatted in the old language.
+            state(|c| c.menu_feedback.clear());
             Ok(Vec::new())
         }
         Action::AddWaypoint { name, color } => {

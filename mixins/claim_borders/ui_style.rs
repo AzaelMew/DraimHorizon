@@ -49,6 +49,33 @@ pub struct Preferences {
     pub contrast: bool,
     pub accent: Accent,
 }
+
+#[derive(Debug)]
+pub enum PreferencesError {
+    TooLarge,
+    UnknownSchema,
+    InvalidJson(serde_json::Error),
+}
+
+impl PreferencesError {
+    pub fn text(&self, language: Language) -> String {
+        match self {
+            Self::TooLarge => language
+                .text(
+                    "Файл оформления слишком большой",
+                    "Appearance file is too large",
+                )
+                .into(),
+            Self::UnknownSchema => language
+                .text("Неизвестная версия оформления", "Unknown appearance schema")
+                .into(),
+            Self::InvalidJson(error) => format!(
+                "{}: {error}",
+                language.text("Файл оформления повреждён", "Appearance file is corrupted")
+            ),
+        }
+    }
+}
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -65,13 +92,13 @@ impl Preferences {
         json!({"schema":1,"opacity":self.opacity,"motion":self.motion,"shadows":self.shadows,"contrast":self.contrast,
         "accent":match self.accent{Accent::Mint=>0,Accent::Lavender=>1,Accent::Sky=>2}}).to_string()
     }
-    pub fn decode(raw: &str) -> Result<Self, String> {
+    pub fn decode(raw: &str) -> Result<Self, PreferencesError> {
         if raw.len() > 4096 {
-            return Err("Файл оформления слишком большой".into());
+            return Err(PreferencesError::TooLarge);
         }
-        let v: Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+        let v: Value = serde_json::from_str(raw).map_err(PreferencesError::InvalidJson)?;
         if v["schema"].as_u64() != Some(1) {
-            return Err("Неизвестная версия оформления".into());
+            return Err(PreferencesError::UnknownSchema);
         }
         Ok(Self {
             opacity: v["opacity"].as_u64().unwrap_or(84).clamp(50, 98) as u8,
@@ -572,7 +599,20 @@ mod tests {
         };
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
         assert!(Preferences::decode("{}").is_err());
-        assert!(Preferences::decode(r#"{"schema":99}"#).is_err());
+        let unknown_schema = Preferences::decode(r#"{"schema":99}"#).unwrap_err();
+        assert_eq!(
+            unknown_schema.text(Language::Russian),
+            "Неизвестная версия оформления"
+        );
+        assert_eq!(
+            unknown_schema.text(Language::English),
+            "Unknown appearance schema"
+        );
+        let oversized = Preferences::decode(&" ".repeat(4097)).unwrap_err();
+        assert_eq!(
+            oversized.text(Language::English),
+            "Appearance file is too large"
+        );
         assert_eq!(
             Preferences::decode(r#"{"schema":1,"opacity":999}"#)
                 .unwrap()

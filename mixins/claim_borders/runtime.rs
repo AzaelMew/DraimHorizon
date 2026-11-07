@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 pub const ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizons";
-pub const VERSION: &str = "0.22.4";
+pub const VERSION: &str = "0.22.5";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 pub fn description_in(language: Language) -> &'static str {
     language.text(

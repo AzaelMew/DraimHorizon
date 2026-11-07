@@ -25,12 +25,45 @@ struct Scene {
     began: Instant,
     last: Instant,
 }
+
+enum SettingsError {
+    Decode(style::PreferencesError),
+    Read(std::io::Error),
+    Save(std::io::Error),
+    NotWritable,
+}
+
+impl SettingsError {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Decode(error) => error.text(language),
+            Self::Read(e) => format!(
+                "{}: {e}",
+                language.text(
+                    "Не удалось прочитать оформление",
+                    "Could not read the appearance file"
+                )
+            ),
+            Self::Save(e) => format!(
+                "{}: {e}",
+                language.text("Не удалось сохранить", "Could not save")
+            ),
+            Self::NotWritable => language
+                .text(
+                    "Оформление не сохранено: проверьте файл appearance",
+                    "Appearance not saved: check the appearance file",
+                )
+                .into(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     loaded: bool,
     writable: bool,
     prefs: style::Preferences,
-    error: Option<String>,
+    error: Option<SettingsError>,
     hover: BTreeMap<u64, Hover>,
     scenes: BTreeMap<u64, Scene>,
     editor: Option<style::Preferences>,
@@ -55,18 +88,10 @@ pub(super) fn preferences(game: &Game<'_>) -> style::Preferences {
                         s.prefs = p;
                         s.writable = true;
                     }
-                    Err(e) => s.error = Some(e),
+                    Err(e) => s.error = Some(SettingsError::Decode(e)),
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => s.writable = true,
-                Err(e) => {
-                    s.error = Some(format!(
-                        "{}: {e}",
-                        language().text(
-                            "Не удалось прочитать оформление",
-                            "Could not read the appearance file"
-                        )
-                    ))
-                }
+                Err(e) => s.error = Some(SettingsError::Read(e)),
             }
             s.loaded = true;
         }
@@ -494,14 +519,7 @@ fn act(game: &Game<'_>, id: u8) {
         }
         8 => {
             if !s.writable {
-                s.error = Some(
-                    language()
-                        .text(
-                            "Оформление не сохранено: проверьте файл appearance",
-                            "Appearance not saved: check the appearance file",
-                        )
-                        .into(),
-                );
+                s.error = Some(SettingsError::NotWritable);
                 return;
             }
             let dir = game.native_data_dir(claims::ID);
@@ -516,12 +534,7 @@ fn act(game: &Game<'_>, id: u8) {
                     s.error = None;
                     s.hits.clear();
                 }
-                Err(e) => {
-                    s.error = Some(format!(
-                        "{}: {e}",
-                        language().text("Не удалось сохранить", "Could not save")
-                    ))
-                }
+                Err(e) => s.error = Some(SettingsError::Save(e)),
             }
         }
         _ => {}
@@ -577,8 +590,9 @@ pub(super) fn settings_render(
         style::TEXT,
         false,
     );
-    let error = state(|s| s.error.clone());
-    let hint = error.as_deref().unwrap_or(language().text(
+    let language = language();
+    let error = state(|s| s.error.as_ref().map(|error| error.text(language)));
+    let hint = error.as_deref().unwrap_or(language.text(
         "Единый стиль меню, карты, HUD и инвентаря",
         "One style for menus, map, HUD and inventory",
     ));

@@ -82,12 +82,45 @@ struct Editor {
     storage: bool,
     collapsed: bool,
 }
+
+enum SettingsError {
+    Decode(String),
+    Read(std::io::Error),
+    Save(std::io::Error),
+    NotWritable,
+}
+
+impl SettingsError {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Decode(e) => format!(
+                "{}: {e}",
+                language.text("Настройки повреждены", "Settings are corrupted")
+            ),
+            Self::Read(e) => format!(
+                "{}: {e}",
+                language.text("Не удалось прочитать настройки", "Could not read settings")
+            ),
+            Self::Save(e) => format!(
+                "{}: {e}",
+                language.text("Не удалось сохранить", "Could not save")
+            ),
+            Self::NotWritable => language
+                .text(
+                    "Настройки не сохранены: проверь файл inventory_tools",
+                    "Settings not saved: check the inventory_tools file",
+                )
+                .into(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     loaded: bool,
     writable: bool,
     preferences: Preferences,
-    error: Option<String>,
+    error: Option<SettingsError>,
     run: Option<Run>,
     request: Option<(Layout, bool, model::Operation)>,
     editor: Option<Editor>,
@@ -118,22 +151,10 @@ fn load_settings(game: &Game<'_>) {
                     s.preferences = p;
                     s.writable = true;
                 }
-                Err(e) => {
-                    s.error = Some(if language() == Language::Russian {
-                        format!("Настройки повреждены: {e}")
-                    } else {
-                        format!("Settings are corrupted: {e}")
-                    })
-                }
+                Err(e) => s.error = Some(SettingsError::Decode(e)),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => s.writable = true,
-            Err(e) => {
-                s.error = Some(if language() == Language::Russian {
-                    format!("Не удалось прочитать настройки: {e}")
-                } else {
-                    format!("Could not read settings: {e}")
-                })
-            }
+            Err(e) => s.error = Some(SettingsError::Read(e)),
         }
         s.loaded = true;
     });
@@ -559,7 +580,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         false,
                     );
                 }
-                let hint = s.error.as_deref().unwrap_or(t(
+                let error = s.error.as_ref().map(|error| error.text(language()));
+                let hint = error.as_deref().unwrap_or(t(
                     "ЛКМ по слоту: исключить. Хотбар защищён.",
                     "LMB on a slot: exclude. The hotbar is protected.",
                 ));
@@ -724,22 +746,10 @@ fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bo
                         s.editor = None;
                         s.error = None;
                     }
-                    Err(e) => {
-                        s.error = Some(if language() == Language::Russian {
-                            format!("Не удалось сохранить: {e}")
-                        } else {
-                            format!("Could not save: {e}")
-                        })
-                    }
+                    Err(e) => s.error = Some(SettingsError::Save(e)),
                 }
             } else {
-                s.error = Some(
-                    t(
-                        "Настройки не сохранены: проверь файл inventory_tools",
-                        "Settings not saved: check the inventory_tools file",
-                    )
-                    .into(),
-                );
+                s.error = Some(SettingsError::NotWritable);
             }
         }
         Button::Collapse => s.editor.as_mut().unwrap().collapsed = !collapsed,
