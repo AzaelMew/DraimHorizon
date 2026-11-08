@@ -2817,9 +2817,10 @@ impl Menu {
                 // A chip per target, toggled like the structure filters on the map.
                 use super::claim_borders_mining as mining;
                 let top = 100.0 + step;
-                let cols = 3;
-                let chip_w = (w - 8.0) / cols as f32;
-                let rows = (((height - 50.0 - top) / 16.0).floor() as usize).max(1);
+                // Icon tiles: the name is the tooltip. Square, so many fit in a row.
+                let tile = 22.0;
+                let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
+                let rows = (((height - 50.0 - top) / (tile + 2.0)).floor() as usize).max(1);
                 let per_page = rows * cols;
                 let pages = mining::COUNT.div_ceil(per_page);
                 let page = self.mining_page % pages;
@@ -2858,10 +2859,10 @@ impl Menu {
                     };
                     out.push(widget(
                         [
-                            x + (slot % cols) as f32 * (chip_w + 4.0),
-                            top + (slot / cols) as f32 * 16.0,
-                            chip_w,
-                            14.0,
+                            x + (slot % cols) as f32 * (tile + 2.0),
+                            top + (slot / cols) as f32 * (tile + 2.0),
+                            tile,
+                            tile,
                         ],
                         self.language.text(ru, en),
                         Some(Control::MiningTarget(index as u8)),

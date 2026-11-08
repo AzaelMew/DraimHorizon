@@ -23,7 +23,7 @@ Navigation executes dig and bridge routes step by step: it breaks blocks in the 
 | Farm | `farm <radius>` (Baritone farms every crop it knows; the crop choice is ignored) |
 | Schematics (rotation 0°) | the file is copied to Baritone's `schematics` folder, then `build <file> x y z` |
 
-Pause sends `pause`, Start after a pause sends `resume`, Stop sends `cancel`. The status line shows `Baritone · <command>`. Bridge, Drain, Tunnel with Floor and rotated schematics keep the built-in drivers. Commands go through Horizon's native command hook as `/baritone <line>`: if no mod runs them, nothing is sent to the server and the tab reports that Baritone did not accept the command. Baritone's own settings (`#set ...`, for example `allowPlace`, `allowBreak`, `replantCrops`) apply.
+Pause sends `pause`, Start after a pause sends `resume`, Stop sends `cancel`. The status line shows `Baritone · <command>`. Bridge, Drain, Tunnel with Floor and rotated schematics keep the built-in drivers. Commands go through Horizon's native command hook as `/baritone <line>`: if no mod runs them, nothing is sent to the server, the chat says so and the built-in driver runs the task instead. Baritone's own settings (`#set ...`, for example `allowPlace`, `allowBreak`, `replantCrops`) apply.
 
 ## Drain
 

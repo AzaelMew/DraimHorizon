@@ -1413,6 +1413,13 @@ fn not_accepted() -> String {
         )
         .into()
 }
+fn fallback_notice(game: &mut Game<'_>) {
+    let text = language().text(
+        "horizon-baritone не принял команду; работает встроенный драйвер",
+        "horizon-baritone did not accept the command; using the built-in driver",
+    );
+    game.native_chat(text);
+}
 /// Runs `/baritone <line>` through Horizon's native command hook. True only when the
 /// horizon-baritone mod ran it; otherwise nothing leaves the client.
 fn baritone_run(game: &mut Game<'_>, line: &str) -> bool {
@@ -1477,7 +1484,10 @@ pub(super) fn start_baritone(
     // The built-in drivers stand down so two controllers never steer at once.
     reset();
     if !baritone_run(game, &line) {
-        return Some(Err(not_accepted()));
+        // Installed but silent (for example built for another Nightly): never leave the tab
+        // dead, run the built-in driver instead.
+        fallback_notice(game);
+        return None;
     }
     *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
     Some(Ok(()))
@@ -1512,7 +1522,10 @@ pub(super) fn build_baritone(
     }
     reset();
     if !baritone_run(game, &line) {
-        return Some(Err(not_accepted()));
+        // Installed but silent (for example built for another Nightly): never leave the tab
+        // dead, run the built-in driver instead.
+        fallback_notice(game);
+        return None;
     }
     *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
     Some(Ok(()))

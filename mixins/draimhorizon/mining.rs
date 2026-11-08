@@ -144,6 +144,36 @@ pub fn target(index: u8) -> Option<(&'static str, &'static str, &'static [&'stat
         .get(index.checked_sub(ORES.len())?)
         .map(|t| (t.label, t.label_en, t.blocks))
 }
+/// The item whose icon stands for a mining target: the ores in `ORES` order, then `EXTRA`.
+const ICONS: [&str; COUNT] = [
+    "minecraft:diamond",
+    "minecraft:ancient_debris",
+    "minecraft:emerald",
+    "minecraft:gold_ingot",
+    "minecraft:iron_ingot",
+    "minecraft:copper_ingot",
+    "minecraft:redstone",
+    "minecraft:lapis_lazuli",
+    "minecraft:coal",
+    "minecraft:quartz",
+    "minecraft:stone",
+    "minecraft:cobblestone",
+    "minecraft:dirt",
+    "minecraft:sand",
+    "minecraft:gravel",
+    "minecraft:clay",
+    "minecraft:oak_log",
+    "minecraft:obsidian",
+    "minecraft:glowstone",
+    "minecraft:netherrack",
+    "minecraft:sandstone",
+    "minecraft:end_stone",
+    "minecraft:pumpkin",
+];
+/// The icon item of a mining target index.
+pub fn icon(index: u8) -> Option<&'static str> {
+    ICONS.get(usize::from(index)).copied()
+}
 /// Every target index as a bit.
 pub const ALL: u32 = (1 << COUNT) - 1;
 /// A job that collects whichever of the selected targets is nearest.
@@ -638,5 +668,16 @@ mod tests {
                 block(p)
             }
         ));
+    }
+    #[test]
+    fn every_target_has_an_icon_item() {
+        for i in 0..COUNT as u8 {
+            let item = icon(i).unwrap();
+            assert!(item.starts_with("minecraft:"), "{i}: {item}");
+            // The icon is an item that the target actually yields or is made of.
+            let (_, _, blocks) = target(i).unwrap();
+            assert!(!blocks.is_empty());
+        }
+        assert_eq!(icon(COUNT as u8), None);
     }
 }

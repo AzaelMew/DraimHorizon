@@ -2,7 +2,7 @@ use crate::game::claim_borders_ui_view as ui;
 // Horizon drawing/input adapter. Mutating Game operations are drained on the client tick.
 use crate::game::native_hooks::NativeScreenView;
 use crate::game::{Game, claim_borders as claims, claim_borders_menu as model};
-use horizon_client::hud::HudBatch;
+use horizon_client::{hud::HudBatch, items::ItemStack};
 use model::Language;
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -544,6 +544,23 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     }
                     _ => widget.text.clone(),
                 });
+            }
+            // Mining targets are item icons; the name is shown as a tooltip.
+            if let Some(model::Control::MiningTarget(index)) = widget.control {
+                if hover {
+                    request_tip = Some(widget.text.clone());
+                }
+                if let Some(item) = crate::game::claim_borders_mining::icon(index)
+                    && game.res.items().get(item).is_some()
+                {
+                    game.draw_item(
+                        batch,
+                        &ItemStack::new(item, 1),
+                        x + (w - 16.0) * 0.5,
+                        y + (h - 16.0) * 0.5,
+                    );
+                    continue;
+                }
             }
             let color = if widget.muted {
                 0x8995a5

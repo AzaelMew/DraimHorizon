@@ -1,5 +1,11 @@
 # История версий
 
+## 0.29.7
+
+- Mining: the target grid shows item icons (diamond, ingots, redstone, logs, stone, …) instead of text chips. The name appears as a tooltip on hover, in Russian or English; the selected state is unchanged. Tiles are 22 px squares, so far more fit in a row and the grid pages less. New `mining::icon` with a test that every target has an icon.
+- horizon-baritone bridge: when that mod is installed and on but does not accept the command (for example it is built for another Nightly), the tab now runs the built-in driver and says so in chat. Before, the tab stopped with "Baritone did not accept the command", which left Navigation, Mining, Tunnel, Farm and Schematics dead whenever the mod was outdated.
+- Not compiled against the real client and not verified in game.
+
 ## 0.29.6
 
 - Drain fix: with sand or gravel the first cell next to the shore was never filled ("Осушение: 0 · Нет доступной грани … луч прицела упирается в соседний блок"). The only block to click on was the shore's wall facing the water, which cannot be hit from inland: the aim ray meets the block's top first, and the walking spots exclude every cell next to water. The drain now walks over the edge of the shore block, sneaking (the same hang as when bridging), until that wall is in the ray, and places from there. Each cell gets at most 3.5 s for this before the next spot is tried. New pure `draining::edge_stand` with a test.
