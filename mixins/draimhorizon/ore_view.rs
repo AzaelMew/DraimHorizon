@@ -82,6 +82,17 @@ pub(super) fn configure(game: &Game<'_>, prefs: model::Preferences) {
         }
     });
 }
+/// Ores of one kind that the experiment currently marks in loaded chunks. The mining job
+/// tries these first, so the route leads to what the player sees highlighted.
+pub(super) fn marks_for(kind: u8) -> Vec<[i32; 3]> {
+    state(|s| {
+        s.marks
+            .iter()
+            .filter(|mark| mark.kind == kind && !mark.predicted)
+            .map(|mark| mark.position)
+            .collect()
+    })
+}
 pub(super) fn status() -> String {
     let status = state(|s| s.status.clone());
     let language = language();

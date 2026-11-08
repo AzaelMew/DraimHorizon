@@ -53,14 +53,26 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
         return false;
     };
     match action {
-        model::Hotkey::Start => {
-            // Starting from a preview or resuming a paused job must not bypass
-            // the existing consent, world identity or server-confirmation gates.
-            // A second press must not restart an active dig and lose its ACK state.
-            if snapshot(game).1
-                && let Err(error) = resume(game)
-            {
+        model::Hotkey::Preview => {
+            if let Err(error) = start_from_menu(game, false) {
                 game.native_chat(&error);
+            }
+        }
+        model::Hotkey::Start => {
+            // A paused task resumes where it stopped; with nothing to resume the key
+            // starts what the Experiments tab shows. Neither path bypasses the consent,
+            // world identity or server-confirmation gates, and a press while a task is
+            // running does nothing, so an active dig never loses its ACK state.
+            let (running, resumable) = control();
+            if !running {
+                let result = if resumable {
+                    resume(game)
+                } else {
+                    start_from_menu(game, true)
+                };
+                if let Err(error) = result {
+                    game.native_chat(&error);
+                }
             }
         }
         model::Hotkey::Pause => pause(),
@@ -68,9 +80,62 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
     }
     true
 }
+/// Start or preview the task of the Baritone tab that was last on screen.
+fn start_from_menu(game: &Game<'_>, running: bool) -> Result<(), String> {
+    use crate::game::claim_borders_menu::Action;
+    match crate::game::claim_borders_menu_view::baritone_request(running)? {
+        Action::Navigate { goal, running } => start(game, goal, running),
+        Action::LoadSchematic {
+            filename,
+            origin,
+            rotation,
+            running,
+        } => crate::game::claim_borders_workshop_view::load(
+            game, filename, origin, rotation, running,
+        ),
+        _ => Ok(()),
+    }
+}
+/// What the action keys should do with the task in progress: (running, resumable).
+fn control() -> (bool, bool) {
+    if assist_active() {
+        return (true, false);
+    }
+    if let Some(control) = crate::game::claim_borders_workshop_view::control() {
+        return control;
+    }
+    if let Some(control) = crate::game::claim_borders_construction_view::control() {
+        return control;
+    }
+    state(|s| {
+        if let Some(job) = s.mining.as_ref() {
+            let preview = !job.active
+                && matches!(
+                    s.nav.status,
+                    model::Status::Preview | model::Status::Planning
+                );
+            return (
+                job.active,
+                !job.active && !preview && job.confirmed < job.limit,
+            );
+        }
+        (
+            s.nav.running,
+            !s.nav.running && matches!(s.nav.status, model::Status::Paused | model::Status::Stuck),
+        )
+    })
+}
 
 struct Query {
     flat: bool,
+    /// Digging is allowed: a usable pickaxe is held and the inventory has room.
+    dig: bool,
+    /// Missing floor may be bridged: building blocks are on hand.
+    place: bool,
+    /// Plan a dig/bridge route even when a walking route exists.
+    force: bool,
+    /// Ores already marked by the ore experiment, tried first when mining.
+    hints: Vec<model::Pos>,
     mine: Option<(u8, Vec<model::Pos>)>,
     token: u64,
     start: model::Pos,
@@ -84,7 +149,7 @@ struct Answer {
     token: u64,
     start: model::Pos,
     path: Option<model::Path>,
-    action_plan: Option<model::ActionPath>,
+    dig_plan: Option<model::DigPath>,
 }
 struct Worker {
     tx: SyncSender<Query>,
@@ -132,12 +197,32 @@ impl Worker {
                                     .as_ref()
                                     .is_some_and(|(ore, _)| mining::matches(*ore, &f.name)),
                                 falling: mining::falling(&f.name),
+                                breakable: f.hardness >= 0.0 && !f.block_entity,
                             }
                         })
                     };
+                    let mut dig_plan = None;
                     let (target, path) = if let Some((_, excluded)) = query.mine.as_ref() {
                         match mining::plan(query.start, excluded, &mut read, canceled) {
                             Some((target, path)) => (Some(target), Some(path)),
+                            // Nothing is exposed: look for ore inside the rock and plan
+                            // the route that digs to it.
+                            None if query.dig && !canceled() => {
+                                match mining::plan_buried(
+                                    query.start,
+                                    excluded,
+                                    &query.hints,
+                                    query.place,
+                                    &mut read,
+                                    canceled,
+                                ) {
+                                    Some((target, route)) => {
+                                        dig_plan = Some(route);
+                                        (Some(target), None)
+                                    }
+                                    None => (None, None),
+                                }
+                            }
                             None => (None, None),
                         }
                     } else {
@@ -152,29 +237,39 @@ impl Worker {
                             ),
                         )
                     };
-                    // If the walking-only planner fails, discover a possible
-                    // dig/bridge route without executing world edits.
-                    let action_plan = if query.mine.is_none()
-                        && path.as_ref().is_none_or(|walking| !walking.complete)
+                    // A walking route that does not reach the goal (or a request to avoid a
+                    // dead end) is answered with a route that breaks and places blocks.
+                    if query.mine.is_none()
+                        && (query.dig || query.place)
+                        && (query.force || path.as_ref().is_none_or(|walking| !walking.complete))
                         && !canceled()
                     {
-                        Some(model::search_actions(
+                        let read = std::cell::RefCell::new(read);
+                        let digging = query.dig;
+                        dig_plan = model::search_dig(
                             query.start,
                             query.goal,
-                            |at| read(at).cell,
+                            false,
+                            query.place,
+                            |at| (*read.borrow_mut())(at).cell,
+                            |at| {
+                                let block = (*read.borrow_mut())(at);
+                                digging
+                                    && block.cell == model::Cell::Solid
+                                    && block.breakable
+                                    && !block.falling
+                                    && !(*read.borrow_mut())([at[0], at[1] + 1, at[2]]).falling
+                            },
                             canceled,
-                        ))
-                        .flatten()
-                    } else {
-                        None
-                    };
+                        );
+                    }
                     if !canceled() {
                         let _ = results.send(Answer {
                             target,
                             token: query.token,
                             start: query.start,
                             path,
-                            action_plan,
+                            dig_plan,
                         });
                     }
                 }
@@ -200,7 +295,12 @@ struct State {
     worker: Option<Worker>,
     token: u64,
     pending: bool,
-    action_plan: Option<model::ActionPath>,
+    /// (blocks to break, blocks to place) of a route shown as a preview.
+    preview_route: Option<(u16, u16)>,
+    /// Ask the planner for a dig/bridge route even if walking could continue.
+    force_dig: bool,
+    /// A dead end was already answered with a dig/bridge route once.
+    stuck_tried: bool,
     last_query: Instant,
 }
 impl Default for State {
@@ -217,7 +317,9 @@ impl Default for State {
             worker: None,
             token: 0,
             pending: false,
-            action_plan: None,
+            preview_route: None,
+            force_dig: false,
+            stuck_tried: false,
             last_query: Instant::now() - Duration::from_secs(2),
         }
     }
@@ -232,6 +334,7 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 pub(super) fn reset() {
     crate::game::claim_borders_workshop_view::reset();
     crate::game::claim_borders_construction_view::reset();
+    drop_assist();
     state(|s| {
         let restore = s.attack_restore;
         let use_restore = s.use_restore;
@@ -275,9 +378,10 @@ fn cancel_pending(s: &mut State) {
         w.generation.store(s.token, Ordering::Relaxed);
     }
     s.pending = false;
-    s.action_plan = None;
+    s.preview_route = None;
 }
 fn pause_state(s: &mut State) {
+    release_assist(s);
     s.nav.pause();
     if let Some(job) = s.mining.as_mut() {
         job.active = false;
@@ -308,6 +412,7 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
             mining::matches(ore, &f.name)
         },
         falling: mining::falling(&f.name),
+        breakable: f.hardness >= 0.0 && !f.block_entity,
     }
 }
 fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
@@ -791,8 +896,22 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .flat_map(|z| (-2..=2).map(move |x| (center.0 + x, center.1 + z)))
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
         .collect();
+    let hints = s
+        .mining
+        .as_ref()
+        .filter(|j| {
+            j.phase == mining::Phase::Searching
+                && j.ore != u8::MAX
+                && crate::game::claim_borders_farming::Crop::from_code(j.ore).is_none()
+        })
+        .map(|j| crate::game::claim_borders_ore_view::marks_for(j.ore))
+        .unwrap_or_default();
     let query = Query {
         flat: s.flat,
+        dig: !s.flat && mining_tool(game, None) && free_slot(game),
+        place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
+        force: s.force_dig,
+        hints,
         mine: s
             .mining
             .as_ref()
@@ -822,6 +941,8 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    drop_assist();
+    assist_reset_budget();
     if let Goal::Farm(config) = goal_request {
         return crate::game::claim_borders_workshop_view::start_farm(game, config, !running);
     }
@@ -897,6 +1018,8 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
     state(|s| {
         s.mining = None;
         s.mine_aim = None;
+        s.stuck_tried = false;
+        s.force_dig = false;
         cancel_pending(s);
         s.scope = scope;
         s.nav.begin(goal, running);
@@ -930,6 +1053,8 @@ pub(super) fn pause() {
         if s.nav.running || s.mining.as_ref().is_some_and(|j| j.active) {
             cancel_pending(s);
             pause_state(s);
+        } else {
+            release_assist(s);
         }
     });
 }
@@ -982,8 +1107,13 @@ pub(super) fn tick(game: &Game<'_>) {
             *s = State::default();
             return;
         }
-        if let Some(w) = s.worker.as_ref() {
-            while let Ok(answer) = w.rx.try_recv() {
+        let answers: Vec<Answer> = s
+            .worker
+            .as_ref()
+            .map(|w| std::iter::from_fn(|| w.rx.try_recv().ok()).collect())
+            .unwrap_or_default();
+        {
+            for answer in answers {
                 if answer.token == s.token && s.pending {
                     s.pending = false;
                     if model::distance(position, model::center(answer.start)) > 1.5 {
@@ -993,28 +1123,77 @@ pub(super) fn tick(game: &Game<'_>) {
                             job.active = false;
                         }
                     } else {
-                        if let Some(job) = s.mining.as_mut()
-                            && job.phase == mining::Phase::Searching
+                        let walking_complete = answer.path.as_ref().is_some_and(|p| p.complete);
+                        let route = answer.dig_plan.filter(|r| !r.steps.is_empty());
+                        let running = s.nav.running || s.mining.as_ref().is_some_and(|j| j.active);
+                        let mut handled = false;
+                        if s.mining
+                            .as_ref()
+                            .is_some_and(|j| j.phase == mining::Phase::Searching)
                         {
                             if let Some(target) = answer.target {
-                                job.select(target);
-                                s.nav.goal =
-                                    answer.path.as_ref().and_then(|p| p.nodes.last().copied());
-                            } else {
+                                s.mining.as_mut().unwrap().select(target);
+                                match route {
+                                    // The ore is inside the rock: dig to it, or show the way.
+                                    Some(route) if running && assist_budget() => {
+                                        let job = s.mining.take();
+                                        install_assist(s, target, job, route);
+                                        handled = true;
+                                    }
+                                    Some(route) => {
+                                        s.preview_route = Some(route_counts(&route));
+                                        s.nav.goal = route.steps.last().map(|step| step.to);
+                                        s.nav.accept(Some(model::Path {
+                                            nodes: route_nodes(&route),
+                                            complete: true,
+                                        }));
+                                        handled = true;
+                                    }
+                                    None => {
+                                        s.nav.goal = answer
+                                            .path
+                                            .as_ref()
+                                            .and_then(|p| p.nodes.last().copied());
+                                    }
+                                }
+                            } else if let Some(job) = s.mining.as_mut() {
                                 job.active = false;
                                 job.phase = mining::Phase::NoTarget;
                             }
+                        } else if s.mining.is_none()
+                            && s.nav.follow.is_none()
+                            && !assist_active()
+                            && (s.force_dig || !walking_complete)
+                            && (answer.path.is_none()
+                                || s.force_dig
+                                || route.as_ref().is_some_and(|r| r.complete))
+                        {
+                            // Walking cannot get there (or just got stuck): break and
+                            // place blocks instead of giving up.
+                            if let Some(route) = route {
+                                let goal = s.nav.goal.unwrap_or(route.start);
+                                s.force_dig = false;
+                                if s.nav.running && assist_budget() {
+                                    install_assist(s, goal, None, route);
+                                } else {
+                                    s.preview_route = Some(route_counts(&route));
+                                    s.nav.accept(Some(model::Path {
+                                        nodes: route_nodes(&route),
+                                        complete: route.complete,
+                                    }));
+                                }
+                                handled = true;
+                            }
                         }
-                        // Keep an action plan for inspection. Until the native
-                        // executor verifies tools, permissions and server ACKs,
-                        // never feed an edit-requiring route to walking input.
-                        s.action_plan = answer.action_plan;
-                        if answer.path.is_none() && s.mining.is_none() && s.nav.running {
-                            // Retry from the current position with a bounded recovery budget.
-                            // Never turn a failed plan into unbounded movement or block edits.
-                            s.nav.blocked(position);
-                        } else {
-                            s.nav.accept(answer.path);
+                        s.force_dig = false;
+                        if !handled {
+                            if answer.path.is_none() && s.mining.is_none() && s.nav.running {
+                                // Retry from the current position with a bounded recovery
+                                // budget. Never turn a failed plan into unbounded movement.
+                                s.nav.blocked(position);
+                            } else {
+                                s.nav.accept(answer.path);
+                            }
                         }
                     }
                 }
@@ -1084,6 +1263,24 @@ pub(super) fn tick(game: &Game<'_>) {
             }
         }
         mining_tick(game, s, position);
+        // A walk that ended in a dead end is not the end of the task: once, ask for a
+        // route that breaks and places blocks from where the player stands.
+        if s.nav.status == model::Status::Stuck
+            && !s.nav.running
+            && s.mining.is_none()
+            && s.nav.follow.is_none()
+            && s.nav.goal.is_some()
+            && !s.flat
+            && !s.stuck_tried
+            && !assist_active()
+            && assist_budget()
+        {
+            s.stuck_tried = true;
+            s.force_dig = true;
+            s.nav.running = true;
+            cancel_pending(s);
+            s.nav.replan();
+        }
         if s.nav.running
             && s.nav.status == model::Status::Waiting
             && s.last_query.elapsed() > Duration::from_millis(350)
@@ -1092,6 +1289,431 @@ pub(super) fn tick(game: &Game<'_>) {
             pause_state(s);
         }
     });
+    assist_tick(game);
+}
+
+// ---------------------------------------------------------------------------------------
+// Routes that break and place blocks.
+//
+// The planner (`model::search_dig`) answers with steps; this executor carries them out one
+// at a time with the ordinary drivers: a server-confirmed dig for every block that stands in
+// the way, the bridge job for a missing floor, the walking navigator for the rest. After a
+// route ends, or fails, the destination is planned again from wherever the player stands, so
+// a stop never leaves the bot guessing. Pausing or any manual input drops the route.
+// ---------------------------------------------------------------------------------------
+enum Stage {
+    /// Look at the next step against the live world.
+    Next,
+    /// Blocks of the current step still to break; `issued` once the dig was started.
+    Dig { rest: Vec<model::Pos>, issued: bool },
+    /// A straight run of `count` floor blocks is being built by the bridge job.
+    Bridge { count: usize },
+    /// Walking the steps `index..end` on the navigator.
+    Walk { end: usize },
+}
+struct Assist {
+    scope: String,
+    /// Where the whole task should end (navigation), or the ore being approached.
+    goal: model::Pos,
+    /// The ore job waiting for the route to bring the player next to its target.
+    mining: Option<mining::Job>,
+    route: model::DigPath,
+    index: usize,
+    stage: Stage,
+    stage_ms: u64,
+    started: Instant,
+}
+enum Flow {
+    Keep,
+    /// The route ran to its end.
+    Done,
+    /// The world no longer matches the plan; plan again.
+    Failed,
+    /// The player took over or paused.
+    Abort,
+    /// Another world: forget everything.
+    Drop,
+}
+/// Failed routes and routes started since the player last gave the order.
+static ASSIST_FAILS: AtomicU64 = AtomicU64::new(0);
+static ASSIST_ROUTES: AtomicU64 = AtomicU64::new(0);
+const ASSIST_MAX_FAILS: u64 = 3;
+const ASSIST_MAX_ROUTES: u64 = 24;
+fn assist_slot<T>(f: impl FnOnce(&mut Option<Assist>) -> T) -> T {
+    static SLOT: Mutex<Option<Assist>> = Mutex::new(None);
+    f(&mut SLOT.lock().unwrap_or_else(|e| e.into_inner()))
+}
+fn assist_active() -> bool {
+    assist_slot(|a| a.is_some())
+}
+fn assist_budget() -> bool {
+    ASSIST_FAILS.load(Ordering::Relaxed) < ASSIST_MAX_FAILS
+        && ASSIST_ROUTES.load(Ordering::Relaxed) < ASSIST_MAX_ROUTES
+}
+fn assist_reset_budget() {
+    ASSIST_FAILS.store(0, Ordering::Relaxed);
+    ASSIST_ROUTES.store(0, Ordering::Relaxed);
+}
+fn drop_assist() {
+    assist_slot(|a| *a = None);
+}
+/// Called with the state lock held: hands a waiting ore job back, paused.
+fn release_assist(s: &mut State) {
+    if let Some(a) = assist_slot(Option::take) {
+        s.scope = a.scope.clone();
+        if let Some(mut job) = a.mining {
+            job.active = false;
+            s.mining = Some(job);
+        } else {
+            // Resuming plans toward the real destination, not the step that was under way.
+            s.nav.goal = Some(a.goal);
+            s.nav.status = model::Status::Paused;
+        }
+    }
+}
+fn install_assist(
+    s: &mut State,
+    goal: model::Pos,
+    mining: Option<mining::Job>,
+    route: model::DigPath,
+) {
+    ASSIST_ROUTES.fetch_add(1, Ordering::Relaxed);
+    s.nav.running = true;
+    s.nav.status = model::Status::Mining;
+    s.nav.goal = route.steps.last().map(|step| step.to);
+    s.preview_route = None;
+    let scope = s.scope.clone();
+    assist_slot(|slot| {
+        *slot = Some(Assist {
+            scope,
+            goal,
+            mining,
+            route,
+            index: 0,
+            stage: Stage::Next,
+            stage_ms: 0,
+            started: Instant::now(),
+        });
+    });
+}
+fn route_nodes(route: &model::DigPath) -> Vec<model::Pos> {
+    std::iter::once(route.start)
+        .chain(route.steps.iter().map(|step| step.to))
+        .collect()
+}
+fn route_counts(route: &model::DigPath) -> (u16, u16) {
+    (
+        route.steps.iter().map(|step| step.dig.len() as u16).sum(),
+        route
+            .steps
+            .iter()
+            .filter(|step| step.place.is_some())
+            .count() as u16,
+    )
+}
+fn assist_label() -> Option<String> {
+    let l = language();
+    assist_slot(|slot| {
+        slot.as_ref().map(|a| {
+            let what = match a.stage {
+                Stage::Next => l.text("Анализ пути", "Analysing the route"),
+                Stage::Dig { .. } => l.text("Ломаю блоки", "Breaking blocks"),
+                Stage::Bridge { .. } => l.text("Строю мост", "Building a bridge"),
+                Stage::Walk { .. } => l.text("Иду по проходу", "Walking the passage"),
+            };
+            format!("{what} · {}/{}", a.index, a.route.steps.len())
+        })
+    })
+}
+/// Start the walking navigator on `nodes`, which begin where the player stands.
+fn assist_walk(scope: &str, nodes: Vec<model::Pos>) {
+    let Some(&goal) = nodes.last() else {
+        return;
+    };
+    state(|s| {
+        cancel_pending(s);
+        s.scope = scope.to_owned();
+        s.nav.begin(goal, true);
+        s.nav.precise = true;
+        s.nav.accept(Some(model::Path {
+            nodes,
+            complete: true,
+        }));
+    });
+}
+/// Plan again toward the same destination after a route ended or failed.
+fn assist_replan(game: &Game<'_>, a: Assist, failed: bool) {
+    if failed {
+        ASSIST_FAILS.fetch_add(1, Ordering::Relaxed);
+    }
+    let give_up = !assist_budget();
+    let Assist {
+        scope,
+        goal,
+        mining,
+        route,
+        ..
+    } = a;
+    // The dig and bridge drivers keep their own state; clear whatever the route left.
+    crate::game::claim_borders_construction_view::reset();
+    state(|s| {
+        cancel_pending(s);
+        s.scope = scope;
+        if let Some(mut job) = mining {
+            // An ore job resumes: next to its ore it breaks it, otherwise it looks again.
+            let near = route.steps.last().map(|step| step.to);
+            if failed || give_up {
+                job.skip();
+                if give_up {
+                    job.active = false;
+                    job.phase = mining::Phase::NoTarget;
+                }
+            }
+            let ready = !failed && job.phase == mining::Phase::Approaching;
+            s.mining = Some(job);
+            s.mine_aim = None;
+            s.nav.begin(near.unwrap_or(goal), true);
+            s.nav.precise = true;
+            if ready {
+                s.nav.running = false;
+                s.nav.status = model::Status::Arrived;
+            } else if give_up {
+                s.nav.running = false;
+                s.nav.status = model::Status::NoPath;
+            } else {
+                s.nav.replan();
+            }
+            return;
+        }
+        s.mining = None;
+        s.nav.begin(goal, true);
+        if give_up {
+            s.nav.running = false;
+            s.nav.status = model::Status::NoPath;
+        } else if request(game, s).is_err() {
+            s.nav.replan();
+        }
+    });
+}
+fn assist_tick(game: &Game<'_>) {
+    let Some(mut a) = assist_slot(Option::take) else {
+        return;
+    };
+    match assist_step(game, &mut a) {
+        Flow::Keep => assist_slot(|slot| {
+            if slot.is_none() {
+                *slot = Some(a);
+            }
+        }),
+        Flow::Done => assist_replan(game, a, false),
+        Flow::Failed => assist_replan(game, a, true),
+        Flow::Abort => state(|s| {
+            cancel_pending(s);
+            s.scope = a.scope.clone();
+            if let Some(mut job) = a.mining {
+                job.active = false;
+                s.mining = Some(job);
+            } else {
+                s.nav.goal = Some(a.goal);
+            }
+            s.nav.running = false;
+            s.nav.status = model::Status::Paused;
+        }),
+        Flow::Drop => {}
+    }
+}
+fn assist_step(game: &Game<'_>, a: &mut Assist) -> Flow {
+    use crate::game::claim_borders_construction as building;
+    use crate::game::claim_borders_construction_view as construction;
+    if !game.native_on(claims::ID) || scope(game).as_deref() != Some(a.scope.as_str()) {
+        return Flow::Drop;
+    }
+    if !game.native_playing() || !allowed(game) {
+        return Flow::Abort;
+    }
+    let Some(p) = game.native_player() else {
+        return Flow::Abort;
+    };
+    let position = [p.x, p.y, p.z];
+    let now = a.started.elapsed().as_millis() as u64;
+    if now > 300_000 || now.saturating_sub(a.stage_ms) > 45_000 {
+        return Flow::Failed;
+    }
+    match &mut a.stage {
+        Stage::Next => {
+            if a.index >= a.route.steps.len() {
+                return Flow::Done;
+            }
+            let expected = if a.index == 0 {
+                a.route.start
+            } else {
+                a.route.steps[a.index - 1].to
+            };
+            if model::distance(position, model::center(expected)) > 1.3 {
+                return Flow::Failed;
+            }
+            let step = a.route.steps[a.index].clone();
+            let rest: Vec<_> = step
+                .dig
+                .iter()
+                .copied()
+                .filter(|at| live_cell(game, *at) == model::Cell::Solid)
+                .collect();
+            a.stage_ms = now;
+            if !rest.is_empty() {
+                a.stage = Stage::Dig {
+                    rest,
+                    issued: false,
+                };
+                return Flow::Keep;
+            }
+            if let Some(floor) = step.place {
+                if live_cell(game, floor) != model::Cell::Air {
+                    // Somebody (or the server) already put something there.
+                    if live_cell(game, floor) != model::Cell::Solid {
+                        return Flow::Failed;
+                    }
+                } else {
+                    // One bridge job builds the whole straight run of floor blocks.
+                    let from = expected;
+                    let Some(direction) =
+                        building::Direction::from_step(step.to[0] - from[0], step.to[2] - from[2])
+                    else {
+                        return Flow::Failed;
+                    };
+                    let mut count = 1;
+                    while let Some(next) = a.route.steps.get(a.index + count) {
+                        let before = a.route.steps[a.index + count - 1].to;
+                        if next.place.is_none()
+                            || !next.dig.is_empty()
+                            || next.to[1] != before[1]
+                            || building::Direction::from_step(
+                                next.to[0] - before[0],
+                                next.to[2] - before[2],
+                            ) != Some(direction)
+                            || count >= 32
+                        {
+                            break;
+                        }
+                        count += 1;
+                    }
+                    let config = building::Config {
+                        kind: building::Kind::Bridge,
+                        direction,
+                        width: 1,
+                        height: 2,
+                        length: count as u16,
+                        fill_floor: true,
+                    };
+                    return match construction::start(game, config, false) {
+                        Ok(()) => {
+                            a.stage = Stage::Bridge { count };
+                            Flow::Keep
+                        }
+                        Err(_) => Flow::Failed,
+                    };
+                }
+            }
+            // A run of plain steps is walked in one go.
+            let mut end = a.index + 1;
+            while let Some(next) = a.route.steps.get(end) {
+                if next.place.is_some() || !next.dig.is_empty() {
+                    break;
+                }
+                end += 1;
+            }
+            let mut nodes = vec![expected];
+            nodes.extend(a.route.steps[a.index..end].iter().map(|step| step.to));
+            let scope = a.scope.clone();
+            assist_walk(&scope, nodes);
+            a.stage = Stage::Walk { end };
+            Flow::Keep
+        }
+        Stage::Dig { rest, issued } => {
+            while let Some(&at) = rest.first() {
+                if live_cell(game, at) == model::Cell::Solid {
+                    break;
+                }
+                rest.remove(0);
+                *issued = false;
+            }
+            let Some(&at) = rest.first() else {
+                a.stage = Stage::Next;
+                return Flow::Keep;
+            };
+            if !*issued {
+                if construction_dig(game, at).is_err() {
+                    return Flow::Failed;
+                }
+                *issued = true;
+                a.stage_ms = now;
+                return Flow::Keep;
+            }
+            match construction_dig_state() {
+                DigState::Done => {
+                    rest.remove(0);
+                    *issued = false;
+                    a.stage_ms = now;
+                    Flow::Keep
+                }
+                DigState::Working => Flow::Keep,
+                DigState::Paused => Flow::Abort,
+                DigState::Failed => Flow::Failed,
+            }
+        }
+        Stage::Bridge { count } => match construction::outcome() {
+            Some(construction::Outcome::Done) => {
+                construction::reset();
+                a.index += *count;
+                a.stage = Stage::Next;
+                a.stage_ms = now;
+                Flow::Keep
+            }
+            Some(construction::Outcome::Working) => Flow::Keep,
+            Some(construction::Outcome::Failed) => Flow::Failed,
+            Some(construction::Outcome::Paused) | None => Flow::Abort,
+        },
+        Stage::Walk { end } => {
+            let end = *end;
+            match state(|s| s.nav.status) {
+                model::Status::Arrived => {
+                    a.index = end;
+                    a.stage = Stage::Next;
+                    a.stage_ms = now;
+                    Flow::Keep
+                }
+                model::Status::Stuck | model::Status::NoPath => Flow::Failed,
+                model::Status::Paused | model::Status::Idle => Flow::Abort,
+                _ => Flow::Keep,
+            }
+        }
+    }
+}
+/// How an excavation started by `construction_dig` is going.
+pub(super) enum DigState {
+    Working,
+    Done,
+    Paused,
+    Failed,
+}
+pub(super) fn construction_dig_state() -> DigState {
+    state(|s| match s.mining.as_ref().filter(|j| j.ore == u8::MAX) {
+        Some(j) if j.phase == mining::Phase::Done => DigState::Done,
+        Some(j) if j.active => DigState::Working,
+        Some(j)
+            if matches!(
+                j.phase,
+                mining::Phase::Refused
+                    | mining::Phase::Tool
+                    | mining::Phase::Inventory
+                    | mining::Phase::Timeout
+                    | mining::Phase::NoTarget
+            ) =>
+        {
+            DigState::Failed
+        }
+        _ => DigState::Paused,
+    })
 }
 
 fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
@@ -1193,6 +1815,9 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     if let Some(snapshot) = crate::game::claim_borders_construction_view::snapshot() {
         return snapshot;
     }
+    if let Some(label) = assist_label() {
+        return (label, false);
+    }
     let language = language();
     state(|s| {
         if let Some(job) = s.mining.as_ref() {
@@ -1222,7 +1847,7 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                     }
                     mining::Phase::Done => language.text("Добыча завершена", "Mining complete"),
                     mining::Phase::NoTarget => {
-                        language.text("Доступная руда не найдена", "No reachable exposed ore")
+                        language.text("Доступная руда не найдена", "No reachable ore found")
                     }
                     mining::Phase::Refused => {
                         language.text("Сервер отклонил разрушение", "Server refused the break")
@@ -1275,34 +1900,12 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
             .goal
             .zip(game.native_player())
             .map(|(goal, p)| model::distance([p.x, p.y, p.z], model::center(goal)));
-        // Do not advertise an action-aware route as executable until the
-        // block-edit driver can confirm every operation with the server.
         let action_hint = s
-            .action_plan
-            .as_ref()
-            .and_then(|plan| {
-                let digs = plan
-                    .actions
-                    .iter()
-                    .filter(|a| matches!(a, model::StepAction::Dig { .. }))
-                    .count();
-                let bridges = plan
-                    .actions
-                    .iter()
-                    .filter(|a| matches!(a, model::StepAction::Bridge { .. }))
-                    .count();
-                (digs + bridges > 0).then(|| {
-                    let kind = if plan.complete {
-                        language.text("Маршрут с действиями", "Action route")
-                    } else {
-                        language.text("Частичный маршрут", "Partial route")
-                    };
-                    let warning = language.text(
-                        "копание/мосты пока не исполняются",
-                        "dig/bridge execution not implemented",
-                    );
-                    format!(" · {kind}: {digs} dig, {bridges} bridge · {warning}")
-                })
+            .preview_route
+            .filter(|(digs, places)| digs + places > 0)
+            .map(|(digs, places)| match language {
+                Language::Russian => format!(" · маршрут: ломать {digs}, ставить {places}"),
+                Language::English => format!(" · route: break {digs}, place {places}"),
             })
             .unwrap_or_default();
         (

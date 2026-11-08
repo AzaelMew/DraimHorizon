@@ -17,9 +17,10 @@ fn text(ru: &'static str, en: &'static str) -> &'static str {
 }
 fn reason(error: schema::PlaceError) -> &'static str {
     match error {
-        schema::PlaceError::Material => {
-            text("Нет материала в хотбаре", "Material missing from hotbar")
-        }
+        schema::PlaceError::Material => text(
+            "Нет материала (хотбар, 2-я рука, инвентарь)",
+            "Material missing (hotbar, off hand, inventory)",
+        ),
         schema::PlaceError::Refused => text("Сервер отказал", "Server refused"),
         schema::PlaceError::Manual => text("Ручное вмешательство", "Manual input"),
         schema::PlaceError::Timeout => text("Нет ответа сервера", "Server acknowledgement timeout"),
@@ -94,6 +95,18 @@ pub(super) fn reset() {
 }
 pub(super) fn exists() -> bool {
     state(|s| s.task.is_some() || s.pending.is_some())
+}
+/// (running, resumable) for the action keys. A paused or stopped task can resume;
+/// a finished or previewed one starts over from the tab's settings.
+pub(super) fn control() -> Option<(bool, bool)> {
+    state(|s| {
+        if s.pending.is_some() {
+            return Some((true, false));
+        }
+        s.task
+            .as_ref()
+            .map(|_| (s.active, !s.active && !s.preview && s.phase != Phase::Done))
+    })
 }
 pub(super) fn pause() {
     state(|s| {
@@ -248,11 +261,9 @@ fn matches(game: &Game<'_>, at: nav::Pos, w: &schema::BlockState) -> bool {
         game.native_block_property(at, key)
     })
 }
+/// Seeds anywhere the placement driver can reach them: hotbar, off hand or inventory.
 fn seed(game: &Game<'_>, crop: farm::Crop) -> bool {
-    (0..9).any(|i| {
-        game.stack_in(i)
-            .is_some_and(|s| s.count > 0 && s.item.as_ref() == crop.seed())
-    })
+    placement::has_item(game, &|name| name == crop.seed())
 }
 fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, String> {
     let registry = &game.pack.assets.registry;
@@ -309,10 +320,23 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     }
     candidates.sort_unstable();
     candidates.dedup();
-    candidates.sort_by(|a, b| {
-        nav::distance(nav::center(*a), [p.x, p.y, p.z])
-            .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z]))
-    });
+    if matches!(s.task, Some(Task::Farm { .. })) {
+        // Seeds go onto the farmland next to the player's feet. Standing right beside the
+        // target keeps the aim ray from meeting the neighbouring crops first.
+        candidates.sort_by(|a, b| {
+            nav::distance(nav::center(*a), nav::center(target))
+                .total_cmp(&nav::distance(nav::center(*b), nav::center(target)))
+                .then(
+                    nav::distance(nav::center(*a), [p.x, p.y, p.z])
+                        .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z])),
+                )
+        });
+    } else {
+        candidates.sort_by(|a, b| {
+            nav::distance(nav::center(*a), [p.x, p.y, p.z])
+                .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z]))
+        });
+    }
     candidates.truncate(16);
     if let Some(at) = candidates.get(s.attempt).copied() {
         s.attempt += 1;
@@ -327,12 +351,18 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
             }
         }
     } else {
+        let why = placement::diagnostic();
+        let message = text(
+            "Нет доступной грани; подойдите ближе и продолжите",
+            "No reachable placement face",
+        );
         fail(
             s,
-            text(
-                "Нет доступной грани; подойдите ближе и продолжите",
-                "No reachable placement face",
-            ),
+            if why.is_empty() {
+                message.to_owned()
+            } else {
+                format!("{message} ({why})")
+            },
         );
         false
     }
@@ -535,7 +565,10 @@ pub(super) fn tick(game: &Game<'_>) {
                 if config.replant && !seed(game, config.crop) {
                     fail(
                         s,
-                        text("Нужны семена в хотбаре", "Seeds required in hotbar"),
+                        text(
+                            "Нужны семена (хотбар, 2-я рука или инвентарь)",
+                            "Seeds required (hotbar, off hand or inventory)",
+                        ),
                     );
                     return;
                 }

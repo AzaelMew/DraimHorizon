@@ -6,14 +6,14 @@ Open **J → Experiments → Baritone** and choose **Tunnel** or **Bridge**. Bot
 
 - Hold a suitable pickaxe with durability remaining and keep an inventory slot free.
 - Choose North, East, South or West; a length of 1, 8, 16, 32 or 64; width 1–3; and height 2–3.
-- **Floor** enables filling missing floor blocks from the hotbar. Leave it off to stop at gaps. Width two extends one column to the left of the central lane.
-- **Preview** shows the direction and length without acting. **Start** clears each section from top to bottom, confirms each break with the server, then advances.
+- **Floor** enables filling missing floor blocks (hotbar, off hand or inventory). Leave it off to stop at gaps. Width two extends one column to the left of the central lane.
+- The preview key shows the direction and length without acting; the start key clears each section from top to bottom, confirms each break with the server, then advances.
 
 The floor under the player is not excavated. Containers, unbreakable blocks, falling blocks above the cut, liquids and unavailable chunks stop the task. Unsupported partial block shapes also stop progress.
 
 ## Bridge and floor placement
 
-Bridge creates a one-block-wide, level passage in the selected direction. It fills gaps and walks across existing solid floor; it does not clear walls. Choose a length, put suitable blocks in the hotbar and click **Start**.
+Bridge creates a one-block-wide, level passage in the selected direction. It fills gaps and walks across existing solid floor; it does not clear walls. Choose a length, keep suitable blocks in the hotbar, off hand or inventory (inventory blocks are moved into the hotbar automatically) and press the start key. The character keeps walking on confirmed blocks and sneaks only while placing.
 
 Allowed materials are cobblestone, cobbled deepslate, stone, deepslate, dirt, netherrack, andesite, granite, diorite and stone bricks. Sand, gravel, containers and interactive or hazardous blocks are not selected.
 

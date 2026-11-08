@@ -1,5 +1,15 @@
 # История версий
 
+## 0.30.0
+
+- Baritone > Navigation: coordinates are three separate X / Y / Z fields (pasting `x y z` fills all three). The Preview / Go / Resume / Stop buttons are removed from every Baritone tab; use the four configurable keys (preview, start/resume, pause, stop) in Options > Mods. Entered settings now survive closing and reopening the menu.
+- Navigation no longer gets stuck: when no walkable route exists or the character stalls, it plans again with permission to break blocks and place a block under a gap, executes the route step by step, re-plans after every route and stops with a visible reason after a bounded number of failures. Vertical pillaring is not supported.
+- Mining: uses the same ore table as the Ores experiment. Overlay marks are tried first, then loaded chunks are scanned (radius 24); buried ore is reached by a dug route.
+- Tunnel: looks ahead and keeps walking instead of working one block at a time. The vanilla 5-tick destroy delay still bounds the rate per block, even with Efficiency 5 and Haste 2.
+- Bridge: no sneaking while walking onto confirmed blocks; blocks from the off hand and the inventory (moved into the hotbar) are used.
+- Farm: seeds are found in any inventory area, standing spots are ordered so the aim ray does not hit neighbouring crops, and the status line shows why nothing was sown. The root cause of the old behaviour was not reproduced in game.
+- View-layer code was not compiled locally; only the pure modules were tested. Compile the real client with the native-client workflow.
+
 ## 0.29.2
 
 - Fix the build: pin `rust-toolchain.toml` to Rust 1.99.1 instead of 1.83.0. The crates use `edition = "2024"` and `rust-version = "1.95"`, which Rust 1.83 cannot parse, so a local `cargo build` through rustup failed before compiling anything.

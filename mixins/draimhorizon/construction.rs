@@ -27,6 +27,16 @@ impl Direction {
             Self::West => [-1, 0],
         }
     }
+    /// The direction of a unit horizontal step.
+    pub fn from_step(dx: i32, dz: i32) -> Option<Self> {
+        match (dx, dz) {
+            (0, -1) => Some(Self::North),
+            (1, 0) => Some(Self::East),
+            (0, 1) => Some(Self::South),
+            (-1, 0) => Some(Self::West),
+            _ => None,
+        }
+    }
     pub fn next(self) -> Self {
         match self {
             Self::North => Self::East,
@@ -74,19 +84,24 @@ impl Default for Block {
     }
 }
 pub fn material(name: &str) -> bool {
-    matches!(
-        name,
-        "minecraft:cobblestone"
-            | "minecraft:cobbled_deepslate"
-            | "minecraft:stone"
-            | "minecraft:deepslate"
-            | "minecraft:dirt"
-            | "minecraft:netherrack"
-            | "minecraft:andesite"
-            | "minecraft:granite"
-            | "minecraft:diorite"
-            | "minecraft:stone_bricks"
-    )
+    name.ends_with("_planks")
+        || matches!(
+            name,
+            "minecraft:cobblestone"
+                | "minecraft:cobbled_deepslate"
+                | "minecraft:stone"
+                | "minecraft:deepslate"
+                | "minecraft:dirt"
+                | "minecraft:netherrack"
+                | "minecraft:andesite"
+                | "minecraft:granite"
+                | "minecraft:diorite"
+                | "minecraft:stone_bricks"
+                | "minecraft:tuff"
+                | "minecraft:blackstone"
+                | "minecraft:sandstone"
+                | "minecraft:smooth_stone"
+        )
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stop {
@@ -101,6 +116,13 @@ pub enum Stop {
     Timeout,
     Manual,
     Tool,
+}
+/// Stations ahead of the player that a tunnel clears before walking on.
+pub const LOOKAHEAD: u16 = 2;
+enum Scan {
+    Stop(Stop),
+    Break(nav::Pos),
+    Clear(Option<nav::Pos>),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -152,11 +174,8 @@ impl Job {
             self.origin[2] + z * i32::from(step),
         ]
     }
-    pub fn next(&self, mut block: impl FnMut(nav::Pos) -> Block) -> Action {
-        if self.completed >= self.config.length {
-            return Action::Done;
-        }
-        let at = self.station(self.completed + 1);
+    /// What a single station asks for, before any decision about order.
+    fn scan(&self, at: nav::Pos, block: &mut impl FnMut(nav::Pos) -> Block) -> Scan {
         let [dx, dz] = self.config.direction.vector();
         let side = [-dz, dx];
         let mut breaking = None;
@@ -177,27 +196,27 @@ impl Job {
                 nav::Cell::Air if self.config.fill_floor || self.config.kind == Kind::Bridge => {
                     floor.get_or_insert(under);
                 }
-                nav::Cell::Unknown => return Action::Stop(Stop::Unknown),
-                nav::Cell::Hazard => return Action::Stop(Stop::Hazard),
-                _ => return Action::Stop(Stop::Floor),
+                nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
+                nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                _ => return Scan::Stop(Stop::Floor),
             }
             for y in (0..i32::from(self.config.height)).rev() {
                 let pos = [x, at[1] + y, z];
                 let b = block(pos);
                 match b.cell {
                     nav::Cell::Air => continue,
-                    nav::Cell::Unknown => return Action::Stop(Stop::Unknown),
-                    nav::Cell::Hazard => return Action::Stop(Stop::Hazard),
+                    nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
+                    nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
                     _ => {}
                 }
                 if self.config.kind == Kind::Bridge {
-                    return Action::Stop(Stop::Blocked);
+                    return Scan::Stop(Stop::Blocked);
                 }
                 if b.falling || block([x, pos[1] + 1, z]).falling {
-                    return Action::Stop(Stop::Falling);
+                    return Scan::Stop(Stop::Falling);
                 }
                 if !b.diggable {
-                    return Action::Stop(Stop::Protected);
+                    return Scan::Stop(Stop::Protected);
                 }
                 for delta in [
                     [1, 0, 0],
@@ -208,17 +227,46 @@ impl Job {
                     [0, 0, -1],
                 ] {
                     match block([pos[0] + delta[0], pos[1] + delta[1], pos[2] + delta[2]]).cell {
-                        nav::Cell::Unknown => return Action::Stop(Stop::Unknown),
-                        nav::Cell::Hazard => return Action::Stop(Stop::Hazard),
+                        nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
+                        nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
                         _ => {}
                     }
                 }
                 breaking.get_or_insert(pos);
             }
         }
-        if let Some(pos) = breaking {
-            Action::Break(pos)
-        } else if let Some(pos) = floor {
+        match breaking {
+            Some(pos) => Scan::Break(pos),
+            None => Scan::Clear(floor),
+        }
+    }
+    pub fn next(&self, mut block: impl FnMut(nav::Pos) -> Block) -> Action {
+        if self.completed >= self.config.length {
+            return Action::Done;
+        }
+        let at = self.station(self.completed + 1);
+        let floor = match self.scan(at, &mut block) {
+            Scan::Stop(reason) => return Action::Stop(reason),
+            Scan::Break(pos) => return Action::Break(pos),
+            Scan::Clear(floor) => floor,
+        };
+        // The next stations are within reach before the player gets there: clear them
+        // first so the walk is one continuous run instead of dig, stop, step, repeat.
+        // A station that is not safe to dig only ends the look-ahead; it is reported
+        // when the player actually arrives.
+        if self.config.kind == Kind::Tunnel {
+            for ahead in 2..=1 + LOOKAHEAD {
+                if self.completed + ahead > self.config.length {
+                    break;
+                }
+                match self.scan(self.station(self.completed + ahead), &mut block) {
+                    Scan::Break(pos) => return Action::Break(pos),
+                    Scan::Clear(_) => {}
+                    Scan::Stop(_) => break,
+                }
+            }
+        }
+        if let Some(pos) = floor {
             Action::Place(pos)
         } else {
             Action::Walk(at)
@@ -401,6 +449,70 @@ mod tests {
         );
     }
     #[test]
+    fn tunnel_clears_the_stations_ahead_before_walking_on() {
+        let job = Job::new(
+            Config {
+                length: 4,
+                ..config(Kind::Tunnel)
+            },
+            [0, 0, 0],
+            false,
+        )
+        .unwrap();
+        let solid = |_: nav::Pos| Block {
+            cell: nav::Cell::Solid,
+            diggable: true,
+            falling: false,
+        };
+        // Station 1 is open, stations 2 and 3 are rock: dig them from here.
+        let wall = |p: nav::Pos| {
+            if (2..=3).contains(&p[0]) && (0..2).contains(&p[1]) {
+                solid(p)
+            } else {
+                air(p)
+            }
+        };
+        assert_eq!(job.next(wall), Action::Break([2, 1, 0]));
+        // Four stations away is beyond the look-ahead.
+        let far = |p: nav::Pos| {
+            if p[0] == 4 && (0..2).contains(&p[1]) {
+                solid(p)
+            } else {
+                air(p)
+            }
+        };
+        assert_eq!(job.next(far), Action::Walk([1, 0, 0]));
+        // An unsafe station ahead never stops the walk and is not dug.
+        let protected = |p: nav::Pos| {
+            if p[0] == 2 && (0..2).contains(&p[1]) {
+                Block {
+                    diggable: false,
+                    ..solid(p)
+                }
+            } else {
+                air(p)
+            }
+        };
+        assert_eq!(job.next(protected), Action::Walk([1, 0, 0]));
+        // A bridge cannot dig ahead.
+        let bridge = Job::new(config(Kind::Bridge), [0, 0, 0], false).unwrap();
+        assert_eq!(bridge.next(air), Action::Walk([1, 0, 0]));
+    }
+    #[test]
+    fn direction_from_unit_steps() {
+        for d in [
+            Direction::North,
+            Direction::East,
+            Direction::South,
+            Direction::West,
+        ] {
+            let [x, z] = d.vector();
+            assert_eq!(Direction::from_step(x, z), Some(d));
+        }
+        assert_eq!(Direction::from_step(1, 1), None);
+        assert_eq!(Direction::from_step(0, 0), None);
+    }
+    #[test]
     fn tunnel_direction_tracks_player_yaw() {
         assert_eq!(Direction::from_yaw(0.0), Direction::South);
         assert_eq!(Direction::from_yaw(90.0), Direction::West);
@@ -416,6 +528,7 @@ mod tests {
         assert!(!job.edge_safe([1.4, 0., 0.5]));
         assert!(!job.edge_safe([1.1, 0., 0.8]));
         assert!(material("minecraft:cobblestone"));
+        assert!(material("minecraft:oak_planks"));
         for name in [
             "minecraft:sand",
             "minecraft:chest",
