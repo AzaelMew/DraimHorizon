@@ -1221,8 +1221,22 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
             .goal
             .zip(game.native_player())
             .map(|(goal, p)| model::distance([p.x, p.y, p.z], model::center(goal)));
+        // Do not advertise an action-aware route as executable until the
+        // block-edit driver can confirm every operation with the server.
+        let action_hint = s.action_plan.as_ref().and_then(|plan| {
+            let digs = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Dig { .. })).count();
+            let bridges = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Bridge { .. })).count();
+            (digs + bridges > 0).then(|| {
+                if plan.complete {
+                    format!(" · {} / {}: {digs} dig, {bridges} bridge (not executable yet)",
+                        plan.nodes.len().saturating_sub(1), plan.nodes.len().saturating_sub(1))
+                } else {
+                    format!(" · partial action plan: {digs} dig, {bridges} bridge (not executable yet)")
+                }
+            })
+        }).unwrap_or_default();
         (
-            distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")),
+            format!("{}{}", distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")), action_hint),
             !s.nav.running,
         )
     })
