@@ -804,6 +804,23 @@ mod action_planner_tests {
     }
 
     #[test]
+    fn two_block_obstruction_requires_both_digs() {
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [1, 0, 0] || p == [1, 1, 0] {
+                    Cell::Solid
+                } else {
+                    world(p)
+                }
+            }),
+            Some(StepAction::Dig {
+                feet: Some([1, 0, 0]),
+                head: Some([1, 1, 0]),
+            })
+        );
+    }
+
+    #[test]
     fn rejects_hazards_unknowns_and_non_adjacent_steps() {
         assert_eq!(plan_step([0, 0, 0], [2, 0, 0], world), None);
         assert_eq!(
