@@ -2,7 +2,8 @@
 use crate::game::claim_borders_schematic as schematic;
 use crate::game::{
     Game, claim_borders as claims, claim_borders_construction as model,
-    claim_borders_navigation as nav, claim_borders_navigation_view as navigation,
+    claim_borders_draining as drain, claim_borders_navigation as nav,
+    claim_borders_navigation_view as navigation,
 };
 use std::{
     sync::{Mutex, OnceLock},
@@ -156,10 +157,15 @@ fn main_hand_places(game: &Game<'_>) -> bool {
     })
 }
 fn source_for(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Option<Source> {
+    // The cheapest matching stack goes first, so plentiful stone is spent before valuables.
     (0..9)
-        .find(|slot| {
+        .filter(|slot| {
             game.stack_in(*slot)
                 .is_some_and(|stack| stack.count > 0 && wanted(&stack.item))
+        })
+        .min_by_key(|slot| {
+            game.stack_in(*slot)
+                .map_or(1, |stack| model::rank(&stack.item))
         })
         .map(Source::Hotbar)
         .or_else(|| {
@@ -174,12 +180,19 @@ fn source_for(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Option<Source> 
         })
 }
 fn inventory_slot(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Option<usize> {
-    (9..36).find(|slot| {
-        game.inventory
-            .get(*slot)
-            .and_then(Option::as_ref)
-            .is_some_and(|stack| stack.count > 0 && wanted(&stack.item))
-    })
+    (9..36)
+        .filter(|slot| {
+            game.inventory
+                .get(*slot)
+                .and_then(Option::as_ref)
+                .is_some_and(|stack| stack.count > 0 && wanted(&stack.item))
+        })
+        .min_by_key(|slot| {
+            game.inventory
+                .get(*slot)
+                .and_then(Option::as_ref)
+                .map_or(1, |stack| model::rank(&stack.item))
+        })
 }
 /// Whether a matching stack exists in the hotbar, the off hand or the main inventory.
 pub(super) fn has_item(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> bool {
@@ -231,8 +244,46 @@ fn fetch(game: &mut Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Fetch {
         }
     }
 }
-fn build_material(name: &str) -> bool {
-    model::material(name)
+/// Whether the block an item places is a plain, solid cube: no container, no fluid, no
+/// shape that is not a full block, nothing unbreakable. The name filter alone cannot know.
+fn solid_cube(game: &Game<'_>, name: &str) -> bool {
+    let Some(id) = game.pack.assets.registry.default_state(name) else {
+        return false;
+    };
+    let facts = game.res.facts().get(id);
+    facts.full_collision
+        && !facts.block_entity
+        && facts.fluid_level == 0
+        && !facts.waterlogged
+        && facts.hardness >= 0.0
+}
+/// Every distinct item the player carries that may be spent on a floor, a bridge or, with
+/// `fill`, on filling water. Taken from the hotbar, the off hand and the main inventory.
+pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let stacks = (0..9)
+        .filter_map(|slot| game.stack_in(slot))
+        .chain(game.offhand.as_ref())
+        .chain((9..36).filter_map(|slot| game.inventory.get(slot).and_then(Option::as_ref)));
+    for stack in stacks {
+        let name: &str = &stack.item;
+        let allowed = if fill {
+            model::fill_material(name)
+        } else {
+            model::material(name)
+        };
+        if stack.count > 0 && allowed && !names.iter().any(|n| n == name) && solid_cube(game, name)
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+/// The cheapest usable building item the player carries, for requests that name one.
+pub(super) fn cheapest_item(game: &Game<'_>, fill: bool) -> Option<String> {
+    building_items(game, fill)
+        .into_iter()
+        .min_by_key(|name| model::rank(name))
 }
 fn placing(s: &State) -> bool {
     s.external
@@ -392,12 +443,12 @@ pub(super) fn start(game: &Game<'_>, config: model::Config, preview: bool) -> Re
     }
     if !preview
         && (config.fill_floor || config.kind == model::Kind::Bridge)
-        && !has_item(game, &build_material)
+        && building_items(game, false).is_empty()
     {
         return Err(l
             .text(
-                "Добавьте камень, булыжник, землю или доски в инвентарь",
-                "Put stone, cobblestone, dirt or planks in your inventory",
+                "Добавьте строительные блоки в инвентарь (камень, земля, доски…)",
+                "Put building blocks in your inventory (stone, dirt, planks…)",
             )
             .into());
     }
@@ -707,9 +758,15 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         return false;
     }
     let wanted_item = external.as_ref().map(|e| e.item.clone());
+    // Resolved once: the closure must not borrow the game while a swap click needs it mutably.
+    let usable = if wanted_item.is_none() {
+        building_items(game, false)
+    } else {
+        Vec::new()
+    };
     let wanted = |name: &str| match wanted_item.as_deref() {
         Some(item) => name == item,
-        None => model::material(name),
+        None => usable.iter().any(|n| n == name),
     };
     let Some(source) = source_for(game, &wanted) else {
         // Nothing usable in the hotbar or the off hand: bring a stack over from the inventory
@@ -738,7 +795,9 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         stop(model::Stop::Material);
         return false;
     };
-    if block(game, placement.target).cell != nav::Cell::Air {
+    let free = block(game, placement.target).cell == nav::Cell::Air
+        || (external.is_some() && drain::replaceable(&game.native_block(placement.target)));
+    if !free {
         stop(model::Stop::Blocked);
         return false;
     }
@@ -953,7 +1012,7 @@ pub(super) fn outcome() -> Option<Outcome> {
 }
 /// Whether blocks usable for a floor are in the hotbar, the off hand or the inventory.
 pub(super) fn has_building_blocks(game: &Game<'_>) -> bool {
-    has_item(game, &build_material)
+    !building_items(game, false).is_empty()
 }
 pub(super) fn snapshot() -> Option<(String, bool)> {
     let l = language();

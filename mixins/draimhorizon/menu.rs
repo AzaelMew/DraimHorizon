@@ -459,6 +459,7 @@ pub enum BaritoneMode {
     Tunnel,
     Bridge,
     Farm,
+    Drain,
     Schematic,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -479,6 +480,7 @@ pub enum Control {
     FarmRadius,
     FarmLimit,
     FarmReplant,
+    DrainRadius,
     SchematicFile,
     SchematicRefresh,
     SchematicRotation,
@@ -611,6 +613,7 @@ pub struct Menu {
     pub farm_radius: u8,
     pub farm_limit: u16,
     pub farm_replant: bool,
+    pub drain_radius: u8,
     pub schematic_file: Option<String>,
     pub schematic_origin: String,
     pub schematic_rotation: u8,
@@ -667,6 +670,7 @@ impl Default for Menu {
             farm_radius: 6,
             farm_limit: 16,
             farm_replant: true,
+            drain_radius: 6,
             schematic_file: None,
             schematic_origin: String::new(),
             schematic_rotation: 0,
@@ -758,6 +762,7 @@ impl Menu {
         self.farm_radius = from.farm_radius;
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
+        self.drain_radius = from.drain_radius;
         self.schematic_file = from.schematic_file.clone();
         self.schematic_origin = from.schematic_origin.clone();
         self.schematic_rotation = from.schematic_rotation;
@@ -855,6 +860,12 @@ impl Menu {
                     radius: self.farm_radius,
                     limit: self.farm_limit,
                     replant: self.farm_replant,
+                }),
+                running,
+            }),
+            BaritoneMode::Drain => Ok(Action::Navigate {
+                goal: Goal::Drain(super::claim_borders_draining::Config {
+                    radius: self.drain_radius,
                 }),
                 running,
             }),
@@ -2477,7 +2488,7 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 20.0) / 6.0;
+            let mode_width = (w - 24.0) / 7.0;
             for (i, mode, label) in [
                 (
                     0,
@@ -2500,8 +2511,9 @@ impl Menu {
                     self.language.text("Мост", "Bridge"),
                 ),
                 (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (5, BaritoneMode::Drain, self.language.text("Вода", "Drain")),
                 (
-                    5,
+                    6,
                     BaritoneMode::Schematic,
                     self.language.text("Схемы", "Schematics"),
                 ),
@@ -2685,6 +2697,22 @@ impl Menu {
                         false,
                     ));
                 }
+            } else if self.baritone_mode == BaritoneMode::Drain {
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    localized!(self.language, "Радиус: {}", "Radius: {}", self.drain_radius),
+                    Some(Control::DrainRadius),
+                    false,
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, w, 14.0],
+                    self.language.text(
+                        "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
+                        "Fills water from the bottom up with inventory blocks (sand too)",
+                    ),
+                    None,
+                    false,
+                ));
             } else if self.baritone_mode == BaritoneMode::Mining {
                 let ore = &experimental::ORES
                     [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
@@ -3340,6 +3368,15 @@ impl Menu {
             }
             Control::FarmReplant => {
                 self.farm_replant = !self.farm_replant;
+                None
+            }
+            Control::DrainRadius => {
+                self.drain_radius = match self.drain_radius {
+                    3 => 6,
+                    6 => 9,
+                    9 => 12,
+                    _ => 3,
+                };
                 None
             }
             Control::SchematicFile => {
@@ -6077,6 +6114,20 @@ mod tests {
                 running: true
             })
         ));
+        menu.baritone_mode = BaritoneMode::Drain;
+        assert!(matches!(
+            menu.baritone_request(false),
+            Ok(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Drain(c),
+                running: false
+            }) if c.radius == 6
+        ));
+        menu.activate(&model, 200.0, Control::DrainRadius);
+        assert_eq!(menu.drain_radius, 9);
+        for _ in 0..3 {
+            menu.activate(&model, 200.0, Control::DrainRadius);
+        }
+        assert_eq!(menu.drain_radius, 6);
         menu.baritone_mode = BaritoneMode::Schematic;
         menu.activate(&model, 200.0, Control::SchematicFile);
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
@@ -6095,7 +6146,11 @@ mod tests {
                 ..
             })
         ));
-        for mode in [BaritoneMode::Farm, BaritoneMode::Schematic] {
+        for mode in [
+            BaritoneMode::Farm,
+            BaritoneMode::Drain,
+            BaritoneMode::Schematic,
+        ] {
             menu.baritone_mode = mode;
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
@@ -6109,6 +6164,7 @@ mod tests {
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant
+                                    | Control::DrainRadius
                                     | Control::SchematicFile
                                     | Control::SchematicRefresh
                                     | Control::SchematicRotation

@@ -83,25 +83,148 @@ impl Default for Block {
         }
     }
 }
+/// Cheap, plentiful blocks that are spent before anything else.
+const COMMON: [&str; 15] = [
+    "cobblestone",
+    "cobbled_deepslate",
+    "stone",
+    "deepslate",
+    "dirt",
+    "netherrack",
+    "andesite",
+    "granite",
+    "diorite",
+    "tuff",
+    "blackstone",
+    "sandstone",
+    "smooth_stone",
+    "stone_bricks",
+    "basalt",
+];
+/// Blocks that fall when unsupported: fine to dump into water, never for a floor.
+pub fn gravity(name: &str) -> bool {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    matches!(name, "sand" | "red_sand" | "gravel") || name.ends_with("_concrete_powder")
+}
+/// Whether a block item is safe to spend on a floor or a bridge. The name filter keeps out
+/// everything with a function (containers, redstone parts, workstations), hazards, valuables
+/// and shapes that are not a plain cube. `Game` data adds the collision/block-entity facts.
 pub fn material(name: &str) -> bool {
-    name.ends_with("_planks")
+    let Some(name) = name.strip_prefix("minecraft:") else {
+        return false;
+    };
+    if gravity(name) {
+        return false;
+    }
+    const DENY: &[&str] = &[
+        "shulker",
+        "chest",
+        "barrel",
+        "furnace",
+        "smoker",
+        "hopper",
+        "dropper",
+        "dispenser",
+        "piston",
+        "observer",
+        "tnt",
+        "command",
+        "structure",
+        "spawner",
+        "bedrock",
+        "barrier",
+        "obsidian",
+        "beacon",
+        "conduit",
+        "anvil",
+        "table",
+        "lectern",
+        "jukebox",
+        "note_block",
+        "bookshelf",
+        "bell",
+        "campfire",
+        "lantern",
+        "torch",
+        "magma",
+        "cactus",
+        "slime",
+        "honey",
+        "ice",
+        "snow",
+        "sponge",
+        "sculk",
+        "bee",
+        "frogspawn",
+        "infested",
+        "lodestone",
+        "respawn",
+        "reinforced",
+        "debris",
+        "_ore",
+        "raw_",
+        "button",
+        "plate",
+        "slab",
+        "stairs",
+        "wall",
+        "fence",
+        "gate",
+        "door",
+        "sign",
+        "pane",
+        "bars",
+        "carpet",
+        "glazed",
+        "head",
+        "skull",
+    ];
+    if DENY.iter().any(|d| name.contains(d)) {
+        return false;
+    }
+    // Storage blocks of metals, gems and redstone are valuables, not building stock.
+    if name.ends_with("_block") {
+        return matches!(name, "dripstone_block" | "moss_block");
+    }
+    COMMON.contains(&name)
+        || name.ends_with("_planks")
+        || name.ends_with("_log")
+        || name.ends_with("_wood")
+        || name.ends_with("_bricks")
+        || name.ends_with("_sandstone")
+        || name.ends_with("_terracotta")
+        || name.ends_with("_concrete")
+        || name.ends_with("_stone")
+        || name.starts_with("polished_")
+        || name.starts_with("smooth_")
         || matches!(
             name,
-            "minecraft:cobblestone"
-                | "minecraft:cobbled_deepslate"
-                | "minecraft:stone"
-                | "minecraft:deepslate"
-                | "minecraft:dirt"
-                | "minecraft:netherrack"
-                | "minecraft:andesite"
-                | "minecraft:granite"
-                | "minecraft:diorite"
-                | "minecraft:stone_bricks"
-                | "minecraft:tuff"
-                | "minecraft:blackstone"
-                | "minecraft:sandstone"
-                | "minecraft:smooth_stone"
+            "mossy_cobblestone"
+                | "coarse_dirt"
+                | "end_stone"
+                | "red_sandstone"
+                | "terracotta"
+                | "bricks"
+                | "mud"
+                | "packed_mud"
+                | "calcite"
+                | "smooth_basalt"
+                | "prismarine"
+                | "clay"
         )
+}
+/// What a water fill may spend: the building blocks plus plain sand and gravel.
+pub fn fill_material(name: &str) -> bool {
+    material(name)
+        || name
+            .strip_prefix("minecraft:")
+            .is_some_and(|n| matches!(n, "sand" | "red_sand" | "gravel"))
+}
+/// Spending order: the cheap, plentiful blocks first, anything else only when nothing better
+/// is carried.
+pub fn rank(name: &str) -> u8 {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    u8::from(!(COMMON.contains(&name) || matches!(name, "sand" | "red_sand" | "gravel")))
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stop {
@@ -537,6 +660,47 @@ mod tests {
         ] {
             assert!(!material(name));
         }
+        // Everything a player might carry: building stock is accepted, the rest never.
+        for name in [
+            "minecraft:red_sandstone",
+            "minecraft:polished_andesite",
+            "minecraft:white_concrete",
+            "minecraft:cut_sandstone",
+            "minecraft:oak_log",
+            "minecraft:white_terracotta",
+            "minecraft:deepslate_bricks",
+            "minecraft:end_stone",
+        ] {
+            assert!(material(name), "{name}");
+        }
+        for name in [
+            "minecraft:white_shulker_box",
+            "minecraft:ender_chest",
+            "minecraft:barrel",
+            "minecraft:diamond_block",
+            "minecraft:netherite_block",
+            "minecraft:redstone_block",
+            "minecraft:diamond_ore",
+            "minecraft:ancient_debris",
+            "minecraft:obsidian",
+            "minecraft:stone_slab",
+            "minecraft:polished_blackstone_button",
+            "minecraft:oak_stairs",
+            "minecraft:infested_stone",
+            "minecraft:white_concrete_powder",
+            "minecraft:crafting_table",
+            "minecraft:sticky_piston",
+            "minecraft:white_glazed_terracotta",
+            "minecraft:cobblestone_wall",
+            "minecraft:diamond_pickaxe",
+            "mod:stone",
+        ] {
+            assert!(!material(name), "{name}");
+        }
+        assert!(fill_material("minecraft:sand") && fill_material("minecraft:gravel"));
+        assert!(!fill_material("minecraft:white_concrete_powder"));
+        assert!(rank("minecraft:cobblestone") < rank("minecraft:oak_planks"));
+        assert!(rank("minecraft:sand") < rank("minecraft:white_concrete"));
         assert!(
             Job::new(
                 Config {

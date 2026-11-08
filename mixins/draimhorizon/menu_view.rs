@@ -352,6 +352,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     model::BaritoneMode::Tunnel => ui::Icon::Layers,
                     model::BaritoneMode::Bridge => ui::Icon::Fill,
                     model::BaritoneMode::Farm => ui::Icon::Restock,
+                    model::BaritoneMode::Drain => ui::Icon::Grid,
                     model::BaritoneMode::Schematic => ui::Icon::Home,
                 };
                 ui::icon(

@@ -1,6 +1,6 @@
 # Experimental navigation
 
-Open **J → Experiments → Baritone** and accept the experimental warning if prompted. Choose **Navigation**, **Mining**, **Tunnel**, **Bridge**, **Farm** or **Schematics**. [Tunnel and bridge controls](construction.md).
+Open **J → Experiments → Baritone** and accept the experimental warning if prompted. Choose **Navigation**, **Mining**, **Tunnel**, **Bridge**, **Farm**, **Drain** or **Schematics**. [Tunnel and bridge controls](construction.md).
 
 1. Enter **X**, **Y** and **Z** in three separate fields (pasting `x y z` fills all three), click **Waypoint** to cycle through saved destinations in your current dimension, or click **Player** to choose a nearby loaded player. The selectors are mutually exclusive and return to coordinate input after the last entry. Editing a coordinate clears both selections.
 2. There are no action buttons. Assign the four **Baritone** keys (preview, start/resume, pause, stop) in **Options → Mods → DraimHorizon**; they work from every Baritone tab. See [automation](automation.md#global-automation-keys).

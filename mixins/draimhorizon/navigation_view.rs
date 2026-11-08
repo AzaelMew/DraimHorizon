@@ -946,6 +946,9 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
     if let Goal::Farm(config) = goal_request {
         return crate::game::claim_borders_workshop_view::start_farm(game, config, !running);
     }
+    if let Goal::Drain(config) = goal_request {
+        return crate::game::claim_borders_workshop_view::start_drain(game, config, !running);
+    }
     crate::game::claim_borders_workshop_view::reset();
     if let Goal::Construct(mut config) = goal_request {
         config.direction = crate::game::claim_borders_construction::Direction::from_yaw(game.yaw);
@@ -970,7 +973,7 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
             .to_owned()
     })?;
     let goal = match goal_request {
-        Goal::Farm(_) => unreachable!(),
+        Goal::Farm(_) | Goal::Drain(_) => unreachable!(),
         Goal::Construct(_) => unreachable!(),
         Goal::Mine { .. } => unreachable!(),
         Goal::Coordinates(at) => at,

@@ -10,6 +10,10 @@ Bindings are ignored while a screen or text editor is open, the window is unfocu
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
 
+## Drain
+
+Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12) and have building blocks in the hotbar, off hand or inventory; sand and gravel work too. Stand on the shore or float on the surface, then press the start key. The bot fills water and seagrass in the square around you from the bottom up, always on a cell that rests on something solid, so nothing falls. Cheap blocks are used first. If the next cell is out of reach it walks to a standable spot nearby; if none exists it stops with a message, so move closer and continue. It finishes when no supported cell remains and reports how many were left (for example cells under you). It cannot fill deeper than your reach allows unless the lower layers can be reached first, and it does not remove kelp.
+
 ## Farm
 
 Choose **Wheat**, **Carrots**, **Potatoes** or **Beetroot**, a radius (3, 6, 9 or 12), a harvest limit (16, 32, 64 or 0 for continuous operation), and **Replant**. Stand at crop height beside prepared farmland. **Preview** marks the area without acting; **Start** closes the menu and works within the square centered on that starting position, at that fixed height.

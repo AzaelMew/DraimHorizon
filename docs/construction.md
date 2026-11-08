@@ -6,7 +6,7 @@ Open **J → Experiments → Baritone** and choose **Tunnel** or **Bridge**. Bot
 
 - Hold a suitable pickaxe with durability remaining and keep an inventory slot free.
 - Choose North, East, South or West; a length of 1, 8, 16, 32 or 64; width 1–3; and height 2–3.
-- **Floor** enables filling missing floor blocks (hotbar, off hand or inventory). Leave it off to stop at gaps. Width two extends one column to the left of the central lane.
+- **Floor** enables filling missing floor blocks (hotbar, off hand or inventory; any plain building block, stone-like ones first). Leave it off to stop at gaps. Width two extends one column to the left of the central lane.
 - The preview key shows the direction and length without acting; the start key clears each section from top to bottom, confirms each break with the server, then advances.
 
 The floor under the player is not excavated. Containers, unbreakable blocks, falling blocks above the cut, liquids and unavailable chunks stop the task. Unsupported partial block shapes also stop progress.
@@ -26,3 +26,7 @@ Automatic slot selection is restored afterwards if the player has not chosen ano
 Movement, jump, sneak, attack/use, opening a screen or moving the camera during placement pauses construction. **Resume** preserves completed distance and waits for in-flight confirmations. After moving away from the passage, start a new task instead of resuming from a distant position. **Stop** cancels the task. Reconnecting or changing worlds/accounts clears it.
 
 The first implementation uses full blocks and a straight level passage. It does not build arbitrary schematics, stairs, towers, farms or fluid-clearing structures. Item pickup remains the ordinary game's behavior.
+
+## Materials
+
+Tunnel floors and bridges accept any plain, solid building block you carry: stone types, dirt, planks, logs, bricks, sandstone, terracotta, concrete and similar. Cheap, plentiful blocks are used first. Shulker boxes, chests and other containers, redstone parts, workstations, TNT, slabs, stairs, walls, ores, storage blocks of metals and gems, obsidian, sand, gravel and concrete powder are never placed.

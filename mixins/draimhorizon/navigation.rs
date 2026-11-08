@@ -65,6 +65,7 @@ pub enum Goal {
     Mine { ore: u8, limit: u16 },
     Construct(super::claim_borders_construction::Config),
     Farm(super::claim_borders_farming::Config),
+    Drain(super::claim_borders_draining::Config),
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;
