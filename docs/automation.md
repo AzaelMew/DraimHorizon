@@ -32,7 +32,7 @@ Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blo
 - **With sand or gravel** (used first when you have them) any depth works. The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a bridge you stand on. The block sinks and fills the column from the bottom; the bot repeats it until the column reaches the surface, then moves on along the new surface. Each drop waits about 1.5 s for the block to sink.
 - **With other blocks** (stone, dirt, …) only cells resting on something solid are filled, bottom-up, so the floor must be within reach (about 4 blocks below you). For deeper water the task stops and asks for sand or gravel.
 
-Stand on a block next to the water, not in it. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
+Stand on a block next to the water, not in it. The wall of the shore facing the water cannot be clicked from inland, so the bot walks to the edge of the shore block and sneaks over it, like when bridging, before dropping the block. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
 
 ## Farm
 

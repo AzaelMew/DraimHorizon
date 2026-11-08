@@ -1,5 +1,11 @@
 # История версий
 
+## 0.29.6
+
+- Drain fix: with sand or gravel the first cell next to the shore was never filled ("Осушение: 0 · Нет доступной грани … луч прицела упирается в соседний блок"). The only block to click on was the shore's wall facing the water, which cannot be hit from inland: the aim ray meets the block's top first, and the walking spots exclude every cell next to water. The drain now walks over the edge of the shore block, sneaking (the same hang as when bridging), until that wall is in the ray, and places from there. Each cell gets at most 3.5 s for this before the next spot is tried. New pure `draining::edge_stand` with a test.
+- Drain is a built-in driver and does not use the horizon-baritone bridge, so it does not depend on that mod being updated to the current Nightly.
+- Not compiled against the real client and not verified in game: the view layer builds only in the native-client workflow, which was not run here.
+
 ## 0.29.5
 
 - Bridge to horizon-baritone (luhnox/horizon-baritone, a native port of Baritone 1.21.4): when that mod is installed and on, Navigation, Mining, Tunnel (without Floor), Farm and unrotated Schematics hand their task to it as `goto` / `goal` / `follow player` / `mine` / `tunnel` / `farm` / `build` through Horizon's native command hook, and the action keys send `pause` / `resume` / `cancel`. A command no mod ran never reaches the server. Bridge, Drain, Floor and rotated schematics keep the built-in drivers. New pure module `baritone_bridge.rs` with tests.

@@ -612,6 +612,9 @@ pub(super) fn movement(
         reset();
         return false;
     }
+    if edge_drive(game, forward, strafe, jump, sneak) {
+        return true;
+    }
     if !state(|s| s.job.as_ref().is_some_and(|j| j.active)) {
         return false;
     }
@@ -698,6 +701,62 @@ pub(super) fn movement(
         *sneak = j.phase == model::Phase::Placing;
         true
     })
+}
+/// How long a drain placement may spend reaching the edge before the next spot is tried.
+const EDGE_MS: u64 = 3500;
+/// The point to hang over and the shore block, for a water cell that no inland face reaches.
+fn edge_goal(game: &Game<'_>, target: nav::Pos, player: [f64; 3]) -> Option<([f64; 3], nav::Pos)> {
+    drain::edge_stand(
+        target,
+        player,
+        |at| block(game, at).cell == nav::Cell::Solid,
+        |at| block(game, at).cell == nav::Cell::Air,
+    )
+}
+/// Walks to the shore edge and sneaks over it while a drain placement waits for a face.
+fn edge_drive(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    let Some(target) = state(|s| {
+        let p = s.placement.as_ref()?;
+        let e = s.external.as_ref()?;
+        (e.active && e.result.is_none() && p.edge && p.sequence.is_none()).then_some(p.target)
+    }) else {
+        return false;
+    };
+    if *forward != 0.0 || *strafe != 0.0 || *jump || *sneak || !game.native_playing() {
+        pause();
+        navigation::pause();
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        pause();
+        return false;
+    };
+    if game
+        .player
+        .as_ref()
+        .is_none_or(|b| !b.ground.on_ground || b.fluids.was_touching_water || b.flying)
+    {
+        pause();
+        navigation::pause();
+        return false;
+    }
+    let position = [p.x, p.y, p.z];
+    let Some((edge, shore)) = edge_goal(game, target, position) else {
+        return false;
+    };
+    let input = model::steer(position, edge, p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    *jump = false;
+    // Sneaking keeps the player from walking off; only needed near the water.
+    *sneak = nav::distance(position, nav::center(shore)) < 1.6;
+    true
 }
 fn aim(game: &mut Game<'_>, point: [f64; 3]) {
     if let Some(eye) = game.eye_position() {
@@ -960,6 +1019,24 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     };
     let position = [p.x, p.y, p.z];
     let Some(job) = job else {
+        // Filling water: the walls facing the water cannot be hit from inland, so hang over
+        // the edge of the shore block, sneaking, until the face is in the ray. Bounded.
+        let waited = state(|s| {
+            (s.started.elapsed().as_millis() as u64).saturating_sub(placement.started_ms)
+        });
+        if external.is_some()
+            && drain::replaceable(&game.native_block(placement.target))
+            && waited < EDGE_MS
+            && edge_goal(game, placement.target, position).is_some()
+        {
+            state(|s| {
+                if let Some(p) = s.placement.as_mut() {
+                    p.edge = true;
+                }
+                s.aim = Some([game.yaw, game.pitch]);
+            });
+            return false;
+        }
         state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
