@@ -78,6 +78,62 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
         && (dy >= 0 || cell([to[0], from[1] + 1, to[2]]) == Cell::Air)
 }
 
+/// A candidate world action for a single horizontal step. This is a conservative
+/// preflight only: the native adapter must separately verify permissions, tools,
+/// inventory and the server-confirmed block change before moving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepAction {
+    Walk,
+    Dig { feet: Pos, head: Option<Pos> },
+    Bridge { support: Pos },
+}
+
+pub fn plan_step(
+    from: Pos,
+    to: Pos,
+    mut cell: impl FnMut(Pos) -> Cell,
+) -> Option<StepAction> {
+    if to[1] != from[1]
+        || (to[0] - from[0]).abs() + (to[2] - from[2]).abs() != 1
+    {
+        return None;
+    }
+    // Never modify unknown, protected/partial or hazardous blocks. Include the
+    // adjacent cells and overhead clearance to avoid digging into lava or a fall.
+    for [dx, dz] in [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] {
+        for dy in -1..=2 {
+            if cell([to[0] + dx, to[1] + dy, to[2] + dz]) == Cell::Hazard {
+                return None;
+            }
+        }
+    }
+    let feet = cell(to);
+    let head_pos = [to[0], to[1] + 1, to[2]];
+    let head = cell(head_pos);
+    let support_pos = [to[0], to[1] - 1, to[2]];
+    let support = cell(support_pos);
+    if [feet, head, support].contains(&Cell::Unknown)
+        || [feet, head, support].contains(&Cell::Blocked)
+    {
+        return None;
+    }
+    match (feet, head, support) {
+        (Cell::Air, Cell::Air, Cell::Solid) => Some(StepAction::Walk),
+        (Cell::Air, Cell::Air, Cell::Air) => Some(StepAction::Bridge {
+            support: support_pos,
+        }),
+        (Cell::Solid | Cell::Air, Cell::Solid | Cell::Air, Cell::Solid)
+            if feet == Cell::Solid || head == Cell::Solid =>
+        {
+            Some(StepAction::Dig {
+                feet: to,
+                head: (head == Cell::Solid).then_some(head_pos),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn heuristic(a: Pos, b: Pos) -> i32 {
     ((a[0] - b[0]).abs() + (a[2] - b[2]).abs()) * 10 + (a[1] - b[1]).abs() * 2
 }
@@ -610,5 +666,51 @@ mod tests {
         }));
         assert_eq!(n.input([0.5, 0., 0.5], 0., true), Input::default());
         assert_eq!(block([-0.1, 64., -16.1]), [-1, 64, -17]);
+    }
+}
+
+#[cfg(test)]
+mod action_planner_tests {
+    use super::*;
+
+    fn world(at: Pos) -> Cell {
+        if at[1] < 0 { Cell::Solid } else { Cell::Air }
+    }
+
+    #[test]
+    fn walk_dig_and_bridge_are_distinct() {
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], world),
+            Some(StepAction::Walk)
+        );
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [1, 0, 0] { Cell::Solid } else { world(p) }
+            }),
+            Some(StepAction::Dig { feet: [1, 0, 0], head: None })
+        );
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [1, -1, 0] { Cell::Air } else { world(p) }
+            }),
+            Some(StepAction::Bridge { support: [1, -1, 0] })
+        );
+    }
+
+    #[test]
+    fn rejects_hazards_unknowns_and_non_adjacent_steps() {
+        assert_eq!(plan_step([0, 0, 0], [2, 0, 0], world), None);
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [2, 0, 0] { Cell::Hazard } else { world(p) }
+            }),
+            None
+        );
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [1, -1, 0] { Cell::Unknown } else { world(p) }
+            }),
+            None
+        );
     }
 }
