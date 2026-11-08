@@ -31,6 +31,9 @@ pub use farming as claim_borders_farming;
 #[path = "../mixins/draimhorizon/draining.rs"]
 pub mod draining;
 pub use draining as claim_borders_draining;
+#[path = "../mixins/draimhorizon/baritone_bridge.rs"]
+pub mod baritone_bridge;
+pub use baritone_bridge as claim_borders_baritone_bridge;
 
 #[path = "../mixins/draimhorizon/relay_settings.rs"]
 pub mod relay_settings;

@@ -10,6 +10,21 @@ Bindings are ignored while a screen or text editor is open, the window is unfocu
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
 
+## With horizon-baritone
+
+[horizon-baritone](https://github.com/luhnox/horizon-baritone) is a separate native mod, a Rust port of Baritone 1.21.4 (LGPL-3.0). Install it in the launcher's native mods next to DraimHorizon; both are built into the same Horizon Nightly, so use the Nightly both support. When it is on, the Baritone tabs hand their task to it instead of the built-in drivers:
+
+| Tab | Baritone command |
+| --- | --- |
+| Navigation (coordinates or waypoint) | `goto x y z`; the preview key sets `goal x y z` |
+| Navigation (player) | `follow player <name>` |
+| Mining | `mine <limit> <blocks of every selected target>` |
+| Tunnel (without Floor) | `tunnel <height> <width> <length>` in the facing direction |
+| Farm | `farm <radius>` (Baritone farms every crop it knows; the crop choice is ignored) |
+| Schematics (rotation 0°) | the file is copied to Baritone's `schematics` folder, then `build <file> x y z` |
+
+Pause sends `pause`, Start after a pause sends `resume`, Stop sends `cancel`. The status line shows `Baritone · <command>`. Bridge, Drain, Tunnel with Floor and rotated schematics keep the built-in drivers. Commands go through Horizon's native command hook as `/baritone <line>`: if no mod runs them, nothing is sent to the server and the tab reports that Baritone did not accept the command. Baritone's own settings (`#set ...`, for example `allowPlace`, `allowBreak`, `replantCrops`) apply.
+
 ## Drain
 
 Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blocks (hotbar, off hand or inventory) and press the start key.

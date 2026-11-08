@@ -44,6 +44,12 @@ name = "claim_borders_draining"
 source = "draining.rs"
 
 [[module]]
+id = "baritone-bridge"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_baritone_bridge"
+source = "baritone_bridge.rs"
+
+[[module]]
 id = "schematic-files"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_schematic_files"

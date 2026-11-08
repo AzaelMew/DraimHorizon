@@ -401,6 +401,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
         game.native_mod_screen_close(claims::ID);
     }
 }
+/// The tab-list name of an online player.
+pub(super) fn online_name(game: &mut Game<'_>, uuid: u128) -> Option<String> {
+    cached_online(game)
+        .into_iter()
+        .find(|(id, _)| *id == uuid)
+        .map(|(_, name)| name)
+}
 pub(super) fn entity_position(game: &Game<'_>, uuid: u128) -> Option<[f64; 3]> {
     let entity = game.remote.as_ref()?.player_entity(uuid)?;
     let mob = game.mobs.iter().find(|m| m.id == entity && !m.removed)?;
@@ -1654,6 +1661,13 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             rotation,
             running,
         } => {
+            if let Some(result) = crate::game::claim_borders_navigation_view::build_baritone(
+                game, &filename, origin, rotation, running,
+            ) {
+                result?;
+                game.native_mod_screen_close(claims::ID);
+                return Ok(Vec::new());
+            }
             crate::game::claim_borders_workshop_view::load(
                 game, filename, origin, rotation, running,
             )?;
@@ -1669,6 +1683,15 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             Ok(Vec::new())
         }
         Action::Navigate { goal, running } => {
+            if let Some(result) =
+                crate::game::claim_borders_navigation_view::start_baritone(game, goal, running)
+            {
+                result?;
+                if running {
+                    game.native_mod_screen_close(claims::ID);
+                }
+                return Ok(Vec::new());
+            }
             crate::game::claim_borders_navigation_view::start(game, goal, running)?;
             if running {
                 game.native_mod_screen_close(claims::ID);

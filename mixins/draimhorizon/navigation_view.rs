@@ -1,4 +1,5 @@
 // Native adapter for the local walking navigator; bounded background path planning.
+use crate::game::claim_borders_baritone_bridge as bridge;
 use crate::game::claim_borders_mining as mining;
 use crate::game::{Game, Resources, claim_borders as claims, claim_borders_navigation as model};
 use claim_borders_relay_client::translation::Language;
@@ -8,7 +9,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -65,6 +66,13 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
 pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
     match action {
         model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
+        model::Hotkey::Start if BRIDGE_PAUSED.load(Ordering::Relaxed) => {
+            if !baritone_run(game, bridge::RESUME) {
+                return Err(not_accepted());
+            }
+            BRIDGE_PAUSED.store(false, Ordering::Relaxed);
+            Ok(true)
+        }
         model::Hotkey::Start => {
             let (running, resumable) = control();
             if running {
@@ -78,28 +86,44 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
             .map(|()| true)
         }
         model::Hotkey::Pause => {
+            if bridged().is_some() && baritone_run(game, bridge::PAUSE) {
+                BRIDGE_PAUSED.store(true, Ordering::Relaxed);
+            }
             pause();
             Ok(false)
         }
         model::Hotkey::Stop => {
+            if bridged().is_some() {
+                baritone_run(game, bridge::CANCEL);
+            }
             reset();
             Ok(false)
         }
     }
 }
 /// Start or preview the task of the Baritone tab that was last on screen.
-fn start_from_menu(game: &Game<'_>, running: bool) -> Result<(), String> {
+fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
-        Action::Navigate { goal, running } => start(game, goal, running),
+        Action::Navigate { goal, running } => {
+            if let Some(result) = start_baritone(game, goal, running) {
+                return result;
+            }
+            start(game, goal, running)
+        }
         Action::LoadSchematic {
             filename,
             origin,
             rotation,
             running,
-        } => crate::game::claim_borders_workshop_view::load(
-            game, filename, origin, rotation, running,
-        ),
+        } => {
+            if let Some(result) = build_baritone(game, &filename, origin, rotation, running) {
+                return result;
+            }
+            crate::game::claim_borders_workshop_view::load(
+                game, filename, origin, rotation, running,
+            )
+        }
         _ => Ok(()),
     }
 }
@@ -339,6 +363,7 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn reset() {
+    bridge_clear();
     crate::game::claim_borders_workshop_view::reset();
     crate::game::claim_borders_construction_view::reset();
     drop_assist();
@@ -1367,6 +1392,131 @@ enum Flow {
     Drop,
 }
 /// Failed routes and routes started since the player last gave the order.
+// ---------------------------------------------------------------------------------------
+// horizon-baritone: when that mod is on, the tabs it can do are handed to it.
+
+/// The last command handed to horizon-baritone, while that task is the current one.
+static BRIDGED: Mutex<Option<String>> = Mutex::new(None);
+static BRIDGE_PAUSED: AtomicBool = AtomicBool::new(false);
+fn bridged() -> Option<String> {
+    BRIDGED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+fn bridge_clear() {
+    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    BRIDGE_PAUSED.store(false, Ordering::Relaxed);
+}
+fn not_accepted() -> String {
+    language()
+        .text(
+            "Baritone не принял команду",
+            "Baritone did not accept the command",
+        )
+        .into()
+}
+/// Runs `/baritone <line>` through Horizon's native command hook. True only when the
+/// horizon-baritone mod ran it; otherwise nothing leaves the client.
+fn baritone_run(game: &mut Game<'_>, line: &str) -> bool {
+    if !game.native_on(bridge::MOD_ID) {
+        return false;
+    }
+    let mut ran = false;
+    game.native_command(&format!("baritone {line}"), &mut ran);
+    ran
+}
+/// The Baritone command for a tab's task, or `None` for what the port has no command for
+/// (bridge, drain, schematic rotation, floor filling, crop choice is ignored by `farm`).
+fn baritone_line(game: &mut Game<'_>, goal: Goal, running: bool) -> Option<String> {
+    let place = |at: model::Pos| {
+        if running {
+            bridge::goto(at)
+        } else {
+            bridge::goal(at)
+        }
+    };
+    match goal {
+        Goal::Coordinates(at) => Some(place(at)),
+        Goal::Waypoint(id) => {
+            let player = game.native_player()?;
+            let waypoint = crate::game::claim_borders_client::own_waypoints()
+                .into_iter()
+                .find(|w| w.id == id && w.dimension == player.dimension)?;
+            Some(place(model::block(waypoint.position)))
+        }
+        Goal::Follow(uuid) if running => crate::game::claim_borders_client::online_name(game, uuid)
+            .and_then(|name| bridge::follow(&name)),
+        Goal::Mine { targets, limit, .. } if running => {
+            let blocks: Vec<&str> = (0..mining::COUNT as u8)
+                .filter(|i| targets & (1 << i) != 0)
+                .filter_map(mining::target)
+                .flat_map(|(_, _, blocks)| blocks.iter().copied())
+                .collect();
+            bridge::mine(limit, &blocks)
+        }
+        Goal::Construct(c)
+            if running
+                && c.kind == crate::game::claim_borders_construction::Kind::Tunnel
+                && !c.fill_floor =>
+        {
+            Some(bridge::tunnel(c.height, c.width, c.length))
+        }
+        Goal::Farm(c) if running => Some(bridge::farm(c.radius)),
+        _ => None,
+    }
+}
+/// Starts a tab's task in horizon-baritone. `None` when that mod is off or has no command for
+/// the task, so the built-in driver runs it.
+pub(super) fn start_baritone(
+    game: &mut Game<'_>,
+    goal: Goal,
+    running: bool,
+) -> Option<Result<(), String>> {
+    if !game.native_on(bridge::MOD_ID) || !allowed(game) {
+        return None;
+    }
+    let line = baritone_line(game, goal, running)?;
+    // The built-in drivers stand down so two controllers never steer at once.
+    reset();
+    if !baritone_run(game, &line) {
+        return Some(Err(not_accepted()));
+    }
+    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
+    Some(Ok(()))
+}
+/// Builds a schematic with horizon-baritone: the file is copied into its schematics folder
+/// under a one-word name and `build <name> <x> <y> <z>` is run. `None` when that mod is off,
+/// for a preview, or for a rotation, which Baritone's `build` has no argument for.
+pub(super) fn build_baritone(
+    game: &mut Game<'_>,
+    filename: &str,
+    origin: model::Pos,
+    rotation: u8,
+    running: bool,
+) -> Option<Result<(), String>> {
+    if !running || rotation != 0 || !game.native_on(bridge::MOD_ID) || !allowed(game) {
+        return None;
+    }
+    let source = crate::game::claim_borders_workshop_view::folder(game).join(filename);
+    let name = bridge::schematic_name(filename);
+    let line = bridge::build(&name, origin)?;
+    // Baritone reads `<mod data>/baritone/schematics`, beside this mod's own data folder.
+    let folder = game
+        .native_data_dir(claims::SETTINGS_ID)
+        .parent()?
+        .join(bridge::MOD_ID)
+        .join("schematics");
+    // One small file on a click: the import itself stays on Baritone's side.
+    if let Err(error) =
+        std::fs::create_dir_all(&folder).and_then(|()| std::fs::copy(&source, folder.join(&name)))
+    {
+        return Some(Err(format!("{filename}: {error}")));
+    }
+    reset();
+    if !baritone_run(game, &line) {
+        return Some(Err(not_accepted()));
+    }
+    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
+    Some(Ok(()))
+}
 static ASSIST_FAILS: AtomicU64 = AtomicU64::new(0);
 static ASSIST_ROUTES: AtomicU64 = AtomicU64::new(0);
 const ASSIST_MAX_FAILS: u64 = 3;
@@ -1841,6 +1991,20 @@ pub(super) fn movement(
 }
 
 pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
+    if let Some(line) = bridged() {
+        let paused = BRIDGE_PAUSED.load(Ordering::Relaxed);
+        return (
+            format!(
+                "Baritone · {line}{}",
+                if paused {
+                    language().text(" · пауза", " · paused")
+                } else {
+                    ""
+                }
+            ),
+            paused,
+        );
+    }
     if let Some(snapshot) = crate::game::claim_borders_workshop_view::snapshot() {
         return snapshot;
     }
