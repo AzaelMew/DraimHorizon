@@ -4,6 +4,8 @@
 
 - Fix the build: pin `rust-toolchain.toml` to Rust 1.99.1 instead of 1.83.0. The crates use `edition = "2024"` and `rust-version = "1.95"`, which Rust 1.83 cannot parse, so a local `cargo build` through rustup failed before compiling anything.
 - Align `.github/workflows/horizon-compatibility.yml` with `release.yml` and `docs/development.md`: install and use Rust 1.99.1 rather than 1.83.0.
+- Fix `python3 tools/stage.py` failing with `pinned source hash mismatch: crates/horizon-client/src/game.rs`. The pin already targeted official Nightly `fdc87ae`, but the recorded `game.rs` hash still belonged to the previous Nightly `2ebf00a`, whose `game.rs` upstream has since split into several modules. Refresh it with `tools/compatibility.py --update`; the other nine pinned hashes already matched.
+- Checked against `fdc87ae`: all four injection targets that live in `game.rs` still exist, and `screen_over_playing`, used by two adapters, moved to `game/pointer_capture.rs` as `pub(super)`, so it stays reachable from the injected modules. Applying the mixins and compiling the real client are still to be confirmed by CI.
 - No runtime behavior, settings or data formats change. Keep the official Nightly pin and the legacy settings namespace.
 
 ## 0.29.1 (PR #14 review, unreleased)
