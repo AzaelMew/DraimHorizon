@@ -1,14 +1,10 @@
-**DraimHorizon 0.29.3 — Baritone UX, materials and drain (unreleased)**
+**DraimHorizon 0.29.4 — Baritone keys and mining targets (unreleased)**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Navigation: separate X / Y / Z fields; on-screen action buttons replaced by four configurable hotkeys (Options > Mods); automatic re-planning with block breaking and placing instead of getting stuck.
-- Mining detects ores through the Ores experiment table and digs to buried ore.
-- Tunnel lookahead and continuous walking; bridge uses the off hand and inventory blocks and no longer sneaks while walking; farm sowing fixes with a visible diagnostic.
+- Baritone action keys have defaults: Numpad 1 preview, 2 start / resume, 3 pause, 4 stop (changeable in Options > Mods).
+- The keys also work while the menu is open on a Baritone tab and no text field is focused; Start closes the menu and begins the task.
+- Mining can also collect stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels still need a pickaxe.
+- The idle status asks you to press the Start key instead of showing "No destination".
 
-- Default Baritone keys Numpad 1–4 (preview, start, pause, stop); clearer idle status.
-- Mining targets: 13 extra (stone, wood, dirt, sand, gravel, clay, obsidian, …); axe and shovel accepted.
-- Tunnel and Bridge use any safe building block from the hotbar, off hand or inventory (no containers, valuables, slabs, stairs or TNT).
-- New Drain tab fills water bottom-up with inventory blocks, sand and gravel included.
-
-Not verified in game. Tunnel speed remains bounded by the vanilla destroy delay. No installation or publication is implied.
+Not verified in game. No installation or publication is implied.
