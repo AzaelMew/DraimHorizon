@@ -100,7 +100,10 @@ impl Worker {
                     };
                     // If the walking-only planner fails, discover a possible
                     // dig/bridge route without executing world edits.
-                    let action_plan = if query.mine.is_none() && path.is_none() && !canceled() {
+                    let action_plan = if query.mine.is_none()
+                        && path.as_ref().is_none_or(|walking| !walking.complete)
+                        && !canceled()
+                    {
                         Some(model::search_actions(
                             query.start,
                             query.goal,
