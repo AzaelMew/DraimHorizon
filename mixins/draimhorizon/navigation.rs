@@ -134,6 +134,99 @@ pub fn plan_step(
     }
 }
 
+/// Bounded action-aware search. This produces a *plan*, never performs edits.
+/// The native executor must revalidate every action against the live world.
+#[derive(Clone, Debug)]
+pub struct ActionPath {
+    pub nodes: Vec<Pos>,
+    pub actions: Vec<StepAction>,
+    pub complete: bool,
+}
+
+pub fn search_actions(
+    start: Pos,
+    goal: Pos,
+    mut cell: impl FnMut(Pos) -> Cell,
+    canceled: impl Fn() -> bool,
+) -> Option<ActionPath> {
+    if !standable(start, &mut cell) {
+        return None;
+    }
+    let began = Instant::now();
+    let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
+    let mut costs = HashMap::from([(start, 0)]);
+    let mut parents: HashMap<Pos, (Pos, StepAction)> = HashMap::new();
+    let mut best = start;
+    let mut expanded = 0;
+    while let Some(Reverse((_, cost, at))) = open.pop() {
+        if canceled() {
+            return None;
+        }
+        if cost != costs[&at] {
+            continue;
+        }
+        if heuristic(at, goal) < heuristic(best, goal) {
+            best = at;
+        }
+        if at == goal {
+            best = at;
+            break;
+        }
+        expanded += 1;
+        if expanded >= MAX_NODES || began.elapsed() > Duration::from_millis(80) {
+            break;
+        }
+        for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+            let next = [at[0] + dx, at[1], at[2] + dz];
+            if (next[0] - start[0]).abs() > RADIUS
+                || (next[2] - start[2]).abs() > RADIUS
+                || (next[1] - start[1]).abs() > 16
+            {
+                continue;
+            }
+            let Some(action) = plan_step(at, next, &mut cell) else {
+                continue;
+            };
+            // Mining and placement are expensive and require server acknowledgements.
+            // Prefer a safe walking detour whenever possible.
+            let step_cost = match action {
+                StepAction::Walk => 10,
+                StepAction::Bridge { .. } => 50,
+                StepAction::Dig { head, .. } => if head.is_some() { 80 } else { 60 },
+            };
+            let next_cost = cost + step_cost;
+            if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                costs.insert(next, next_cost);
+                parents.insert(next, (at, action));
+                open.push(Reverse((
+                    next_cost + heuristic(next, goal),
+                    next_cost,
+                    next,
+                )));
+            }
+        }
+    }
+    if canceled() || (best == start && start != goal) {
+        return None;
+    }
+    let mut nodes = vec![best];
+    let mut actions = Vec::new();
+    while let Some((parent, action)) = parents.get(nodes.last().unwrap()) {
+        actions.push(*action);
+        nodes.push(*parent);
+        if nodes.len() > MAX_NODES {
+            return None;
+        }
+    }
+    nodes.reverse();
+    actions.reverse();
+    Some(ActionPath {
+        nodes,
+        actions,
+        complete: best == goal,
+    })
+}
+
 fn heuristic(a: Pos, b: Pos) -> i32 {
     ((a[0] - b[0]).abs() + (a[2] - b[2]).abs()) * 10 + (a[1] - b[1]).abs() * 2
 }
@@ -712,5 +805,47 @@ mod action_planner_tests {
             }),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod action_search_tests {
+    use super::*;
+
+    #[test]
+    fn action_search_prefers_walking_and_can_plan_a_gap() {
+        let cell = |p: Pos| {
+            if p[1] < 0 && p != [1, -1, 0] {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let result = search_actions([0, 0, 0], [2, 0, 0], cell, || false).unwrap();
+        assert!(result.complete);
+        assert_eq!(result.nodes.len(), result.actions.len() + 1);
+        // Walking around the gap is cheaper than building a bridge.
+        assert!(result.actions.iter().all(|a| *a == StepAction::Walk));
+    }
+
+    #[test]
+    fn action_search_rejects_unknown_destination() {
+        let cell = |p: Pos| {
+            if p == [1, 0, 0] { Cell::Unknown }
+            else if p[1] < 0 { Cell::Solid }
+            else { Cell::Air }
+        };
+        let result = search_actions([0, 0, 0], [1, 0, 0], cell, || false);
+        assert!(result.is_none_or(|p| !p.complete));
+    }
+
+    #[test]
+    fn action_search_honors_cancellation() {
+        let result = search_actions(
+            [0, 0, 0], [8, 0, 0],
+            |p| if p[1] < 0 { Cell::Solid } else { Cell::Air },
+            || true,
+        );
+        assert!(result.is_none());
     }
 }
