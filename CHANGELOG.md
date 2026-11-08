@@ -1,5 +1,11 @@
 # История версий
 
+## 0.29.2
+
+- Fix the build: pin `rust-toolchain.toml` to Rust 1.99.1 instead of 1.83.0. The crates use `edition = "2024"` and `rust-version = "1.95"`, which Rust 1.83 cannot parse, so a local `cargo build` through rustup failed before compiling anything.
+- Align `.github/workflows/horizon-compatibility.yml` with `release.yml` and `docs/development.md`: install and use Rust 1.99.1 rather than 1.83.0.
+- No runtime behavior, settings or data formats change. Keep the official Nightly pin and the legacy settings namespace.
+
 ## 0.29.1 (PR #14 review, unreleased)
 
 - Register configurable Baritone start/resume, pause and stop keys in Horizon's Options > Mods page. Bindings are unassigned by default and use Horizon's existing persistence; ignore releases, obstructed gameplay, modifiers and conflicting gameplay/native-mod bindings. Starting an active job does not restart it.
