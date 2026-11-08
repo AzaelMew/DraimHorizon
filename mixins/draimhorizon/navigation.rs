@@ -84,7 +84,7 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepAction {
     Walk,
-    Dig { feet: Pos, head: Option<Pos> },
+    Dig { feet: Option<Pos>, head: Option<Pos> },
     Bridge { support: Pos },
 }
 
@@ -126,7 +126,7 @@ pub fn plan_step(
             if feet == Cell::Solid || head == Cell::Solid =>
         {
             Some(StepAction::Dig {
-                feet: to,
+                feet: (feet == Cell::Solid).then_some(to),
                 head: (head == Cell::Solid).then_some(head_pos),
             })
         }
@@ -192,7 +192,7 @@ pub fn search_actions(
             let step_cost = match action {
                 StepAction::Walk => 10,
                 StepAction::Bridge { .. } => 50,
-                StepAction::Dig { head, .. } => if head.is_some() { 80 } else { 60 },
+                StepAction::Dig { feet, head } => if feet.is_some() && head.is_some() { 100 } else { 60 },
             };
             let next_cost = cost + step_cost;
             if costs.get(&next).is_none_or(|old| next_cost < *old) {
@@ -780,13 +780,26 @@ mod action_planner_tests {
             plan_step([0, 0, 0], [1, 0, 0], |p| {
                 if p == [1, 0, 0] { Cell::Solid } else { world(p) }
             }),
-            Some(StepAction::Dig { feet: [1, 0, 0], head: None })
+            Some(StepAction::Dig { feet: Some([1, 0, 0]), head: None })
         );
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
                 if p == [1, -1, 0] { Cell::Air } else { world(p) }
             }),
             Some(StepAction::Bridge { support: [1, -1, 0] })
+        );
+    }
+
+    #[test]
+    fn head_only_obstruction_does_not_request_digging_air() {
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [1, 1, 0] { Cell::Solid } else { world(p) }
+            }),
+            Some(StepAction::Dig {
+                feet: None,
+                head: Some([1, 1, 0]),
+            })
         );
     }
 
