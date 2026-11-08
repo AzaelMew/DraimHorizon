@@ -1646,6 +1646,12 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             }
             Ok(Vec::new())
         }
+        Action::BaritoneKey(key) => {
+            if crate::game::claim_borders_navigation_view::run(game, key)? {
+                game.native_mod_screen_close(claims::ID);
+            }
+            Ok(Vec::new())
+        }
         Action::Navigate { goal, running } => {
             crate::game::claim_borders_navigation_view::start(game, goal, running)?;
             if running {

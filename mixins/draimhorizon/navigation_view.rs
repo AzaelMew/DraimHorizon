@@ -52,33 +52,40 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
     ) else {
         return false;
     };
-    match action {
-        model::Hotkey::Preview => {
-            if let Err(error) = start_from_menu(game, false) {
-                game.native_chat(&error);
-            }
-        }
-        model::Hotkey::Start => {
-            // A paused task resumes where it stopped; with nothing to resume the key
-            // starts what the Experiments tab shows. Neither path bypasses the consent,
-            // world identity or server-confirmation gates, and a press while a task is
-            // running does nothing, so an active dig never loses its ACK state.
-            let (running, resumable) = control();
-            if !running {
-                let result = if resumable {
-                    resume(game)
-                } else {
-                    start_from_menu(game, true)
-                };
-                if let Err(error) = result {
-                    game.native_chat(&error);
-                }
-            }
-        }
-        model::Hotkey::Pause => pause(),
-        model::Hotkey::Stop => reset(),
+    if let Err(error) = run(game, action) {
+        game.native_chat(&error);
     }
     true
+}
+/// Carry out an action key. Returns whether the menu should close (a task was started).
+/// A paused task resumes where it stopped; with nothing to resume, Start begins what the
+/// Baritone tab shows. Neither path bypasses the consent, world identity or
+/// server-confirmation gates, and a press while a task is running does nothing, so an
+/// active dig never loses its ACK state.
+pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    match action {
+        model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
+        model::Hotkey::Start => {
+            let (running, resumable) = control();
+            if running {
+                return Ok(false);
+            }
+            if resumable {
+                resume(game)
+            } else {
+                start_from_menu(game, true)
+            }
+            .map(|()| true)
+        }
+        model::Hotkey::Pause => {
+            pause();
+            Ok(false)
+        }
+        model::Hotkey::Stop => {
+            reset();
+            Ok(false)
+        }
+    }
 }
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &Game<'_>, running: bool) -> Result<(), String> {

@@ -737,6 +737,23 @@ pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut boo
             }
             return;
         }
+        // While a screen is open the game does not pass keys to the mod, so the action keys
+        // are also handled here, for the tab on screen, unless a text field is being edited.
+        if modifiers == 0 && s.menu.baritone_keys_active() {
+            let bindings = crate::game::claim_borders_navigation::Hotkey::ALL
+                .map(|action| game.native_mod_key(claims::ID, action.id(), action.preset()));
+            if let Some(action) = crate::game::claim_borders_navigation::hotkey(
+                key,
+                true,
+                true,
+                false,
+                bindings.each_ref().map(String::as_str),
+            ) {
+                *canceled = true;
+                enqueue(s, model::Action::BaritoneKey(action));
+                return;
+            }
+        }
         if s.menu.key(key, modifiers) {
             *canceled = true;
         }
