@@ -72,7 +72,12 @@ pub enum Goal {
     Coordinates(Pos),
     Waypoint(u64),
     Follow(u128),
-    Mine { ore: u8, limit: u16 },
+    /// `ore` is a target index, or `mining::ANY` for every bit of `targets`.
+    Mine {
+        ore: u8,
+        targets: u32,
+        limit: u16,
+    },
     Construct(super::claim_borders_construction::Config),
     Farm(super::claim_borders_farming::Config),
     Drain(super::claim_borders_draining::Config),

@@ -1620,6 +1620,22 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_workshop_view::refresh(game)?;
             Ok(Vec::new())
         }
+        Action::OpenSchematicFolder => {
+            let dir = crate::game::claim_borders_workshop_view::folder(game);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            // Horizon's own "open folder" (resource packs): Explorer, Finder or xdg-open.
+            crate::game::packs::open_folder(&dir);
+            {
+                use horizon_client::clipboard::Clipboard;
+                game.clipboard.set(&dir.display().to_string());
+            }
+            // A list already being read is fine; the next click reads it again.
+            let _ = crate::game::claim_borders_workshop_view::refresh(game);
+            Ok(vec![tr!(
+                "Папка схем открыта (путь скопирован). Положите .schem / .litematic и выберите файл.",
+                "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
+            )])
+        }
         Action::SchematicInfo(folder) => {
             use horizon_client::clipboard::Clipboard;
             let text = if folder {

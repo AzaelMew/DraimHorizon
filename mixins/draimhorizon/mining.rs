@@ -1,6 +1,9 @@
 // Bounded ore mining jobs. Only server-confirmed block changes advance the count.
 use super::{claim_borders_experimental::ORES, claim_borders_navigation as nav};
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, Instant},
+};
 pub const SCAN_RADIUS: i32 = 16;
 #[derive(Clone, Copy, Debug)]
 pub struct Block {
@@ -141,7 +144,25 @@ pub fn target(index: u8) -> Option<(&'static str, &'static str, &'static [&'stat
         .get(index.checked_sub(ORES.len())?)
         .map(|t| (t.label, t.label_en, t.blocks))
 }
+/// Every target index as a bit.
+pub const ALL: u32 = (1 << COUNT) - 1;
+/// A job that collects whichever of the selected targets is nearest.
+pub const ANY: u8 = 200;
+static SELECTION: AtomicU32 = AtomicU32::new(1);
+/// The targets an `ANY` job collects. Read by the search worker too.
+pub fn select(mask: u32) {
+    SELECTION.store(mask & ALL, Ordering::Relaxed);
+}
+pub fn selection() -> u32 {
+    SELECTION.load(Ordering::Relaxed)
+}
 pub fn matches(ore: u8, name: &str) -> bool {
+    if ore == ANY {
+        let mask = selection();
+        return (0..COUNT as u8).any(|i| {
+            mask & (1 << i) != 0 && target(i).is_some_and(|(_, _, blocks)| blocks.contains(&name))
+        });
+    }
     target(ore).is_some_and(|(_, _, blocks)| blocks.contains(&name))
 }
 pub fn falling(name: &str) -> bool {
@@ -335,7 +356,7 @@ impl Job {
         job
     }
     pub fn new(ore: u8, limit: u16) -> Option<Self> {
-        if usize::from(ore) >= COUNT || !(1..=64).contains(&limit) {
+        if (usize::from(ore) >= COUNT && ore != ANY) || !(1..=64).contains(&limit) {
             return None;
         }
         Some(Self {
@@ -455,6 +476,14 @@ mod tests {
         assert!(matches(ORES.len() as u8, "minecraft:stone"));
         assert!(!matches(ORES.len() as u8, "minecraft:diamond_ore"));
         assert!(Job::new(COUNT as u8 - 1, 8).is_some());
+        assert!(Job::new(ANY, 8).is_some());
+        select(1 | 1 << ORES.len());
+        assert!(matches(ANY, "minecraft:diamond_ore"));
+        assert!(matches(ANY, "minecraft:stone"));
+        assert!(!matches(ANY, "minecraft:oak_log"));
+        select(u32::MAX);
+        assert_eq!(selection(), ALL);
+        select(1);
         assert!(Job::new(COUNT as u8, 8).is_none());
     }
     #[test]

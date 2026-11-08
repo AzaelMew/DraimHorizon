@@ -917,7 +917,17 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
                 && j.ore != u8::MAX
                 && crate::game::claim_borders_farming::Crop::from_code(j.ore).is_none()
         })
-        .map(|j| crate::game::claim_borders_ore_view::marks_for(j.ore))
+        .map(|j| {
+            if j.ore == mining::ANY {
+                let mask = mining::selection();
+                (0..crate::game::claim_borders_experimental::ORES.len() as u8)
+                    .filter(|i| mask & (1 << i) != 0)
+                    .flat_map(crate::game::claim_borders_ore_view::marks_for)
+                    .collect()
+            } else {
+                crate::game::claim_borders_ore_view::marks_for(j.ore)
+            }
+        })
         .unwrap_or_default();
     let query = Query {
         flat: s.flat,
@@ -968,7 +978,13 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
         return crate::game::claim_borders_construction_view::start(game, config, !running);
     }
     crate::game::claim_borders_construction_view::reset();
-    if let Goal::Mine { ore, limit } = goal_request {
+    if let Goal::Mine {
+        ore,
+        targets,
+        limit,
+    } = goal_request
+    {
+        mining::select(targets);
         return start_mining(game, ore, limit, running);
     }
     let language = language();

@@ -240,6 +240,8 @@ pub enum Action {
     /// An action key pressed while the menu is open: the game itself does not pass
     /// keys to the mod while a screen is shown.
     BaritoneKey(super::claim_borders_navigation::Hotkey),
+    /// Create and open the schematic folder in the system file manager, then list it.
+    OpenSchematicFolder,
     ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
@@ -317,6 +319,7 @@ impl std::fmt::Debug for Action {
                 .field("running", running)
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
+            Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
             Self::LoadSchematic {
@@ -496,13 +499,17 @@ pub enum Control {
     ConstructHeight,
     ConstructFloor,
     BaritoneMode(BaritoneMode),
-    MiningOre,
+    MiningTarget(u8),
+    MiningPage,
     MiningLimit,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
     NavigationWaypointChoice(usize),
     NavigationChoicesPage(i8),
+    SchematicChoice(usize),
+    SchematicChoicesPage(i8),
+    SchematicOpenFolder,
     ExperimentalTab(ExperimentalSection),
     ToggleReconnect,
     SettingsTab(u8),
@@ -627,7 +634,9 @@ pub struct Menu {
     pub construct_height: u8,
     pub construct_floor: bool,
     pub baritone_mode: BaritoneMode,
-    pub mining_ore: u8,
+    /// Selected mining targets, one bit per `mining::target` index.
+    pub mining_targets: u32,
+    pub mining_page: usize,
     pub mining_limit: u16,
     pub navigation_player: Option<u128>,
     pub navigation_x: String,
@@ -636,6 +645,9 @@ pub struct Menu {
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub navigation_choices_page: usize,
+    /// The schematic file list is open under the file button.
+    pub schematic_choices: bool,
+    pub schematic_choices_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     deepl_key: String,
@@ -685,9 +697,12 @@ impl Default for Menu {
             navigation_waypoint: None,
             navigation_choices: None,
             navigation_choices_page: 0,
+            schematic_choices: false,
+            schematic_choices_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
-            mining_ore: 0,
+            mining_targets: 1,
+            mining_page: 0,
             mining_limit: 16,
             construct_direction: super::claim_borders_construction::Direction::North,
             construct_length: 16,
@@ -776,7 +791,8 @@ impl Menu {
         self.construct_height = from.construct_height;
         self.construct_floor = from.construct_floor;
         self.baritone_mode = from.baritone_mode;
-        self.mining_ore = from.mining_ore;
+        self.mining_targets = from.mining_targets;
+        self.mining_page = from.mining_page;
         self.mining_limit = from.mining_limit;
         self.navigation_player = from.navigation_player;
         self.navigation_waypoint = from.navigation_waypoint;
@@ -791,6 +807,7 @@ impl Menu {
             && self.experimental_section == ExperimentalSection::Baritone
             && self.focus.is_none()
             && self.navigation_choices.is_none()
+            && !self.schematic_choices
             && !self.experiments_prompt
     }
     fn hotkey_hint(&self, model: &ViewModel) -> String {
@@ -841,13 +858,28 @@ impl Menu {
                 };
                 Ok(Action::Navigate { goal, running })
             }
-            BaritoneMode::Mining => Ok(Action::Navigate {
-                goal: Goal::Mine {
-                    ore: self.mining_ore,
-                    limit: self.mining_limit,
-                },
-                running,
-            }),
+            BaritoneMode::Mining => {
+                use super::claim_borders_mining as mining;
+                let targets = self.mining_targets & mining::ALL;
+                if targets == 0 {
+                    return Err(language
+                        .text("Выберите, что добывать", "Choose what to mine")
+                        .into());
+                }
+                let ore = if targets.count_ones() == 1 {
+                    targets.trailing_zeros() as u8
+                } else {
+                    mining::ANY
+                };
+                Ok(Action::Navigate {
+                    goal: Goal::Mine {
+                        ore,
+                        targets,
+                        limit: self.mining_limit,
+                    },
+                    running,
+                })
+            }
             BaritoneMode::Tunnel | BaritoneMode::Bridge => {
                 let bridge = self.baritone_mode == BaritoneMode::Bridge;
                 Ok(Action::Navigate {
@@ -1134,6 +1166,62 @@ impl Menu {
                         false,
                     ));
                 }
+            }
+        }
+        if self.tab == Tab::Experimental
+            && self.baritone_mode == BaritoneMode::Schematic
+            && self.schematic_choices
+            && let Some(anchor) = widgets
+                .iter()
+                .find(|w| w.control == Some(Control::SchematicFile))
+        {
+            let rect = anchor.rect;
+            // The files, then one entry that opens the folder to add more.
+            let total = model.schematic_files.len() + 1;
+            let page_count = total.div_ceil(8);
+            let page = self.schematic_choices_page.min(page_count - 1);
+            let start = page * 8;
+            let count = (total - start).min(8);
+            let item_h = 20.0;
+            let menu_h = (count + usize::from(page_count > 1)) as f32 * item_h;
+            let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
+                rect[1] + rect[3]
+            } else {
+                (rect[1] - menu_h).max(8.0)
+            };
+            for i in 0..count {
+                let index = start + i;
+                let (label, control) = match model.schematic_files.get(index) {
+                    Some(name) => (name.clone(), Control::SchematicChoice(index)),
+                    None => (
+                        self.language
+                            .text("Открыть папку…", "Open folder…")
+                            .to_owned(),
+                        Control::SchematicOpenFolder,
+                    ),
+                };
+                widgets.push(widget(
+                    [rect[0], top + i as f32 * item_h, rect[2], item_h],
+                    label,
+                    Some(control),
+                    self.schematic_file.as_deref()
+                        == model.schematic_files.get(index).map(String::as_str),
+                ));
+            }
+            if page_count > 1 {
+                let y = top + count as f32 * item_h;
+                widgets.push(widget(
+                    [rect[0], y, rect[2] / 2.0, item_h],
+                    format!("← {}/{}", page + 1, page_count),
+                    Some(Control::SchematicChoicesPage(-1)),
+                    false,
+                ));
+                widgets.push(widget(
+                    [rect[0] + rect[2] / 2.0, y, rect[2] / 2.0, item_h],
+                    format!("{}/{} →", page + 1, page_count),
+                    Some(Control::SchematicChoicesPage(1)),
+                    false,
+                ));
             }
         }
         widgets
@@ -2726,28 +2814,60 @@ impl Menu {
                     false,
                 ));
             } else if self.baritone_mode == BaritoneMode::Mining {
-                let ore = super::claim_borders_mining::target(
-                    self.mining_ore
-                        .min(super::claim_borders_mining::COUNT as u8 - 1),
-                )
-                .unwrap_or(("", "", &[]));
+                // A chip per target, toggled like the structure filters on the map.
+                use super::claim_borders_mining as mining;
+                let top = 100.0 + step;
+                let cols = 3;
+                let chip_w = (w - 8.0) / cols as f32;
+                let rows = (((height - 50.0 - top) / 16.0).floor() as usize).max(1);
+                let per_page = rows * cols;
+                let pages = mining::COUNT.div_ceil(per_page);
+                let page = self.mining_page % pages;
                 out.push(widget(
-                    [x, 100.0, w, h],
-                    localized!(
-                        self.language,
-                        "Добыча: {}",
-                        "Mine: {}",
-                        self.language.text(ore.0, ore.1)
-                    ),
-                    Some(Control::MiningOre),
-                    false,
-                ));
-                out.push(widget(
-                    [x, 100.0 + step, w, h],
+                    [x, 100.0, tab_width, h],
                     localized!(self.language, "Блоков: {}", "Blocks: {}", self.mining_limit),
                     Some(Control::MiningLimit),
                     false,
                 ));
+                out.push(widget(
+                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    if pages > 1 {
+                        localized!(
+                            self.language,
+                            "Выбрано: {} · стр. {}/{} →",
+                            "Selected: {} · page {}/{} →",
+                            (self.mining_targets & mining::ALL).count_ones(),
+                            page + 1,
+                            pages
+                        )
+                    } else {
+                        localized!(
+                            self.language,
+                            "Выбрано: {}",
+                            "Selected: {}",
+                            (self.mining_targets & mining::ALL).count_ones()
+                        )
+                    },
+                    Some(Control::MiningPage),
+                    false,
+                ));
+                for slot in 0..per_page {
+                    let index = page * per_page + slot;
+                    let Some((ru, en, _)) = mining::target(index as u8) else {
+                        break;
+                    };
+                    out.push(widget(
+                        [
+                            x + (slot % cols) as f32 * (chip_w + 4.0),
+                            top + (slot / cols) as f32 * 16.0,
+                            chip_w,
+                            14.0,
+                        ],
+                        self.language.text(ru, en),
+                        Some(Control::MiningTarget(index as u8)),
+                        self.mining_targets & (1 << index) != 0,
+                    ));
+                }
             } else {
                 let waypoint = self
                     .navigation_waypoint
@@ -2818,8 +2938,7 @@ impl Menu {
                 ));
                 out.push(widget(
                     [x + tab_width + 4.0, height - 30.0, tab_width, 14.0],
-                    self.language
-                        .text("Путь к папке → буфер", "Folder path → clipboard"),
+                    self.language.text("Открыть папку", "Open folder"),
                     Some(Control::SchematicFolder),
                     false,
                 ));
@@ -3295,8 +3414,20 @@ impl Menu {
         let Some(control) = hit.and_then(|w| w.control) else {
             self.focus = None;
             self.navigation_choices = None;
+            self.schematic_choices = false;
             return None;
         };
+        if self.schematic_choices
+            && !matches!(
+                control,
+                Control::SchematicFile
+                    | Control::SchematicChoice(_)
+                    | Control::SchematicChoicesPage(_)
+                    | Control::SchematicOpenFolder
+            )
+        {
+            self.schematic_choices = false;
+        }
         if self.navigation_choices.is_some()
             && !matches!(
                 control,
@@ -3395,16 +3526,34 @@ impl Menu {
                 None
             }
             Control::SchematicFile => {
+                self.focus = None;
                 if model.schematic_files.is_empty() {
-                    return Some(Action::RefreshSchematics);
+                    // Nothing to choose yet: show the folder so files can be put there.
+                    self.schematic_choices = false;
+                    return Some(Action::OpenSchematicFolder);
                 }
-                let i = self
-                    .schematic_file
-                    .as_ref()
-                    .and_then(|n| model.schematic_files.iter().position(|f| f == n))
-                    .map_or(0, |i| (i + 1) % model.schematic_files.len());
-                self.schematic_file = Some(model.schematic_files[i].clone());
+                self.schematic_choices = !self.schematic_choices;
+                self.schematic_choices_page = 0;
+                // Pick up files added since the list was last read.
+                self.schematic_choices.then_some(Action::RefreshSchematics)
+            }
+            Control::SchematicChoice(index) => {
+                if let Some(name) = model.schematic_files.get(index) {
+                    self.schematic_file = Some(name.clone());
+                }
+                self.schematic_choices = false;
                 None
+            }
+            Control::SchematicChoicesPage(direction) => {
+                let pages = (model.schematic_files.len() + 1).div_ceil(8);
+                self.schematic_choices_page =
+                    (self.schematic_choices_page as isize + direction as isize)
+                        .rem_euclid(pages as isize) as usize;
+                None
+            }
+            Control::SchematicOpenFolder => {
+                self.schematic_choices = false;
+                Some(Action::OpenSchematicFolder)
             }
             Control::SchematicRefresh => Some(Action::RefreshSchematics),
             Control::SchematicRotation => {
@@ -3412,15 +3561,22 @@ impl Menu {
                 None
             }
             Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
-            Control::SchematicFolder => Some(Action::SchematicInfo(true)),
+            Control::SchematicFolder => Some(Action::OpenSchematicFolder),
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
                 self.navigation_choices = None;
+                self.schematic_choices = false;
                 self.focus = None;
                 None
             }
-            Control::MiningOre => {
-                self.mining_ore = (self.mining_ore + 1) % super::claim_borders_mining::COUNT as u8;
+            Control::MiningTarget(index) => {
+                if usize::from(index) < super::claim_borders_mining::COUNT {
+                    self.mining_targets ^= 1 << index;
+                }
+                None
+            }
+            Control::MiningPage => {
+                self.mining_page = self.mining_page.wrapping_add(1);
                 None
             }
             Control::MiningLimit => {
@@ -4138,6 +4294,14 @@ impl Menu {
             );
             return;
         }
+        if self.schematic_choices {
+            self.activate(
+                model,
+                height,
+                Control::SchematicChoicesPage(if delta > 0.0 { -1 } else { 1 }),
+            );
+            return;
+        }
         if !self.relay_setup {
             self.activate(
                 model,
@@ -4311,6 +4475,10 @@ impl Menu {
         }
         if key == "key.keyboard.escape" {
             if self.navigation_choices.take().is_some() {
+                return true;
+            }
+            if self.schematic_choices {
+                self.schematic_choices = false;
                 return true;
             }
             self.access_token.clear();
@@ -5128,7 +5296,11 @@ mod tests {
             assert!(matches!(
                 menu.baritone_request(false),
                 Ok(Action::Navigate {
-                    goal: super::super::claim_borders_navigation::Goal::Mine { ore: 0, limit: 16 },
+                    goal: super::super::claim_borders_navigation::Goal::Mine {
+                        ore: 0,
+                        targets: 1,
+                        limit: 16
+                    },
                     running: false
                 })
             ));
@@ -5140,7 +5312,8 @@ mod tests {
                         matches!(
                             r.control,
                             Some(
-                                Control::MiningOre
+                                Control::MiningTarget(_)
+                                    | Control::MiningPage
                                     | Control::MiningLimit
                                     | Control::BaritoneMode(_)
                             )
@@ -6110,6 +6283,87 @@ mod tests {
         }
     }
     #[test]
+    fn mining_targets_toggle_like_filters_and_several_mine_together() {
+        use super::super::claim_borders_mining as mining;
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            baritone_mode: BaritoneMode::Mining,
+            ..Menu::default()
+        };
+        menu.activate(&model, 300.0, Control::MiningTarget(0));
+        assert!(menu.baritone_request(false).is_err());
+        menu.activate(&model, 300.0, Control::MiningTarget(3));
+        assert!(matches!(
+            menu.baritone_request(false),
+            Ok(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Mine {
+                    ore: 3,
+                    targets: 8,
+                    ..
+                },
+                ..
+            })
+        ));
+        menu.activate(&model, 300.0, Control::MiningTarget(12));
+        assert!(matches!(
+            menu.baritone_request(false),
+            Ok(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Mine {
+                    ore: mining::ANY,
+                    ..
+                },
+                ..
+            })
+        ));
+        // Every target is reachable through the pages at the smallest panel.
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..mining::COUNT {
+            for w in menu.layout(&model, 360.0, 200.0) {
+                if let Some(Control::MiningTarget(i)) = w.control {
+                    seen.insert(i);
+                }
+            }
+            menu.activate(&model, 200.0, Control::MiningPage);
+        }
+        assert_eq!(seen.len(), mining::COUNT);
+    }
+    #[test]
+    fn schematic_button_opens_the_folder_or_a_file_list() {
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            baritone_mode: BaritoneMode::Schematic,
+            ..Menu::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 300.0, Control::SchematicFile),
+            Some(Action::OpenSchematicFolder)
+        ));
+        assert!(!menu.schematic_choices);
+        model.schematic_files = vec!["a.schem".into(), "b.litematic".into()];
+        assert!(matches!(
+            menu.activate(&model, 300.0, Control::SchematicFile),
+            Some(Action::RefreshSchematics)
+        ));
+        assert!(menu.schematic_choices);
+        let rows = menu.layout(&model, 360.0, 300.0);
+        assert!(
+            rows.iter()
+                .any(|w| w.control == Some(Control::SchematicChoice(1)))
+        );
+        assert!(
+            rows.iter()
+                .any(|w| w.control == Some(Control::SchematicOpenFolder))
+        );
+        assert!(!menu.baritone_keys_active());
+        menu.activate(&model, 300.0, Control::SchematicChoice(1));
+        assert_eq!(menu.schematic_file.as_deref(), Some("b.litematic"));
+        assert!(!menu.schematic_choices);
+    }
+    #[test]
     fn action_keys_reach_the_baritone_tab_unless_a_field_is_being_edited() {
         let mut menu = Menu::default();
         assert!(!menu.baritone_keys_active());
@@ -6158,6 +6412,8 @@ mod tests {
         assert_eq!(menu.drain_radius, 6);
         menu.baritone_mode = BaritoneMode::Schematic;
         menu.activate(&model, 200.0, Control::SchematicFile);
+        assert!(menu.schematic_choices);
+        menu.activate(&model, 200.0, Control::SchematicChoice(0));
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
         for value in ["", "1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
             menu.schematic_origin = value.into();
