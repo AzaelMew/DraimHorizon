@@ -910,6 +910,14 @@ impl Menu {
                     } else {
                         (rect[1] - menu_h).max(8.0)
                     };
+                    if count == 0 {
+                        widgets.push(widget(
+                            [rect[0], top, rect[2], item_h],
+                            self.language.text("Нет доступных целей", "No available targets"),
+                            Some(Control::NavigationChoicesPage(0)),
+                            false,
+                        ));
+                    }
                     for i in 0..count {
                         widgets.push(widget(
                             [rect[0], top + i as f32 * item_h, rect[2], item_h],
@@ -5286,6 +5294,23 @@ mod tests {
         menu.navigation_player = Some(101);
         menu.reconcile(&next, &next, 200.0);
         assert_eq!(menu.navigation_player, Some(101));
+    }
+
+    #[test]
+    fn empty_navigation_dropdown_shows_non_actionable_placeholder() {
+        let model = ViewModel::default();
+        let mut menu = Menu::default();
+        menu.tab = Tab::Experimental;
+        menu.experimental_section = ExperimentalSection::Baritone;
+        menu.baritone_mode = BaritoneMode::Navigation;
+        menu.navigation_choices = Some(true);
+        let widgets = menu.layout(&model, 800.0, 480.0);
+        assert!(widgets.iter().any(|w| {
+            w.control == Some(Control::NavigationChoicesPage(0))
+                && w.label.contains("No available targets")
+                    || w.control == Some(Control::NavigationChoicesPage(0))
+                        && w.label.contains("Нет доступных целей")
+        }));
     }
 
     #[test]
