@@ -1,13 +1,19 @@
 # История версий
 
+## 0.29.4
+
+- The Baritone action keys also work while the menu is open on a Baritone tab and no text field is focused (the game does not deliver keys to the mod while a screen is open). Start closes the menu and begins the task; errors are shown in the menu feedback.
+- Baritone keys have defaults: Numpad 1 preview, 2 start/resume, 3 pause, 4 stop (changeable in Options > Mods), so a task can be started without first assigning keys. The idle status now says to press the Start key instead of "No destination".
+- Mining can collect 13 more targets besides the ores: stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels and dig routes still require a pickaxe.
+- Baritone mining messages ask for a suitable tool (pickaxe, axe or shovel) instead of only a pickaxe. Tunnels and dig routes still need a pickaxe.
+- New workflow `auto-version.yml`: a same-repository pull request that leaves the version unchanged gets its patch version raised automatically, with a stub CHANGELOG entry and release note from the title (`tools/auto_version.py`, tested in `tools/tests`). Forks are not touched. Commits pushed with the workflow token do not start other workflows; the merge to main runs the full verification.
+- Not compiled or tested in game yet beyond the pure modules and CI.
+
 ## 0.29.3
 
 - Baritone > Navigation: coordinates are three separate X / Y / Z fields (pasting `x y z` fills all three). The Preview / Go / Resume / Stop buttons are removed from every Baritone tab; use the four configurable keys (preview, start/resume, pause, stop) in Options > Mods. Entered settings now survive closing and reopening the menu.
 - Navigation no longer gets stuck: when no walkable route exists or the character stalls, it plans again with permission to break blocks and place a block under a gap, executes the route step by step, re-plans after every route and stops with a visible reason after a bounded number of failures. Vertical pillaring is not supported.
 - Mining: uses the same ore table as the Ores experiment. Overlay marks are tried first, then loaded chunks are scanned (radius 24); buried ore is reached by a dug route.
-- The Baritone action keys also work while the menu is open on a Baritone tab and no text field is focused (the game does not deliver keys to the mod while a screen is open). Start closes the menu and begins the task; errors are shown in the menu feedback.
-- Baritone keys have defaults: Numpad 1 preview, 2 start/resume, 3 pause, 4 stop (changeable in Options > Mods), so a task can be started without first assigning keys. The idle status now says to press the Start key instead of "No destination".
-- Mining can collect 13 more targets besides the ores: stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels and dig routes still require a pickaxe.
 - Tunnel and Bridge spend any suitable building block the player carries (hotbar, off hand or inventory), not a fixed list. Stone-like blocks go first. Shulker boxes, chests and other containers, redstone parts, workstations, TNT, slabs, stairs, ores, storage blocks of metals and gems, and anything that is not a plain solid cube are never placed; the check also uses the game's own block data.
 - New Baritone > Drain tab: fills a pond from the bottom up within a radius of 3–12 with blocks from the inventory, sand and gravel included, only on cells that rest on something solid. Walks to the next cell when it is out of reach, stops when no supported cell remains and reports how many were left.
 - Tunnel: looks ahead and keeps walking instead of working one block at a time. The vanilla 5-tick destroy delay still bounds the rate per block, even with Efficiency 5 and Haste 2.

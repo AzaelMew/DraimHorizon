@@ -1,0 +1,40 @@
+name: Raise the version of a pull request
+# A pull request that leaves the version unchanged would silently publish nothing, because
+# the release job keeps an existing tag. Raise the patch version on the pull request branch.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  bump:
+    # Pull requests from forks cannot be pushed to; the maintainer bumps those by hand.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Raise the version when the pull request kept it
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git show "origin/${BASE_REF}:Cargo.toml" > "${RUNNER_TEMP}/base-Cargo.toml"
+          python3 tools/auto_version.py --base-cargo "${RUNNER_TEMP}/base-Cargo.toml" --title "$PR_TITLE" --number "$PR_NUMBER"
+          python3 tools/version.py check
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: raise version for pull request #${PR_NUMBER}"
+          git push origin "HEAD:${HEAD_REF}"
