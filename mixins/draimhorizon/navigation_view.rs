@@ -30,6 +30,7 @@ struct Answer {
     token: u64,
     start: model::Pos,
     path: Option<model::Path>,
+    action_plan: Option<model::ActionPath>,
 }
 struct Worker {
     tx: SyncSender<Query>,
@@ -97,12 +98,26 @@ impl Worker {
                             ),
                         )
                     };
+                    // If the walking-only planner fails, discover a possible
+                    // dig/bridge route without executing world edits.
+                    let action_plan = if query.mine.is_none() && path.is_none() && !canceled() {
+                        Some(model::search_actions(
+                            query.start,
+                            query.goal,
+                            |at| read(at).cell,
+                            canceled,
+                        ))
+                        .flatten()
+                    } else {
+                        None
+                    };
                     if !canceled() {
                         let _ = results.send(Answer {
                             target,
                             token: query.token,
                             start: query.start,
                             path,
+                            action_plan,
                         });
                     }
                 }
@@ -128,6 +143,7 @@ struct State {
     worker: Option<Worker>,
     token: u64,
     pending: bool,
+    action_plan: Option<model::ActionPath>,
     last_query: Instant,
 }
 impl Default for State {
@@ -144,6 +160,7 @@ impl Default for State {
             worker: None,
             token: 0,
             pending: false,
+            action_plan: None,
             last_query: Instant::now() - Duration::from_secs(2),
         }
     }
@@ -201,6 +218,7 @@ fn cancel_pending(s: &mut State) {
         w.generation.store(s.token, Ordering::Relaxed);
     }
     s.pending = false;
+    s.action_plan = None;
 }
 fn pause_state(s: &mut State) {
     s.nav.pause();
@@ -930,6 +948,10 @@ pub(super) fn tick(game: &Game<'_>) {
                                 job.phase = mining::Phase::NoTarget;
                             }
                         }
+                        // Keep an action plan for inspection. Until the native
+                        // executor verifies tools, permissions and server ACKs,
+                        // never feed an edit-requiring route to walking input.
+                        s.action_plan = answer.action_plan;
                         if answer.path.is_none() && s.mining.is_none() && s.nav.running {
                             // Retry from the current position with a bounded recovery budget.
                             // Never turn a failed plan into unbounded movement or block edits.
