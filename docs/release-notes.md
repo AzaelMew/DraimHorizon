@@ -1,4 +1,4 @@
-**DraimHorizon 0.29.0 — PR #14 review build (unreleased)**
+**DraimHorizon 0.29.1 — PR #14 review build (unreleased)**
 
 Target: official Horizon Nightly source `2ebf00a0281c592f79191e76fce0e7d522c6f425` (Java 26.3).
 
