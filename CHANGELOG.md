@@ -1,6 +1,6 @@
 # История версий
 
-## 0.29.0 (PR #14 review, unreleased)
+## 0.29.1 (PR #14 review, unreleased)
 
 - Register configurable Baritone start/resume, pause and stop keys in Horizon's Options > Mods page. Bindings are unassigned by default and use Horizon's existing persistence; ignore releases, obstructed gameplay, modifiers and conflicting gameplay/native-mod bindings. Starting an active job does not restart it.
 - Reject action-plan steps beside unknown terrain, including adjacent support and overhead cells. Dig/Bridge routes remain diagnostic only: no unverified world edits or action routes are fed to walking input.
