@@ -20,9 +20,129 @@ impl Default for Block {
         }
     }
 }
+/// What the miner can be told to collect besides the highlighted ores.
+pub struct Target {
+    pub label: &'static str,
+    pub label_en: &'static str,
+    pub blocks: &'static [&'static str],
+}
+const EXTRA: [Target; 13] = [
+    Target {
+        label: "Камень",
+        label_en: "Stone",
+        blocks: &[
+            "minecraft:stone",
+            "minecraft:deepslate",
+            "minecraft:andesite",
+            "minecraft:diorite",
+            "minecraft:granite",
+            "minecraft:tuff",
+        ],
+    },
+    Target {
+        label: "Булыжник",
+        label_en: "Cobblestone",
+        blocks: &[
+            "minecraft:cobblestone",
+            "minecraft:cobbled_deepslate",
+            "minecraft:mossy_cobblestone",
+        ],
+    },
+    Target {
+        label: "Земля",
+        label_en: "Dirt",
+        blocks: &[
+            "minecraft:dirt",
+            "minecraft:grass_block",
+            "minecraft:coarse_dirt",
+            "minecraft:podzol",
+            "minecraft:mycelium",
+            "minecraft:rooted_dirt",
+        ],
+    },
+    Target {
+        label: "Песок",
+        label_en: "Sand",
+        blocks: &["minecraft:sand", "minecraft:red_sand"],
+    },
+    Target {
+        label: "Гравий",
+        label_en: "Gravel",
+        blocks: &["minecraft:gravel"],
+    },
+    Target {
+        label: "Глина",
+        label_en: "Clay",
+        blocks: &["minecraft:clay"],
+    },
+    Target {
+        label: "Дерево",
+        label_en: "Wood",
+        blocks: &[
+            "minecraft:oak_log",
+            "minecraft:spruce_log",
+            "minecraft:birch_log",
+            "minecraft:jungle_log",
+            "minecraft:acacia_log",
+            "minecraft:dark_oak_log",
+            "minecraft:mangrove_log",
+            "minecraft:cherry_log",
+            "minecraft:pale_oak_log",
+            "minecraft:crimson_stem",
+            "minecraft:warped_stem",
+        ],
+    },
+    Target {
+        label: "Обсидиан",
+        label_en: "Obsidian",
+        blocks: &["minecraft:obsidian", "minecraft:crying_obsidian"],
+    },
+    Target {
+        label: "Светокамень",
+        label_en: "Glowstone",
+        blocks: &["minecraft:glowstone"],
+    },
+    Target {
+        label: "Камень Незера",
+        label_en: "Nether stone",
+        blocks: &[
+            "minecraft:netherrack",
+            "minecraft:basalt",
+            "minecraft:blackstone",
+            "minecraft:soul_sand",
+            "minecraft:soul_soil",
+        ],
+    },
+    Target {
+        label: "Песчаник",
+        label_en: "Sandstone",
+        blocks: &["minecraft:sandstone", "minecraft:red_sandstone"],
+    },
+    Target {
+        label: "Эндерняк",
+        label_en: "End stone",
+        blocks: &["minecraft:end_stone"],
+    },
+    Target {
+        label: "Тыквы и арбузы",
+        label_en: "Pumpkins and melons",
+        blocks: &["minecraft:pumpkin", "minecraft:melon"],
+    },
+];
+/// Number of things the miner can collect: the highlighted ores, then the extra targets.
+pub const COUNT: usize = ORES.len() + EXTRA.len();
+/// (Russian label, English label, blocks) for a mining target index.
+pub fn target(index: u8) -> Option<(&'static str, &'static str, &'static [&'static str])> {
+    let index = usize::from(index);
+    if let Some(ore) = ORES.get(index) {
+        return Some((ore.label, ore.label_en, ore.blocks));
+    }
+    EXTRA
+        .get(index.checked_sub(ORES.len())?)
+        .map(|t| (t.label, t.label_en, t.blocks))
+}
 pub fn matches(ore: u8, name: &str) -> bool {
-    ORES.get(usize::from(ore))
-        .is_some_and(|o| o.blocks.contains(&name))
+    target(ore).is_some_and(|(_, _, blocks)| blocks.contains(&name))
 }
 pub fn falling(name: &str) -> bool {
     matches!(
@@ -215,7 +335,7 @@ impl Job {
         job
     }
     pub fn new(ore: u8, limit: u16) -> Option<Self> {
-        if usize::from(ore) >= ORES.len() || !(1..=64).contains(&limit) {
+        if usize::from(ore) >= COUNT || !(1..=64).contains(&limit) {
             return None;
         }
         Some(Self {
@@ -322,6 +442,22 @@ impl Job {
 mod tests {
     use super::*;
     #[test]
+    fn every_target_has_a_label_and_blocks_and_ores_keep_their_indices() {
+        assert_eq!(COUNT, ORES.len() + 13);
+        for index in 0..COUNT as u8 {
+            let (ru, en, blocks) = target(index).unwrap();
+            assert!(!ru.is_empty() && !en.is_empty() && !blocks.is_empty());
+            assert!(blocks.iter().all(|b| b.starts_with("minecraft:")));
+            assert!(matches(index, blocks[0]));
+        }
+        assert!(target(COUNT as u8).is_none());
+        assert!(matches(0, "minecraft:diamond_ore"));
+        assert!(matches(ORES.len() as u8, "minecraft:stone"));
+        assert!(!matches(ORES.len() as u8, "minecraft:diamond_ore"));
+        assert!(Job::new(COUNT as u8 - 1, 8).is_some());
+        assert!(Job::new(COUNT as u8, 8).is_none());
+    }
+    #[test]
     fn counts_only_confirmed_breaks_and_refuses_server_rejections() {
         let mut job = Job::new(0, 2).unwrap();
         job.select([2, 0, 0]);
@@ -358,7 +494,7 @@ mod tests {
         assert_eq!(job.phase, Phase::Done);
         job.resume();
         assert!(!job.active);
-        assert!(Job::new(10, 1).is_none());
+        assert!(Job::new(COUNT as u8, 1).is_none());
         assert!(Job::new(0, 0).is_none());
         assert!(Job::new(0, 65).is_none());
         let mut late = Job::excavation([1, 0, 0]);

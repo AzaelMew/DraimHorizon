@@ -69,7 +69,7 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                 [
                     action.id().into(),
                     action.label(language).into(),
-                    crate::game::claim_borders_navigation::Hotkey::DEFAULT.into(),
+                    action.preset().into(),
                 ]
             }),
         )
@@ -1327,11 +1327,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
     let borders_enabled = claims::with_state(|s| s.enabled);
     let (navigation_status, _) = crate::game::claim_borders_navigation_view::snapshot(game);
     let hotkeys = crate::game::claim_borders_navigation::Hotkey::ALL.map(|action| {
-        let key = game.native_mod_key(
-            claims::ID,
-            action.id(),
-            crate::game::claim_borders_navigation::Hotkey::DEFAULT,
-        );
+        let key = game.native_mod_key(claims::ID, action.id(), action.preset());
         // "key.keyboard.left.shift" -> "LEFT SHIFT"; an unassigned key shows nothing.
         match key.strip_prefix("key.keyboard.") {
             Some("unknown") | None => String::new(),

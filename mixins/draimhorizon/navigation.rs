@@ -15,8 +15,18 @@ pub enum Hotkey {
 impl Hotkey {
     pub const COUNT: usize = 4;
     pub const ALL: [Self; Self::COUNT] = [Self::Preview, Self::Start, Self::Pause, Self::Stop];
-    // Opt in from Options > Mods; never claim existing gameplay keys by default.
+    /// Marks an unassigned binding; such a key never triggers anything.
     pub const DEFAULT: &str = "key.keyboard.unknown";
+    /// The numeric keypad is unused by the game, so the keys work out of the box without
+    /// taking a gameplay key. They can be changed in Options > Mods.
+    pub fn preset(self) -> &'static str {
+        match self {
+            Self::Preview => "key.keyboard.keypad.1",
+            Self::Start => "key.keyboard.keypad.2",
+            Self::Pause => "key.keyboard.keypad.3",
+            Self::Stop => "key.keyboard.keypad.4",
+        }
+    }
     pub fn id(self) -> &'static str {
         match self {
             Self::Preview => "navigation_preview",

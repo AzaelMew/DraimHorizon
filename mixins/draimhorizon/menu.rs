@@ -2714,15 +2714,18 @@ impl Menu {
                     false,
                 ));
             } else if self.baritone_mode == BaritoneMode::Mining {
-                let ore = &experimental::ORES
-                    [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
+                let ore = super::claim_borders_mining::target(
+                    self.mining_ore
+                        .min(super::claim_borders_mining::COUNT as u8 - 1),
+                )
+                .unwrap_or(("", "", &[]));
                 out.push(widget(
                     [x, 100.0, w, h],
                     localized!(
                         self.language,
-                        "Руда: {}",
-                        "Ore: {}",
-                        self.language.text(ore.label, ore.label_en)
+                        "Добыча: {}",
+                        "Mine: {}",
+                        self.language.text(ore.0, ore.1)
                     ),
                     Some(Control::MiningOre),
                     false,
@@ -3405,7 +3408,7 @@ impl Menu {
                 None
             }
             Control::MiningOre => {
-                self.mining_ore = (self.mining_ore + 1) % experimental::ORES.len() as u8;
+                self.mining_ore = (self.mining_ore + 1) % super::claim_borders_mining::COUNT as u8;
                 None
             }
             Control::MiningLimit => {

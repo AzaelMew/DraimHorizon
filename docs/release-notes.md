@@ -6,6 +6,8 @@ Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2c
 - Mining detects ores through the Ores experiment table and digs to buried ore.
 - Tunnel lookahead and continuous walking; bridge uses the off hand and inventory blocks and no longer sneaks while walking; farm sowing fixes with a visible diagnostic.
 
+- Default Baritone keys Numpad 1–4 (preview, start, pause, stop); clearer idle status.
+- Mining targets: 13 extra (stone, wood, dirt, sand, gravel, clay, obsidian, …); axe and shovel accepted.
 - Tunnel and Bridge use any safe building block from the hotbar, off hand or inventory (no containers, valuables, slabs, stairs or TNT).
 - New Drain tab fills water bottom-up with inventory blocks, sand and gravel included.
 
