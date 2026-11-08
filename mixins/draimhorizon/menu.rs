@@ -316,6 +316,7 @@ impl std::fmt::Debug for Action {
                 .field("goal", goal)
                 .field("running", running)
                 .finish(),
+            Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
             Self::LoadSchematic {
