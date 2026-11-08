@@ -4247,6 +4247,9 @@ impl Menu {
             return true;
         }
         if key == "key.keyboard.escape" {
+            if self.navigation_choices.take().is_some() {
+                return true;
+            }
             self.access_token.clear();
             self.deepl_key.clear();
             if self.relay_setup {
@@ -5232,6 +5235,17 @@ mod tests {
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
         assert_eq!(menu.navigation_coordinates, "2");
+    }
+
+    #[test]
+    fn navigation_dropdown_escape_closes_popup_before_screen() {
+        let model = ViewModel::default();
+        let mut menu = Menu::default();
+        menu.activate(&model, 200.0, Control::NavigationWaypoint);
+        assert_eq!(menu.navigation_choices, Some(false));
+        assert!(menu.key("key.keyboard.escape", 0));
+        assert_eq!(menu.navigation_choices, None);
+        assert!(!menu.key("key.keyboard.escape", 0));
     }
 
     #[test]
