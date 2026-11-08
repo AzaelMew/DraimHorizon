@@ -4,6 +4,55 @@ use std::collections::{BinaryHeap, HashMap};
 use std::time::{Duration, Instant};
 
 pub type Pos = [i32; 3];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hotkey {
+    Start,
+    Pause,
+    Stop,
+}
+impl Hotkey {
+    pub const ALL: [Self; 3] = [Self::Start, Self::Pause, Self::Stop];
+    // Opt in from Options > Mods; never claim existing gameplay keys by default.
+    pub const DEFAULT: &str = "key.keyboard.unknown";
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Start => "navigation_start",
+            Self::Pause => "navigation_pause",
+            Self::Stop => "navigation_stop",
+        }
+    }
+    pub fn label(
+        self,
+        language: claim_borders_relay_client::translation::Language,
+    ) -> &'static str {
+        match self {
+            Self::Start => {
+                language.text("Baritone: старт / продолжить", "Baritone: start / resume")
+            }
+            Self::Pause => language.text("Baritone: пауза", "Baritone: pause"),
+            Self::Stop => language.text("Baritone: остановить", "Baritone: stop"),
+        }
+    }
+}
+
+pub fn hotkey(
+    key: &str,
+    pressed: bool,
+    eligible: bool,
+    conflict: bool,
+    bindings: [&str; 3],
+) -> Option<Hotkey> {
+    if !pressed || !eligible || conflict || key == Hotkey::DEFAULT {
+        return None;
+    }
+    let mut matches = bindings
+        .into_iter()
+        .zip(Hotkey::ALL)
+        .filter_map(|(binding, action)| (binding == key).then_some(action));
+    let action = matches.next()?;
+    matches.next().is_none().then_some(action)
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Goal {
     Coordinates(Pos),
@@ -84,25 +133,27 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepAction {
     Walk,
-    Dig { feet: Option<Pos>, head: Option<Pos> },
-    Bridge { support: Pos },
+    Dig {
+        feet: Option<Pos>,
+        head: Option<Pos>,
+    },
+    Bridge {
+        support: Pos,
+    },
 }
 
-pub fn plan_step(
-    from: Pos,
-    to: Pos,
-    mut cell: impl FnMut(Pos) -> Cell,
-) -> Option<StepAction> {
-    if to[1] != from[1]
-        || (to[0] - from[0]).abs() + (to[2] - from[2]).abs() != 1
-    {
+pub fn plan_step(from: Pos, to: Pos, mut cell: impl FnMut(Pos) -> Cell) -> Option<StepAction> {
+    if to[1] != from[1] || (to[0] - from[0]).abs() + (to[2] - from[2]).abs() != 1 {
         return None;
     }
     // Never modify unknown, protected/partial or hazardous blocks. Include the
     // adjacent cells and overhead clearance to avoid digging into lava or a fall.
     for [dx, dz] in [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] {
         for dy in -1..=2 {
-            if cell([to[0] + dx, to[1] + dy, to[2] + dz]) == Cell::Hazard {
+            if matches!(
+                cell([to[0] + dx, to[1] + dy, to[2] + dz]),
+                Cell::Hazard | Cell::Unknown
+            ) {
                 return None;
             }
         }
@@ -192,7 +243,13 @@ pub fn search_actions(
             let step_cost = match action {
                 StepAction::Walk => 10,
                 StepAction::Bridge { .. } => 50,
-                StepAction::Dig { feet, head } => if feet.is_some() && head.is_some() { 100 } else { 60 },
+                StepAction::Dig { feet, head } => {
+                    if feet.is_some() && head.is_some() {
+                        100
+                    } else {
+                        60
+                    }
+                }
             };
             let next_cost = cost + step_cost;
             if costs.get(&next).is_none_or(|old| next_cost < *old) {
@@ -569,6 +626,34 @@ impl Navigator {
 mod tests {
     use super::*;
     #[test]
+    fn global_hotkeys_require_a_unique_binding_and_unobstructed_gameplay() {
+        let bindings = ["key.keyboard.f6", "key.keyboard.f7", "key.keyboard.f8"];
+        for (key, action) in bindings.into_iter().zip(Hotkey::ALL) {
+            assert_eq!(hotkey(key, true, true, false, bindings), Some(action));
+            assert_eq!(hotkey(key, false, true, false, bindings), None);
+            assert_eq!(hotkey(key, true, false, false, bindings), None);
+            assert_eq!(hotkey(key, true, true, true, bindings), None);
+        }
+        assert_eq!(
+            hotkey("key.keyboard.f6", true, true, false, [bindings[0]; 3]),
+            None
+        );
+        assert_eq!(
+            hotkey(Hotkey::DEFAULT, true, true, false, [Hotkey::DEFAULT; 3]),
+            None
+        );
+        assert_eq!(hotkey("key.keyboard.w", true, true, false, bindings), None);
+        for language in [
+            claim_borders_relay_client::translation::Language::English,
+            claim_borders_relay_client::translation::Language::Russian,
+        ] {
+            for action in Hotkey::ALL {
+                assert!(!action.label(language).is_empty());
+                assert!(action.id().starts_with("navigation_"));
+            }
+        }
+    }
+    #[test]
     fn follow_uses_hysteresis_and_stops_when_the_target_disappears() {
         let mut f = Follow::new(42, 0);
         assert_eq!(
@@ -766,6 +851,37 @@ mod tests {
 mod action_planner_tests {
     use super::*;
 
+    #[test]
+    fn edits_reject_unknown_neighbors_and_overhead() {
+        for unknown in [[2, 0, 0], [1, 2, 0], [1, -1, 1]] {
+            assert_eq!(
+                plan_step([0, 0, 0], [1, 0, 0], |p| {
+                    if p == unknown {
+                        Cell::Unknown
+                    } else if p == [1, 0, 0] {
+                        Cell::Solid
+                    } else {
+                        world(p)
+                    }
+                }),
+                None,
+                "must not dig next to unknown terrain at {unknown:?}"
+            );
+        }
+        assert_eq!(
+            plan_step([0, 0, 0], [1, 0, 0], |p| {
+                if p == [2, -1, 0] {
+                    Cell::Unknown
+                } else if p == [1, -1, 0] {
+                    Cell::Air
+                } else {
+                    world(p)
+                }
+            }),
+            None
+        );
+    }
+
     fn world(at: Pos) -> Cell {
         if at[1] < 0 { Cell::Solid } else { Cell::Air }
     }
@@ -778,15 +894,24 @@ mod action_planner_tests {
         );
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, 0, 0] { Cell::Solid } else { world(p) }
+                if p == [1, 0, 0] {
+                    Cell::Solid
+                } else {
+                    world(p)
+                }
             }),
-            Some(StepAction::Dig { feet: Some([1, 0, 0]), head: None })
+            Some(StepAction::Dig {
+                feet: Some([1, 0, 0]),
+                head: None
+            })
         );
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
                 if p == [1, -1, 0] { Cell::Air } else { world(p) }
             }),
-            Some(StepAction::Bridge { support: [1, -1, 0] })
+            Some(StepAction::Bridge {
+                support: [1, -1, 0]
+            })
         );
     }
 
@@ -794,7 +919,11 @@ mod action_planner_tests {
     fn head_only_obstruction_does_not_request_digging_air() {
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, 1, 0] { Cell::Solid } else { world(p) }
+                if p == [1, 1, 0] {
+                    Cell::Solid
+                } else {
+                    world(p)
+                }
             }),
             Some(StepAction::Dig {
                 feet: None,
@@ -825,13 +954,21 @@ mod action_planner_tests {
         assert_eq!(plan_step([0, 0, 0], [2, 0, 0], world), None);
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [2, 0, 0] { Cell::Hazard } else { world(p) }
+                if p == [2, 0, 0] {
+                    Cell::Hazard
+                } else {
+                    world(p)
+                }
             }),
             None
         );
         assert_eq!(
             plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, -1, 0] { Cell::Unknown } else { world(p) }
+                if p == [1, -1, 0] {
+                    Cell::Unknown
+                } else {
+                    world(p)
+                }
             }),
             None
         );
@@ -861,9 +998,13 @@ mod action_search_tests {
     #[test]
     fn action_search_rejects_unknown_destination() {
         let cell = |p: Pos| {
-            if p == [1, 0, 0] { Cell::Unknown }
-            else if p[1] < 0 { Cell::Solid }
-            else { Cell::Air }
+            if p == [1, 0, 0] {
+                Cell::Unknown
+            } else if p[1] < 0 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
         };
         let result = search_actions([0, 0, 0], [1, 0, 0], cell, || false);
         assert!(result.is_none_or(|p| !p.complete));
@@ -872,7 +1013,8 @@ mod action_search_tests {
     #[test]
     fn action_search_honors_cancellation() {
         let result = search_actions(
-            [0, 0, 0], [8, 0, 0],
+            [0, 0, 0],
+            [8, 0, 0],
             |p| if p[1] < 0 { Cell::Solid } else { Cell::Air },
             || true,
         );

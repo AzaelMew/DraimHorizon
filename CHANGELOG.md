@@ -1,5 +1,14 @@
 # История версий
 
+## 0.29.0 (PR #14 review, unreleased)
+
+- Register configurable Baritone start/resume, pause and stop keys in Horizon's Options > Mods page. Bindings are unassigned by default and use Horizon's existing persistence; ignore releases, obstructed gameplay, modifiers and conflicting gameplay/native-mod bindings. Starting an active job does not restart it.
+- Reject action-plan steps beside unknown terrain, including adjacent support and overhead cells. Dig/Bridge routes remain diagnostic only: no unverified world edits or action routes are fed to walking input.
+- Clear stale coordinate fallback and show a localized notice when a selected navigation player or waypoint disappears. Adapt the waypoint regression to explicit dropdown selection.
+- Restore PR #14 verification, fix the previously failing waypoint test and Clippy errors, and format the author's new planner/UI code.
+- Preserve the author's facing-based construction, default floor, compact controls, target dropdowns and bounded recovery. Keep the official Nightly 2ebf00a pin and legacy settings namespace.
+- Remaining PR requirements: sequential server-confirmed Dig/Bridge execution, full permissions/tool/resource safety integration and live in-game end-to-end validation. This review build is not a completed autonomous action navigator.
+
 ## 0.28.0
 
 - Add Baritone > Farm: choose wheat, carrots, potatoes or beetroot, radius 3–12, harvest limit or continuous operation, and optional replanting. Harvest only mature crops, count server-confirmed breaks, and plant empty farmland with seeds from the hotbar.

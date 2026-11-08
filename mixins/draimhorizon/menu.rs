@@ -776,17 +776,31 @@ impl Menu {
         }
         // Navigation targets are identified by stable IDs, not snapshot indices.
         // A vanished player/waypoint must not leave an invisible stale destination.
+        let mut target_missing = false;
         if self
             .navigation_player
             .is_some_and(|id| !next.navigation_players.iter().any(|(uuid, _)| *uuid == id))
         {
             self.navigation_player = None;
+            target_missing = true;
         }
         if self
             .navigation_waypoint
             .is_some_and(|id| !next.navigation_waypoints.iter().any(|row| row.id == id))
         {
             self.navigation_waypoint = None;
+            target_missing = true;
+        }
+        if target_missing {
+            // Coordinates typed before selecting a target are not an authorized fallback.
+            self.navigation_coordinates.clear();
+            self.notice = self
+                .language
+                .text(
+                    "Цель недоступна; выберите новую цель",
+                    "Target unavailable; select a new destination",
+                )
+                .into();
         }
         if let Some(players) = self.navigation_choices {
             let count = if players {
@@ -885,61 +899,85 @@ impl Menu {
                 ];
             }
         }
-        if self.tab == Tab::Experimental && self.baritone_mode == BaritoneMode::Navigation {
-            if let Some(players) = self.navigation_choices {
-                let anchor = widgets.iter().find(|w| w.control == Some(if players {
-                    Control::NavigationPlayer
+        if self.tab == Tab::Experimental
+            && self.baritone_mode == BaritoneMode::Navigation
+            && let Some(players) = self.navigation_choices
+        {
+            let anchor = widgets.iter().find(|w| {
+                w.control
+                    == Some(if players {
+                        Control::NavigationPlayer
+                    } else {
+                        Control::NavigationWaypoint
+                    })
+            });
+            if let Some(anchor) = anchor {
+                let rect = anchor.rect;
+                let entries = if players {
+                    model
+                        .navigation_players
+                        .iter()
+                        .map(|(_, name)| name.as_str())
+                        .collect::<Vec<_>>()
                 } else {
-                    Control::NavigationWaypoint
-                }));
-                if let Some(anchor) = anchor {
-                    let rect = anchor.rect;
-                    let entries = if players {
-                        model.navigation_players.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>()
-                    } else {
-                        model.navigation_waypoints.iter().map(|w| w.name.as_str()).collect::<Vec<_>>()
-                    };
-                    let page_count = entries.len().div_ceil(8);
-                    let page = self.navigation_choices_page.min(page_count.saturating_sub(1));
-                    let start = page * 8;
-                    let count = entries.len().saturating_sub(start).min(8);
-                    let item_h = 20.0;
-                    let menu_h = (count + usize::from(page_count > 1)).max(1) as f32 * item_h;
-                    let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
-                        rect[1] + rect[3]
-                    } else {
-                        (rect[1] - menu_h).max(8.0)
-                    };
-                    if count == 0 {
-                        widgets.push(widget(
-                            [rect[0], top, rect[2], item_h],
-                            self.language.text("Нет доступных целей", "No available targets"),
-                            Some(Control::NavigationChoicesPage(0)),
-                            false,
-                        ));
-                    }
-                    for i in 0..count {
-                        widgets.push(widget(
-                            [rect[0], top + i as f32 * item_h, rect[2], item_h],
-                            entries[start + i],
-                            Some(if players { Control::NavigationPlayerChoice(start + i) } else { Control::NavigationWaypointChoice(start + i) }),
-                            false,
-                        ));
-                    }
-                    if page_count > 1 {
-                        widgets.push(widget(
-                            [rect[0], top + count as f32 * item_h, rect[2] / 2.0, item_h],
-                            format!("← {}/{}", page + 1, page_count),
-                            Some(Control::NavigationChoicesPage(-1)),
-                            false,
-                        ));
-                        widgets.push(widget(
-                            [rect[0] + rect[2] / 2.0, top + count as f32 * item_h, rect[2] / 2.0, item_h],
-                            format!("{}/{} →", page + 1, page_count),
-                            Some(Control::NavigationChoicesPage(1)),
-                            false,
-                        ));
-                    }
+                    model
+                        .navigation_waypoints
+                        .iter()
+                        .map(|w| w.name.as_str())
+                        .collect::<Vec<_>>()
+                };
+                let page_count = entries.len().div_ceil(8);
+                let page = self
+                    .navigation_choices_page
+                    .min(page_count.saturating_sub(1));
+                let start = page * 8;
+                let count = entries.len().saturating_sub(start).min(8);
+                let item_h = 20.0;
+                let menu_h = (count + usize::from(page_count > 1)).max(1) as f32 * item_h;
+                let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
+                    rect[1] + rect[3]
+                } else {
+                    (rect[1] - menu_h).max(8.0)
+                };
+                if count == 0 {
+                    widgets.push(widget(
+                        [rect[0], top, rect[2], item_h],
+                        self.language
+                            .text("Нет доступных целей", "No available targets"),
+                        Some(Control::NavigationChoicesPage(0)),
+                        false,
+                    ));
+                }
+                for i in 0..count {
+                    widgets.push(widget(
+                        [rect[0], top + i as f32 * item_h, rect[2], item_h],
+                        entries[start + i],
+                        Some(if players {
+                            Control::NavigationPlayerChoice(start + i)
+                        } else {
+                            Control::NavigationWaypointChoice(start + i)
+                        }),
+                        false,
+                    ));
+                }
+                if page_count > 1 {
+                    widgets.push(widget(
+                        [rect[0], top + count as f32 * item_h, rect[2] / 2.0, item_h],
+                        format!("← {}/{}", page + 1, page_count),
+                        Some(Control::NavigationChoicesPage(-1)),
+                        false,
+                    ));
+                    widgets.push(widget(
+                        [
+                            rect[0] + rect[2] / 2.0,
+                            top + count as f32 * item_h,
+                            rect[2] / 2.0,
+                            item_h,
+                        ],
+                        format!("{}/{} →", page + 1, page_count),
+                        Some(Control::NavigationChoicesPage(1)),
+                        false,
+                    ));
                 }
             }
         }
@@ -3416,13 +3454,21 @@ impl Menu {
                 })
             }
             Control::NavigationPlayer => {
-                self.navigation_choices = if self.navigation_choices == Some(true) { None } else { Some(true) };
+                self.navigation_choices = if self.navigation_choices == Some(true) {
+                    None
+                } else {
+                    Some(true)
+                };
                 self.navigation_choices_page = 0;
                 self.focus = None;
                 None
             }
             Control::NavigationWaypoint => {
-                self.navigation_choices = if self.navigation_choices == Some(false) { None } else { Some(false) };
+                self.navigation_choices = if self.navigation_choices == Some(false) {
+                    None
+                } else {
+                    Some(false)
+                };
                 self.navigation_choices_page = 0;
                 self.focus = None;
                 None
@@ -5016,6 +5062,8 @@ mod tests {
             menu.activate(&model, 200.0, Control::NavigationWaypoint)
                 .is_none()
         );
+        assert_eq!(menu.navigation_waypoint, None);
+        menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
         assert!(matches!(
             menu.activate(&model, 200.0, Control::NavigationStart),
             Some(Action::Navigate {
@@ -5297,13 +5345,42 @@ mod tests {
     }
 
     #[test]
+    fn vanished_navigation_target_never_falls_back_to_old_coordinates() {
+        for language in [Language::Russian, Language::English] {
+            for player in [false, true] {
+                let mut menu = Menu {
+                    language,
+                    navigation_player: player.then_some(117),
+                    navigation_waypoint: (!player).then_some(41),
+                    navigation_coordinates: "120 64 -350".into(),
+                    ..Menu::default()
+                };
+                let next = ViewModel {
+                    language,
+                    experiments_accepted: true,
+                    ..ViewModel::default()
+                };
+                menu.reconcile(&ViewModel::default(), &next, 200.0);
+                assert!(menu.navigation_coordinates.is_empty());
+                assert!(!menu.notice.is_empty());
+                assert!(
+                    menu.activate(&next, 200.0, Control::NavigationStart)
+                        .is_none()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn empty_navigation_dropdown_shows_non_actionable_placeholder() {
         let model = ViewModel::default();
-        let mut menu = Menu::default();
-        menu.tab = Tab::Experimental;
-        menu.experimental_section = ExperimentalSection::Baritone;
-        menu.baritone_mode = BaritoneMode::Navigation;
-        menu.navigation_choices = Some(true);
+        let menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            baritone_mode: BaritoneMode::Navigation,
+            navigation_choices: Some(true),
+            ..Menu::default()
+        };
         let widgets = menu.layout(&model, 800.0, 480.0);
         assert!(widgets.iter().any(|w| {
             w.control == Some(Control::NavigationChoicesPage(0))
@@ -5336,9 +5413,11 @@ mod tests {
                 .collect(),
             ..ViewModel::default()
         };
-        let mut menu = Menu::default();
-        menu.tab = Tab::Experimental;
-        menu.baritone_mode = BaritoneMode::Navigation;
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            baritone_mode: BaritoneMode::Navigation,
+            ..Menu::default()
+        };
         menu.activate(&model, 200.0, Control::NavigationWaypoint);
         menu.scroll(&model, 200.0, -1.0);
         assert_eq!(menu.navigation_choices_page, 1);

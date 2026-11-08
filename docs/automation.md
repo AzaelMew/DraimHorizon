@@ -2,6 +2,14 @@
 
 Open **J → Experiments → Baritone** and accept the experimental warning. These are native Rust features, not the Java Baritone library. Manual movement, attack/use, camera adjustments during interaction, or opening a screen pauses the relevant action. Use **Resume** after correcting a problem; **Stop** clears the job. Jobs are session-only and reset when the server, account or dimension changes.
 
+## Global automation keys
+
+In **Options → Mods → DraimHorizon**, assign **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They are unassigned by default; Horizon saves them with the other native-mod bindings. First create a task with **Preview** or pause a started task, then use the start/resume key outside the menu. Pressing Start again while a task is active does not restart it.
+
+Bindings are ignored while a screen or text editor is open, the window is unfocused, modifiers are held, or experimental consent is absent. A binding shared with another automation action, an enabled native mod or a gameplay key does not trigger automation; choose a unique key. Native key repeats and key releases do not start actions.
+
+The navigation fallback can describe routes requiring digging or bridging, but **does not execute those actions**. Its status is diagnostic, not permission to cross a gap or enter a solid block. The standalone Tunnel/Bridge jobs use their existing server-confirmed drivers.
+
 ## Farm
 
 Choose **Wheat**, **Carrots**, **Potatoes** or **Beetroot**, a radius (3, 6, 9 or 12), a harvest limit (16, 32, 64 or 0 for continuous operation), and **Replant**. Stand at crop height beside prepared farmland. **Preview** marks the area without acting; **Start** closes the menu and works within the square centered on that starting position, at that fixed height.

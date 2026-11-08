@@ -1,9 +1,14 @@
-**DraimHorizon 0.28.0** for official Horizon Nightly 2026-11-07 — 2ebf00a (Java 26.3).
+**DraimHorizon 0.29.0 — PR #14 review build (unreleased)**
 
-- **Farm:** mature wheat, carrots, potatoes and beetroot, bounded area, confirmed harvest limit or continuous operation, optional hotbar replanting, preview and pause/resume.
-- **Schematics:** Sponge/WorldEdit `.schem` and Litematica `.litematic`, XYZ origin, quarter-turn rotation, outline preview, material list and confirmed building from hotbar items.
-- Bounded background imports, normal game interactions, level farm routes and cancellation on account/world changes. Stop on occupied cells, missing supplies, server refusal or timeout.
+Target: official Horizon Nightly source `2ebf00a0281c592f79191e76fce0e7d522c6f425` (Java 26.3).
 
-[Controls, supported formats and limits](automation.md). No demolition, scaffolding, supply fetching or block-entity NBT placement. This remains experimental and requires live server testing.
+- Configurable **Baritone: start / resume**, **pause** and **stop** bindings in **Options > Mods > DraimHorizon**. Unassigned by default; Horizon saves custom bindings. They apply outside menus, not while typing, and ignore conflicting gameplay/native-mod keys. Start uses the last preview or paused task and does not restart an active job.
+- Action-route preflight rejects unknown neighboring terrain and overhead cells.
+- Losing a selected player/waypoint clears stale coordinate fallback and asks for a new destination.
+- Re-enable PR verification, update the waypoint-selection test, fix Clippy failures and format the new code.
 
-Includes existing navigation, following, mining, tunneling and bridges. Bundle ID remains `draimhorizon`; existing settings/data remain under `claim_borders`.
+Retains the PR author's facing-based tunnel/bridge direction, default-on tunnel floor, compact settings, paginated player/waypoint selection and bounded walking recovery.
+
+**Not complete:** Dig/Bridge navigation plans are diagnostic only. Sequential world-action execution, live permission/tool/resource checks and server-confirmed replanning are still required. This is not a finished autonomous action navigator and has not been validated end-to-end in a live game.
+
+Bundle ID remains `draimhorizon`; persisted data remains under `claim_borders`. No installation or publication is implied by this review build.

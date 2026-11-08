@@ -15,6 +15,60 @@ use std::{
 };
 
 pub use model::Goal;
+
+/// Native keys are persisted and edited by Horizon's Options > Mods page.
+/// The native_key hook excludes repeats and runs independently of our menu.
+pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
+    let bindings = model::Hotkey::ALL
+        .map(|action| game.native_mod_key(claims::ID, action.id(), model::Hotkey::DEFAULT));
+    let eligible = allowed(game)
+        && game.native_window()
+        && game.focused
+        && game.native_playing()
+        && !game.screen_over_playing()
+        && game.player.is_some()
+        && game.sleeping.is_none()
+        && game.modifiers.is_empty();
+    let conflict = game
+        .settings
+        .keys
+        .mappings_for(key)
+        .any(|name| !name.starts_with("key.debug."))
+        || game.settings.mods.installed.iter().any(|row| {
+            game.native_on(&row.id)
+                && row.native.as_ref().is_some_and(|native| {
+                    native.keys.iter().any(|[name, _, default]| {
+                        !(row.id == claims::ID && model::Hotkey::ALL.iter().any(|a| a.id() == name))
+                            && game.native_mod_key(&row.id, name, default) == key
+                    })
+                })
+        });
+    let Some(action) = model::hotkey(
+        key,
+        pressed,
+        eligible,
+        conflict,
+        bindings.each_ref().map(String::as_str),
+    ) else {
+        return false;
+    };
+    match action {
+        model::Hotkey::Start => {
+            // Starting from a preview or resuming a paused job must not bypass
+            // the existing consent, world identity or server-confirmation gates.
+            // A second press must not restart an active dig and lose its ACK state.
+            if snapshot(game).1
+                && let Err(error) = resume(game)
+            {
+                game.native_chat(&error);
+            }
+        }
+        model::Hotkey::Pause => pause(),
+        model::Hotkey::Stop => reset(),
+    }
+    true
+}
+
 struct Query {
     flat: bool,
     mine: Option<(u8, Vec<model::Pos>)>,
@@ -1223,24 +1277,40 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
             .map(|(goal, p)| model::distance([p.x, p.y, p.z], model::center(goal)));
         // Do not advertise an action-aware route as executable until the
         // block-edit driver can confirm every operation with the server.
-        let action_hint = s.action_plan.as_ref().and_then(|plan| {
-            let digs = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Dig { .. })).count();
-            let bridges = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Bridge { .. })).count();
-            (digs + bridges > 0).then(|| {
-                let kind = if plan.complete {
-                    language.text("Маршрут с действиями", "Action route")
-                } else {
-                    language.text("Частичный маршрут", "Partial route")
-                };
-                let warning = language.text(
-                    "копание/мосты пока не исполняются",
-                    "dig/bridge execution not implemented",
-                );
-                format!(" · {kind}: {digs} dig, {bridges} bridge · {warning}")
+        let action_hint = s
+            .action_plan
+            .as_ref()
+            .and_then(|plan| {
+                let digs = plan
+                    .actions
+                    .iter()
+                    .filter(|a| matches!(a, model::StepAction::Dig { .. }))
+                    .count();
+                let bridges = plan
+                    .actions
+                    .iter()
+                    .filter(|a| matches!(a, model::StepAction::Bridge { .. }))
+                    .count();
+                (digs + bridges > 0).then(|| {
+                    let kind = if plan.complete {
+                        language.text("Маршрут с действиями", "Action route")
+                    } else {
+                        language.text("Частичный маршрут", "Partial route")
+                    };
+                    let warning = language.text(
+                        "копание/мосты пока не исполняются",
+                        "dig/bridge execution not implemented",
+                    );
+                    format!(" · {kind}: {digs} dig, {bridges} bridge · {warning}")
+                })
             })
-        }).unwrap_or_default();
+            .unwrap_or_default();
         (
-            format!("{}{}", distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")), action_hint),
+            format!(
+                "{}{}",
+                distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")),
+                action_hint
+            ),
             !s.nav.running,
         )
     })
