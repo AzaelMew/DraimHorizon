@@ -774,6 +774,33 @@ impl Menu {
         {
             self.selected = None;
         }
+        // Navigation targets are identified by stable IDs, not snapshot indices.
+        // A vanished player/waypoint must not leave an invisible stale destination.
+        if self
+            .navigation_player
+            .is_some_and(|id| !next.navigation_players.iter().any(|(uuid, _)| *uuid == id))
+        {
+            self.navigation_player = None;
+        }
+        if self
+            .navigation_waypoint
+            .is_some_and(|id| !next.navigation_waypoints.iter().any(|row| row.id == id))
+        {
+            self.navigation_waypoint = None;
+        }
+        if let Some(players) = self.navigation_choices {
+            let count = if players {
+                next.navigation_players.len()
+            } else {
+                next.navigation_waypoints.len()
+            };
+            if count == 0 {
+                self.navigation_choices_page = 0;
+            } else {
+                self.navigation_choices_page =
+                    self.navigation_choices_page.min(count.div_ceil(8) - 1);
+            }
+        }
         self.clamp_page(next, height);
     }
     pub fn clamp_page(&mut self, model: &ViewModel, height: f32) {
@@ -5235,6 +5262,30 @@ mod tests {
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
         assert_eq!(menu.navigation_coordinates, "2");
+    }
+
+    #[test]
+    fn navigation_snapshot_reconciles_removed_targets_and_shrunk_pages() {
+        let old = ViewModel {
+            navigation_players: (0..18).map(|i| (100 + i, format!("Player{i}"))).collect(),
+            ..ViewModel::default()
+        };
+        let next = ViewModel {
+            navigation_players: vec![(101, "Player1".into())],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            navigation_player: Some(117),
+            navigation_choices: Some(true),
+            navigation_choices_page: 2,
+            ..Menu::default()
+        };
+        menu.reconcile(&old, &next, 200.0);
+        assert_eq!(menu.navigation_player, None);
+        assert_eq!(menu.navigation_choices_page, 0);
+        menu.navigation_player = Some(101);
+        menu.reconcile(&next, &next, 200.0);
+        assert_eq!(menu.navigation_player, Some(101));
     }
 
     #[test]
