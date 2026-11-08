@@ -1227,12 +1227,16 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
             let digs = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Dig { .. })).count();
             let bridges = plan.actions.iter().filter(|a| matches!(a, model::StepAction::Bridge { .. })).count();
             (digs + bridges > 0).then(|| {
-                if plan.complete {
-                    format!(" · {} / {}: {digs} dig, {bridges} bridge (not executable yet)",
-                        plan.nodes.len().saturating_sub(1), plan.nodes.len().saturating_sub(1))
+                let kind = if plan.complete {
+                    language.text("Маршрут с действиями", "Action route")
                 } else {
-                    format!(" · partial action plan: {digs} dig, {bridges} bridge (not executable yet)")
-                }
+                    language.text("Частичный маршрут", "Partial route")
+                };
+                let warning = language.text(
+                    "копание/мосты пока не исполняются",
+                    "dig/bridge execution not implemented",
+                );
+                format!(" · {kind}: {digs} dig, {bridges} bridge · {warning}")
             })
         }).unwrap_or_default();
         (
