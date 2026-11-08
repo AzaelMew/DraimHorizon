@@ -5307,9 +5307,8 @@ mod tests {
         let widgets = menu.layout(&model, 800.0, 480.0);
         assert!(widgets.iter().any(|w| {
             w.control == Some(Control::NavigationChoicesPage(0))
-                && w.label.contains("No available targets")
-                    || w.control == Some(Control::NavigationChoicesPage(0))
-                        && w.label.contains("Нет доступных целей")
+                && (w.text.contains("No available targets")
+                    || w.text.contains("Нет доступных целей"))
         }));
     }
 
