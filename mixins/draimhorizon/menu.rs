@@ -5098,7 +5098,7 @@ mod tests {
     #[test]
     fn mining_controls_are_explicit_and_fit_compact_panels() {
         for language in [Language::Russian, Language::English] {
-            let mut menu = Menu {
+            let menu = Menu {
                 tab: Tab::Experimental,
                 experimental_section: ExperimentalSection::Baritone,
                 baritone_mode: BaritoneMode::Mining,
@@ -5155,7 +5155,7 @@ mod tests {
     fn construction_modes_validate_consent_and_compact_geometry() {
         for language in [Language::Russian, Language::English] {
             for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
-                let mut menu = Menu {
+                let menu = Menu {
                     tab: Tab::Experimental,
                     experimental_section: ExperimentalSection::Baritone,
                     baritone_mode: mode,
