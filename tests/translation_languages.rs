@@ -219,3 +219,82 @@ fn common_filter_never_skips_real_chat_lines_it_cannot_identify_reliably() {
     // A long, clearly uncommon language is still skipped.
     assert!(!common.allows("שלום לכולם, זה משפט שלם בשפה העברית שאנחנו כותבים כאן."));
 }
+
+#[test]
+fn text_already_in_the_target_language_is_never_sent_or_shown_as_a_translation() {
+    use claim_borders_relay_client::translation::Translation;
+    let en = TargetLanguage::English;
+    let ru = TargetLanguage::Russian;
+    // Lines from a live chat that were wrongly rewritten when translating into English.
+    for text in [
+        "im at spawn",
+        "so guys, in a couple of moments I'll go to bed",
+        "how can I make it private?",
+        "they are not tied to fantus",
+        "hello",
+        "lol",
+    ] {
+        assert!(!en.should_translate(None, text), "{text}");
+    }
+    // Text with foreign markers is still translated into English.
+    for text in [
+        "куда на моей территорке",
+        "claim команда",
+        "Hola amigos",
+        "Cześć wszystkim",
+        "こんにちは",
+        "Hei, mitä kuuluu? ä",
+    ] {
+        assert!(en.should_translate(None, text), "{text}");
+    }
+    // Russian target: Russian is skipped, English is translated.
+    assert!(!ru.should_translate(None, "привет все, где спавн?"));
+    assert!(ru.should_translate(None, "hello everyone"));
+    assert!(ru.should_translate(None, "im at spawn"));
+    // An explicit source is trusted, but never the target itself.
+    assert!(en.should_translate(Some(TargetLanguage::Finnish), "hei"));
+    assert!(!en.should_translate(Some(TargetLanguage::English), "hi"));
+    // Commands and text without letters are never sent.
+    assert!(!en.should_translate(None, "/msg Alex hola"));
+    assert!(!en.should_translate(None, "123 :)"));
+    // Provider output that is not a real translation is discarded.
+    let same_language = Translation {
+        text: "I'm at spawn".into(),
+        source_language: Some("EN".into()),
+    };
+    assert!(same_language.is_noop("im at spawn", en));
+    let recased = Translation {
+        text: "Im at spawn!".into(),
+        source_language: None,
+    };
+    assert!(recased.is_noop("im at spawn", en));
+    let real = Translation {
+        text: "where is the base".into(),
+        source_language: Some("RU".into()),
+    };
+    assert!(!real.is_noop("где база", en));
+}
+
+#[test]
+fn explicit_non_latin_source_leaves_text_in_other_scripts_alone() {
+    let en = TargetLanguage::English;
+    let ru = Some(TargetLanguage::Russian);
+    // Reported live: with Chat from = Russian, "yea i know" came back as "yeah i know".
+    for text in [
+        "yea i know",
+        "im at spawn",
+        "how can I make it private?",
+        "lol",
+    ] {
+        assert!(!en.should_translate(ru, text), "{text}");
+    }
+    // Russian and mixed lines are still translated.
+    for text in ["куда на моей территорке", "claim команда", "где спавн?"]
+    {
+        assert!(en.should_translate(ru, text), "{text}");
+    }
+    // Latin-script sources cannot be told apart by script and stay trusted.
+    assert!(en.should_translate(Some(TargetLanguage::Finnish), "hei kaikki"));
+    assert!(en.should_translate(Some(TargetLanguage::Japanese), "こんにちは"));
+    assert!(!en.should_translate(Some(TargetLanguage::Japanese), "hello"));
+}

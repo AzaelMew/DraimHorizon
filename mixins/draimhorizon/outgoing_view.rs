@@ -85,7 +85,10 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
     }
     let ui_language = crate::game::claim_borders_chat_view::language(game);
     let prefs = targets(game);
-    let translate = enabled(game) && prefs.outgoing.needs_translation(&text);
+    let translate = enabled(game)
+        && prefs
+            .outgoing
+            .should_translate(prefs.policy(true).source, &text);
     let current = scope(game).unwrap();
     let result = state(|s| {
         if s.scope != current {
