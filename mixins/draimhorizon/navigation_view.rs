@@ -20,7 +20,7 @@ pub use model::Goal;
 /// The native_key hook excludes repeats and runs independently of our menu.
 pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
     let bindings = model::Hotkey::ALL
-        .map(|action| game.native_mod_key(claims::ID, action.id(), model::Hotkey::DEFAULT));
+        .map(|action| game.native_mod_key(claims::ID, action.id(), action.preset()));
     let eligible = allowed(game)
         && game.native_window()
         && game.focused
@@ -52,33 +52,40 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
     ) else {
         return false;
     };
-    match action {
-        model::Hotkey::Preview => {
-            if let Err(error) = start_from_menu(game, false) {
-                game.native_chat(&error);
-            }
-        }
-        model::Hotkey::Start => {
-            // A paused task resumes where it stopped; with nothing to resume the key
-            // starts what the Experiments tab shows. Neither path bypasses the consent,
-            // world identity or server-confirmation gates, and a press while a task is
-            // running does nothing, so an active dig never loses its ACK state.
-            let (running, resumable) = control();
-            if !running {
-                let result = if resumable {
-                    resume(game)
-                } else {
-                    start_from_menu(game, true)
-                };
-                if let Err(error) = result {
-                    game.native_chat(&error);
-                }
-            }
-        }
-        model::Hotkey::Pause => pause(),
-        model::Hotkey::Stop => reset(),
+    if let Err(error) = run(game, action) {
+        game.native_chat(&error);
     }
     true
+}
+/// Carry out an action key. Returns whether the menu should close (a task was started).
+/// A paused task resumes where it stopped; with nothing to resume, Start begins what the
+/// Baritone tab shows. Neither path bypasses the consent, world identity or
+/// server-confirmation gates, and a press while a task is running does nothing, so an
+/// active dig never loses its ACK state.
+pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    match action {
+        model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
+        model::Hotkey::Start => {
+            let (running, resumable) = control();
+            if running {
+                return Ok(false);
+            }
+            if resumable {
+                resume(game)
+            } else {
+                start_from_menu(game, true)
+            }
+            .map(|()| true)
+        }
+        model::Hotkey::Pause => {
+            pause();
+            Ok(false)
+        }
+        model::Hotkey::Stop => {
+            reset();
+            Ok(false)
+        }
+    }
 }
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &Game<'_>, running: bool) -> Result<(), String> {
@@ -419,7 +426,12 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
     let Some(stack) = game.held() else {
         return false;
     };
-    if !stack.item.ends_with("_pickaxe") {
+    // Ores need a pickaxe, wood an axe, dirt and sand a shovel; the per-block check below
+    // decides whether the held tool is right for the actual target.
+    if !["_pickaxe", "_axe", "_shovel"]
+        .iter()
+        .any(|kind| stack.item.ends_with(kind))
+    {
         return false;
     }
     let mut max = game
@@ -444,8 +456,9 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
             .correct_for_drops(Some(stack), &game.native_block(at))
     })
 }
+/// Tunnels and bridges dig stone, which only a pickaxe is meant for.
 pub(super) fn construction_tool(game: &Game<'_>) -> bool {
-    mining_tool(game, None)
+    game.held().is_some_and(|s| s.item.ends_with("_pickaxe")) && mining_tool(game, None)
 }
 pub(super) fn workshop_walk(game: &Game<'_>, goal: model::Pos, flat: bool) -> Result<(), String> {
     clear_construction_driver();
@@ -595,8 +608,8 @@ fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(
     if running && !mining_tool(game, None) {
         return Err(language
             .text(
-                "Возьмите кирку с запасом прочности",
-                "Hold a pickaxe with durability remaining",
+                "Возьмите подходящий инструмент (кирка, топор, лопата) с запасом прочности",
+                "Hold a suitable tool (pickaxe, axe, shovel) with durability remaining",
             )
             .into());
     }
@@ -645,8 +658,8 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
         if !mining_tool(game, None) || !free_slot(game) {
             return Err(language()
                 .text(
-                    "Нужна исправная кирка и свободный слот",
-                    "A usable pickaxe and a free slot are required",
+                    "Нужен исправный инструмент и свободный слот",
+                    "A usable tool and a free slot are required",
                 )
                 .into());
         }
@@ -908,7 +921,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .unwrap_or_default();
     let query = Query {
         flat: s.flat,
-        dig: !s.flat && mining_tool(game, None) && free_slot(game),
+        dig: !s.flat && construction_tool(game) && free_slot(game),
         place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
         force: s.force_dig,
         hints,
@@ -1856,8 +1869,8 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                         language.text("Сервер отклонил разрушение", "Server refused the break")
                     }
                     mining::Phase::Tool => language.text(
-                        "Нужна подходящая исправная кирка",
-                        "A suitable usable pickaxe is required",
+                        "Нужен подходящий исправный инструмент",
+                        "A suitable usable tool is required",
                     ),
                     mining::Phase::Inventory => {
                         language.text("Нужен свободный слот", "A free inventory slot is required")
@@ -1884,7 +1897,10 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                 "Игрок потерян · следование остановлено",
                 "Player lost · following stopped",
             ),
-            model::Status::Idle => language.text("Цель не задана", "No destination"),
+            model::Status::Idle => language.text(
+                "Задача не запущена · нажмите клавишу «Старт»",
+                "No task running · press the Start key",
+            ),
             model::Status::Planning => language.text("Расчёт маршрута…", "Planning route…"),
             model::Status::Preview => language.text("Просмотр маршрута", "Route preview"),
             model::Status::Walking => language.text("Движение", "Walking"),

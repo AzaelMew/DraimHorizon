@@ -237,6 +237,9 @@ pub enum Action {
         goal: super::claim_borders_navigation::Goal,
         running: bool,
     },
+    /// An action key pressed while the menu is open: the game itself does not pass
+    /// keys to the mod while a screen is shown.
+    BaritoneKey(super::claim_borders_navigation::Hotkey),
     ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
@@ -313,6 +316,7 @@ impl std::fmt::Debug for Action {
                 .field("goal", goal)
                 .field("running", running)
                 .finish(),
+            Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
             Self::LoadSchematic {
@@ -781,6 +785,14 @@ impl Menu {
         self.navigation_z = from.navigation_z.clone();
     }
     /// Footer line of the Baritone tabs: what each action key is bound to.
+    /// Whether the Baritone tab is on screen with no text field taking the keys.
+    pub fn baritone_keys_active(&self) -> bool {
+        self.tab == Tab::Experimental
+            && self.experimental_section == ExperimentalSection::Baritone
+            && self.focus.is_none()
+            && self.navigation_choices.is_none()
+            && !self.experiments_prompt
+    }
     fn hotkey_hint(&self, model: &ViewModel) -> String {
         if model.hotkeys.iter().all(String::is_empty) {
             return self
@@ -2714,15 +2726,18 @@ impl Menu {
                     false,
                 ));
             } else if self.baritone_mode == BaritoneMode::Mining {
-                let ore = &experimental::ORES
-                    [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
+                let ore = super::claim_borders_mining::target(
+                    self.mining_ore
+                        .min(super::claim_borders_mining::COUNT as u8 - 1),
+                )
+                .unwrap_or(("", "", &[]));
                 out.push(widget(
                     [x, 100.0, w, h],
                     localized!(
                         self.language,
-                        "Руда: {}",
-                        "Ore: {}",
-                        self.language.text(ore.label, ore.label_en)
+                        "Добыча: {}",
+                        "Mine: {}",
+                        self.language.text(ore.0, ore.1)
                     ),
                     Some(Control::MiningOre),
                     false,
@@ -3405,7 +3420,7 @@ impl Menu {
                 None
             }
             Control::MiningOre => {
-                self.mining_ore = (self.mining_ore + 1) % experimental::ORES.len() as u8;
+                self.mining_ore = (self.mining_ore + 1) % super::claim_borders_mining::COUNT as u8;
                 None
             }
             Control::MiningLimit => {
@@ -6093,6 +6108,19 @@ mod tests {
             assert_eq!(next, expected_preferences);
             model.chat_preferences = next;
         }
+    }
+    #[test]
+    fn action_keys_reach_the_baritone_tab_unless_a_field_is_being_edited() {
+        let mut menu = Menu::default();
+        assert!(!menu.baritone_keys_active());
+        menu.tab = Tab::Experimental;
+        menu.experimental_section = ExperimentalSection::Baritone;
+        assert!(menu.baritone_keys_active());
+        menu.focus = Some(Field::NavigationX);
+        assert!(!menu.baritone_keys_active());
+        menu.focus = None;
+        menu.experiments_prompt = true;
+        assert!(!menu.baritone_keys_active());
     }
     #[test]
     fn farming_and_schematic_actions_validate_and_fit() {
