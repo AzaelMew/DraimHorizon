@@ -5235,6 +5235,36 @@ mod tests {
     }
 
     #[test]
+    fn navigation_dropdown_mouse_wheel_pages_without_changing_main_menu() {
+        let model = ViewModel {
+            navigation_waypoints: (0..18)
+                .map(|id| WaypointRow {
+                    id,
+                    name: format!("Waypoint{id}"),
+                    detail: String::new(),
+                    color: 0,
+                })
+                .collect(),
+            ..ViewModel::default()
+        };
+        let mut menu = Menu::default();
+        menu.tab = Tab::Experimental;
+        menu.baritone_mode = BaritoneMode::Navigation;
+        menu.activate(&model, 200.0, Control::NavigationWaypoint);
+        menu.scroll(&model, 200.0, -1.0);
+        assert_eq!(menu.navigation_choices_page, 1);
+        menu.scroll(&model, 200.0, 1.0);
+        assert_eq!(menu.navigation_choices_page, 0);
+        menu.scroll(&model, 200.0, f64::NAN);
+        assert_eq!(menu.navigation_choices_page, 0);
+        menu.activate(&model, 200.0, Control::NavigationChoicesPage(-1));
+        assert_eq!(menu.navigation_choices_page, 2);
+        menu.activate(&model, 200.0, Control::NavigationWaypointChoice(17));
+        assert_eq!(menu.navigation_waypoint, Some(17));
+        assert_eq!(menu.navigation_choices, None);
+    }
+
+    #[test]
     fn navigation_dropdown_pagination_selects_absolute_player_id() {
         let model = ViewModel {
             navigation_players: (0..19).map(|i| (100 + i, format!("Player{i}"))).collect(),
