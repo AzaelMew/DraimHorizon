@@ -38,11 +38,22 @@ pub(super) fn experiments_prompt() -> bool {
     state(|s| s.menu.experiments_prompt)
 }
 pub(super) fn reset() {
-    state(|s| *s = State::default());
+    state(|s| {
+        let previous = std::mem::take(&mut s.menu);
+        *s = State::default();
+        s.menu.keep_baritone(&previous);
+    });
+}
+/// The Baritone task the Experiments tab currently describes, for the action keys.
+/// It works with the menu closed: the settings survive `open` and `reset`.
+pub(super) fn baritone_request(running: bool) -> Result<model::Action, String> {
+    state(|s| s.menu.baritone_request(running))
 }
 pub(super) fn open() {
     state(|s| {
+        let previous = std::mem::take(&mut s.menu);
         s.menu = model::Menu::default();
+        s.menu.keep_baritone(&previous);
         s.actions.clear();
         s.pressed.clear();
         s.paste_fields.clear();
@@ -341,6 +352,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     model::BaritoneMode::Tunnel => ui::Icon::Layers,
                     model::BaritoneMode::Bridge => ui::Icon::Fill,
                     model::BaritoneMode::Farm => ui::Icon::Restock,
+                    model::BaritoneMode::Drain => ui::Icon::Grid,
                     model::BaritoneMode::Schematic => ui::Icon::Home,
                 };
                 ui::icon(
@@ -555,7 +567,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     };
                     let (ru, en) = match s.menu.focus {
                         Some(model::Field::SchematicOrigin) => ("XYZ: ", "XYZ: "),
-                        Some(model::Field::NavigationCoordinates) => ("XYZ: ", "XYZ: "),
+                        Some(model::Field::NavigationX) => ("X: ", "X: "),
+                        Some(model::Field::NavigationY) => ("Y: ", "Y: "),
+                        Some(model::Field::NavigationZ) => ("Z: ", "Z: "),
                         Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
                         Some(model::Field::Name) => ("Имя: ", "Name: "),
                         Some(model::Field::Color | model::Field::PriorityColor) => {

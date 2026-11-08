@@ -4,17 +4,21 @@ Open **J → Experiments → Baritone** and accept the experimental warning. The
 
 ## Global automation keys
 
-In **Options → Mods → DraimHorizon**, assign **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They are unassigned by default; Horizon saves them with the other native-mod bindings. First create a task with **Preview** or pause a started task, then use the start/resume key outside the menu. Pressing Start again while a task is active does not restart it.
+In **Options → Mods → DraimHorizon**, assign **Baritone: preview**, **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They replace the former on-screen buttons in all tabs. They are unassigned by default; Horizon saves them with the other native-mod bindings. Press preview, or pause a started task, then use the start/resume key. Pressing Start again while a task is active does not restart it.
 
 Bindings are ignored while a screen or text editor is open, the window is unfocused, modifiers are held, or experimental consent is absent. A binding shared with another automation action, an enabled native mod or a gameplay key does not trigger automation; choose a unique key. Native key repeats and key releases do not start actions.
 
-The navigation fallback can describe routes requiring digging or bridging, but **does not execute those actions**. Its status is diagnostic, not permission to cross a gap or enter a solid block. The standalone Tunnel/Bridge jobs use their existing server-confirmed drivers.
+Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
+
+## Drain
+
+Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12) and have building blocks in the hotbar, off hand or inventory; sand and gravel work too. Stand on the shore or float on the surface, then press the start key. The bot fills water and seagrass in the square around you from the bottom up, always on a cell that rests on something solid, so nothing falls. Cheap blocks are used first. If the next cell is out of reach it walks to a standable spot nearby; if none exists it stops with a message, so move closer and continue. It finishes when no supported cell remains and reports how many were left (for example cells under you). It cannot fill deeper than your reach allows unless the lower layers can be reached first, and it does not remove kelp.
 
 ## Farm
 
 Choose **Wheat**, **Carrots**, **Potatoes** or **Beetroot**, a radius (3, 6, 9 or 12), a harvest limit (16, 32, 64 or 0 for continuous operation), and **Replant**. Stand at crop height beside prepared farmland. **Preview** marks the area without acting; **Start** closes the menu and works within the square centered on that starting position, at that fixed height.
 
-Only fully grown crops of the selected kind are harvested. The limit counts server-confirmed harvested plants, not drops. With Replant enabled, keep the matching seeds/carrots/potatoes in the hotbar before harvesting; empty farmland in the area is planted too. Leave a free inventory slot. Item pickup uses normal Minecraft behavior. When no targets are ready, the farm waits for growth.
+Only fully grown crops of the selected kind are harvested. The limit counts server-confirmed harvested plants, not drops. With Replant enabled, keep the matching seeds/carrots/potatoes in the inventory before harvesting; empty farmland in the area is planted too. Leave a free inventory slot. Item pickup uses normal Minecraft behavior. When no targets are ready, the farm waits for growth.
 
 The farm uses level walking routes through loaded, safe cells. Crops obstruct route planning, so provide walkways within normal interaction reach. It does not till soil, add water, use bone meal, replenish inventory, or automate other crops.
 

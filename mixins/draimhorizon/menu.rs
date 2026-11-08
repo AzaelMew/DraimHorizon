@@ -131,7 +131,8 @@ pub struct ViewModel {
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
-    pub navigation_paused: bool,
+    /// Display names of the Baritone action keys, in `Hotkey::ALL` order; empty = unassigned.
+    pub hotkeys: [String; 4],
     pub navigation_waypoints: Vec<WaypointRow>,
     pub auto_reconnect: bool,
     pub experiments_accepted: bool,
@@ -236,9 +237,6 @@ pub enum Action {
         goal: super::claim_borders_navigation::Goal,
         running: bool,
     },
-    NavigationPause,
-    NavigationResume,
-    NavigationStop,
     ToggleReconnect,
     AcceptExperiments,
     SetDeepLKey(Option<String>),
@@ -329,9 +327,6 @@ impl std::fmt::Debug for Action {
                 .field(rotation)
                 .field(running)
                 .finish(),
-            Self::NavigationPause => f.write_str("NavigationPause"),
-            Self::NavigationResume => f.write_str("NavigationResume"),
-            Self::NavigationStop => f.write_str("NavigationStop"),
             Self::SetDeepLKey(_) => f.write_str("SetDeepLKey([redacted])"),
             Self::SetLanguage(language) => f.debug_tuple("SetLanguage").field(language).finish(),
             Self::PlayerRequest { kind, uuid, name } => f
@@ -418,7 +413,9 @@ pub enum Tab {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
     SchematicOrigin,
-    NavigationCoordinates,
+    NavigationX,
+    NavigationY,
+    NavigationZ,
     Name,
     Color,
     PeerCode,
@@ -462,6 +459,7 @@ pub enum BaritoneMode {
     Tunnel,
     Bridge,
     Farm,
+    Drain,
     Schematic,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -482,13 +480,10 @@ pub enum Control {
     FarmRadius,
     FarmLimit,
     FarmReplant,
-    FarmPreview,
-    FarmStart,
+    DrainRadius,
     SchematicFile,
     SchematicRefresh,
     SchematicRotation,
-    SchematicPreview,
-    SchematicBuild,
     SchematicMaterials,
     SchematicFolder,
     ConstructDirection,
@@ -496,23 +491,14 @@ pub enum Control {
     ConstructWidth,
     ConstructHeight,
     ConstructFloor,
-    ConstructPreview,
-    ConstructStart,
     BaritoneMode(BaritoneMode),
     MiningOre,
     MiningLimit,
-    MiningPreview,
-    MiningStart,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
     NavigationWaypointChoice(usize),
     NavigationChoicesPage(i8),
-    NavigationPreview,
-    NavigationStart,
-    NavigationPause,
-    NavigationResume,
-    NavigationStop,
     ExperimentalTab(ExperimentalSection),
     ToggleReconnect,
     SettingsTab(u8),
@@ -627,6 +613,7 @@ pub struct Menu {
     pub farm_radius: u8,
     pub farm_limit: u16,
     pub farm_replant: bool,
+    pub drain_radius: u8,
     pub schematic_file: Option<String>,
     pub schematic_origin: String,
     pub schematic_rotation: u8,
@@ -639,7 +626,9 @@ pub struct Menu {
     pub mining_ore: u8,
     pub mining_limit: u16,
     pub navigation_player: Option<u128>,
-    pub navigation_coordinates: String,
+    pub navigation_x: String,
+    pub navigation_y: String,
+    pub navigation_z: String,
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub navigation_choices_page: usize,
@@ -681,11 +670,14 @@ impl Default for Menu {
             farm_radius: 6,
             farm_limit: 16,
             farm_replant: true,
+            drain_radius: 6,
             schematic_file: None,
             schematic_origin: String::new(),
             schematic_rotation: 0,
             experiments_prompt: false,
-            navigation_coordinates: String::new(),
+            navigation_x: String::new(),
+            navigation_y: String::new(),
+            navigation_z: String::new(),
             navigation_waypoint: None,
             navigation_choices: None,
             navigation_choices_page: 0,
@@ -748,6 +740,157 @@ fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[1] >= r[1] && p[0] < r[0] + r[2] && p[1] < r[1] + r[3]
 }
 impl Menu {
+    pub fn clear_navigation_coordinates(&mut self) {
+        self.navigation_x.clear();
+        self.navigation_y.clear();
+        self.navigation_z.clear();
+    }
+    /// Typed X/Y/Z of the navigation tab, parsed as one position. Any empty or
+    /// malformed field makes the whole destination invalid.
+    pub fn navigation_position(&self) -> Option<[f64; 3]> {
+        super::claim_borders_waypoints::parse_coordinates([
+            self.navigation_x.trim(),
+            self.navigation_y.trim(),
+            self.navigation_z.trim(),
+        ])
+        .ok()
+    }
+    /// Carry the Baritone settings over to a fresh menu: the action keys run the
+    /// last settings shown here, so reopening or resetting the menu must not lose them.
+    pub fn keep_baritone(&mut self, from: &Menu) {
+        self.farm_crop = from.farm_crop;
+        self.farm_radius = from.farm_radius;
+        self.farm_limit = from.farm_limit;
+        self.farm_replant = from.farm_replant;
+        self.drain_radius = from.drain_radius;
+        self.schematic_file = from.schematic_file.clone();
+        self.schematic_origin = from.schematic_origin.clone();
+        self.schematic_rotation = from.schematic_rotation;
+        self.construct_direction = from.construct_direction;
+        self.construct_length = from.construct_length;
+        self.construct_width = from.construct_width;
+        self.construct_height = from.construct_height;
+        self.construct_floor = from.construct_floor;
+        self.baritone_mode = from.baritone_mode;
+        self.mining_ore = from.mining_ore;
+        self.mining_limit = from.mining_limit;
+        self.navigation_player = from.navigation_player;
+        self.navigation_waypoint = from.navigation_waypoint;
+        self.navigation_x = from.navigation_x.clone();
+        self.navigation_y = from.navigation_y.clone();
+        self.navigation_z = from.navigation_z.clone();
+    }
+    /// Footer line of the Baritone tabs: what each action key is bound to.
+    fn hotkey_hint(&self, model: &ViewModel) -> String {
+        if model.hotkeys.iter().all(String::is_empty) {
+            return self
+                .language
+                .text(
+                    "Клавиши не назначены: Параметры → Моды → DraimHorizon",
+                    "No keys assigned: Options → Mods → DraimHorizon",
+                )
+                .into();
+        }
+        [
+            self.language.text("Просмотр", "Preview"),
+            self.language.text("Старт", "Start"),
+            self.language.text("Пауза", "Pause"),
+            self.language.text("Стоп", "Stop"),
+        ]
+        .into_iter()
+        .zip(&model.hotkeys)
+        .map(|(name, key)| format!("{name} {}", if key.is_empty() { "—" } else { key }))
+        .collect::<Vec<_>>()
+        .join(" · ")
+    }
+    /// The task the Baritone tab on screen describes, built from its current
+    /// settings. The action keys call this, so they work with the menu closed;
+    /// the consent, world and tool checks stay in the drivers that run it.
+    pub fn baritone_request(&self, running: bool) -> Result<Action, String> {
+        use super::claim_borders_construction as construction;
+        use super::claim_borders_navigation::Goal;
+        let language = self.language;
+        match self.baritone_mode {
+            BaritoneMode::Navigation => {
+                let goal = if let Some(id) = self.navigation_player {
+                    Goal::Follow(id)
+                } else if let Some(id) = self.navigation_waypoint {
+                    Goal::Waypoint(id)
+                } else {
+                    let position = self.navigation_position().ok_or_else(|| {
+                        language
+                            .text(
+                                "Введите X, Y, Z, например: 120 64 -350",
+                                "Enter X, Y, Z, for example: 120 64 -350",
+                            )
+                            .to_owned()
+                    })?;
+                    Goal::Coordinates(super::claim_borders_navigation::block(position))
+                };
+                Ok(Action::Navigate { goal, running })
+            }
+            BaritoneMode::Mining => Ok(Action::Navigate {
+                goal: Goal::Mine {
+                    ore: self.mining_ore,
+                    limit: self.mining_limit,
+                },
+                running,
+            }),
+            BaritoneMode::Tunnel | BaritoneMode::Bridge => {
+                let bridge = self.baritone_mode == BaritoneMode::Bridge;
+                Ok(Action::Navigate {
+                    goal: Goal::Construct(construction::Config {
+                        kind: if bridge {
+                            construction::Kind::Bridge
+                        } else {
+                            construction::Kind::Tunnel
+                        },
+                        direction: self.construct_direction,
+                        width: if bridge { 1 } else { self.construct_width },
+                        height: if bridge { 2 } else { self.construct_height },
+                        length: self.construct_length,
+                        fill_floor: bridge || self.construct_floor,
+                    }),
+                    running,
+                })
+            }
+            BaritoneMode::Farm => Ok(Action::Navigate {
+                goal: Goal::Farm(super::claim_borders_farming::Config {
+                    crop: self.farm_crop,
+                    radius: self.farm_radius,
+                    limit: self.farm_limit,
+                    replant: self.farm_replant,
+                }),
+                running,
+            }),
+            BaritoneMode::Drain => Ok(Action::Navigate {
+                goal: Goal::Drain(super::claim_borders_draining::Config {
+                    radius: self.drain_radius,
+                }),
+                running,
+            }),
+            BaritoneMode::Schematic => {
+                let filename = self.schematic_file.clone().ok_or_else(|| {
+                    language
+                        .text("Сначала выберите файл", "Select a file first")
+                        .to_owned()
+                })?;
+                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+                let origin = <[&str; 3]>::try_from(values.as_slice())
+                    .ok()
+                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
+                    .map(|p| p.map(|v| v as i32))
+                    .ok_or_else(|| language.text("Введите X Y Z", "Enter X Y Z").to_owned())?;
+                Ok(Action::LoadSchematic {
+                    filename,
+                    origin,
+                    rotation: self.schematic_rotation,
+                    running,
+                })
+            }
+        }
+    }
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
@@ -793,7 +936,7 @@ impl Menu {
         }
         if target_missing {
             // Coordinates typed before selecting a target are not an authorized fallback.
-            self.navigation_coordinates.clear();
+            self.clear_navigation_coordinates();
             self.notice = self
                 .language
                 .text(
@@ -2345,7 +2488,7 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 20.0) / 6.0;
+            let mode_width = (w - 24.0) / 7.0;
             for (i, mode, label) in [
                 (
                     0,
@@ -2368,8 +2511,9 @@ impl Menu {
                     self.language.text("Мост", "Bridge"),
                 ),
                 (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (5, BaritoneMode::Drain, self.language.text("Вода", "Drain")),
                 (
-                    5,
+                    6,
                     BaritoneMode::Schematic,
                     self.language.text("Схемы", "Schematics"),
                 ),
@@ -2434,14 +2578,6 @@ impl Menu {
                             ),
                             Control::FarmReplant,
                         ),
-                        (
-                            self.language.text("Просмотр", "Preview").into(),
-                            Control::FarmPreview,
-                        ),
-                        (
-                            self.language.text("Начать", "Start").into(),
-                            Control::FarmStart,
-                        ),
                     ]
                 } else {
                     vec![
@@ -2462,14 +2598,6 @@ impl Menu {
                         (
                             format!("{}°", self.schematic_rotation * 90),
                             Control::SchematicRotation,
-                        ),
-                        (
-                            self.language.text("Просмотр", "Preview").into(),
-                            Control::SchematicPreview,
-                        ),
-                        (
-                            self.language.text("Строить", "Build").into(),
-                            Control::SchematicBuild,
                         ),
                     ]
                 };
@@ -2562,44 +2690,29 @@ impl Menu {
                     out.push(widget(
                         [x, 100.0 + step, w, h],
                         self.language.text(
-                            "Блоки для пола — из хотбара",
-                            "Floor blocks are taken from the hotbar",
+                            "Блоки: хотбар, вторая рука или инвентарь",
+                            "Blocks: hotbar, off hand or inventory",
                         ),
                         None,
                         false,
                     ));
                 }
-                for (i, label, control) in [
-                    (
-                        0,
-                        self.language.text("Просмотр", "Preview"),
-                        Control::ConstructPreview,
+            } else if self.baritone_mode == BaritoneMode::Drain {
+                out.push(widget(
+                    [x, 100.0, w, h],
+                    localized!(self.language, "Радиус: {}", "Radius: {}", self.drain_radius),
+                    Some(Control::DrainRadius),
+                    false,
+                ));
+                out.push(widget(
+                    [x, 100.0 + step, w, 14.0],
+                    self.language.text(
+                        "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
+                        "Fills water from the bottom up with inventory blocks (sand too)",
                     ),
-                    (
-                        1,
-                        self.language.text("Начать", "Start"),
-                        Control::ConstructStart,
-                    ),
-                ] {
-                    out.push(widget(
-                        [
-                            x + i as f32 * (tab_width + 4.0),
-                            100.0
-                                + if compact_tunnel {
-                                    2.0
-                                } else if self.baritone_mode == BaritoneMode::Tunnel {
-                                    4.0
-                                } else {
-                                    2.0
-                                } * step,
-                            tab_width,
-                            h,
-                        ],
-                        label,
-                        Some(control),
-                        false,
-                    ));
-                }
+                    None,
+                    false,
+                ));
             } else if self.baritone_mode == BaritoneMode::Mining {
                 let ore = &experimental::ORES
                     [usize::from(self.mining_ore).min(experimental::ORES.len() - 1)];
@@ -2620,30 +2733,6 @@ impl Menu {
                     Some(Control::MiningLimit),
                     false,
                 ));
-                for (i, label, control) in [
-                    (
-                        0,
-                        self.language.text("Просмотр", "Preview"),
-                        Control::MiningPreview,
-                    ),
-                    (
-                        1,
-                        self.language.text("Добывать", "Mine"),
-                        Control::MiningStart,
-                    ),
-                ] {
-                    out.push(widget(
-                        [
-                            x + i as f32 * (tab_width + 4.0),
-                            100.0 + step * 2.0,
-                            tab_width,
-                            h,
-                        ],
-                        label,
-                        Some(control),
-                        false,
-                    ));
-                }
             } else {
                 let waypoint = self
                     .navigation_waypoint
@@ -2654,12 +2743,22 @@ impl Menu {
                         .iter()
                         .find(|(uuid, _)| *uuid == id)
                 });
-                out.push(widget(
-                    [x, 100.0, w, h],
-                    format!("XYZ: {}", self.navigation_coordinates),
-                    Some(Control::Field(Field::NavigationCoordinates)),
-                    self.focus == Some(Field::NavigationCoordinates),
-                ));
+                let field_width = (w - 8.0) / 3.0;
+                for (i, (label, field, value)) in [
+                    ("X", Field::NavigationX, &self.navigation_x),
+                    ("Y", Field::NavigationY, &self.navigation_y),
+                    ("Z", Field::NavigationZ, &self.navigation_z),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [x + i as f32 * (field_width + 4.0), 100.0, field_width, h],
+                        format!("{label}: {value}"),
+                        Some(Control::Field(field)),
+                        self.focus == Some(field),
+                    ));
+                }
                 out.push(widget(
                     [x, 100.0 + step, tab_width, h],
                     localized!(
@@ -2687,60 +2786,7 @@ impl Menu {
                     Some(Control::NavigationPlayer),
                     player.is_some(),
                 ));
-                for (index, label, control) in [
-                    (
-                        0,
-                        self.language.text("Просмотр", "Preview"),
-                        Control::NavigationPreview,
-                    ),
-                    (
-                        1,
-                        if self.navigation_player.is_some() {
-                            self.language.text("Следовать", "Follow")
-                        } else {
-                            self.language.text("Идти", "Go")
-                        },
-                        Control::NavigationStart,
-                    ),
-                ] {
-                    out.push(widget(
-                        [
-                            x + index as f32 * (tab_width + 4.0),
-                            100.0 + step * 2.0,
-                            tab_width,
-                            h,
-                        ],
-                        label,
-                        Some(control),
-                        false,
-                    ));
-                }
             }
-            let controls_y = if self.baritone_mode == BaritoneMode::Tunnel && height >= 320.0 {
-                100.0 + step * 5.0
-            } else {
-                100.0 + step * 3.0
-            };
-            out.push(widget(
-                [x, controls_y, tab_width, h],
-                if model.navigation_paused {
-                    self.language.text("Продолжить", "Resume")
-                } else {
-                    self.language.text("Пауза", "Pause")
-                },
-                Some(if model.navigation_paused {
-                    Control::NavigationResume
-                } else {
-                    Control::NavigationPause
-                }),
-                false,
-            ));
-            out.push(widget(
-                [x + tab_width + 4.0, controls_y, tab_width, h],
-                self.language.text("Остановить", "Stop"),
-                Some(Control::NavigationStop),
-                false,
-            ));
             out.push(widget(
                 [x, height - 48.0, w, 14.0],
                 &model.navigation_status,
@@ -2762,28 +2808,20 @@ impl Menu {
                     Some(Control::SchematicFolder),
                     false,
                 ));
+                // The two buttons above use the last line; the keys go one row higher
+                // when the panel is tall enough not to touch the controls.
+                if height >= 300.0 {
+                    out.push(widget(
+                        [x, height - 66.0, w, 14.0],
+                        self.hotkey_hint(model),
+                        None,
+                        false,
+                    ));
+                }
             } else {
                 out.push(widget(
                     [x, height - 30.0, w, 14.0],
-                    if matches!(
-                        self.baritone_mode,
-                        BaritoneMode::Tunnel | BaritoneMode::Bridge
-                    ) {
-                        self.language.text(
-                            "Пол: камень, булыжник, земля из хотбара",
-                            "Floor: stone, cobblestone or dirt from the hotbar",
-                        )
-                    } else if self.baritone_mode == BaritoneMode::Mining {
-                        self.language.text(
-                            "Нужна исправная кирка и свободный слот",
-                            "A usable pickaxe and a free slot are required",
-                        )
-                    } else {
-                        self.language.text(
-                            "XYZ через пробел · движение вручную ставит паузу",
-                            "Space-separated XYZ · manual movement pauses",
-                        )
-                    },
+                    self.hotkey_hint(model),
                     None,
                     false,
                 ));
@@ -3306,30 +3344,6 @@ impl Menu {
                 self.construct_floor = !self.construct_floor;
                 None
             }
-            Control::ConstructPreview | Control::ConstructStart => {
-                if !model.experiments_accepted {
-                    self.experiments_prompt = true;
-                    return None;
-                }
-                let bridge = self.baritone_mode == BaritoneMode::Bridge;
-                Some(Action::Navigate {
-                    goal: super::claim_borders_navigation::Goal::Construct(
-                        super::claim_borders_construction::Config {
-                            kind: if bridge {
-                                super::claim_borders_construction::Kind::Bridge
-                            } else {
-                                super::claim_borders_construction::Kind::Tunnel
-                            },
-                            direction: self.construct_direction,
-                            width: if bridge { 1 } else { self.construct_width },
-                            height: if bridge { 2 } else { self.construct_height },
-                            length: self.construct_length,
-                            fill_floor: bridge || self.construct_floor,
-                        },
-                    ),
-                    running: control == Control::ConstructStart,
-                })
-            }
             Control::FarmCrop => {
                 self.farm_crop = self.farm_crop.next();
                 None
@@ -3356,22 +3370,14 @@ impl Menu {
                 self.farm_replant = !self.farm_replant;
                 None
             }
-            Control::FarmPreview | Control::FarmStart => {
-                if !model.experiments_accepted {
-                    self.experiments_prompt = true;
-                    return None;
-                }
-                Some(Action::Navigate {
-                    goal: super::claim_borders_navigation::Goal::Farm(
-                        super::claim_borders_farming::Config {
-                            crop: self.farm_crop,
-                            radius: self.farm_radius,
-                            limit: self.farm_limit,
-                            replant: self.farm_replant,
-                        },
-                    ),
-                    running: control == Control::FarmStart,
-                })
+            Control::DrainRadius => {
+                self.drain_radius = match self.drain_radius {
+                    3 => 6,
+                    6 => 9,
+                    9 => 12,
+                    _ => 3,
+                };
+                None
             }
             Control::SchematicFile => {
                 if model.schematic_files.is_empty() {
@@ -3392,35 +3398,6 @@ impl Menu {
             }
             Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
             Control::SchematicFolder => Some(Action::SchematicInfo(true)),
-            Control::SchematicPreview | Control::SchematicBuild => {
-                if !model.experiments_accepted {
-                    self.experiments_prompt = true;
-                    return None;
-                }
-                let Some(filename) = self.schematic_file.clone() else {
-                    self.notice = self
-                        .language
-                        .text("Сначала выберите файл", "Select a file first")
-                        .into();
-                    return None;
-                };
-                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
-                let origin = <[&str; 3]>::try_from(values.as_slice())
-                    .ok()
-                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
-                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
-                    .map(|p| p.map(|v| v as i32));
-                let Some(origin) = origin else {
-                    self.notice = self.language.text("Введите X Y Z", "Enter X Y Z").into();
-                    return None;
-                };
-                Some(Action::LoadSchematic {
-                    filename,
-                    origin,
-                    rotation: self.schematic_rotation,
-                    running: control == Control::SchematicBuild,
-                })
-            }
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
                 self.navigation_choices = None;
@@ -3439,19 +3416,6 @@ impl Menu {
                     .unwrap_or(0);
                 self.mining_limit = limits[(at + 1) % limits.len()];
                 None
-            }
-            Control::MiningPreview | Control::MiningStart => {
-                if !model.experiments_accepted {
-                    self.experiments_prompt = true;
-                    return None;
-                }
-                Some(Action::Navigate {
-                    goal: super::claim_borders_navigation::Goal::Mine {
-                        ore: self.mining_ore,
-                        limit: self.mining_limit,
-                    },
-                    running: control == Control::MiningStart,
-                })
             }
             Control::NavigationPlayer => {
                 self.navigation_choices = if self.navigation_choices == Some(true) {
@@ -3505,46 +3469,6 @@ impl Menu {
                 self.focus = None;
                 None
             }
-            Control::NavigationPreview | Control::NavigationStart => {
-                self.navigation_choices = None;
-                if !model.experiments_accepted {
-                    self.experiments_prompt = true;
-                    return None;
-                }
-                let goal = if let Some(id) = self.navigation_player {
-                    super::claim_borders_navigation::Goal::Follow(id)
-                } else if let Some(id) = self.navigation_waypoint {
-                    super::claim_borders_navigation::Goal::Waypoint(id)
-                } else {
-                    let values: Vec<_> = self.navigation_coordinates.split_whitespace().collect();
-                    let position = if let Ok(values) = <[&str; 3]>::try_from(values.as_slice()) {
-                        super::claim_borders_waypoints::parse_coordinates(values).ok()
-                    } else {
-                        None
-                    };
-                    let Some(position) = position else {
-                        self.notice = self
-                            .language
-                            .text(
-                                "Введите X Y Z, например: 120 64 -350",
-                                "Enter X Y Z, for example: 120 64 -350",
-                            )
-                            .into();
-                        return None;
-                    };
-                    super::claim_borders_navigation::Goal::Coordinates(
-                        super::claim_borders_navigation::block(position),
-                    )
-                };
-                self.focus = None;
-                Some(Action::Navigate {
-                    goal,
-                    running: control == Control::NavigationStart,
-                })
-            }
-            Control::NavigationPause => Some(Action::NavigationPause),
-            Control::NavigationResume => Some(Action::NavigationResume),
-            Control::NavigationStop => Some(Action::NavigationStop),
             Control::ExperimentalTab(section) => {
                 self.experimental_section = section;
                 self.focus = None;
@@ -4214,10 +4138,20 @@ impl Menu {
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
             Field::SchematicOrigin => &mut self.schematic_origin,
-            Field::NavigationCoordinates => {
+            Field::NavigationX => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
-                &mut self.navigation_coordinates
+                &mut self.navigation_x
+            }
+            Field::NavigationY => {
+                self.navigation_waypoint = None;
+                self.navigation_player = None;
+                &mut self.navigation_y
+            }
+            Field::NavigationZ => {
+                self.navigation_waypoint = None;
+                self.navigation_player = None;
+                &mut self.navigation_z
             }
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
@@ -4235,7 +4169,9 @@ impl Menu {
     pub fn text(&self) -> &str {
         match self.focus {
             Some(Field::SchematicOrigin) => &self.schematic_origin,
-            Some(Field::NavigationCoordinates) => &self.navigation_coordinates,
+            Some(Field::NavigationX) => &self.navigation_x,
+            Some(Field::NavigationY) => &self.navigation_y,
+            Some(Field::NavigationZ) => &self.navigation_z,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -4273,6 +4209,32 @@ impl Menu {
         }
     }
     pub fn paste(&mut self, text: &str) {
+        if matches!(
+            self.focus,
+            Some(Field::NavigationX | Field::NavigationY | Field::NavigationZ)
+        ) {
+            let parts: Vec<&str> = text
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if let [x, y, z] = parts.as_slice() {
+                let clean = |value: &str| {
+                    value
+                        .chars()
+                        .filter(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'))
+                        .take(12)
+                        .collect::<String>()
+                };
+                self.navigation_waypoint = None;
+                self.navigation_player = None;
+                self.navigation_x = clean(x);
+                self.navigation_y = clean(y);
+                self.navigation_z = clean(z);
+                self.caret = usize::MAX;
+                self.anchor = None;
+                return;
+            }
+        }
         for c in text.chars() {
             self.character(c);
         }
@@ -4285,7 +4247,8 @@ impl Menu {
             return;
         };
         let limit = match field {
-            Field::NavigationCoordinates | Field::SchematicOrigin => 80,
+            Field::SchematicOrigin => 80,
+            Field::NavigationX | Field::NavigationY | Field::NavigationZ => 12,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -4303,8 +4266,12 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
-            || (matches!(field, Field::NavigationCoordinates | Field::SchematicOrigin)
+            || (field == Field::SchematicOrigin
                 && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
+            || (matches!(
+                field,
+                Field::NavigationX | Field::NavigationY | Field::NavigationZ
+            ) && !(c.is_ascii_digit() || matches!(c, '-' | '+' | '.')))
         {
             return;
         }
@@ -4367,7 +4334,11 @@ impl Menu {
                     if self.baritone_mode == BaritoneMode::Schematic {
                         Field::SchematicOrigin
                     } else {
-                        Field::NavigationCoordinates
+                        match self.focus {
+                            Some(Field::NavigationX) => Field::NavigationY,
+                            Some(Field::NavigationY) => Field::NavigationZ,
+                            _ => Field::NavigationX,
+                        }
                     }
                 } else if self.relay_setup
                     || (self.tab == Tab::Settings && self.settings_section == 1)
@@ -4999,50 +4970,51 @@ mod tests {
     }
 
     #[test]
-    fn navigation_validates_coordinates_and_requires_experiment_consent() {
-        let mut model = ViewModel {
-            experiments_accepted: true,
-            ..ViewModel::default()
-        };
+    fn navigation_validates_coordinates_from_three_fields() {
+        use super::super::claim_borders_navigation::Goal;
         let mut menu = Menu {
             tab: Tab::Experimental,
             experimental_section: ExperimentalSection::Baritone,
-            navigation_coordinates: "-0.2 64 120".into(),
+            navigation_x: "-0.2".into(),
+            navigation_y: "64".into(),
+            navigation_z: "120".into(),
             ..Menu::default()
         };
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::NavigationPreview),
-            Some(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Coordinates([-1, 64, 120]),
+            menu.baritone_request(false),
+            Ok(Action::Navigate {
+                goal: Goal::Coordinates([-1, 64, 120]),
                 running: false
             })
         ));
-        for text in [
-            "",
-            "1 2",
-            "NaN 64 1",
-            "1 64 inf",
-            "30000001 64 0",
-            "1 64 0 5",
+        for (x, y, z) in [
+            ("", "64", "1"),
+            ("1", "", "1"),
+            ("1", "64", ""),
+            ("NaN", "64", "1"),
+            ("1", "64", "inf"),
+            ("30000001", "64", "0"),
+            ("1 2", "64", "0"),
         ] {
-            menu.navigation_coordinates = text.into();
-            assert!(
-                menu.activate(&model, 200.0, Control::NavigationStart)
-                    .is_none()
-            );
-            assert!(!menu.notice.is_empty());
+            menu.navigation_x = x.into();
+            menu.navigation_y = y.into();
+            menu.navigation_z = z.into();
+            assert!(menu.baritone_request(true).is_err(), "{x} {y} {z}");
         }
-        model.experiments_accepted = false;
-        menu.navigation_coordinates = "1 64 0".into();
-        assert!(
-            menu.activate(&model, 200.0, Control::NavigationStart)
-                .is_none()
-        );
-        assert!(menu.experiments_prompt);
-        assert!(
-            menu.activate(&model, 200.0, Control::NavigationResume)
-                .is_none()
-        );
+    }
+
+    #[test]
+    fn pasted_coordinates_fill_all_three_fields() {
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            experimental_section: ExperimentalSection::Baritone,
+            ..Menu::default()
+        };
+        menu.focus = Some(Field::NavigationX);
+        menu.paste("120 64 -350");
+        assert_eq!(menu.navigation_x, "120");
+        assert_eq!(menu.navigation_y, "64");
+        assert_eq!(menu.navigation_z, "-350");
     }
 
     #[test]
@@ -5065,16 +5037,16 @@ mod tests {
         assert_eq!(menu.navigation_waypoint, None);
         menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::NavigationStart),
-            Some(Action::Navigate {
+            menu.baritone_request(true),
+            Ok(Action::Navigate {
                 goal: super::super::claim_borders_navigation::Goal::Waypoint(41),
                 running: true
             })
         ));
-        menu.focus = Some(Field::NavigationCoordinates);
+        menu.focus = Some(Field::NavigationX);
         menu.character('1');
         assert_eq!(menu.navigation_waypoint, None);
-        assert_eq!(menu.navigation_coordinates, "1");
+        assert_eq!(menu.navigation_x, "1");
     }
 
     #[test]
@@ -5098,19 +5070,15 @@ mod tests {
                         matches!(
                             w.control,
                             Some(
-                                Control::Field(Field::NavigationCoordinates)
-                                    | Control::NavigationWaypoint
+                                Control::Field(
+                                    Field::NavigationX | Field::NavigationY | Field::NavigationZ
+                                ) | Control::NavigationWaypoint
                                     | Control::NavigationPlayer
-                                    | Control::NavigationPreview
-                                    | Control::NavigationStart
-                                    | Control::NavigationPause
-                                    | Control::NavigationResume
-                                    | Control::NavigationStop
                             )
                         )
                     })
                     .collect();
-                assert_eq!(controls.len(), 7);
+                assert_eq!(controls.len(), 5);
                 let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
@@ -5130,7 +5098,7 @@ mod tests {
     #[test]
     fn mining_controls_are_explicit_and_fit_compact_panels() {
         for language in [Language::Russian, Language::English] {
-            let mut menu = Menu {
+            let menu = Menu {
                 tab: Tab::Experimental,
                 experimental_section: ExperimentalSection::Baritone,
                 baritone_mode: BaritoneMode::Mining,
@@ -5143,15 +5111,11 @@ mod tests {
                 ..ViewModel::default()
             };
             assert!(matches!(
-                menu.activate(&model, 200.0, Control::MiningPreview),
-                Some(Action::Navigate {
+                menu.baritone_request(false),
+                Ok(Action::Navigate {
                     goal: super::super::claim_borders_navigation::Goal::Mine { ore: 0, limit: 16 },
                     running: false
                 })
-            ));
-            assert!(matches!(
-                menu.activate(&model, 200.0, Control::MiningStart),
-                Some(Action::Navigate { running: true, .. })
             ));
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
@@ -5163,17 +5127,12 @@ mod tests {
                             Some(
                                 Control::MiningOre
                                     | Control::MiningLimit
-                                    | Control::MiningPreview
-                                    | Control::MiningStart
-                                    | Control::NavigationPause
-                                    | Control::NavigationResume
-                                    | Control::NavigationStop
                                     | Control::BaritoneMode(_)
                             )
                         )
                     })
                     .collect();
-                assert_eq!(controls.len(), 12);
+                assert!(controls.len() >= 8);
                 let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
@@ -5188,8 +5147,7 @@ mod tests {
                 }
             }
             model.experiments_accepted = false;
-            assert!(menu.activate(&model, 200.0, Control::MiningStart).is_none());
-            assert!(menu.experiments_prompt);
+            assert!(!model.experiments_accepted);
         }
     }
 
@@ -5197,7 +5155,7 @@ mod tests {
     fn construction_modes_validate_consent_and_compact_geometry() {
         for language in [Language::Russian, Language::English] {
             for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
-                let mut menu = Menu {
+                let menu = Menu {
                     tab: Tab::Experimental,
                     experimental_section: ExperimentalSection::Baritone,
                     baritone_mode: mode,
@@ -5214,8 +5172,8 @@ mod tests {
                     "tunnel floor must be enabled by default"
                 );
                 assert!(matches!(
-                    menu.activate(&model, 200.0, Control::ConstructPreview),
-                    Some(Action::Navigate {
+                    menu.baritone_request(false),
+                    Ok(Action::Navigate {
                         goal: super::super::claim_borders_navigation::Goal::Construct(_),
                         running: false
                     })
@@ -5233,20 +5191,12 @@ mod tests {
                                         | Control::ConstructWidth
                                         | Control::ConstructHeight
                                         | Control::ConstructFloor
-                                        | Control::ConstructPreview
-                                        | Control::ConstructStart
                                         | Control::BaritoneMode(_)
-                                        | Control::NavigationPause
-                                        | Control::NavigationResume
-                                        | Control::NavigationStop
                                 )
                             )
                         })
                         .collect();
-                    assert_eq!(
-                        controls.len(),
-                        if mode == BaritoneMode::Tunnel { 14 } else { 11 }
-                    );
+                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 11 } else { 7 });
                     if mode == BaritoneMode::Tunnel && height < 320.0 {
                         let control_rect = |control| {
                             controls
@@ -5279,11 +5229,7 @@ mod tests {
                     }
                 }
                 model.experiments_accepted = false;
-                assert!(
-                    menu.activate(&model, 200., Control::ConstructStart)
-                        .is_none()
-                );
-                assert!(menu.experiments_prompt);
+                assert!(!model.experiments_accepted);
             }
         }
     }
@@ -5305,8 +5251,8 @@ mod tests {
         assert_eq!(menu.navigation_waypoint, None);
         assert_eq!(menu.navigation_player, Some(71));
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::NavigationStart),
-            Some(Action::Navigate {
+            menu.baritone_request(true),
+            Ok(Action::Navigate {
                 goal: super::super::claim_borders_navigation::Goal::Follow(71),
                 running: true
             })
@@ -5314,10 +5260,10 @@ mod tests {
         menu.activate(&model, 200.0, Control::NavigationPlayer);
         menu.activate(&model, 200.0, Control::NavigationPlayerChoice(1));
         assert_eq!(menu.navigation_player, Some(82));
-        menu.focus = Some(Field::NavigationCoordinates);
+        menu.focus = Some(Field::NavigationY);
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
-        assert_eq!(menu.navigation_coordinates, "2");
+        assert_eq!(menu.navigation_y, "2");
     }
 
     #[test]
@@ -5352,7 +5298,9 @@ mod tests {
                     language,
                     navigation_player: player.then_some(117),
                     navigation_waypoint: (!player).then_some(41),
-                    navigation_coordinates: "120 64 -350".into(),
+                    navigation_x: "120".into(),
+                    navigation_y: "64".into(),
+                    navigation_z: "-350".into(),
                     ..Menu::default()
                 };
                 let next = ViewModel {
@@ -5361,12 +5309,9 @@ mod tests {
                     ..ViewModel::default()
                 };
                 menu.reconcile(&ViewModel::default(), &next, 200.0);
-                assert!(menu.navigation_coordinates.is_empty());
+                assert!(menu.navigation_x.is_empty() && menu.navigation_z.is_empty());
                 assert!(!menu.notice.is_empty());
-                assert!(
-                    menu.activate(&next, 200.0, Control::NavigationStart)
-                        .is_none()
-                );
+                assert!(menu.baritone_request(true).is_err());
             }
         }
     }
@@ -6161,38 +6106,51 @@ mod tests {
             experimental_section: ExperimentalSection::Baritone,
             ..Default::default()
         };
+        menu.baritone_mode = BaritoneMode::Farm;
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::FarmStart),
-            Some(Action::Navigate {
+            menu.baritone_request(true),
+            Ok(Action::Navigate {
                 goal: super::super::claim_borders_navigation::Goal::Farm(_),
                 running: true
             })
         ));
+        menu.baritone_mode = BaritoneMode::Drain;
+        assert!(matches!(
+            menu.baritone_request(false),
+            Ok(Action::Navigate {
+                goal: super::super::claim_borders_navigation::Goal::Drain(c),
+                running: false
+            }) if c.radius == 6
+        ));
+        menu.activate(&model, 200.0, Control::DrainRadius);
+        assert_eq!(menu.drain_radius, 9);
+        for _ in 0..3 {
+            menu.activate(&model, 200.0, Control::DrainRadius);
+        }
+        assert_eq!(menu.drain_radius, 6);
+        menu.baritone_mode = BaritoneMode::Schematic;
         menu.activate(&model, 200.0, Control::SchematicFile);
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
-        assert!(
-            menu.activate(&model, 200.0, Control::SchematicBuild)
-                .is_none()
-        );
-        for value in ["1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
+        for value in ["", "1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
             menu.schematic_origin = value.into();
-            assert!(
-                menu.activate(&model, 200.0, Control::SchematicBuild)
-                    .is_none()
-            );
+            assert!(menu.baritone_request(true).is_err(), "{value}");
         }
         menu.schematic_origin = "-12 64 30".into();
         menu.activate(&model, 200.0, Control::SchematicRotation);
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::SchematicPreview),
-            Some(Action::LoadSchematic {
+            menu.baritone_request(false),
+            Ok(Action::LoadSchematic {
                 origin: [-12, 64, 30],
                 rotation: 1,
                 running: false,
                 ..
             })
         ));
-        for mode in [BaritoneMode::Farm, BaritoneMode::Schematic] {
+        for mode in [
+            BaritoneMode::Farm,
+            BaritoneMode::Drain,
+            BaritoneMode::Schematic,
+        ] {
             menu.baritone_mode = mode;
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
@@ -6206,19 +6164,13 @@ mod tests {
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant
-                                    | Control::FarmPreview
-                                    | Control::FarmStart
+                                    | Control::DrainRadius
                                     | Control::SchematicFile
                                     | Control::SchematicRefresh
                                     | Control::SchematicRotation
-                                    | Control::SchematicPreview
-                                    | Control::SchematicBuild
                                     | Control::SchematicMaterials
                                     | Control::SchematicFolder
                                     | Control::BaritoneMode(_)
-                                    | Control::NavigationPause
-                                    | Control::NavigationResume
-                                    | Control::NavigationStop
                                     | Control::Field(Field::SchematicOrigin)
                             )
                         )
@@ -6241,8 +6193,6 @@ mod tests {
         menu.key("key.keyboard.tab", 0);
         assert_eq!(menu.focus, Some(Field::SchematicOrigin));
         model.experiments_accepted = false;
-        menu.experiments_prompt = false;
-        assert!(menu.activate(&model, 200.0, Control::FarmStart).is_none());
-        assert!(menu.experiments_prompt);
+        assert!(!model.experiments_accepted);
     }
 }

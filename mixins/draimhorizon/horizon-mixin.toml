@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.29.2"
+version = "0.29.3"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -36,6 +36,12 @@ id = "farming"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_farming"
 source = "farming.rs"
+
+[[module]]
+id = "draining"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_draining"
+source = "draining.rs"
 
 [[module]]
 id = "schematic-files"

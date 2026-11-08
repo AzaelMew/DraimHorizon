@@ -7,16 +7,19 @@ pub type Pos = [i32; 3];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hotkey {
+    Preview,
     Start,
     Pause,
     Stop,
 }
 impl Hotkey {
-    pub const ALL: [Self; 3] = [Self::Start, Self::Pause, Self::Stop];
+    pub const COUNT: usize = 4;
+    pub const ALL: [Self; Self::COUNT] = [Self::Preview, Self::Start, Self::Pause, Self::Stop];
     // Opt in from Options > Mods; never claim existing gameplay keys by default.
     pub const DEFAULT: &str = "key.keyboard.unknown";
     pub fn id(self) -> &'static str {
         match self {
+            Self::Preview => "navigation_preview",
             Self::Start => "navigation_start",
             Self::Pause => "navigation_pause",
             Self::Stop => "navigation_stop",
@@ -27,6 +30,7 @@ impl Hotkey {
         language: claim_borders_relay_client::translation::Language,
     ) -> &'static str {
         match self {
+            Self::Preview => language.text("Baritone: просмотр", "Baritone: preview"),
             Self::Start => {
                 language.text("Baritone: старт / продолжить", "Baritone: start / resume")
             }
@@ -41,7 +45,7 @@ pub fn hotkey(
     pressed: bool,
     eligible: bool,
     conflict: bool,
-    bindings: [&str; 3],
+    bindings: [&str; Hotkey::COUNT],
 ) -> Option<Hotkey> {
     if !pressed || !eligible || conflict || key == Hotkey::DEFAULT {
         return None;
@@ -61,6 +65,7 @@ pub enum Goal {
     Mine { ore: u8, limit: u16 },
     Construct(super::claim_borders_construction::Config),
     Farm(super::claim_borders_farming::Config),
+    Drain(super::claim_borders_draining::Config),
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;
@@ -127,86 +132,125 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
         && (dy >= 0 || cell([to[0], from[1] + 1, to[2]]) == Cell::Air)
 }
 
-/// A candidate world action for a single horizontal step. This is a conservative
-/// preflight only: the native adapter must separately verify permissions, tools,
-/// inventory and the server-confirmed block change before moving.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StepAction {
-    Walk,
-    Dig {
-        feet: Option<Pos>,
-        head: Option<Pos>,
-    },
-    Bridge {
-        support: Pos,
-    },
+/// One move of a route that may break and place blocks: what to remove and what to
+/// build before stepping onto `to`. The native executor revalidates all of it live.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DigStep {
+    pub to: Pos,
+    pub dig: Vec<Pos>,
+    pub place: Option<Pos>,
 }
+#[derive(Clone, Debug)]
+pub struct DigPath {
+    pub start: Pos,
+    pub steps: Vec<DigStep>,
+    pub complete: bool,
+}
+const DIG_COST: i32 = 45;
+const PLACE_COST: i32 = 35;
 
-pub fn plan_step(from: Pos, to: Pos, mut cell: impl FnMut(Pos) -> Cell) -> Option<StepAction> {
-    if to[1] != from[1] || (to[0] - from[0]).abs() + (to[2] - from[2]).abs() != 1 {
+/// A single horizontal move that may climb or drop one block. Blocks that stand in the way
+/// are dug when `diggable` allows it; a missing floor is bridged when `can_place`. Fluids,
+/// unknown chunks and partial blocks next to the route make the move invalid.
+pub fn dig_step(
+    from: Pos,
+    to: Pos,
+    can_place: bool,
+    cell: &mut impl FnMut(Pos) -> Cell,
+    diggable: &mut impl FnMut(Pos) -> bool,
+) -> Option<DigStep> {
+    let dy = to[1] - from[1];
+    if (to[0] - from[0]).abs() + (to[2] - from[2]).abs() != 1 || dy.abs() > 1 {
         return None;
     }
-    // Never modify unknown, protected/partial or hazardous blocks. Include the
-    // adjacent cells and overhead clearance to avoid digging into lava or a fall.
     for [dx, dz] in [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] {
-        for dy in -1..=2 {
+        for y in -1..=2 {
             if matches!(
-                cell([to[0] + dx, to[1] + dy, to[2] + dz]),
+                cell([to[0] + dx, to[1] + y, to[2] + dz]),
                 Cell::Hazard | Cell::Unknown
             ) {
                 return None;
             }
         }
     }
-    let feet = cell(to);
-    let head_pos = [to[0], to[1] + 1, to[2]];
-    let head = cell(head_pos);
-    let support_pos = [to[0], to[1] - 1, to[2]];
-    let support = cell(support_pos);
-    if [feet, head, support].contains(&Cell::Unknown)
-        || [feet, head, support].contains(&Cell::Blocked)
-    {
-        return None;
+    let mut needed = vec![to, [to[0], to[1] + 1, to[2]]];
+    if dy > 0 {
+        needed.push([from[0], from[1] + 2, from[2]]);
     }
-    match (feet, head, support) {
-        (Cell::Air, Cell::Air, Cell::Solid) => Some(StepAction::Walk),
-        (Cell::Air, Cell::Air, Cell::Air) => Some(StepAction::Bridge {
-            support: support_pos,
-        }),
-        (Cell::Solid | Cell::Air, Cell::Solid | Cell::Air, Cell::Solid)
-            if feet == Cell::Solid || head == Cell::Solid =>
-        {
-            Some(StepAction::Dig {
-                feet: (feet == Cell::Solid).then_some(to),
-                head: (head == Cell::Solid).then_some(head_pos),
-            })
+    if dy < 0 {
+        needed.push([to[0], to[1] + 2, to[2]]);
+    }
+    let mut dig = Vec::new();
+    for at in needed {
+        match cell(at) {
+            Cell::Air => {}
+            Cell::Solid if diggable(at) => {
+                for delta in [
+                    [1, 0, 0],
+                    [-1, 0, 0],
+                    [0, 1, 0],
+                    [0, -1, 0],
+                    [0, 0, 1],
+                    [0, 0, -1],
+                ] {
+                    if matches!(
+                        cell([at[0] + delta[0], at[1] + delta[1], at[2] + delta[2]]),
+                        Cell::Hazard | Cell::Unknown
+                    ) {
+                        return None;
+                    }
+                }
+                dig.push(at);
+            }
+            _ => return None,
         }
-        _ => None,
     }
+    // Break from the top down so nothing above settles into the cleared space.
+    dig.sort_by_key(|at| Reverse(at[1]));
+    let support = [to[0], to[1] - 1, to[2]];
+    let place = match cell(support) {
+        Cell::Solid => None,
+        Cell::Air if can_place && dy == 0 => Some(support),
+        _ => return None,
+    };
+    Some(DigStep { to, dig, place })
 }
 
-/// Bounded action-aware search. This produces a *plan*, never performs edits.
-/// The native executor must revalidate every action against the live world.
-#[derive(Clone, Debug)]
-pub struct ActionPath {
-    pub nodes: Vec<Pos>,
-    pub actions: Vec<StepAction>,
-    pub complete: bool,
-}
-
-pub fn search_actions(
+/// Bounded A* that may dig through rock and bridge gaps. With `adjacent`, standing next to
+/// `goal` (its column, at feet or head height) counts as arrival, which is what mining an
+/// ore needs. The result is a plan: every action is checked again against the live world.
+pub fn search_dig(
     start: Pos,
     goal: Pos,
+    adjacent: bool,
+    can_place: bool,
     mut cell: impl FnMut(Pos) -> Cell,
+    mut diggable: impl FnMut(Pos) -> bool,
     canceled: impl Fn() -> bool,
-) -> Option<ActionPath> {
+) -> Option<DigPath> {
+    let reached = |at: Pos| {
+        at == goal
+            || (adjacent
+                && (at[0] - goal[0]).abs() + (at[2] - goal[2]).abs() == 1
+                && (0..=1).contains(&(goal[1] - at[1])))
+    };
+    let estimate = |at: Pos| {
+        let horizontal = (at[0] - goal[0]).abs() + (at[2] - goal[2]).abs();
+        let vertical = (at[1] - goal[1]).abs();
+        let horizontal = if adjacent {
+            (horizontal - 1).max(0)
+        } else {
+            horizontal
+        };
+        horizontal.max(vertical) * 10
+    };
     if !standable(start, &mut cell) {
         return None;
     }
     let began = Instant::now();
-    let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
+    let mut open = BinaryHeap::from([Reverse((estimate(start), 0, start))]);
     let mut costs = HashMap::from([(start, 0)]);
-    let mut parents: HashMap<Pos, (Pos, StepAction)> = HashMap::new();
+    let mut parents: HashMap<Pos, (Pos, DigStep)> = HashMap::new();
     let mut best = start;
     let mut expanded = 0;
     while let Some(Reverse((_, cost, at))) = open.pop() {
@@ -216,71 +260,59 @@ pub fn search_actions(
         if cost != costs[&at] {
             continue;
         }
-        if heuristic(at, goal) < heuristic(best, goal) {
+        if estimate(at) < estimate(best) {
             best = at;
         }
-        if at == goal {
+        if reached(at) {
             best = at;
             break;
         }
         expanded += 1;
-        if expanded >= MAX_NODES || began.elapsed() > Duration::from_millis(80) {
+        if expanded >= MAX_NODES || began.elapsed() > Duration::from_millis(150) {
             break;
         }
         for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            let next = [at[0] + dx, at[1], at[2] + dz];
-            if (next[0] - start[0]).abs() > RADIUS
-                || (next[2] - start[2]).abs() > RADIUS
-                || (next[1] - start[1]).abs() > 16
-            {
-                continue;
-            }
-            let Some(action) = plan_step(at, next, &mut cell) else {
-                continue;
-            };
-            // Mining and placement are expensive and require server acknowledgements.
-            // Prefer a safe walking detour whenever possible.
-            let step_cost = match action {
-                StepAction::Walk => 10,
-                StepAction::Bridge { .. } => 50,
-                StepAction::Dig { feet, head } => {
-                    if feet.is_some() && head.is_some() {
-                        100
-                    } else {
-                        60
-                    }
+            for dy in [0, 1, -1] {
+                let next = [at[0] + dx, at[1] + dy, at[2] + dz];
+                if (next[0] - start[0]).abs() > RADIUS
+                    || (next[2] - start[2]).abs() > RADIUS
+                    || (next[1] - start[1]).abs() > 48
+                {
+                    continue;
                 }
-            };
-            let next_cost = cost + step_cost;
-            if costs.get(&next).is_none_or(|old| next_cost < *old) {
-                costs.insert(next, next_cost);
-                parents.insert(next, (at, action));
-                open.push(Reverse((
-                    next_cost + heuristic(next, goal),
-                    next_cost,
-                    next,
-                )));
+                let Some(step) = dig_step(at, next, can_place, &mut cell, &mut diggable) else {
+                    continue;
+                };
+                let next_cost = cost
+                    + 10
+                    + if dy > 0 { 4 } else { dy.abs() * 2 }
+                    + step.dig.len() as i32 * DIG_COST
+                    + if step.place.is_some() { PLACE_COST } else { 0 };
+                if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                    costs.insert(next, next_cost);
+                    parents.insert(next, (at, step));
+                    open.push(Reverse((next_cost + estimate(next), next_cost, next)));
+                }
             }
         }
     }
-    if canceled() || (best == start && start != goal) {
+    if canceled() || (best == start && !reached(start)) {
         return None;
     }
-    let mut nodes = vec![best];
-    let mut actions = Vec::new();
-    while let Some((parent, action)) = parents.get(nodes.last().unwrap()) {
-        actions.push(*action);
-        nodes.push(*parent);
-        if nodes.len() > MAX_NODES {
+    let mut steps = Vec::new();
+    let mut at = best;
+    while let Some((parent, step)) = parents.get(&at) {
+        steps.push(step.clone());
+        at = *parent;
+        if steps.len() > MAX_NODES {
             return None;
         }
     }
-    nodes.reverse();
-    actions.reverse();
-    Some(ActionPath {
-        nodes,
-        actions,
-        complete: best == goal,
+    steps.reverse();
+    Some(DigPath {
+        start,
+        steps,
+        complete: reached(best),
     })
 }
 
@@ -627,7 +659,12 @@ mod tests {
     use super::*;
     #[test]
     fn global_hotkeys_require_a_unique_binding_and_unobstructed_gameplay() {
-        let bindings = ["key.keyboard.f6", "key.keyboard.f7", "key.keyboard.f8"];
+        let bindings = [
+            "key.keyboard.f5",
+            "key.keyboard.f6",
+            "key.keyboard.f7",
+            "key.keyboard.f8",
+        ];
         for (key, action) in bindings.into_iter().zip(Hotkey::ALL) {
             assert_eq!(hotkey(key, true, true, false, bindings), Some(action));
             assert_eq!(hotkey(key, false, true, false, bindings), None);
@@ -635,11 +672,23 @@ mod tests {
             assert_eq!(hotkey(key, true, true, true, bindings), None);
         }
         assert_eq!(
-            hotkey("key.keyboard.f6", true, true, false, [bindings[0]; 3]),
+            hotkey(
+                "key.keyboard.f5",
+                true,
+                true,
+                false,
+                [bindings[0]; Hotkey::COUNT]
+            ),
             None
         );
         assert_eq!(
-            hotkey(Hotkey::DEFAULT, true, true, false, [Hotkey::DEFAULT; 3]),
+            hotkey(
+                Hotkey::DEFAULT,
+                true,
+                true,
+                false,
+                [Hotkey::DEFAULT; Hotkey::COUNT]
+            ),
             None
         );
         assert_eq!(hotkey("key.keyboard.w", true, true, false, bindings), None);
@@ -848,176 +897,142 @@ mod tests {
 }
 
 #[cfg(test)]
-mod action_planner_tests {
+mod dig_search_tests {
     use super::*;
 
-    #[test]
-    fn edits_reject_unknown_neighbors_and_overhead() {
-        for unknown in [[2, 0, 0], [1, 2, 0], [1, -1, 1]] {
-            assert_eq!(
-                plan_step([0, 0, 0], [1, 0, 0], |p| {
-                    if p == unknown {
-                        Cell::Unknown
-                    } else if p == [1, 0, 0] {
-                        Cell::Solid
-                    } else {
-                        world(p)
-                    }
-                }),
-                None,
-                "must not dig next to unknown terrain at {unknown:?}"
-            );
+    fn rock(p: Pos) -> Cell {
+        if p[1] < 0 || (p[0] >= 1 && p[1] <= 1) {
+            Cell::Solid
+        } else {
+            Cell::Air
         }
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [2, -1, 0] {
-                    Cell::Unknown
-                } else if p == [1, -1, 0] {
-                    Cell::Air
-                } else {
-                    world(p)
-                }
-            }),
-            None
-        );
-    }
-
-    fn world(at: Pos) -> Cell {
-        if at[1] < 0 { Cell::Solid } else { Cell::Air }
     }
 
     #[test]
-    fn walk_dig_and_bridge_are_distinct() {
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], world),
-            Some(StepAction::Walk)
-        );
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, 0, 0] {
-                    Cell::Solid
-                } else {
-                    world(p)
-                }
-            }),
-            Some(StepAction::Dig {
-                feet: Some([1, 0, 0]),
-                head: None
-            })
-        );
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, -1, 0] { Cell::Air } else { world(p) }
-            }),
-            Some(StepAction::Bridge {
-                support: [1, -1, 0]
-            })
-        );
-    }
-
-    #[test]
-    fn head_only_obstruction_does_not_request_digging_air() {
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, 1, 0] {
-                    Cell::Solid
-                } else {
-                    world(p)
-                }
-            }),
-            Some(StepAction::Dig {
-                feet: None,
-                head: Some([1, 1, 0]),
-            })
-        );
-    }
-
-    #[test]
-    fn two_block_obstruction_requires_both_digs() {
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, 0, 0] || p == [1, 1, 0] {
-                    Cell::Solid
-                } else {
-                    world(p)
-                }
-            }),
-            Some(StepAction::Dig {
-                feet: Some([1, 0, 0]),
-                head: Some([1, 1, 0]),
-            })
-        );
-    }
-
-    #[test]
-    fn rejects_hazards_unknowns_and_non_adjacent_steps() {
-        assert_eq!(plan_step([0, 0, 0], [2, 0, 0], world), None);
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [2, 0, 0] {
-                    Cell::Hazard
-                } else {
-                    world(p)
-                }
-            }),
-            None
-        );
-        assert_eq!(
-            plan_step([0, 0, 0], [1, 0, 0], |p| {
-                if p == [1, -1, 0] {
-                    Cell::Unknown
-                } else {
-                    world(p)
-                }
-            }),
-            None
-        );
-    }
-}
-
-#[cfg(test)]
-mod action_search_tests {
-    use super::*;
-
-    #[test]
-    fn action_search_prefers_walking_and_can_plan_a_gap() {
-        let cell = |p: Pos| {
-            if p[1] < 0 && p != [1, -1, 0] {
+    fn digs_a_straight_tunnel_through_rock_to_the_goal() {
+        // Deep rock: climbing out would cost more than tunnelling straight through.
+        let deep = |p: Pos| {
+            if p[1] < 0 || (p[0] >= 1 && p[1] <= 30) {
                 Cell::Solid
             } else {
                 Cell::Air
             }
         };
-        let result = search_actions([0, 0, 0], [2, 0, 0], cell, || false).unwrap();
-        assert!(result.complete);
-        assert_eq!(result.nodes.len(), result.actions.len() + 1);
-        // Walking around the gap is cheaper than building a bridge.
-        assert!(result.actions.iter().all(|a| *a == StepAction::Walk));
+        let path =
+            search_dig([0, 0, 0], [4, 0, 0], false, false, deep, |_| true, || false).unwrap();
+        assert!(path.complete);
+        assert_eq!(path.steps.len(), 4);
+        for step in &path.steps {
+            // Feet and head are rock; the head goes first.
+            assert_eq!(step.dig.len(), 2);
+            assert!(step.dig[0][1] > step.dig[1][1]);
+            assert_eq!(step.place, None);
+        }
     }
 
     #[test]
-    fn action_search_rejects_unknown_destination() {
+    fn refuses_to_dig_what_is_not_diggable_and_prefers_walking() {
+        assert!(
+            search_dig(
+                [0, 0, 0],
+                [4, 0, 0],
+                false,
+                false,
+                rock,
+                |_| false,
+                || false
+            )
+            .is_none_or(|p| !p.complete)
+        );
+        let open = |p: Pos| if p[1] < 0 { Cell::Solid } else { Cell::Air };
+        let path = search_dig([0, 0, 0], [3, 0, 0], false, true, open, |_| true, || false).unwrap();
+        assert!(
+            path.steps
+                .iter()
+                .all(|s| s.dig.is_empty() && s.place.is_none())
+        );
+    }
+
+    #[test]
+    fn stairs_climb_one_block_per_step_and_stop_next_to_a_buried_ore() {
+        // Solid ground at y < 0; everything above y = 0 is rock except the start column.
         let cell = |p: Pos| {
-            if p == [1, 0, 0] {
+            if p[1] < 0 || p[0] != 0 && p[1] <= 6 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let ore = [4, 5, 0];
+        let path = search_dig([0, 0, 0], ore, true, false, cell, |_| true, || false).unwrap();
+        assert!(path.complete);
+        let last = path.steps.last().unwrap().to;
+        assert_eq!((last[0] - ore[0]).abs() + (last[2] - ore[2]).abs(), 1);
+        assert!((0..=1).contains(&(ore[1] - last[1])));
+        let mut at = path.start;
+        for step in &path.steps {
+            assert!((step.to[1] - at[1]).abs() <= 1);
+            at = step.to;
+        }
+    }
+
+    #[test]
+    fn bridges_a_gap_and_never_touches_fluids_or_unknown_blocks() {
+        let gap = |p: Pos| {
+            if p[1] < 0 && !(1..=2).contains(&p[0]) {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let path = search_dig([0, 0, 0], [3, 0, 0], false, true, gap, |_| true, || false).unwrap();
+        assert!(path.complete);
+        assert_eq!(
+            path.steps
+                .iter()
+                .filter_map(|s| s.place)
+                .collect::<Vec<_>>(),
+            vec![[1, -1, 0], [2, -1, 0]]
+        );
+        assert!(
+            search_dig([0, 0, 0], [3, 0, 0], false, false, gap, |_| true, || false)
+                .is_none_or(|p| !p.complete)
+        );
+        let lava = |p: Pos| {
+            if p == [1, 1, 0] {
+                Cell::Hazard
+            } else {
+                rock(p)
+            }
+        };
+        assert!(
+            search_dig([0, 0, 0], [4, 0, 0], false, false, lava, |_| true, || false)
+                .is_none_or(|p| !p.complete)
+        );
+        let unknown = |p: Pos| {
+            if p == [3, 0, 0] {
                 Cell::Unknown
-            } else if p[1] < 0 {
-                Cell::Solid
             } else {
-                Cell::Air
+                rock(p)
             }
         };
-        let result = search_actions([0, 0, 0], [1, 0, 0], cell, || false);
-        assert!(result.is_none_or(|p| !p.complete));
+        assert!(
+            search_dig(
+                [0, 0, 0],
+                [4, 0, 0],
+                false,
+                false,
+                unknown,
+                |_| true,
+                || false
+            )
+            .is_none_or(|p| !p.complete)
+        );
     }
 
     #[test]
-    fn action_search_honors_cancellation() {
-        let result = search_actions(
-            [0, 0, 0],
-            [8, 0, 0],
-            |p| if p[1] < 0 { Cell::Solid } else { Cell::Air },
-            || true,
-        );
-        assert!(result.is_none());
+    fn dig_search_honors_cancellation_and_needs_a_standing_start() {
+        assert!(search_dig([0, 0, 0], [4, 0, 0], false, false, rock, |_| true, || true).is_none());
+        assert!(search_dig([0, 5, 0], [4, 5, 0], false, false, rock, |_| true, || false).is_none());
     }
 }

@@ -7,6 +7,8 @@ pub struct Block {
     pub cell: nav::Cell,
     pub ore: bool,
     pub falling: bool,
+    /// Solid and safe to break: not bedrock-like and without a block entity.
+    pub breakable: bool,
 }
 impl Default for Block {
     fn default() -> Self {
@@ -14,6 +16,7 @@ impl Default for Block {
             cell: nav::Cell::Unknown,
             ore: false,
             falling: false,
+            breakable: false,
         }
     }
 }
@@ -105,6 +108,74 @@ pub fn plan(
                     return Some((target, path));
                 }
             }
+        }
+    }
+    None
+}
+/// Half-size of the cube searched for ore that has no open face yet.
+pub const BURIED_RADIUS: i32 = 24;
+/// The nearest ore of the kind that can be reached by digging, whether or not it is exposed,
+/// with the route that gets next to it. `hints` are ores the player already sees marked by
+/// the ore experiment; they are tried first. Nothing here edits the world.
+pub fn plan_buried(
+    start: nav::Pos,
+    excluded: &[nav::Pos],
+    hints: &[nav::Pos],
+    can_place: bool,
+    block: impl FnMut(nav::Pos) -> Block,
+    canceled: impl Fn() -> bool,
+) -> Option<(nav::Pos, nav::DigPath)> {
+    let began = Instant::now();
+    let block = std::cell::RefCell::new(block);
+    let read = |at: nav::Pos| (*block.borrow_mut())(at);
+    let distance = |at: nav::Pos| {
+        let [x, y, z] = [at[0] - start[0], at[1] - start[1], at[2] - start[2]];
+        x * x + y * y + z * z
+    };
+    let mut candidates: Vec<(i32, nav::Pos)> = Vec::new();
+    for &at in hints {
+        if read(at).ore && !excluded.contains(&at) && !candidates.iter().any(|c| c.1 == at) {
+            // A marked ore wins over an unmarked one of similar distance.
+            candidates.push((distance(at) / 2, at));
+        }
+    }
+    for y in -BURIED_RADIUS..=BURIED_RADIUS {
+        for z in -BURIED_RADIUS..=BURIED_RADIUS {
+            if canceled() || began.elapsed() > Duration::from_millis(300) {
+                return None;
+            }
+            for x in -BURIED_RADIUS..=BURIED_RADIUS {
+                let at = [start[0] + x, start[1] + y, start[2] + z];
+                if read(at).ore && !excluded.contains(&at) && !candidates.iter().any(|c| c.1 == at)
+                {
+                    candidates.push((distance(at), at));
+                }
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates.truncate(12);
+    for (_, target) in candidates {
+        if canceled() || began.elapsed() > Duration::from_millis(900) {
+            return None;
+        }
+        let path = nav::search_dig(
+            start,
+            target,
+            true,
+            can_place,
+            |at| read(at).cell,
+            |at| {
+                let b = read(at);
+                b.cell == nav::Cell::Solid
+                    && b.breakable
+                    && !b.falling
+                    && !read([at[0], at[1] + 1, at[2]]).falling
+            },
+            &canceled,
+        );
+        if let Some(path) = path.filter(|p| p.complete) {
+            return Some((target, path));
         }
     }
     None
@@ -305,6 +376,40 @@ mod tests {
         assert_eq!(late.confirmed, 1);
     }
     #[test]
+    fn plans_a_dig_route_to_buried_ore_and_skips_excluded_or_unbreakable_rock() {
+        let ore = [5, 0, 0];
+        let world = |p: nav::Pos| Block {
+            cell: if p[1] < 0 || (p[0] >= 1 && p[1] <= 20) {
+                nav::Cell::Solid
+            } else {
+                nav::Cell::Air
+            },
+            ore: p == ore,
+            falling: false,
+            breakable: true,
+        };
+        // Nothing is exposed, so the exposed-ore planner finds nothing here.
+        assert!(plan([0, 0, 0], &[], world, || false).is_none());
+        let (target, path) = plan_buried([0, 0, 0], &[], &[], false, world, || false).unwrap();
+        assert_eq!(target, ore);
+        assert!(path.complete);
+        assert!(path.steps.iter().all(|s| !s.dig.is_empty()));
+        let last = path.steps.last().unwrap().to;
+        assert_eq!((last[0] - ore[0]).abs() + (last[2] - ore[2]).abs(), 1);
+        // Excluded ore and a sealed-off ore are not routed to.
+        assert!(plan_buried([0, 0, 0], &[ore], &[], false, world, || false).is_none());
+        let sealed = |p: nav::Pos| Block {
+            breakable: false,
+            ..world(p)
+        };
+        assert!(plan_buried([0, 0, 0], &[], &[], false, sealed, || false).is_none());
+        assert!(plan_buried([0, 0, 0], &[], &[], false, world, || true).is_none());
+        // A hint is accepted only while the world still shows an ore there.
+        assert!(plan_buried([0, 0, 0], &[ore], &[[9, 0, 0]], false, world, || false).is_none());
+        let (target, _) = plan_buried([0, 0, 0], &[], &[ore], false, world, || false).unwrap();
+        assert_eq!(target, ore);
+    }
+    #[test]
     fn plans_only_reachable_exposed_ore_and_never_mines_its_support() {
         let mut controller = nav::Navigator::default();
         controller.begin([1, 0, 0], true);
@@ -332,6 +437,7 @@ mod tests {
             },
             ore: p == ore,
             falling: false,
+            breakable: true,
         };
         let (target, path) = plan([0, 0, 0], &[], &mut block, || false).unwrap();
         assert_eq!(target, ore);
@@ -347,6 +453,7 @@ mod tests {
                     cell: nav::Cell::Solid,
                     ore: false,
                     falling: true,
+                    breakable: true,
                 }
             } else {
                 block(p)
@@ -360,6 +467,7 @@ mod tests {
                     cell: nav::Cell::Hazard,
                     ore: false,
                     falling: false,
+                    breakable: true,
                 }
             } else {
                 block(p)

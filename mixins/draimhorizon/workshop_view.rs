@@ -1,9 +1,9 @@
 // Farm and schematic jobs share the normal movement, attack and placement drivers.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_construction_view as placement,
-    claim_borders_farming as farm, claim_borders_navigation as nav,
-    claim_borders_navigation_view as driver, claim_borders_schematic as schema,
-    claim_borders_schematic_files as files,
+    claim_borders_draining as drain, claim_borders_farming as farm,
+    claim_borders_navigation as nav, claim_borders_navigation_view as driver,
+    claim_borders_schematic as schema, claim_borders_schematic_files as files,
 };
 use horizon_client::gizmos::Gizmos;
 use std::{
@@ -17,9 +17,10 @@ fn text(ru: &'static str, en: &'static str) -> &'static str {
 }
 fn reason(error: schema::PlaceError) -> &'static str {
     match error {
-        schema::PlaceError::Material => {
-            text("Нет материала в хотбаре", "Material missing from hotbar")
-        }
+        schema::PlaceError::Material => text(
+            "Нет материала (хотбар, 2-я рука, инвентарь)",
+            "Material missing (hotbar, off hand, inventory)",
+        ),
         schema::PlaceError::Refused => text("Сервер отказал", "Server refused"),
         schema::PlaceError::Manual => text("Ручное вмешательство", "Manual input"),
         schema::PlaceError::Timeout => text("Нет ответа сервера", "Server acknowledgement timeout"),
@@ -32,6 +33,11 @@ enum Task {
         config: farm::Config,
         origin: nav::Pos,
         harvested: u16,
+    },
+    Drain {
+        config: drain::Config,
+        origin: nav::Pos,
+        filled: u16,
     },
     Build {
         document: schema::Blueprint,
@@ -94,6 +100,18 @@ pub(super) fn reset() {
 }
 pub(super) fn exists() -> bool {
     state(|s| s.task.is_some() || s.pending.is_some())
+}
+/// (running, resumable) for the action keys. A paused or stopped task can resume;
+/// a finished or previewed one starts over from the tab's settings.
+pub(super) fn control() -> Option<(bool, bool)> {
+    state(|s| {
+        if s.pending.is_some() {
+            return Some((true, false));
+        }
+        s.task
+            .as_ref()
+            .map(|_| (s.active, !s.active && !s.preview && s.phase != Phase::Done))
+    })
 }
 pub(super) fn pause() {
     state(|s| {
@@ -210,6 +228,43 @@ pub(super) fn start_farm(
     });
     Ok(())
 }
+pub(super) fn start_drain(
+    game: &Game<'_>,
+    config: drain::Config,
+    preview: bool,
+) -> Result<(), String> {
+    if state(|s| s.pending.is_some()) {
+        return Err(text("Загрузка уже выполняется", "Import already running").into());
+    }
+    let scope = guard(game)?;
+    if !config.valid() {
+        return Err("Invalid draining bounds".into());
+    }
+    if !preview && placement::cheapest_item(game, true).is_none() {
+        return Err(text(
+            "Нужны блоки для засыпки (хотбар, 2-я рука или инвентарь)",
+            "Blocks to fill with are required (hotbar, off hand or inventory)",
+        )
+        .into());
+    }
+    let p = game.native_player().ok_or("Join a world first")?;
+    // The player may be swimming, so the block is not adjusted to a standing position.
+    let origin = nav::block([p.x, p.y, p.z]);
+    driver::clear_construction_driver();
+    placement::reset();
+    state(|s| {
+        *s = State::default();
+        s.scope = scope;
+        s.task = Some(Task::Drain {
+            config,
+            origin,
+            filled: 0,
+        });
+        s.preview = preview;
+        s.active = !preview;
+    });
+    Ok(())
+}
 pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
     let scope = driver::scope(game).ok_or("Join a world first")?;
     state(|s| {
@@ -248,11 +303,9 @@ fn matches(game: &Game<'_>, at: nav::Pos, w: &schema::BlockState) -> bool {
         game.native_block_property(at, key)
     })
 }
+/// Seeds anywhere the placement driver can reach them: hotbar, off hand or inventory.
 fn seed(game: &Game<'_>, crop: farm::Crop) -> bool {
-    (0..9).any(|i| {
-        game.stack_in(i)
-            .is_some_and(|s| s.count > 0 && s.item.as_ref() == crop.seed())
-    })
+    placement::has_item(game, &|name| name == crop.seed())
 }
 fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, String> {
     let registry = &game.pack.assets.registry;
@@ -309,10 +362,23 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     }
     candidates.sort_unstable();
     candidates.dedup();
-    candidates.sort_by(|a, b| {
-        nav::distance(nav::center(*a), [p.x, p.y, p.z])
-            .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z]))
-    });
+    if matches!(s.task, Some(Task::Farm { .. })) {
+        // Seeds go onto the farmland next to the player's feet. Standing right beside the
+        // target keeps the aim ray from meeting the neighbouring crops first.
+        candidates.sort_by(|a, b| {
+            nav::distance(nav::center(*a), nav::center(target))
+                .total_cmp(&nav::distance(nav::center(*b), nav::center(target)))
+                .then(
+                    nav::distance(nav::center(*a), [p.x, p.y, p.z])
+                        .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z])),
+                )
+        });
+    } else {
+        candidates.sort_by(|a, b| {
+            nav::distance(nav::center(*a), [p.x, p.y, p.z])
+                .total_cmp(&nav::distance(nav::center(*b), [p.x, p.y, p.z]))
+        });
+    }
     candidates.truncate(16);
     if let Some(at) = candidates.get(s.attempt).copied() {
         s.attempt += 1;
@@ -327,12 +393,18 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
             }
         }
     } else {
+        let why = placement::diagnostic();
+        let message = text(
+            "Нет доступной грани; подойдите ближе и продолжите",
+            "No reachable placement face",
+        );
         fail(
             s,
-            text(
-                "Нет доступной грани; подойдите ближе и продолжите",
-                "No reachable placement face",
-            ),
+            if why.is_empty() {
+                message.to_owned()
+            } else {
+                format!("{message} ({why})")
+            },
         );
         false
     }
@@ -424,6 +496,9 @@ pub(super) fn tick(game: &Game<'_>) {
                 }
                 match result {
                     Ok(_) => {
+                        if let Some(Task::Drain { filled, .. }) = s.task.as_mut() {
+                            *filled += 1;
+                        }
                         s.target = None;
                         s.plant = false;
                         s.attempt = 0;
@@ -499,6 +574,78 @@ pub(super) fn tick(game: &Game<'_>) {
                         return;
                     }
                 }
+                Task::Drain {
+                    config,
+                    origin,
+                    filled,
+                } => {
+                    if s.last.elapsed() < Duration::from_millis(400) {
+                        return;
+                    }
+                    s.last = Instant::now();
+                    let Some(p) = game.native_player() else {
+                        return;
+                    };
+                    let eye = [p.x, p.y + 1.2, p.z];
+                    let r = i32::from(config.radius);
+                    let body = p.y.floor() as i32;
+                    let mut cells = Vec::new();
+                    for z in -r..=r {
+                        for x in -r..=r {
+                            let (cx, cz) = (origin[0] + x, origin[2] + z);
+                            let mut in_water = false;
+                            for y in (origin[1] - drain::DEPTH..=origin[1]).rev() {
+                                let name = game.native_block([cx, y, cz]);
+                                if drain::replaceable(&name) {
+                                    in_water = true;
+                                    // The player's own body occupies these cells.
+                                    if (p.x - (f64::from(cx) + 0.5)).abs() < 0.8
+                                        && (p.z - (f64::from(cz) + 0.5)).abs() < 0.8
+                                        && (body..=body + 1).contains(&y)
+                                    {
+                                        continue;
+                                    }
+                                    let supported = placement::block(game, [cx, y - 1, cz]).cell
+                                        == nav::Cell::Solid;
+                                    cells.push(drain::Candidate {
+                                        at: [cx, y, cz],
+                                        supported,
+                                    });
+                                } else if in_water
+                                    || !matches!(
+                                        name.as_str(),
+                                        "minecraft:air" | "minecraft:cave_air"
+                                    )
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    match drain::pick(&cells, eye) {
+                        Some((at, _)) => {
+                            s.target = Some(at);
+                            s.attempt = 0;
+                        }
+                        None => {
+                            s.phase = Phase::Done;
+                            s.active = false;
+                            s.message = if cells.is_empty() {
+                                format!("{}: {filled}", text("Готово, засыпано", "Done, filled"))
+                            } else {
+                                format!(
+                                    "{}: {}",
+                                    text(
+                                        "Остались ячейки без опоры или под вами",
+                                        "Cells left without a floor or under you"
+                                    ),
+                                    cells.len()
+                                )
+                            };
+                            return;
+                        }
+                    }
+                }
                 Task::Build { document, cursor } => {
                     for _ in 0..64 {
                         if *cursor == document.blocks.len() {
@@ -535,7 +682,10 @@ pub(super) fn tick(game: &Game<'_>) {
                 if config.replant && !seed(game, config.crop) {
                     fail(
                         s,
-                        text("Нужны семена в хотбаре", "Seeds required in hotbar"),
+                        text(
+                            "Нужны семена (хотбар, 2-я рука или инвентарь)",
+                            "Seeds required (hotbar, off hand or inventory)",
+                        ),
                     );
                     return;
                 }
@@ -563,6 +713,32 @@ pub(super) fn tick(game: &Game<'_>) {
                 schema::PlacementRequest {
                     target,
                     item: config.crop.seed().into(),
+                    state: wanted.clone(),
+                    allowed: BTreeMap::from([(target, wanted)]),
+                }
+            }
+            Task::Drain { .. } => {
+                if !drain::replaceable(&game.native_block(target)) {
+                    s.target = None;
+                    return;
+                }
+                let Some(item) = placement::cheapest_item(game, true) else {
+                    fail(
+                        s,
+                        text(
+                            "Нужны блоки (хотбар, 2-я рука или инвентарь)",
+                            "Blocks required (hotbar, off hand or inventory)",
+                        ),
+                    );
+                    return;
+                };
+                let Ok(wanted) = schema::BlockState::parse(&item) else {
+                    fail(s, text("Блок не поддерживается", "Unsupported block"));
+                    return;
+                };
+                schema::PlacementRequest {
+                    target,
+                    item,
                     state: wanted.clone(),
                     allowed: BTreeMap::from([(target, wanted)]),
                 }
@@ -600,9 +776,11 @@ pub(super) fn tick(game: &Game<'_>) {
                 }
             }
         };
-        if game.native_block(target) != "minecraft:air"
-            && game.native_block(target) != "minecraft:cave_air"
-        {
+        let current = game.native_block(target);
+        let free = current == "minecraft:air"
+            || current == "minecraft:cave_air"
+            || (matches!(s.task, Some(Task::Drain { .. })) && drain::replaceable(&current));
+        if !free {
             fail(
                 s,
                 format!(
@@ -636,6 +814,9 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                     config.limit.to_string()
                 }
             ),
+            Some(Task::Drain { filled, .. }) => {
+                format!("{}: {filled}", text("Осушение", "Drain"))
+            }
             Some(Task::Build { document, cursor }) => {
                 format!("{}: {cursor}/{}", document.format, document.blocks.len())
             }
@@ -684,6 +865,13 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
         };
         let blocks = match &s.task {
             Some(Task::Farm { origin, config, .. }) => {
+                let r = i32::from(config.radius);
+                vec![
+                    [origin[0] - r, origin[1], origin[2] - r],
+                    [origin[0] + r, origin[1], origin[2] + r],
+                ]
+            }
+            Some(Task::Drain { origin, config, .. }) => {
                 let r = i32::from(config.radius);
                 vec![
                     [origin[0] - r, origin[1], origin[2] - r],

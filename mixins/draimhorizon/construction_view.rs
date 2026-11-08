@@ -2,7 +2,8 @@
 use crate::game::claim_borders_schematic as schematic;
 use crate::game::{
     Game, claim_borders as claims, claim_borders_construction as model,
-    claim_borders_navigation as nav, claim_borders_navigation_view as navigation,
+    claim_borders_draining as drain, claim_borders_navigation as nav,
+    claim_borders_navigation_view as navigation,
 };
 use std::{
     sync::{Mutex, OnceLock},
@@ -24,6 +25,9 @@ struct State {
     aim: Option<[f32; 2]>,
     started: Instant,
     action_ms: u64,
+    fetches: u8,
+    fetch_ms: u64,
+    diag: &'static str,
 }
 impl Default for State {
     fn default() -> Self {
@@ -37,6 +41,9 @@ impl Default for State {
             aim: None,
             started: Instant::now(),
             action_ms: 0,
+            fetches: 0,
+            fetch_ms: 0,
+            diag: "",
         }
     }
 }
@@ -89,6 +96,17 @@ pub(super) fn world_reset() {
 pub(super) fn exists() -> bool {
     state(|s| s.job.is_some())
 }
+/// (running, resumable) for the action keys; see `workshop_view::control`.
+pub(super) fn control() -> Option<(bool, bool)> {
+    state(|s| {
+        s.job.as_ref().map(|j| {
+            (
+                j.active,
+                !j.preview && !j.active && j.phase != model::Phase::Done,
+            )
+        })
+    })
+}
 pub(super) fn pause() {
     state(|s| {
         let unsent = s.placement.as_ref().is_some_and(|p| p.sequence.is_none());
@@ -123,11 +141,149 @@ fn stop(reason: model::Stop) {
         }
     });
 }
-fn material_slot(game: &Game<'_>) -> Option<usize> {
-    (0..9).find(|slot| {
-        game.stack_in(*slot)
-            .is_some_and(|stack| stack.count > 0 && model::material(&stack.item))
+/// Where a block to place can be taken from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Hotbar(usize),
+    Offhand,
+}
+/// Whether the selected hand would place a block of its own before the off hand gets a turn.
+fn main_hand_places(game: &Game<'_>) -> bool {
+    game.held().is_some_and(|stack| {
+        game.res
+            .items()
+            .get(&stack.item)
+            .is_some_and(|item| item.block.is_some())
     })
+}
+fn source_for(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Option<Source> {
+    // The cheapest matching stack goes first, so plentiful stone is spent before valuables.
+    (0..9)
+        .filter(|slot| {
+            game.stack_in(*slot)
+                .is_some_and(|stack| stack.count > 0 && wanted(&stack.item))
+        })
+        .min_by_key(|slot| {
+            game.stack_in(*slot)
+                .map_or(1, |stack| model::rank(&stack.item))
+        })
+        .map(Source::Hotbar)
+        .or_else(|| {
+            // Vanilla offers the off hand the click once the main hand passed it, so a
+            // pickaxe in the main hand and blocks in the off hand place normally.
+            (!main_hand_places(game)
+                && game
+                    .offhand
+                    .as_ref()
+                    .is_some_and(|stack| stack.count > 0 && wanted(&stack.item)))
+            .then_some(Source::Offhand)
+        })
+}
+fn inventory_slot(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Option<usize> {
+    (9..36)
+        .filter(|slot| {
+            game.inventory
+                .get(*slot)
+                .and_then(Option::as_ref)
+                .is_some_and(|stack| stack.count > 0 && wanted(&stack.item))
+        })
+        .min_by_key(|slot| {
+            game.inventory
+                .get(*slot)
+                .and_then(Option::as_ref)
+                .map_or(1, |stack| model::rank(&stack.item))
+        })
+}
+/// Whether a matching stack exists in the hotbar, the off hand or the main inventory.
+pub(super) fn has_item(game: &Game<'_>, wanted: &dyn Fn(&str) -> bool) -> bool {
+    source_for(game, wanted).is_some() || inventory_slot(game, wanted).is_some()
+}
+enum Fetch {
+    Waiting,
+    Missing,
+}
+/// Moves one matching stack from the main inventory into the hotbar with a single swap click,
+/// the click the inventory screen sends for a number key. The selected slot is never touched,
+/// the click is rate limited and bounded per task, and the server's answer is awaited.
+fn fetch(game: &mut Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Fetch {
+    use horizon_client::menu::Input;
+    if game.remote.is_none() || !game.native_playing() {
+        return Fetch::Missing;
+    }
+    let Some(from) = inventory_slot(game, wanted) else {
+        return Fetch::Missing;
+    };
+    let target = (0..9)
+        .filter(|slot| *slot != game.selected)
+        .find(|slot| game.stack_in(*slot).is_none())
+        .or_else(|| (0..9).rev().find(|slot| *slot != game.selected));
+    let Some(target) = target else {
+        return Fetch::Missing;
+    };
+    let ready = state(|s| {
+        let now = s.started.elapsed().as_millis() as u64;
+        if s.fetches >= 24 {
+            return None;
+        }
+        if now.saturating_sub(s.fetch_ms) < 500 && s.fetch_ms != 0 {
+            return Some(false);
+        }
+        s.fetch_ms = now.max(1);
+        s.fetches += 1;
+        Some(true)
+    });
+    match ready {
+        None => Fetch::Missing,
+        Some(false) => Fetch::Waiting,
+        Some(true) => {
+            if game.remote_menu_ops(&[(Some(from), target as i32, Input::Swap)]) {
+                Fetch::Waiting
+            } else {
+                Fetch::Missing
+            }
+        }
+    }
+}
+/// Whether the block an item places is a plain, solid cube: no container, no fluid, no
+/// shape that is not a full block, nothing unbreakable. The name filter alone cannot know.
+fn solid_cube(game: &Game<'_>, name: &str) -> bool {
+    let Some(id) = game.pack.assets.registry.default_state(name) else {
+        return false;
+    };
+    let facts = game.res.facts().get(id);
+    facts.full_collision
+        && !facts.block_entity
+        && facts.fluid_level == 0
+        && !facts.waterlogged
+        && facts.hardness >= 0.0
+}
+/// Every distinct item the player carries that may be spent on a floor, a bridge or, with
+/// `fill`, on filling water. Taken from the hotbar, the off hand and the main inventory.
+pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let stacks = (0..9)
+        .filter_map(|slot| game.stack_in(slot))
+        .chain(game.offhand.as_ref())
+        .chain((9..36).filter_map(|slot| game.inventory.get(slot).and_then(Option::as_ref)));
+    for stack in stacks {
+        let name: &str = &stack.item;
+        let allowed = if fill {
+            model::fill_material(name)
+        } else {
+            model::material(name)
+        };
+        if stack.count > 0 && allowed && !names.iter().any(|n| n == name) && solid_cube(game, name)
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+/// The cheapest usable building item the player carries, for requests that name one.
+pub(super) fn cheapest_item(game: &Game<'_>, fill: bool) -> Option<String> {
+    building_items(game, fill)
+        .into_iter()
+        .min_by_key(|name| model::rank(name))
 }
 fn placing(s: &State) -> bool {
     s.external
@@ -136,6 +292,39 @@ fn placing(s: &State) -> bool {
         || s.job
             .as_ref()
             .is_some_and(|j| j.active && j.phase == model::Phase::Placing)
+}
+/// Why the last placement found no usable face, for the status line.
+pub(super) fn diagnostic() -> String {
+    let l = language();
+    let why = state(|s| s.diag);
+    match why {
+        "" => String::new(),
+        "support" => l.text("нет опоры рядом", "no support block nearby").into(),
+        "aim" => l
+            .text(
+                "луч прицела упирается в соседний блок",
+                "the aim ray hits another block first",
+            )
+            .into(),
+        "entity" => l
+            .text("на пути моб или предмет", "an entity is in the way")
+            .into(),
+        "interactive" => l
+            .text(
+                "опора — интерактивный блок",
+                "the support block is interactive",
+            )
+            .into(),
+        "refused" => l
+            .text(
+                "клиент отказывается ставить сюда",
+                "the client refuses to place here",
+            )
+            .into(),
+        _ => l
+            .text("ставится не тот блок", "a different block would be placed")
+            .into(),
+    }
 }
 pub(super) fn placement_pending() -> bool {
     state(|s| s.placement.as_ref().is_some_and(|p| p.sequence.is_some()))
@@ -254,12 +443,12 @@ pub(super) fn start(game: &Game<'_>, config: model::Config, preview: bool) -> Re
     }
     if !preview
         && (config.fill_floor || config.kind == model::Kind::Bridge)
-        && material_slot(game).is_none()
+        && building_items(game, false).is_empty()
     {
         return Err(l
             .text(
-                "Добавьте камень, булыжник или землю в хотбар",
-                "Put stone, cobblestone or dirt in the hotbar",
+                "Добавьте строительные блоки в инвентарь (камень, земля, доски…)",
+                "Put building blocks in your inventory (stone, dirt, planks…)",
             )
             .into());
     }
@@ -466,6 +655,11 @@ pub(super) fn movement(
                 } else if nav::distance(position, nav::center(goal)) < 0.12 {
                     j.completed += 1;
                     j.phase = model::Phase::Ready;
+                    // Keep walking when the next section is already open: no pause per block.
+                    if let model::Action::Walk(next) = j.next(|at| block(game, at)) {
+                        j.phase = model::Phase::Walking;
+                        input = model::steer(position, nav::center(next), p.yaw);
+                    }
                 } else {
                     input = model::steer(position, nav::center(goal), p.yaw);
                 }
@@ -489,7 +683,9 @@ pub(super) fn movement(
         *forward = input.forward;
         *strafe = input.strafe;
         *jump = false;
-        *sneak = j.config.kind == model::Kind::Bridge || j.phase == model::Phase::Placing;
+        // Only the edge of the bridge needs a sneak. Walking onto a block the server has
+        // already confirmed is done at full speed instead of the sneaking crawl.
+        *sneak = j.phase == model::Phase::Placing;
         true
     })
 }
@@ -561,33 +757,51 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     if placement.sequence.is_some() {
         return false;
     }
-    let slot = if let Some(e) = external.as_ref() {
-        (0..9).find(|slot| {
-            game.stack_in(*slot)
-                .is_some_and(|s| s.count > 0 && s.item.as_ref() == e.item)
-        })
+    let wanted_item = external.as_ref().map(|e| e.item.clone());
+    // Resolved once: the closure must not borrow the game while a swap click needs it mutably.
+    let usable = if wanted_item.is_none() {
+        building_items(game, false)
     } else {
-        material_slot(game)
+        Vec::new()
     };
-    let Some(slot) = slot else {
-        stop(model::Stop::Material);
-        return false;
+    let wanted = |name: &str| match wanted_item.as_deref() {
+        Some(item) => name == item,
+        None => usable.iter().any(|n| n == name),
     };
-    state(|s| {
-        if s.auto_slot.is_none() {
-            s.original_slot = Some(game.selected);
+    let Some(source) = source_for(game, &wanted) else {
+        // Nothing usable in the hotbar or the off hand: bring a stack over from the inventory
+        // and place on a following tick, once the swap has settled.
+        match fetch(game, &wanted) {
+            Fetch::Waiting => {}
+            Fetch::Missing => stop(model::Stop::Material),
         }
-        s.auto_slot = Some(slot);
-    });
-    game.selected = slot;
-    let Some(stack) = game.stack_in(slot).cloned() else {
+        return false;
+    };
+    let stack = match source {
+        Source::Hotbar(slot) => {
+            state(|s| {
+                if s.auto_slot.is_none() {
+                    s.original_slot = Some(game.selected);
+                }
+                s.auto_slot = Some(slot);
+            });
+            game.selected = slot;
+            game.stack_in(slot).cloned()
+        }
+        // The main hand keeps its tool; the off hand's block is used when it passes.
+        Source::Offhand => game.offhand.clone(),
+    };
+    let Some(stack) = stack else {
         stop(model::Stop::Material);
         return false;
     };
-    if block(game, placement.target).cell != nav::Cell::Air {
+    let free = block(game, placement.target).cell == nav::Cell::Air
+        || (external.is_some() && drain::replaceable(&game.native_block(placement.target)));
+    if !free {
         stop(model::Stop::Blocked);
         return false;
     }
+    let mut why = "support";
     for delta in [
         [0, -1, 0],
         [1, 0, 0],
@@ -623,28 +837,34 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             ],
         );
         if game.entity_targeted() {
+            why = "entity";
             continue;
         }
         let Some(hit) = game.pick().filter(|h| h.pos == anchor && h.face == face) else {
+            why = "aim";
             continue;
         };
         // Do not activate a workstation or other interactive support instead of placing.
         if game.block_takes_click(&hit, Some(&stack)) {
+            why = "interactive";
             continue;
         }
         let Some((at, changes)) = game.remote_can_place(&hit, &stack) else {
+            why = "refused";
             continue;
         };
         if [at.x, at.y, at.z] != placement.target
             || changes.is_empty()
             || (external.is_none() && changes.len() != 1)
         {
+            why = "target";
             continue;
         }
         let placed = game.res.facts().get(changes[0].1);
         let mut confirm = Vec::new();
         if let Some(e) = external.as_ref() {
             if changes.len() > 4 {
+                why = "target";
                 continue;
             }
             let mut valid = true;
@@ -667,9 +887,11 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 confirm.push((pos, wanted.clone()));
             }
             if !valid {
+                why = "target";
                 continue;
             }
         } else if !placed.full_collision || placed.name.as_ref() != stack.item.as_ref() {
+            why = "target";
             continue;
         }
         state(|s| {
@@ -692,10 +914,12 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     };
     let position = [p.x, p.y, p.z];
     let Some(job) = job else {
+        state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
     };
     if nav::distance(position, job.edge()) < 0.08 {
+        state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
     }
@@ -767,6 +991,29 @@ pub(super) fn ack(game: &Game<'_>, sequence: i32) {
         }
     });
 }
+/// How the bridge or tunnel job started by a route is going.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Outcome {
+    Working,
+    Done,
+    Paused,
+    Failed,
+}
+pub(super) fn outcome() -> Option<Outcome> {
+    state(|s| {
+        s.job.as_ref().map(|j| match j.phase {
+            model::Phase::Done => Outcome::Done,
+            model::Phase::Stopped(model::Stop::Manual) => Outcome::Paused,
+            model::Phase::Stopped(_) => Outcome::Failed,
+            _ if j.active => Outcome::Working,
+            _ => Outcome::Paused,
+        })
+    })
+}
+/// Whether blocks usable for a floor are in the hotbar, the off hand or the inventory.
+pub(super) fn has_building_blocks(game: &Game<'_>) -> bool {
+    !building_items(game, false).is_empty()
+}
 pub(super) fn snapshot() -> Option<(String, bool)> {
     let l = language();
     state(|s| {
@@ -787,9 +1034,10 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                     model::Phase::Stopped(model::Stop::Refused) => {
                         l.text("Сервер отказал", "Server refused")
                     }
-                    model::Phase::Stopped(model::Stop::Material) => {
-                        l.text("Нет блоков в хотбаре", "No building blocks in hotbar")
-                    }
+                    model::Phase::Stopped(model::Stop::Material) => l.text(
+                        "Нет блоков (хотбар, 2-я рука, инвентарь)",
+                        "No building blocks (hotbar, off hand, inventory)",
+                    ),
                     model::Phase::Stopped(model::Stop::Hazard) => {
                         l.text("Жидкость или опасный блок", "Fluid or hazardous block")
                     }
