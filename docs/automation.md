@@ -12,7 +12,12 @@ Navigation executes dig and bridge routes step by step: it breaks blocks in the 
 
 ## Drain
 
-Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12) and have building blocks in the hotbar, off hand or inventory; sand and gravel work too. Stand on the shore or float on the surface, then press the start key. The bot fills water and seagrass in the square around you from the bottom up, always on a cell that rests on something solid, so nothing falls. Cheap blocks are used first. If the next cell is out of reach it walks to a standable spot nearby; if none exists it stops with a message, so move closer and continue. It finishes when no supported cell remains and reports how many were left (for example cells under you). It cannot fill deeper than your reach allows unless the lower layers can be reached first, and it does not remove kelp.
+Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blocks (hotbar, off hand or inventory) and press the start key.
+
+- **With sand or gravel** (used first when you have them) any depth works. The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a bridge you stand on. The block sinks and fills the column from the bottom; the bot repeats it until the column reaches the surface, then moves on along the new surface. Each drop waits about 1.5 s for the block to sink.
+- **With other blocks** (stone, dirt, …) only cells resting on something solid are filled, bottom-up, so the floor must be within reach (about 4 blocks below you). For deeper water the task stops and asks for sand or gravel.
+
+Stand on a block next to the water, not in it. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
 
 ## Farm
 

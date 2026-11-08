@@ -279,11 +279,21 @@ pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
     }
     names
 }
-/// The cheapest usable building item the player carries, for requests that name one.
-pub(super) fn cheapest_item(game: &Game<'_>, fill: bool) -> Option<String> {
-    building_items(game, fill)
-        .into_iter()
-        .min_by_key(|name| model::rank(name))
+/// What to fill water with, and whether it is a falling block. Sand and gravel come first:
+/// dropped into the surface cell they sink and stack from the bottom, whatever the depth.
+/// Anything else is the cheapest building block, which only stays where it is placed.
+pub(super) fn drain_item(game: &Game<'_>) -> Option<(String, bool)> {
+    let items = building_items(game, true);
+    items
+        .iter()
+        .find(|name| model::gravity(name))
+        .map(|name| (name.clone(), true))
+        .or_else(|| {
+            items
+                .into_iter()
+                .min_by_key(|name| model::rank(name))
+                .map(|name| (name, false))
+        })
 }
 fn placing(s: &State) -> bool {
     s.external

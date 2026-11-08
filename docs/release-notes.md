@@ -6,5 +6,6 @@ Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2c
 - The keys also work while the menu is open on a Baritone tab and no text field is focused; Start closes the menu and begins the task.
 - Mining can also collect stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels still need a pickaxe.
 - The idle status asks you to press the Start key instead of showing "No destination".
+- Drain: works in deep water with sand or gravel (drops blocks into the surface cell and lets them sink); other blocks need the floor within reach and say so otherwise.
 
 Not verified in game. No installation or publication is implied.

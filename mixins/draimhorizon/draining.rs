@@ -48,6 +48,16 @@ pub fn pick(cells: &[Candidate], eye: [f64; 3]) -> Option<(Pos, bool)> {
                 .map(|c| (c.at, false))
         })
 }
+/// For falling blocks dropped into the surface: the nearest cell with something to click on,
+/// within reach if there is one, otherwise the nearest overall so the caller can walk there.
+pub fn pick_nearest(cells: &[Candidate], eye: [f64; 3]) -> Option<(Pos, bool)> {
+    let distance = |c: &Candidate| nav::distance(nav::center(c.at), eye);
+    let nearest = cells
+        .iter()
+        .filter(|c| c.supported)
+        .min_by(|a, b| distance(a).total_cmp(&distance(b)).then(a.at.cmp(&b.at)))?;
+    Some((nearest.at, distance(nearest) <= REACH))
+}
 /// Whether a column position lies inside the square around the start.
 pub fn inside(config: Config, origin: Pos, at: Pos) -> bool {
     let r = i32::from(config.radius);
@@ -77,6 +87,19 @@ mod tests {
         let eye = [0.5, 65.6, 0.5];
         let cells = [cell([9, 60, 0], true), cell([6, 60, 0], true)];
         assert_eq!(pick(&cells, eye), Some(([6, 60, 0], false)));
+    }
+    #[test]
+    fn dropping_picks_the_nearest_cell_that_has_an_anchor() {
+        let eye = [0.5, 65.6, 0.5];
+        let cells = [
+            cell([1, 64, 0], false),
+            cell([3, 64, 0], true),
+            cell([2, 64, 1], true),
+        ];
+        assert_eq!(pick_nearest(&cells, eye), Some(([2, 64, 1], true)));
+        let far = [cell([9, 64, 0], true)];
+        assert_eq!(pick_nearest(&far, eye), Some(([9, 64, 0], false)));
+        assert_eq!(pick_nearest(&[cell([1, 64, 0], false)], eye), None);
     }
     #[test]
     fn same_layer_prefers_the_nearest_cell() {
