@@ -223,6 +223,21 @@ pub struct Translation {
     pub source_language: Option<String>,
 }
 
+impl Translation {
+    /// True when this is not a real translation: the provider reports the text was already in
+    /// `target`, or only case, spacing or punctuation changed. Such results are discarded.
+    pub fn is_noop(&self, original: &str, target: TargetLanguage) -> bool {
+        let letters = |s: &str| -> String {
+            s.chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect()
+        };
+        self.source_language.as_deref() == Some(target.source_code().as_str())
+            || letters(&self.text) == letters(original)
+    }
+}
+
 pub struct SharedDeepL {
     url: Url,
     token: String,
@@ -435,6 +450,7 @@ pub struct Translator {
     results: Receiver<(u64, Option<Translation>)>,
     stop: Arc<AtomicBool>,
     target: TargetLanguage,
+    source: Option<TargetLanguage>,
 }
 impl Default for Translator {
     fn default() -> Self {
@@ -502,6 +518,7 @@ impl Translator {
             results,
             stop,
             target,
+            source: policy.source,
         }
     }
 }
@@ -513,7 +530,7 @@ impl Translator {
         self.enqueue(id, text, Some(deadline))
     }
     fn enqueue(&self, id: u64, text: &str, deadline: Option<Instant>) -> bool {
-        if text.len() > 4096 || !self.target.needs_translation(text) {
+        if text.len() > 4096 || !self.target.should_translate(self.source, text) {
             return false;
         }
         self.requests
