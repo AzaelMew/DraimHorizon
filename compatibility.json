@@ -5,7 +5,7 @@
   "horizon_mixins_revision": "e8cd0aa38cffef49cb2e088ef716baa107148c02",
   "mixin_schema": 6,
   "source_sha256": {
-    "crates/horizon-client/src/game.rs": "b12f409bf298f8d7f40f2e79e7e39d5fe7ebe464ecbbeac6914d7814d114de23",
+    "crates/horizon-client/src/game.rs": "419c2bdd785f2fef499ae460c41f0bfc125b19fb12a8a8c3cef54b27de4687df",
     "crates/horizon-client/src/game/native_hooks.rs": "2cb9c8f04dd92484ae22788c61d658a76b34ab74bf9deab06b0e44958eecd5bd",
     "crates/horizon-client/src/game/remote.rs": "cfd3a13f5f52df60cc6c83340e2aaf68494dd8b91243adf2a54674ad713dcd7f",
     "crates/horizon-client/src/game/debug_renderers.rs": "2092f8993b2c52c1a9aaf9bad43304231a87ead5cf749f259c363e097ac0fa4d",
