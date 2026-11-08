@@ -1,10 +1,11 @@
-**DraimHorizon 0.29.4 — Baritone keys and mining targets (unreleased)**
+**DraimHorizon 0.29.5 - Baritone bridge, mining grid, schematic picker (unreleased)**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Baritone action keys have defaults: Numpad 1 preview, 2 start / resume, 3 pause, 4 stop (changeable in Options > Mods).
-- The keys also work while the menu is open on a Baritone tab and no text field is focused; Start closes the menu and begins the task.
-- Mining can also collect stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels still need a pickaxe.
-- The idle status asks you to press the Start key instead of showing "No destination".
+- With the separate [horizon-baritone](https://github.com/luhnox/horizon-baritone) mod installed and on, Navigation, Mining, Tunnel (without Floor), Farm and unrotated Schematics run on real Baritone (`goto`, `goal`, `follow player`, `mine`, `tunnel`, `farm`, `build`); the action keys send `pause`, `resume` and `cancel`. Without it the built-in drivers run as before, and nothing is ever sent to the server.
+- Mining targets are a grid of toggles, like the map's structure filters; several can be mined at once.
+- The schematic file button opens the folder when it is empty and a file list otherwise.
+- Farm sowing aims at the real 15/16-high farmland top.
+- Drain fills deep water by dropping sand or gravel into the surface cell.
 
 Not verified in game. No installation or publication is implied.

@@ -279,11 +279,21 @@ pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
     }
     names
 }
-/// The cheapest usable building item the player carries, for requests that name one.
-pub(super) fn cheapest_item(game: &Game<'_>, fill: bool) -> Option<String> {
-    building_items(game, fill)
-        .into_iter()
-        .min_by_key(|name| model::rank(name))
+/// What to fill water with, and whether it is a falling block. Sand and gravel come first:
+/// dropped into the surface cell they sink and stack from the bottom, whatever the depth.
+/// Anything else is the cheapest building block, which only stays where it is placed.
+pub(super) fn drain_item(game: &Game<'_>) -> Option<(String, bool)> {
+    let items = building_items(game, true);
+    items
+        .iter()
+        .find(|name| model::gravity(name))
+        .map(|name| (name.clone(), true))
+        .or_else(|| {
+            items
+                .into_iter()
+                .min_by_key(|name| model::rank(name))
+                .map(|name| (name, false))
+        })
 }
 fn placing(s: &State) -> bool {
     s.external
@@ -828,11 +838,22 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             continue;
         }
         let face = delta.map(|n| -n);
+        // Farmland and paths are 15/16 tall. Aiming above that misses their top face, the
+        // ray goes on past it and lands on the next crop or block, so seeds were never sown.
+        let top = if face == [0, 1, 0]
+            && matches!(
+                game.native_block(anchor).as_str(),
+                "minecraft:farmland" | "minecraft:dirt_path"
+            ) {
+            0.9375 - 0.5 - 0.01
+        } else {
+            f64::from(face[1]) * 0.501
+        };
         aim(
             game,
             [
                 f64::from(anchor[0]) + 0.5 + f64::from(face[0]) * 0.501,
-                f64::from(anchor[1]) + 0.5 + f64::from(face[1]) * 0.501,
+                f64::from(anchor[1]) + 0.5 + top,
                 f64::from(anchor[2]) + 0.5 + f64::from(face[2]) * 0.501,
             ],
         );
@@ -849,7 +870,32 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             why = "interactive";
             continue;
         }
-        let Some((at, changes)) = game.remote_can_place(&hit, &stack) else {
+        let dry = game.remote_can_place(&hit, &stack);
+        // Seeds are items that plant a crop rather than block items; when the dry run cannot
+        // model that, sow anyway and let the server's answer confirm the crop.
+        let crop = external.as_ref().filter(|e| {
+            e.allowed.len() == 1
+                && crate::game::claim_borders_farming::Crop::named(&e.state.name).is_some()
+                && face == [0, 1, 0]
+                && game.native_block(anchor) == "minecraft:farmland"
+        });
+        if dry.is_none()
+            && let Some(e) = crop
+        {
+            let confirm = vec![(placement.target, e.state.clone())];
+            state(|s| {
+                if let Some(p) = s.placement.as_mut() {
+                    p.anchor = Some(anchor);
+                    p.material = e.state.name.clone();
+                }
+                if let Some(e) = s.external.as_mut() {
+                    e.confirm = confirm;
+                }
+                s.aim = Some([game.yaw, game.pitch]);
+            });
+            return true;
+        }
+        let Some((at, changes)) = dry else {
             why = "refused";
             continue;
         };

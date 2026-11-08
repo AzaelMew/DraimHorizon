@@ -401,6 +401,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
         game.native_mod_screen_close(claims::ID);
     }
 }
+/// The tab-list name of an online player.
+pub(super) fn online_name(game: &mut Game<'_>, uuid: u128) -> Option<String> {
+    cached_online(game)
+        .into_iter()
+        .find(|(id, _)| *id == uuid)
+        .map(|(_, name)| name)
+}
 pub(super) fn entity_position(game: &Game<'_>, uuid: u128) -> Option<[f64; 3]> {
     let entity = game.remote.as_ref()?.player_entity(uuid)?;
     let mob = game.mobs.iter().find(|m| m.id == entity && !m.removed)?;
@@ -1620,6 +1627,22 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_workshop_view::refresh(game)?;
             Ok(Vec::new())
         }
+        Action::OpenSchematicFolder => {
+            let dir = crate::game::claim_borders_workshop_view::folder(game);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            // Horizon's own "open folder" (resource packs): Explorer, Finder or xdg-open.
+            crate::game::packs::open_folder(&dir);
+            {
+                use horizon_client::clipboard::Clipboard;
+                game.clipboard.set(&dir.display().to_string());
+            }
+            // A list already being read is fine; the next click reads it again.
+            let _ = crate::game::claim_borders_workshop_view::refresh(game);
+            Ok(vec![tr!(
+                "Папка схем открыта (путь скопирован). Положите .schem / .litematic и выберите файл.",
+                "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
+            )])
+        }
         Action::SchematicInfo(folder) => {
             use horizon_client::clipboard::Clipboard;
             let text = if folder {
@@ -1638,6 +1661,13 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             rotation,
             running,
         } => {
+            if let Some(result) = crate::game::claim_borders_navigation_view::build_baritone(
+                game, &filename, origin, rotation, running,
+            ) {
+                result?;
+                game.native_mod_screen_close(claims::ID);
+                return Ok(Vec::new());
+            }
             crate::game::claim_borders_workshop_view::load(
                 game, filename, origin, rotation, running,
             )?;
@@ -1653,6 +1683,15 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             Ok(Vec::new())
         }
         Action::Navigate { goal, running } => {
+            if let Some(result) =
+                crate::game::claim_borders_navigation_view::start_baritone(game, goal, running)
+            {
+                result?;
+                if running {
+                    game.native_mod_screen_close(claims::ID);
+                }
+                return Ok(Vec::new());
+            }
             crate::game::claim_borders_navigation_view::start(game, goal, running)?;
             if running {
                 game.native_mod_screen_close(claims::ID);

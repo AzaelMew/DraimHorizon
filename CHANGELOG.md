@@ -1,5 +1,14 @@
 # История версий
 
+## 0.29.5
+
+- Bridge to horizon-baritone (luhnox/horizon-baritone, a native port of Baritone 1.21.4): when that mod is installed and on, Navigation, Mining, Tunnel (without Floor), Farm and unrotated Schematics hand their task to it as `goto` / `goal` / `follow player` / `mine` / `tunnel` / `farm` / `build` through Horizon's native command hook, and the action keys send `pause` / `resume` / `cancel`. A command no mod ran never reaches the server. Bridge, Drain, Floor and rotated schematics keep the built-in drivers. New pure module `baritone_bridge.rs` with tests.
+- Mining: the target button became a grid of toggles, like the structure filters on the map. Several targets can be selected at once; the miner takes the nearest of any of them and uses the Ores overlay marks of every selected ore as hints. The grid pages on small panels.
+- Schematics: the file button did nothing when the folder was empty. It now creates and opens the schematic folder in the system file manager (and copies the path); with files present it opens a list to pick from, with an entry to open the folder. The bottom button opens the folder too.
+- Farm: seeds were aimed at a point above the farmland's 15/16-high top, so the ray went past it onto the next crop or block and nothing was sown. The aim now targets the real top face; when the client's dry run cannot model seed planting, the click is sent and the server's answer confirms the crop.
+- Drain fix: water deeper than 12 blocks reported hundreds of cells "without support" and did nothing. With sand or gravel the bot now drops blocks into the surface cell beside a solid block, so any depth fills from the bottom; other blocks keep the bottom-up mode and report that deep water needs sand or gravel. The task ends after several empty scans instead of one, because a sinking block briefly leaves its cell empty.
+- Not compiled locally beyond the pure modules; not verified in game.
+
 ## 0.29.4
 
 - The Baritone action keys also work while the menu is open on a Baritone tab and no text field is focused (the game does not deliver keys to the mod while a screen is open). Start closes the menu and begins the task; errors are shown in the menu feedback.

@@ -69,6 +69,12 @@ struct State {
     attempt: usize,
     message: String,
     last: Instant,
+    // How long the next cell scan waits, so a dropped block can sink and the water can settle.
+    wait: Duration,
+    // The wait after a successful placement of the current kind of block.
+    settle: Duration,
+    // Consecutive scans that found nothing to fill; the task ends after a few.
+    idle: u8,
 }
 impl Default for State {
     fn default() -> Self {
@@ -85,6 +91,9 @@ impl Default for State {
             attempt: 0,
             message: String::new(),
             last: Instant::now(),
+            wait: Duration::from_millis(400),
+            settle: Duration::from_millis(400),
+            idle: 0,
         }
     }
 }
@@ -240,7 +249,7 @@ pub(super) fn start_drain(
     if !config.valid() {
         return Err("Invalid draining bounds".into());
     }
-    if !preview && placement::cheapest_item(game, true).is_none() {
+    if !preview && placement::drain_item(game).is_none() {
         return Err(text(
             "Нужны блоки для засыпки (хотбар, 2-я рука или инвентарь)",
             "Blocks to fill with are required (hotbar, off hand or inventory)",
@@ -498,6 +507,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     Ok(_) => {
                         if let Some(Task::Drain { filled, .. }) = s.task.as_mut() {
                             *filled += 1;
+                            s.wait = s.settle;
                         }
                         s.target = None;
                         s.plant = false;
@@ -579,37 +589,74 @@ pub(super) fn tick(game: &Game<'_>) {
                     origin,
                     filled,
                 } => {
-                    if s.last.elapsed() < Duration::from_millis(400) {
+                    if s.last.elapsed() < s.wait {
                         return;
                     }
                     s.last = Instant::now();
+                    s.wait = Duration::from_millis(400);
                     let Some(p) = game.native_player() else {
                         return;
                     };
+                    if *filled >= 4000 {
+                        s.phase = Phase::Done;
+                        s.active = false;
+                        s.message =
+                            text("Достигнут предел операций", "Operation limit reached").into();
+                        return;
+                    }
+                    let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
+                    s.settle = Duration::from_millis(if falling { 1500 } else { 400 });
                     let eye = [p.x, p.y + 1.2, p.z];
                     let r = i32::from(config.radius);
                     let body = p.y.floor() as i32;
+                    let solid = |at: nav::Pos| placement::block(game, at).cell == nav::Cell::Solid;
                     let mut cells = Vec::new();
                     for z in -r..=r {
                         for x in -r..=r {
                             let (cx, cz) = (origin[0] + x, origin[2] + z);
+                            // The player's own body occupies these cells.
+                            let own = |y: i32| {
+                                (p.x - (f64::from(cx) + 0.5)).abs() < 0.8
+                                    && (p.z - (f64::from(cz) + 0.5)).abs() < 0.8
+                                    && (body..=body + 1).contains(&y)
+                            };
+                            if falling {
+                                // Only the surface cell of a column matters: a dropped block
+                                // sinks to the bottom and the column fills from below. The cell
+                                // needs a solid neighbour to click on.
+                                for y in (origin[1] - 4..=origin[1] + 1).rev() {
+                                    let name = game.native_block([cx, y, cz]);
+                                    if matches!(
+                                        name.as_str(),
+                                        "minecraft:air" | "minecraft:cave_air"
+                                    ) {
+                                        continue;
+                                    }
+                                    if drain::replaceable(&name) && !own(y) {
+                                        let anchored = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                                            .iter()
+                                            .any(|[dx, dz]| solid([cx + dx, y, cz + dz]))
+                                            || solid([cx, y - 1, cz]);
+                                        cells.push(drain::Candidate {
+                                            at: [cx, y, cz],
+                                            supported: anchored,
+                                        });
+                                    }
+                                    break;
+                                }
+                                continue;
+                            }
                             let mut in_water = false;
                             for y in (origin[1] - drain::DEPTH..=origin[1]).rev() {
                                 let name = game.native_block([cx, y, cz]);
                                 if drain::replaceable(&name) {
                                     in_water = true;
-                                    // The player's own body occupies these cells.
-                                    if (p.x - (f64::from(cx) + 0.5)).abs() < 0.8
-                                        && (p.z - (f64::from(cz) + 0.5)).abs() < 0.8
-                                        && (body..=body + 1).contains(&y)
-                                    {
+                                    if own(y) {
                                         continue;
                                     }
-                                    let supported = placement::block(game, [cx, y - 1, cz]).cell
-                                        == nav::Cell::Solid;
                                     cells.push(drain::Candidate {
                                         at: [cx, y, cz],
-                                        supported,
+                                        supported: solid([cx, y - 1, cz]),
                                     });
                                 } else if in_water
                                     || !matches!(
@@ -622,22 +669,44 @@ pub(super) fn tick(game: &Game<'_>) {
                             }
                         }
                     }
-                    match drain::pick(&cells, eye) {
+                    let picked = if falling {
+                        drain::pick_nearest(&cells, eye)
+                    } else {
+                        drain::pick(&cells, eye)
+                    };
+                    match picked {
                         Some((at, _)) => {
                             s.target = Some(at);
                             s.attempt = 0;
+                            s.idle = 0;
                         }
                         None => {
+                            // A block that just sank leaves the cell empty for a moment, so
+                            // finish only after several empty scans in a row.
+                            s.idle += 1;
+                            if s.idle < 4 {
+                                s.wait = Duration::from_millis(1000);
+                                return;
+                            }
                             s.phase = Phase::Done;
                             s.active = false;
                             s.message = if cells.is_empty() {
                                 format!("{}: {filled}", text("Готово, засыпано", "Done, filled"))
+                            } else if falling {
+                                format!(
+                                    "{}: {}",
+                                    text(
+                                        "Нет опоры для клика у края: встаньте на блок у воды",
+                                        "Nothing to click on at the edge: stand on a block by the water"
+                                    ),
+                                    cells.len()
+                                )
                             } else {
                                 format!(
                                     "{}: {}",
                                     text(
-                                        "Остались ячейки без опоры или под вами",
-                                        "Cells left without a floor or under you"
+                                        "Дно вне досягаемости или под вами; для глубокой воды нужен песок или гравий",
+                                        "Floor out of reach or under you; deep water needs sand or gravel"
                                     ),
                                     cells.len()
                                 )
@@ -722,7 +791,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     s.target = None;
                     return;
                 }
-                let Some(item) = placement::cheapest_item(game, true) else {
+                let Some((item, _)) = placement::drain_item(game) else {
                     fail(
                         s,
                         text(
