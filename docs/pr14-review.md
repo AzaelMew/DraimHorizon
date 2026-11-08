@@ -99,9 +99,19 @@ The following results were recorded for the initial patched review build before 
 
 No relay server deployment/provider/network end-to-end tests were run; relay behavior was not changed. No claim is made that GitHub CI or live game acceptance passed.
 
+## Integrated-source verification
+
+The follow-up integrates upstream main `e2abab141c567fa30738e7198c595f14680108b0` without rewriting the original PR commits. The version remains **0.29.0**, both changelog entries are preserved, and the independent 0.28.1 translation fix is included.
+
+- **327 Rust tests passed, one ignored** (293 runtime, 4 schematic integration, 9 translation integration, 21 relay-client tests).
+- **6 Python tooling tests passed**; formatting, strict workspace Clippy, version consistency, official Nightly compatibility and diff checks passed.
+- The combined source was staged with official pinned mixins and the real Horizon client compile-check passed with 19 dead-code warnings.
+- The regenerated native bundle validator returned **`ok: true`**; SHA-256: `2b45ee87555acd479f164606e748817202d9cea33f7714819a3daad22b55ecc1`.
+- Live game acceptance remains unperformed. Remote CI status must be checked on the pushed head rather than inferred from these local results.
+
 ## Delivery and integration cautions
 
 - Test bundles use `target/draimhorizons-0.29.0.hnmod`; they are not published releases.
 - Version bumped once to **0.29.0** for the new global-control capability; changelog, release notes and control documentation updated.
-- Upstream main's independent **0.28.1** translation fix (`e2abab1`) must be preserved when integrating this branch. Integrate main with a merge rather than rewriting the author's commit history, retain version **0.29.0**, and verify the combined source.
+- Preserve upstream main's integrated **0.28.1** translation fix (`e2abab1`) in subsequent changes and rerun the gates after further source edits.
 - This bundle is an **unreleased review build**, not approval to merge or an installation into the user's game.

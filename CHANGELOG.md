@@ -9,6 +9,13 @@
 - Preserve the author's facing-based construction, default floor, compact controls, target dropdowns and bounded recovery. Keep the official Nightly 2ebf00a pin and legacy settings namespace.
 - Remaining PR requirements: sequential server-confirmed Dig/Bridge execution, full permissions/tool/resource safety integration and live in-game end-to-end validation. This review build is not a completed autonomous action navigator.
 
+## 0.28.1
+
+- Chat translation no longer touches messages that are already in the target language. Translating into English, lines such as `im at spawn` were sent to the provider and shown back rewritten (`I'm at spawn`). They are now skipped before sending when the local detector identifies the target language, or when plain-ASCII text cannot be identified and the target is English, as before language selection existed.
+- A provider result is discarded when the provider reports the text was already in the target language, or when only case, spacing or punctuation changed.
+- An explicit **Input** / **Chat from** language is trusted, except that a source equal to the target is never translated. With a non-Latin source such as Russian, text containing none of that script (for example `yea i know`) is left alone instead of being forced through the provider as Russian and rewritten.
+- Outgoing messages use the same rule, so an unnecessary translation no longer ends with a "service unavailable" notice.
+
 ## 0.28.0
 
 - Add Baritone > Farm: choose wheat, carrots, potatoes or beetroot, radius 3–12, harvest limit or continuous operation, and optional replanting. Harvest only mature crops, count server-confirmed breaks, and plant empty farmland with seeds from the hotbar.

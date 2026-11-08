@@ -1133,8 +1133,9 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                         if value.source_language.is_some() {
                             entry.source_language = value.source_language.clone();
                         }
-                        // Text returned unchanged (skipped or already in the target) is not a translation.
-                        if entry.original != value.text {
+                        // Text returned unchanged, or only re-cased/re-punctuated, or reported by the
+                        // provider as already in the target language, is not a translation.
+                        if !value.is_noop(&entry.original, target_language) {
                             s.feed.translate(id, value.text, target_language);
                         }
                     }
