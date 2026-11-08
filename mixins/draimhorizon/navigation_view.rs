@@ -15,6 +15,60 @@ use std::{
 };
 
 pub use model::Goal;
+
+/// Native keys are persisted and edited by Horizon's Options > Mods page.
+/// The native_key hook excludes repeats and runs independently of our menu.
+pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
+    let bindings = model::Hotkey::ALL
+        .map(|action| game.native_mod_key(claims::ID, action.id(), model::Hotkey::DEFAULT));
+    let eligible = allowed(game)
+        && game.native_window()
+        && game.focused
+        && game.native_playing()
+        && !game.screen_over_playing()
+        && game.player.is_some()
+        && game.sleeping.is_none()
+        && game.modifiers.is_empty();
+    let conflict = game
+        .settings
+        .keys
+        .mappings_for(key)
+        .any(|name| !name.starts_with("key.debug."))
+        || game.settings.mods.installed.iter().any(|row| {
+            game.native_on(&row.id)
+                && row.native.as_ref().is_some_and(|native| {
+                    native.keys.iter().any(|[name, _, default]| {
+                        !(row.id == claims::ID && model::Hotkey::ALL.iter().any(|a| a.id() == name))
+                            && game.native_mod_key(&row.id, name, default) == key
+                    })
+                })
+        });
+    let Some(action) = model::hotkey(
+        key,
+        pressed,
+        eligible,
+        conflict,
+        bindings.each_ref().map(String::as_str),
+    ) else {
+        return false;
+    };
+    match action {
+        model::Hotkey::Start => {
+            // Starting from a preview or resuming a paused job must not bypass
+            // the existing consent, world identity or server-confirmation gates.
+            // A second press must not restart an active dig and lose its ACK state.
+            if snapshot(game).1
+                && let Err(error) = resume(game)
+            {
+                game.native_chat(&error);
+            }
+        }
+        model::Hotkey::Pause => pause(),
+        model::Hotkey::Stop => reset(),
+    }
+    true
+}
+
 struct Query {
     flat: bool,
     mine: Option<(u8, Vec<model::Pos>)>,
@@ -30,6 +84,7 @@ struct Answer {
     token: u64,
     start: model::Pos,
     path: Option<model::Path>,
+    action_plan: Option<model::ActionPath>,
 }
 struct Worker {
     tx: SyncSender<Query>,
@@ -97,12 +152,29 @@ impl Worker {
                             ),
                         )
                     };
+                    // If the walking-only planner fails, discover a possible
+                    // dig/bridge route without executing world edits.
+                    let action_plan = if query.mine.is_none()
+                        && path.as_ref().is_none_or(|walking| !walking.complete)
+                        && !canceled()
+                    {
+                        Some(model::search_actions(
+                            query.start,
+                            query.goal,
+                            |at| read(at).cell,
+                            canceled,
+                        ))
+                        .flatten()
+                    } else {
+                        None
+                    };
                     if !canceled() {
                         let _ = results.send(Answer {
                             target,
                             token: query.token,
                             start: query.start,
                             path,
+                            action_plan,
                         });
                     }
                 }
@@ -128,6 +200,7 @@ struct State {
     worker: Option<Worker>,
     token: u64,
     pending: bool,
+    action_plan: Option<model::ActionPath>,
     last_query: Instant,
 }
 impl Default for State {
@@ -144,6 +217,7 @@ impl Default for State {
             worker: None,
             token: 0,
             pending: false,
+            action_plan: None,
             last_query: Instant::now() - Duration::from_secs(2),
         }
     }
@@ -201,6 +275,7 @@ fn cancel_pending(s: &mut State) {
         w.generation.store(s.token, Ordering::Relaxed);
     }
     s.pending = false;
+    s.action_plan = None;
 }
 fn pause_state(s: &mut State) {
     s.nav.pause();
@@ -751,7 +826,8 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
         return crate::game::claim_borders_workshop_view::start_farm(game, config, !running);
     }
     crate::game::claim_borders_workshop_view::reset();
-    if let Goal::Construct(config) = goal_request {
+    if let Goal::Construct(mut config) = goal_request {
+        config.direction = crate::game::claim_borders_construction::Direction::from_yaw(game.yaw);
         return crate::game::claim_borders_construction_view::start(game, config, !running);
     }
     crate::game::claim_borders_construction_view::reset();
@@ -929,18 +1005,34 @@ pub(super) fn tick(game: &Game<'_>) {
                                 job.phase = mining::Phase::NoTarget;
                             }
                         }
-                        s.nav.accept(answer.path);
+                        // Keep an action plan for inspection. Until the native
+                        // executor verifies tools, permissions and server ACKs,
+                        // never feed an edit-requiring route to walking input.
+                        s.action_plan = answer.action_plan;
+                        if answer.path.is_none() && s.mining.is_none() && s.nav.running {
+                            // Retry from the current position with a bounded recovery budget.
+                            // Never turn a failed plan into unbounded movement or block edits.
+                            s.nav.blocked(position);
+                        } else {
+                            s.nav.accept(answer.path);
+                        }
                     }
                 }
             }
         }
         if s.pending && s.last_query.elapsed() > Duration::from_secs(5) {
             cancel_pending(s);
-            s.nav.running = false;
-            s.nav.status = model::Status::NoPath;
             if let Some(job) = s.mining.as_mut() {
                 job.active = false;
                 job.phase = mining::Phase::Timeout;
+                s.nav.running = false;
+                s.nav.status = model::Status::NoPath;
+            } else if s.nav.running {
+                // A delayed worker response is not proof that the destination is unreachable.
+                // Retry a bounded number of times without reusing the stale snapshot.
+                s.nav.blocked(position);
+            } else {
+                s.nav.status = model::Status::NoPath;
             }
         }
         if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !game.native_playing()
@@ -1183,8 +1275,42 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
             .goal
             .zip(game.native_player())
             .map(|(goal, p)| model::distance([p.x, p.y, p.z], model::center(goal)));
+        // Do not advertise an action-aware route as executable until the
+        // block-edit driver can confirm every operation with the server.
+        let action_hint = s
+            .action_plan
+            .as_ref()
+            .and_then(|plan| {
+                let digs = plan
+                    .actions
+                    .iter()
+                    .filter(|a| matches!(a, model::StepAction::Dig { .. }))
+                    .count();
+                let bridges = plan
+                    .actions
+                    .iter()
+                    .filter(|a| matches!(a, model::StepAction::Bridge { .. }))
+                    .count();
+                (digs + bridges > 0).then(|| {
+                    let kind = if plan.complete {
+                        language.text("Маршрут с действиями", "Action route")
+                    } else {
+                        language.text("Частичный маршрут", "Partial route")
+                    };
+                    let warning = language.text(
+                        "копание/мосты пока не исполняются",
+                        "dig/bridge execution not implemented",
+                    );
+                    format!(" · {kind}: {digs} dig, {bridges} bridge · {warning}")
+                })
+            })
+            .unwrap_or_default();
         (
-            distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")),
+            format!(
+                "{}{}",
+                distance.map_or_else(|| label.into(), |d| format!("{label} · {d:.0} m")),
+                action_hint
+            ),
             !s.nav.running,
         )
     })

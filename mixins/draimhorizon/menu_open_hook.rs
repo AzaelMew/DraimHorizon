@@ -1,5 +1,8 @@
 fn claim_borders_menu_open(game: &mut crate::game::Game<'_>, key: &str, pressed: bool) {
     use crate::game::claim_borders;
+    if crate::game::claim_borders_navigation_view::key(game, key, pressed) {
+        return;
+    }
     crate::game::claim_borders_ore_view::key(game, key, pressed);
     if pressed
         && game.native_playing()

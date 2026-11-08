@@ -9,6 +9,16 @@ pub enum Direction {
     West,
 }
 impl Direction {
+    /// Minecraft yaw: 0 = south, 90 = west, 180 = north, -90 = east.
+    pub fn from_yaw(yaw: f32) -> Self {
+        let yaw = yaw.rem_euclid(360.0);
+        match ((yaw + 45.0) / 90.0).floor() as u32 % 4 {
+            0 => Self::South,
+            1 => Self::West,
+            2 => Self::North,
+            _ => Self::East,
+        }
+    }
     pub fn vector(self) -> [i32; 2] {
         match self {
             Self::North => [0, -1],
@@ -389,6 +399,15 @@ mod tests {
             place.acknowledge(8, "minecraft:cobblestone", true),
             Some(true)
         );
+    }
+    #[test]
+    fn tunnel_direction_tracks_player_yaw() {
+        assert_eq!(Direction::from_yaw(0.0), Direction::South);
+        assert_eq!(Direction::from_yaw(90.0), Direction::West);
+        assert_eq!(Direction::from_yaw(180.0), Direction::North);
+        assert_eq!(Direction::from_yaw(-90.0), Direction::East);
+        assert_eq!(Direction::from_yaw(359.0), Direction::South);
+        assert_eq!(Direction::from_yaw(-179.0), Direction::North);
     }
     #[test]
     fn edge_movement_is_bounded_and_materials_exclude_gravity_and_containers() {

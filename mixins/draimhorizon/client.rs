@@ -62,7 +62,18 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                     .into(),
                 crate::game::claim_borders_camera_zoom::DEFAULT_KEY.into(),
             ],
-        ],
+        ]
+        .into_iter()
+        .chain(
+            crate::game::claim_borders_navigation::Hotkey::ALL.map(|action| {
+                [
+                    action.id().into(),
+                    action.label(language).into(),
+                    crate::game::claim_borders_navigation::Hotkey::DEFAULT.into(),
+                ]
+            }),
+        )
+        .collect(),
     }
 }
 
