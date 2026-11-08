@@ -6,6 +6,7 @@
 - Baritone keys have defaults: Numpad 1 preview, 2 start/resume, 3 pause, 4 stop (changeable in Options > Mods), so a task can be started without first assigning keys. The idle status now says to press the Start key instead of "No destination".
 - Mining can collect 13 more targets besides the ores: stone, cobblestone, dirt, sand, gravel, clay, wood, obsidian, glowstone, nether stone, sandstone, end stone, pumpkins and melons. A pickaxe, axe or shovel is accepted; tunnels and dig routes still require a pickaxe.
 - Baritone mining messages ask for a suitable tool (pickaxe, axe or shovel) instead of only a pickaxe. Tunnels and dig routes still need a pickaxe.
+- New workflow `auto-version.yml`: a same-repository pull request that leaves the version unchanged gets its patch version raised automatically, with a stub CHANGELOG entry and release note from the title (`tools/auto_version.py`, tested in `tools/tests`). Forks are not touched. Commits pushed with the workflow token do not start other workflows; the merge to main runs the full verification.
 - Not compiled or tested in game yet beyond the pure modules and CI.
 
 ## 0.29.3

@@ -56,6 +56,7 @@ The format is major.minor.patch.
 - Add a concrete CHANGELOG.md entry and replace docs/release-notes.md with notes for this task. Preserve historical entries.
 - Manifest versions, artifact names, release titles and the v<version> tag must agree.
 - Relay service version is separate, in relay/dhrelay/__init__.py. Bump it when deployed relay behavior changes and update its healthcheck tests.
+- `.github/workflows/auto-version.yml` raises the patch version of a same-repository pull request that did not change it, with a stub CHANGELOG entry and release note taken from the title. Replace the stub with concrete text; do not rely on it for minor or major changes.
 - Bumping a version does not authorize commit, push, release or deployment. Perform those when requested. A release task includes monitoring CI and checking published assets.
 
 ## Icons
