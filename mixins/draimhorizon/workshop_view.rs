@@ -140,6 +140,8 @@ struct State {
     unplanted: bool,
     // The job is up and waiting (ripening crops, light or seeds): shown as idle, not paused.
     waiting: bool,
+    // Walking back to the beds, and since when.
+    home: Option<Instant>,
     // The dropped item being walked to, and the ones given up on.
     loot: Option<Loot>,
     ignored_items: Vec<u32>,
@@ -173,6 +175,7 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            home: None,
             progress: (0, Instant::now()),
             done: 0,
             loot: None,
@@ -829,6 +832,65 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
     }
     true
 }
+/// Takes the farm back to its beds when the player is far from them or the chunks they are in
+/// are not loaded (from a distance the field reads as empty, and the job would wait for crops
+/// that are not there). True while it is walking there.
+fn home_step(game: &Game<'_>, s: &mut State) -> bool {
+    let (origin, radius) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => (*origin, f64::from(config.radius)),
+        _ => return false,
+    };
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let near = (p.x - (f64::from(origin[0]) + 0.5)).hypot(p.z - (f64::from(origin[2]) + 0.5))
+        <= radius + 6.0;
+    let loaded = game
+        .world
+        .chunks
+        .contains_key(&(origin[0].div_euclid(16), origin[2].div_euclid(16)));
+    if near && loaded {
+        s.home = None;
+        return false;
+    }
+    let message = text("возвращаюсь к грядкам", "walking back to the beds");
+    match s.home {
+        None => {
+            match driver::workshop_walk(game, origin, true, false) {
+                Ok(()) => {
+                    s.home = Some(Instant::now());
+                    s.message = message.into();
+                    s.waiting = false;
+                }
+                Err(e) => idle(s, e),
+            }
+            true
+        }
+        Some(since) => match driver::workshop_walk_result() {
+            Some(true) => {
+                s.home = None;
+                false
+            }
+            Some(false) => {
+                // No way back for now: wait and ask again instead of pausing.
+                s.home = None;
+                idle(
+                    s,
+                    text(
+                        "далеко от грядок, пути нет, жду и пробую снова",
+                        "far from the beds, no route, waiting to try again",
+                    ),
+                );
+                true
+            }
+            None if since.elapsed() > Duration::from_secs(90) => {
+                s.home = None;
+                true
+            }
+            None => true,
+        },
+    }
+}
 /// Whether a ray from the eye of someone standing at `feet` reaches the middle of `target`
 /// through nothing but air (plants and crops count: they stop the aim ray).
 fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
@@ -860,6 +922,9 @@ fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
     })
 }
 /// Leaves a drain cell for a while (no route to it, or it keeps failing) and goes on.
+/// How long a cell that just received a falling block is left alone: about the time the block
+/// needs to sink out of it. A line is laid at a few blocks a second, as when bridging by hand.
+const SINK_MS: u64 = 450;
 fn give_up_cell(s: &mut State, target: nav::Pos) {
     s.errors += 1;
     s.missed += 1;
@@ -1111,12 +1176,17 @@ pub(super) fn tick(game: &Game<'_>) {
         if !s.active || s.task.is_none() {
             return;
         }
-        if !game.native_playing() {
+        if !driver::in_world(game) {
             // The storage window is open: store_frame drives it, the job just waits.
             if s.store.is_some() && game.screen == Screen::Inventory {
                 return;
             }
             s.active = false;
+            return;
+        }
+        // The inventory, the chat or one of the mod's screens is open: no click can be made, so
+        // the job waits for it to close instead of pausing. (Walking is not affected.)
+        if !game.native_playing() {
             return;
         }
         // A job that does nothing for a long time without saying why (a cell it cannot place, a
@@ -1239,7 +1309,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 && let Some(at) = s.target
                             {
                                 s.skip
-                                    .push((at, Instant::now() + Duration::from_millis(800)));
+                                    .push((at, Instant::now() + Duration::from_millis(SINK_MS)));
                             }
                         }
                         s.target = None;
@@ -1320,6 +1390,10 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.store.is_some() {
             store_walk(game, s);
+            return;
+        }
+        // Far from the beds, or their chunks are not loaded: go back before looking for crops.
+        if s.target.is_none() && home_step(game, s) {
             return;
         }
         if s.target.is_none() {
@@ -1454,7 +1528,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
                     let surface = falling || pattern;
                     s.falling = falling;
-                    s.settle = Duration::from_millis(if falling { 120 } else { 80 });
+                    s.settle = Duration::from_millis(if falling { 70 } else { 80 });
                     let held = |at: nav::Pos| s.skip.iter().any(|(p, _)| *p == at);
                     let eye = [p.x, p.y + 1.2, p.z];
                     let r = i32::from(config.radius);
@@ -1485,6 +1559,9 @@ pub(super) fn tick(game: &Game<'_>) {
                                         "minecraft:air" | "minecraft:cave_air"
                                     ) {
                                         continue;
+                                    }
+                                    if drain::replaceable(&name) {
+                                        placement::forget([cx, y, cz]);
                                     }
                                     if drain::replaceable(&name) && !own(y) && !held([cx, y, cz]) {
                                         let anchored = [[1, 0], [-1, 0], [0, 1], [0, -1]]
@@ -1552,9 +1629,9 @@ pub(super) fn tick(game: &Game<'_>) {
                                 // one when it has, right here.
                                 Some((y, true))
                                     if hold(y)
-                                        .is_some_and(|d| d <= Duration::from_millis(1000)) =>
+                                        .is_some_and(|d| d <= Duration::from_millis(SINK_MS)) =>
                                 {
-                                    s.wait = Duration::from_millis(120);
+                                    s.wait = Duration::from_millis(50);
                                     return;
                                 }
                                 Some((y, true)) if hold(y).is_none() => {
@@ -1580,6 +1657,23 @@ pub(super) fn tick(game: &Game<'_>) {
                             s.idle += 1;
                             if s.idle < 4 {
                                 s.wait = Duration::from_millis(1000);
+                                return;
+                            }
+                            if !cells.is_empty() {
+                                // Water is left but no cell has a firm block beside it to click:
+                                // not done. Wait, look again (the player may move, a block may
+                                // settle) and keep saying why.
+                                s.idle = 0;
+                                s.waiting = true;
+                                s.wait = Duration::from_millis(2500);
+                                s.message = format!(
+                                    "{}: {}",
+                                    text(
+                                        "нет опоры для клика у края, жду (встаньте на блок у воды)",
+                                        "no firm block to click on at the edge, waiting (stand on a block by the water)"
+                                    ),
+                                    cells.len()
+                                );
                                 return;
                             }
                             s.phase = Phase::Done;

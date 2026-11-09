@@ -7,8 +7,8 @@ pub struct Panel {
 }
 impl Panel {
     pub fn new(viewport: [f32; 2]) -> Self {
-        let w = (viewport[0] - 24.0).clamp(1.0, 520.0);
-        let h = (viewport[1] - 24.0).clamp(1.0, 300.0);
+        let w = (viewport[0] - 24.0).clamp(1.0, 640.0);
+        let h = (viewport[1] - 24.0).clamp(1.0, 360.0);
         Self {
             rect: [(viewport[0] - w) / 2.0, (viewport[1] - h) / 2.0, w, h],
         }
@@ -115,7 +115,7 @@ mod tests {
         for viewport in [[1280., 720.], [854., 480.], [320., 240.]] {
             let p = Panel::new(viewport);
             assert!(p.rect[2] < viewport[0] && p.rect[3] < viewport[1]);
-            assert!(p.rect[2] <= 600. && p.rect[3] <= 350.);
+            assert!(p.rect[2] <= 640. && p.rect[3] <= 360.);
             assert_eq!(p.local([p.rect[0] + 24., p.rect[1] + 56.]), [24., 56.]);
         }
     }

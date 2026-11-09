@@ -253,7 +253,9 @@ pub fn safe_target(
     {
         return false;
     }
-    if block([at[0], at[1] + 1, at[2]]).falling {
+    // Sand and gravel are mined with more of the same above them (a dune wall, a desert): the
+    // block above only drops into the gap. For other ore a falling block above is a risk.
+    if !block(at).falling && block([at[0], at[1] + 1, at[2]]).falling {
         return false;
     }
     let neighbors = [
@@ -270,48 +272,121 @@ pub fn safe_target(
             .iter()
             .all(|b| !matches!(b.cell, nav::Cell::Hazard | nav::Cell::Unknown))
 }
+/// Why a search found nothing, for the status line: how many blocks of the kind were seen and
+/// where each one was given up on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlanStats {
+    /// Blocks of the kind seen in the scanned cubes, buried ones included.
+    pub seen: u32,
+    /// Those with an open side: the ones that can be mined without digging.
+    pub candidates: u32,
+    /// No side of the block was safe to mine it from.
+    pub unsafe_: u32,
+    /// Safe, but nowhere to stand beside it.
+    pub no_stand: u32,
+    /// A place to stand, but no walking route to it.
+    pub no_path: u32,
+}
 pub fn plan(
+    start: nav::Pos,
+    excluded: &[nav::Pos],
+    block: impl FnMut(nav::Pos) -> Block,
+    canceled: impl Fn() -> bool,
+) -> Option<(nav::Pos, nav::Path)> {
+    plan_with_stats(start, excluded, block, canceled, &mut PlanStats::default())
+}
+/// The nearest target that can be walked to, scanned outwards in growing cubes so that the
+/// blocks beside the player are always looked at first and a slow scan still has something.
+pub fn plan_with_stats(
     start: nav::Pos,
     excluded: &[nav::Pos],
     mut block: impl FnMut(nav::Pos) -> Block,
     canceled: impl Fn() -> bool,
+    stats: &mut PlanStats,
 ) -> Option<(nav::Pos, nav::Path)> {
     let began = Instant::now();
     let mut candidates = Vec::new();
-    for y in -12..=12 {
-        for z in -SCAN_RADIUS..=SCAN_RADIUS {
-            if canceled() || began.elapsed() > Duration::from_millis(250) {
-                return None;
-            }
-            for x in -SCAN_RADIUS..=SCAN_RADIUS {
-                let at = [start[0] + x, start[1] + y, start[2] + z];
-                if block(at).ore && !excluded.contains(&at) {
-                    candidates.push((x * x + y * y + z * z, at));
+    let mut done = -1;
+    'scan: for radius in [3, 6, 10, SCAN_RADIUS] {
+        for y in -radius.min(12)..=radius.min(12) {
+            for z in -radius..=radius {
+                if canceled() {
+                    return None;
+                }
+                if began.elapsed() > Duration::from_millis(400) {
+                    break 'scan;
+                }
+                for x in -radius..=radius {
+                    if x.abs().max(y.abs()).max(z.abs()) <= done {
+                        continue;
+                    }
+                    let at = [start[0] + x, start[1] + y, start[2] + z];
+                    if !block(at).ore || excluded.contains(&at) {
+                        continue;
+                    }
+                    stats.seen += 1;
+                    // A block with every side closed is dug to by `plan_buried`; the nearest
+                    // ones are often the sand under the player's feet, which would crowd out
+                    // the blocks that are open.
+                    let open = [
+                        [1, 0, 0],
+                        [-1, 0, 0],
+                        [0, 1, 0],
+                        [0, -1, 0],
+                        [0, 0, 1],
+                        [0, 0, -1],
+                    ]
+                    .iter()
+                    .any(|d| {
+                        block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]).cell == nav::Cell::Air
+                    });
+                    if open {
+                        candidates.push((x * x + y * y + z * z, at));
+                    }
                 }
             }
         }
+        done = radius;
+        if candidates.len() >= 24 {
+            break;
+        }
     }
+    stats.candidates = candidates.len() as u32;
     candidates.sort_unstable();
-    candidates.truncate(16);
+    candidates.truncate(32);
     for (_, target) in candidates {
+        let (mut safe, mut stand) = (false, false);
         for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
             // Standing below the block reaches up a trunk: logs several blocks above the ground.
             for y in [0, -1, 1, -2, -3, -4, -5] {
-                if canceled() || began.elapsed() > Duration::from_millis(500) {
+                if canceled() {
+                    return None;
+                }
+                if began.elapsed() > Duration::from_millis(900) {
                     return None;
                 }
                 let at = [target[0] + x, target[1] + y, target[2] + z];
-                if !safe_target(target, nav::center(at), &mut block)
-                    || !nav::standable(at, &mut |p| block(p).cell)
-                {
+                if !safe_target(target, nav::center(at), &mut block) {
                     continue;
                 }
+                safe = true;
+                if !nav::standable(at, &mut |p| block(p).cell) {
+                    continue;
+                }
+                stand = true;
                 if let Some(path) = nav::search(start, at, |p| block(p).cell, &canceled)
                     && path.complete
                 {
                     return Some((target, path));
                 }
             }
+        }
+        if !safe {
+            stats.unsafe_ += 1;
+        } else if !stand {
+            stats.no_stand += 1;
+        } else {
+            stats.no_path += 1;
         }
     }
     None
@@ -363,6 +438,9 @@ pub fn plan_buried(
         if canceled() || began.elapsed() > Duration::from_millis(900) {
             return None;
         }
+        // Digging down to sand or gravel goes through more of it; for other ore a falling block
+        // in or above the way is left alone.
+        let falling_target = read(target).falling;
         let path = nav::search_dig(
             start,
             target,
@@ -373,8 +451,7 @@ pub fn plan_buried(
                 let b = read(at);
                 b.cell == nav::Cell::Solid
                     && b.breakable
-                    && !b.falling
-                    && !read([at[0], at[1] + 1, at[2]]).falling
+                    && (falling_target || (!b.falling && !read([at[0], at[1] + 1, at[2]]).falling))
             },
             &canceled,
         );
@@ -383,6 +460,28 @@ pub fn plan_buried(
         }
     }
     None
+}
+/// The next block to mine without a step: of the blocks within reach, the one nearest to the
+/// block that was just broken (a vein, a column of sand, the next log), the nearest to the eye
+/// among equals. `None` when there is none.
+pub fn next_in_reach(
+    last: Option<nav::Pos>,
+    eye: [f64; 3],
+    candidates: &[nav::Pos],
+) -> Option<nav::Pos> {
+    let anchor = last.map_or(eye, nav::center);
+    candidates.iter().copied().min_by(|a, b| {
+        let key = |at: &nav::Pos| {
+            (
+                nav::distance(nav::center(*at), anchor),
+                nav::distance(nav::center(*at), eye),
+            )
+        };
+        let (ka, kb) = (key(a), key(b));
+        ka.0.total_cmp(&kb.0)
+            .then(ka.1.total_cmp(&kb.1))
+            .then(a.cmp(b))
+    })
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -406,6 +505,8 @@ pub enum Wait {
     Tool,
     /// The inventory has no free slot for the drops.
     Inventory,
+    /// On a trip to the storage container to empty the inventory.
+    Storage,
 }
 #[derive(Clone, Debug)]
 pub struct Job {
@@ -667,6 +768,134 @@ mod tests {
         }
         assert_eq!(dig.phase, Phase::Refused);
         assert!(!dig.active);
+    }
+    /// A desert: sand to y = -1 (every sand block has more sand or air above it) and a dune
+    /// wall of sand three blocks high at x = 4.
+    fn desert(at: nav::Pos) -> Block {
+        let sand = Block {
+            cell: nav::Cell::Solid,
+            ore: true,
+            falling: true,
+            breakable: true,
+        };
+        if at[1] < 0 || (at[0] == 4 && (0..3).contains(&at[1])) {
+            sand
+        } else {
+            Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            }
+        }
+    }
+    #[test]
+    fn sand_is_found_in_a_desert_even_with_sand_stacked_above_it() {
+        let mut stats = PlanStats::default();
+        let (target, path) =
+            plan_with_stats([0, 0, 0], &[], desert, || false, &mut stats).expect("sand to mine");
+        assert!(path.complete);
+        assert!(stats.candidates > 0);
+        // The nearest block is mined, not one far away.
+        let d = target[0] * target[0] + target[1] * target[1] + target[2] * target[2];
+        assert!(d <= 4, "{target:?}");
+        // The dune wall: only its blocks count, and they are still reachable.
+        let wall_only = |at: nav::Pos| {
+            let mut b = desert(at);
+            b.ore = at[0] == 4 && (0..3).contains(&at[1]);
+            b
+        };
+        let (target, _) = plan([0, 0, 0], &[], wall_only, || false).expect("a wall block");
+        assert_eq!(target[0], 4);
+        // Other ore with a falling block above it is still left alone.
+        let risky = |at: nav::Pos| {
+            let mut b = desert(at);
+            b.ore = at == [4, 0, 0];
+            b.falling = at != [4, 0, 0];
+            b
+        };
+        let mut stats = PlanStats::default();
+        assert!(plan_with_stats([0, 0, 0], &[], risky, || false, &mut stats).is_none());
+        assert_eq!((stats.candidates, stats.unsafe_), (1, 1));
+    }
+    /// A ridge: one sand column to y = -1 in the middle of pits whose floor is at y = -4.
+    fn ridge(at: nav::Pos) -> Block {
+        let sand = Block {
+            cell: nav::Cell::Solid,
+            ore: true,
+            falling: true,
+            breakable: true,
+        };
+        if at[1] <= -4 || (at[0] == 0 && at[2] == 0 && at[1] <= -1) {
+            sand
+        } else {
+            Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            }
+        }
+    }
+    #[test]
+    fn the_player_walks_down_a_three_block_drop_to_reach_the_sand() {
+        // On the ridge every neighbour is three blocks lower: a walk steps off the edge.
+        let (target, path) =
+            plan([0, 0, 0], &[], ridge, || false).expect("a walk down into the pit");
+        assert!(ridge(target).ore && path.complete);
+        assert!(path.nodes.iter().any(|n| n[1] <= -3));
+    }
+    /// A sandstone canyon floor: rock everywhere but the player's cell and the one above it,
+    /// with a layer of sand (the only ore) seven blocks up.
+    fn canyon(at: nav::Pos) -> Block {
+        let rock = Block {
+            cell: nav::Cell::Solid,
+            ore: false,
+            falling: false,
+            breakable: true,
+        };
+        match at[1] {
+            0 | 1 if at[0] == 0 && at[2] == 0 => Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            },
+            y if y < 7 => rock,
+            7 => Block {
+                ore: true,
+                falling: true,
+                ..rock
+            },
+            _ => Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            },
+        }
+    }
+    #[test]
+    fn a_way_up_is_dug_through_rock_to_sand_overhead() {
+        // Nothing is open: no walk and nothing in reach, so the planner has to dig a stair up.
+        assert!(plan([0, 0, 0], &[], canyon, || false).is_none());
+        let (target, route) = plan_buried([0, 0, 0], &[], &[], true, canyon, || false)
+            .expect("a stair dug up through the sandstone");
+        assert_eq!(target[1], 7);
+        assert!(
+            route.complete && route.steps.len() >= 5,
+            "{}",
+            route.steps.len()
+        );
+        assert!(route.steps.iter().any(|step| !step.dig.is_empty()));
+    }
+    #[test]
+    fn the_next_block_is_the_one_beside_the_last_break() {
+        let eye = [0.5, 1.6, 0.5];
+        let near_eye = [1, 0, 0];
+        let beside_last = [3, 0, 1];
+        assert_eq!(
+            next_in_reach(Some([3, 0, 2]), eye, &[near_eye, beside_last]),
+            Some(beside_last)
+        );
+        // With no block broken yet the nearest to the eye is taken.
+        assert_eq!(
+            next_in_reach(None, eye, &[beside_last, near_eye]),
+            Some(near_eye)
+        );
+        assert_eq!(next_in_reach(None, eye, &[]), None);
     }
     #[test]
     fn instant_breaks_and_paused_inflight_confirmations_preserve_the_limit() {

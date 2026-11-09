@@ -30,6 +30,43 @@ pub fn product(crop: Crop) -> &'static str {
         Crop::Beetroot => "minecraft:beetroot",
     }
 }
+/// The inventory slots to move into a container after mining: everything but what the miner
+/// still needs. `needed` names what stays whatever the amount (tools, food, a totem), and
+/// `building` marks blocks kept to build with, up to `keep` of each kind, counted from the hotbar
+/// on; a stack that would take that kind over the limit goes into the container.
+pub fn deposit_mined(
+    inventory: &[Stack],
+    needed: &dyn Fn(&str) -> bool,
+    building: &dyn Fn(&str) -> bool,
+    keep: u32,
+) -> Vec<usize> {
+    let mut kept: Vec<(&str, u32)> = Vec::new();
+    let mut slots = Vec::new();
+    for (slot, stack) in inventory.iter().enumerate() {
+        let Some((name, n)) = stack else {
+            continue;
+        };
+        if needed(name) {
+            continue;
+        }
+        if building(name) {
+            match kept.iter_mut().find(|(item, _)| item == name) {
+                Some((_, total)) if *total + n <= keep => {
+                    *total += n;
+                    continue;
+                }
+                Some(_) => {}
+                None if *n <= keep => {
+                    kept.push((name, *n));
+                    continue;
+                }
+                None => {}
+            }
+        }
+        slots.push(slot);
+    }
+    slots
+}
 pub fn free_slots(inventory: &[Stack]) -> usize {
     inventory.iter().filter(|s| s.is_none()).count()
 }
@@ -89,6 +126,30 @@ pub fn withdraw(container: &[Stack], inventory: &[Stack], seed: &str, want: u32)
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mined_loot_goes_to_the_container_except_what_the_miner_needs() {
+        let item = |name: &str, n: u32| Some((name.to_string(), n));
+        let inventory = vec![
+            item("minecraft:diamond_pickaxe", 1),
+            item("minecraft:sand", 64),
+            item("minecraft:bread", 12),
+            item("minecraft:sand", 64),
+            None,
+            item("minecraft:gravel", 20),
+            item("minecraft:sand", 30),
+        ];
+        let needed = |name: &str| name.ends_with("_pickaxe") || name == "minecraft:bread";
+        let sand = |name: &str| name == "minecraft:sand";
+        // One stack of sand is kept to build with; the rest, and the gravel, go.
+        assert_eq!(deposit_mined(&inventory, &needed, &sand, 64), vec![3, 5, 6]);
+        // Nothing is kept when nothing is for building.
+        assert_eq!(
+            deposit_mined(&inventory, &needed, &|_| false, 64),
+            vec![1, 3, 5, 6]
+        );
+        // The tool and the food alone: nothing to move.
+        assert!(deposit_mined(&inventory[..1], &needed, &sand, 64).is_empty());
+    }
     use super::*;
     fn stack(item: &str, n: u32) -> Stack {
         Some((item.into(), n))

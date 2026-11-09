@@ -1509,6 +1509,15 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storage(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            helpers: menu::Helper::ALL.map(|helper| {
+                game.native_setting(claims::SETTINGS_ID, helper.key())
+                    .as_deref()
+                    == Some("true")
+            }),
+            shulker_peek: game
+                .native_setting(claims::SETTINGS_ID, "shulker_peek")
+                .as_deref()
+                != Some("false"),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1666,6 +1675,22 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             }
             Ok(Vec::new())
         }
+        Action::SetShulkerPeek(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "shulker_peek",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetHelper(helper, on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                helper.key(),
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
         Action::SetAutoEat(on) => {
             game.native_set_setting(
                 claims::SETTINGS_ID,
@@ -1678,15 +1703,13 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             let l = crate::game::claim_borders_chat_view::current_language();
             match crate::game::claim_borders_workshop_view::set_storage(game) {
                 Ok([x, y, z]) => Ok(vec![match l {
-                    Language::Russian => format!("Склад фермы: {x} {y} {z}"),
-                    Language::English => format!("Farm storage: {x} {y} {z}"),
+                    Language::Russian => format!("Склад: {x} {y} {z}"),
+                    Language::English => format!("Storage: {x} {y} {z}"),
                 }]),
                 // Aiming at nothing useful while one is set: forget it.
                 Err(_) if crate::game::claim_borders_workshop_view::storage(game).is_some() => {
                     crate::game::claim_borders_workshop_view::clear_storage();
-                    Ok(vec![
-                        l.text("Склад фермы сброшен", "Farm storage cleared").into(),
-                    ])
+                    Ok(vec![l.text("Склад сброшен", "Storage cleared").into()])
                 }
                 Err(e) => Err(e),
             }

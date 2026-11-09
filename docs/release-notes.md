@@ -1,8 +1,8 @@
-**DraimHorizon 0.35.1 - Agent reply language instruction cleanup**
+**DraimHorizon 0.38.2 - Planning from an edge or the air**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Removed the instruction requiring Russian replies to the owner from AGENTS.md.
-- Public README and artwork remain English. No gameplay behavior changed.
+- Mining no longer idles with "no route" when the player stands on an edge, at the lip of a pit or in the air: planning starts from the nearest place that can be stood on.
+- Builds on 0.38.1: digging up to sand overhead and a route budget that mined blocks reset.
 
-Documentation-only change apart from the required synchronized version bump. No installation or publication is implied.
+Not verified in game. No installation or publication is implied.

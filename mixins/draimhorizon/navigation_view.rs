@@ -1,6 +1,8 @@
 // Native adapter for the local walking navigator; bounded background path planning.
 use crate::game::claim_borders_mining as mining;
-use crate::game::{Game, Resources, claim_borders as claims, claim_borders_navigation as model};
+use crate::game::{
+    Game, Resources, Screen, claim_borders as claims, claim_borders_navigation as model,
+};
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{chunk::Chunk, gizmos::Gizmos};
 use horizon_world::registry::BlockStateId;
@@ -144,6 +146,18 @@ pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
         FOCUS_PAUSE_OFF.store(false, Relaxed);
     }
 }
+/// In the world, possibly with the inventory, the chat or one of this mod's own screens (the
+/// menu, the map) open: tasks go on. Walking carries on as usual; breaking and placing wait
+/// until the screen is closed (the game takes no use or attack clicks behind a screen).
+pub(super) fn in_world(game: &Game<'_>) -> bool {
+    game.title.is_none()
+        && game.sign_edit.is_none()
+        && game.book.is_none()
+        && matches!(
+            game.screen,
+            Screen::Playing | Screen::Inventory | Screen::Chat | Screen::Mod
+        )
+}
 /// What the action keys should do with the task in progress: (running, resumable).
 fn control() -> (bool, bool) {
     if assist_active() {
@@ -200,6 +214,8 @@ struct Answer {
     start: model::Pos,
     path: Option<model::Path>,
     dig_plan: Option<model::DigPath>,
+    /// What the search for a mining target saw, for the status line.
+    stats: Option<mining::PlanStats>,
 }
 struct Worker {
     tx: SyncSender<Query>,
@@ -254,15 +270,25 @@ impl Worker {
                             }
                         })
                     };
+                    // The player may stand on an edge or in the air: plan from the nearest place
+                    // that can be stood on (the answer keeps the real start for its own check).
+                    let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
+                        .unwrap_or(query.start);
                     let mut dig_plan = None;
+                    let mut stats = None;
                     let (target, path) = if let Some((_, excluded)) = query.mine.as_ref() {
-                        match mining::plan(query.start, excluded, &mut read, canceled) {
+                        let mut seen = mining::PlanStats::default();
+                        let found = mining::plan_with_stats(
+                            start, excluded, &mut read, canceled, &mut seen,
+                        );
+                        stats = Some(seen);
+                        match found {
                             Some((target, path)) => (Some(target), Some(path)),
                             // Nothing is exposed: look for ore inside the rock and plan
                             // the route that digs to it.
                             None if query.dig && !canceled() => {
                                 match mining::plan_buried(
-                                    query.start,
+                                    start,
                                     excluded,
                                     &query.hints,
                                     query.place,
@@ -282,7 +308,7 @@ impl Worker {
                         (
                             None,
                             model::search_near(
-                                query.start,
+                                start,
                                 query.goal,
                                 query.radius,
                                 |at| read(at).cell,
@@ -300,7 +326,7 @@ impl Worker {
                         let read = std::cell::RefCell::new(read);
                         let digging = query.dig;
                         dig_plan = model::search_dig(
-                            query.start,
+                            start,
                             query.goal,
                             false,
                             query.place,
@@ -323,6 +349,7 @@ impl Worker {
                             start: query.start,
                             path,
                             dig_plan,
+                            stats,
                         });
                     }
                 }
@@ -342,6 +369,9 @@ struct State {
     use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
+    /// What the last mining search saw, shown while it finds nothing.
+    mine_stats: Option<mining::PlanStats>,
+    mine_note: String,
     mine_aim: Option<[f32; 2]>,
     started: Instant,
     nav: model::Navigator,
@@ -365,6 +395,8 @@ impl Default for State {
             use_restore: None,
             attack_restore: None,
             mining: None,
+            mine_stats: None,
+            mine_note: String::new(),
             mine_aim: None,
             started: Instant::now(),
             nav: model::Navigator::default(),
@@ -740,6 +772,22 @@ pub(super) fn construction_resume_dig() {
 fn free_slot(game: &Game<'_>) -> bool {
     game.inventory.iter().take(36).any(Option::is_none)
 }
+/// Whether what a mining job breaks can still be picked up: a free slot, or a stack of the same
+/// kind that is not full (sand laid one by one across the inventory still has room). The
+/// inventory is full only when every slot is taken and every stack of the kind is at its limit.
+fn room_for_mining(game: &Game<'_>, ore: u8) -> bool {
+    free_slot(game)
+        || (0..36).any(|slot| {
+            slot_stack(game, slot).is_some_and(|stack| {
+                let limit = game
+                    .res
+                    .items()
+                    .get(&stack.item)
+                    .map_or(64, |item| item.max_stack);
+                stack.count < limit && mining::matches(ore, &stack.item)
+            })
+        })
+}
 fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(), String> {
     let language = language();
     if !allowed(game) {
@@ -776,7 +824,7 @@ fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(
             )
             .into());
     }
-    if running && !free_slot(game) {
+    if running && !room_for_mining(game, job.ore) {
         return Err(language
             .text("Освободите слот в инвентаре", "Free an inventory slot")
             .into());
@@ -818,7 +866,7 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
         let Some(job) = s.mining.as_mut() else {
             return Ok(());
         };
-        if !mining_tool(game, None) || !free_slot(game) {
+        if !mining_tool(game, None) || !room_for_mining(game, job.ore) {
             return Err(language()
                 .text(
                     "Нужен исправный инструмент и свободный слот",
@@ -842,13 +890,86 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
         request(game, s)
     })
 }
+/// Whether nothing but air lies between the eye and the middle of `target`.
+fn in_plain_sight(game: &Game<'_>, ore: u8, eye: [f64; 3], target: model::Pos) -> bool {
+    let end = model::center(target);
+    let steps = (model::distance(eye, end) / 0.2).ceil() as i32;
+    (1..steps).all(|i| {
+        let t = f64::from(i) / f64::from(steps);
+        let at = [
+            (eye[0] + (end[0] - eye[0]) * t).floor() as i32,
+            (eye[1] + (end[1] - eye[1]) * t).floor() as i32,
+            (eye[2] + (end[2] - eye[2]) * t).floor() as i32,
+        ];
+        at == target || mining_block(game, ore, at).cell == model::Cell::Air
+    })
+}
+/// The block of the job's kind to dig next from where the player stands: within reach, in plain
+/// sight, safe to break, beside the one just broken. `None` when the player has to move.
+fn chain_target(game: &Game<'_>, job: &mining::Job, position: [f64; 3]) -> Option<model::Pos> {
+    // A job that digs a route (a tunnel, a bridge) or clears the way has its own order.
+    if job.ore == u8::MAX
+        || job.blocker
+        || crate::game::claim_borders_farming::Crop::from_code(job.ore).is_some()
+    {
+        return None;
+    }
+    let eye = game.eye_position()?;
+    let base = model::block(eye);
+    let mut found = Vec::new();
+    for dy in -4..=4 {
+        for dz in -4..=4 {
+            for dx in -4..=4 {
+                let at = [base[0] + dx, base[1] + dy, base[2] + dz];
+                if job.excluded.contains(&at)
+                    || model::distance(model::center(at), eye) > 4.2
+                    || !mining_block(game, job.ore, at).ore
+                {
+                    continue;
+                }
+                if mining::safe_target(at, position, &mut |p| mining_block(game, job.ore, p))
+                    && in_plain_sight(game, job.ore, eye, at)
+                {
+                    found.push(at);
+                }
+            }
+        }
+    }
+    mining::next_in_reach(job.last, eye, &found)
+}
 fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let Some(job) = s.mining.as_mut().filter(|j| j.active) else {
         return;
     };
     let now = s.started.elapsed().as_millis() as u64;
+    // The inventory is full of the mined kind: unload into the storage (when one is set), then go
+    // on from where the trip began. Nothing else is done while a trip runs.
+    if crate::game::claim_borders_haul_view::active()
+        || (!room_for_mining(game, job.ore)
+            && crate::game::claim_borders_haul_view::begin(game, job.ore))
+    {
+        job.wait = Some(mining::Wait::Storage);
+        job.started_ms = now;
+        return;
+    }
+    if job.wait == Some(mining::Wait::Storage) {
+        job.wait = None;
+    }
     match job.phase {
         mining::Phase::Searching => {
+            // Anything of the kind within reach and in sight is dug at once, from where the
+            // player stands: no route is needed for it, and none can exist when the player is
+            // on a ridge between pits. Walking and digging a way come only when none is in reach.
+            if let Some(next) = chain_target(game, job, position) {
+                job.select(next);
+                job.phase = mining::Phase::Breaking;
+                job.started_ms = now;
+                s.mine_aim = None;
+                s.nav.running = true;
+                s.nav.status = model::Status::Mining;
+                cancel_pending(s);
+                return;
+            }
             s.nav.running = true;
             // A search that found nothing is repeated every couple of seconds, not every tick.
             if !s.pending && s.last_query.elapsed() >= Duration::from_millis(1500) {
@@ -900,6 +1021,19 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
             }
         }
         mining::Phase::Collecting => {
+            // First the next block in reach, with no step and no search: a person digging sand
+            // does not stop after each block. The drops are picked up when none is in reach.
+            if let Some(next) = chain_target(game, job, position) {
+                job.select(next);
+                job.phase = mining::Phase::Breaking;
+                job.started_ms = now;
+                job.collecting = None;
+                job.arrived_ms = None;
+                s.mine_aim = None;
+                s.nav.running = true;
+                s.nav.status = model::Status::Mining;
+                return;
+            }
             // Pick up what the broken block dropped before the next block: walk to each
             // item lying near it, give up on one that cannot be reached or taken.
             let here = position;
@@ -986,7 +1120,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let _ = position;
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
-    let grace = input_grace();
+    // Mouse buttons pressed behind a screen (clicks in the inventory) are not the player taking
+    // the wheel.
+    let grace = input_grace() || !game.native_playing();
     if (physical || game.right) && !grace {
         crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
@@ -1008,7 +1144,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             return physical;
         };
         if !game.native_on(claims::ID)
-            || !game.native_playing()
+            || !in_world(game)
             || scope(game).as_deref() != Some(s.scope.as_str())
             || game.player.as_ref().is_none_or(|p| {
                 p.flying
@@ -1022,9 +1158,17 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             pause_state(s);
             return physical;
         }
+        // A screen is open: no hit is made until it is closed, and the job waits for that.
+        if !game.native_playing() {
+            return physical;
+        }
         let Some(target) = job.target else {
             return false;
         };
+        if crate::game::claim_borders_haul_view::active() {
+            job.wait = Some(mining::Wait::Storage);
+            return false;
+        }
         if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() && !job.blocker {
             match ensure_tool(game, Some(target)) {
                 Tool::Ready => {}
@@ -1037,7 +1181,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 }
             }
         }
-        if !free_slot(game) {
+        if !room_for_mining(game, job.ore) {
             job.wait = Some(mining::Wait::Inventory);
             return false;
         }
@@ -1118,11 +1262,13 @@ pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
 fn auto_eat(game: &mut Game<'_>) -> bool {
     use crate::game::claim_borders_auto_eat as eat;
     let level = game.player.as_ref().map(|p| p.health.food.food as i32);
+    // Eating is not only for tasks: by hand it waits while the attack or the use button is held
+    // (a fight, a block being broken, a bow drawn) and gives way if one is pressed during a meal.
     let running = level.is_some()
         && game.native_on(claims::ID)
         && game.native_playing()
         && auto_eat_enabled(game)
-        && control().0;
+        && (control().0 || !(game.left || game.right));
     let mut meal = MEAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(level) = level else {
         *meal = None;
@@ -1195,7 +1341,64 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     game.selected = food.slot;
     true
 }
+/// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
+/// fits the block under the crosshair is selected (the held one stays if it fits).
+pub(super) fn auto_tool(game: &mut Game<'_>) {
+    if !game.left || game.right || control().0 || !game.native_playing() {
+        return;
+    }
+    let Some(at) = game.pick().map(|hit| hit.pos) else {
+        return;
+    };
+    if game
+        .res
+        .facts()
+        .get(game.world.block(at[0], at[1], at[2]))
+        .hardness
+        < 0.0
+    {
+        return;
+    }
+    if let Some(slot) = tool_slot(game, Some(at), false).filter(|slot| *slot < 9)
+        && game.selected != slot
+    {
+        game.selected = slot;
+    }
+}
+/// The mining job while a trip to the storage walks: a walk starts the navigator over, which
+/// would drop the job, so it waits here and is put back when the trip is over.
+static HAUL_JOB: Mutex<Option<mining::Job>> = Mutex::new(None);
+pub(super) fn haul_stash() {
+    state(|s| {
+        if let Some(job) = s.mining.take() {
+            *HAUL_JOB.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
+        }
+    });
+}
+/// The trip to the storage is over: mining goes on from where it is (`ok`), or idles with the
+/// inventory full.
+pub(super) fn haul_ended(ok: bool) {
+    let stashed = HAUL_JOB.lock().unwrap_or_else(|e| e.into_inner()).take();
+    state(|s| {
+        if let Some(job) = stashed {
+            s.mining = Some(job);
+        }
+        if let Some(job) = s.mining.as_mut() {
+            if ok {
+                job.wait = None;
+                job.phase = mining::Phase::Searching;
+                job.target = None;
+                job.collecting = None;
+                job.arrived_ms = None;
+            } else {
+                job.wait = Some(mining::Wait::Inventory);
+            }
+        }
+    });
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
+    crate::game::claim_borders_helpers::tick(game);
+    crate::game::claim_borders_haul_view::frame(game);
     if auto_eat(game) {
         return;
     }
@@ -1241,7 +1444,14 @@ pub(super) fn mining_ack(game: &Game<'_>, sequence: i32) {
         if let Some(job) = s.mining.as_mut()
             && let Some(target) = job.target
         {
+            let before = job.confirmed;
             job.acknowledge(sequence, mining_block(game, job.ore, target).ore);
+            // A block that was really mined proves the way works: the budget of dug routes and
+            // failures counts only those without a success in between, so a long mining job is
+            // not stopped by the total number of routes it needed.
+            if job.confirmed > before {
+                assist_reset_budget();
+            }
             *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if !job.active {
                 s.nav.running = false;
@@ -1300,7 +1510,9 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     let query = Query {
         flat: s.flat,
         level: s.level,
-        dig: !s.flat && construction_tool(game) && free_slot(game),
+        // Breaking a way to the block is allowed with any digging tool in the inventory (the
+        // right one is taken per block); a full inventory only leaves drops on the ground.
+        dig: !s.flat && tool_slot(game, None, false).is_some(),
         place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
         force: s.force_dig,
         hints,
@@ -1517,6 +1729,26 @@ pub(super) fn tick(game: &Game<'_>) {
             for answer in answers {
                 if answer.token == s.token && s.pending {
                     s.pending = false;
+                    s.mine_stats = answer.stats;
+                    // Blocks of the kind are around but none can be mined yet: say why.
+                    s.mine_note = answer
+                        .stats
+                        .filter(|st| st.seen > 0 && answer.target.is_none())
+                        .map(|st| {
+                            let l = language();
+                            format!(
+                                "{} · {}: {}/{} · {}: {}/{}/{}",
+                                l.text("Поиск руды…", "Finding ore…"),
+                                l.text("видно/снаружи", "seen/open"),
+                                st.seen,
+                                st.candidates,
+                                l.text("нельзя/нет опоры/нет пути", "unsafe/no footing/no route"),
+                                st.unsafe_,
+                                st.no_stand,
+                                st.no_path
+                            )
+                        })
+                        .unwrap_or_default();
                     if model::distance(position, model::center(answer.start)) > 1.5 {
                         s.nav.running = false;
                         s.nav.status = model::Status::Paused;
@@ -1617,8 +1849,7 @@ pub(super) fn tick(game: &Game<'_>) {
                 s.nav.status = model::Status::NoPath;
             }
         }
-        if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !game.native_playing()
-        {
+        if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !in_world(game) {
             cancel_pending(s);
             pause_state(s);
         }
@@ -1931,7 +2162,7 @@ fn assist_step(game: &Game<'_>, a: &mut Assist) -> Flow {
     if !game.native_on(claims::ID) || scope(game).as_deref() != Some(a.scope.as_str()) {
         return Flow::Drop;
     }
-    if !game.native_playing() || !allowed(game) {
+    if !in_world(game) || !allowed(game) {
         return Flow::Abort;
     }
     let Some(p) = game.native_player() else {
@@ -2152,7 +2383,7 @@ pub(super) fn movement(
     if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
         return;
     }
-    if !game.native_on(claims::ID) || !game.native_playing() {
+    if !game.native_on(claims::ID) || !in_world(game) {
         pause();
         return;
     }
@@ -2235,6 +2466,7 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                         "Простой: нужен подходящий инструмент",
                         "Idle: a suitable tool is needed",
                     ),
+                    mining::Wait::Storage => crate::game::claim_borders_haul_view::status(),
                     mining::Wait::Inventory => language.text(
                         "Простой: освободите слот в инвентаре",
                         "Idle: free an inventory slot",
@@ -2257,6 +2489,7 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                 language.text("Добыча на паузе", "Mining paused")
             } else {
                 match job.phase {
+                    mining::Phase::Searching if !s.mine_note.is_empty() => s.mine_note.as_str(),
                     mining::Phase::Searching => language.text("Поиск руды…", "Finding ore…"),
                     mining::Phase::Approaching if s.nav.status == model::Status::Preview => {
                         language.text("Просмотр добычи", "Mining preview")

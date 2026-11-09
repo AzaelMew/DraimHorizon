@@ -34,6 +34,7 @@ enum Hit {
     Page(i32),
     Search,
     Standard,
+    Sort,
 }
 #[derive(Default)]
 struct State {
@@ -42,6 +43,8 @@ struct State {
     query: TextInput,
     watch_edit: Option<(String, TextInput)>,
     focus: bool,
+    /// 0 = the server's order, 1 = unit price, 2 = lot price (cheapest first).
+    sort: u8,
     page: usize,
     hits: Vec<([f32; 4], Hit)>,
     pending: Option<Pending>,
@@ -287,6 +290,20 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
                 t("Лот сервера", "Server listing").into()
             }
         }
+        Goods | Preview
+            if page.family == scan::Kind::Auction
+                && b.lore.first().is_some_and(|l| l.starts_with('#')) =>
+        {
+            // "#7833 1 Wooden Pickaxe" -> "Lot #7833 · ×1"
+            let mut parts = b.lore[0].split_whitespace();
+            let id = parts.next().unwrap_or("");
+            let count = parts.next().unwrap_or("1");
+            if russian() {
+                format!("Лот {id} · ×{count}")
+            } else {
+                format!("Lot {id} · ×{count}")
+            }
+        }
         _ => {
             let lore = b
                 .lore
@@ -422,6 +439,76 @@ fn goods(
     if let Some((_, stack)) = s.icons.iter().find(|(slot, _)| *slot == b.slot) {
         game.draw_item(batch, stack, r[0] + 5.0, r[1] + 7.0);
     }
+    // A fixed-price lot: the price per unit stands out on the right, the lot price and the
+    // seller (with the time left) sit below.
+    if let Some(l) = &listing {
+        let unit = l.cost as f64 / 100.0 / f64::from(l.count.max(1));
+        let unit_text = if russian() {
+            format!("{unit:.2} / шт.")
+        } else {
+            format!("{unit:.2} each")
+        };
+        let total = if russian() {
+            format!("{} монет", economy::fmt(l.cost))
+        } else {
+            format!("{} coins", economy::fmt(l.cost))
+        };
+        let time = b
+            .lore
+            .iter()
+            .find(|line| line.contains(" left"))
+            .map(|line| line.replace(" left", "").trim().to_owned())
+            .map(|v| {
+                if russian() {
+                    v.replace('d', "д").replace('h', "ч").replace('m', "м")
+                } else {
+                    v
+                }
+            });
+        let who = match time {
+            Some(time) => format!("{} · {time}", l.seller),
+            None => l.seller.clone(),
+        };
+        let unit_w = game.native_text_width(&unit_text);
+        let total_w = game.native_text_width(&total);
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &title, r[2] - 40.0 - unit_w),
+            [r[0] + 26.0, r[1] + 5.0],
+            if deal { 0x87e4af } else { 0xe3ebf3 },
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &unit_text,
+            [r[0] + r[2] - 8.0 - unit_w, r[1] + 5.0],
+            if deal { 0x87e4af } else { 0xf0d68a },
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &who, r[2] - 40.0 - total_w),
+            [r[0] + 26.0, r[1] + 18.0],
+            0x9aacc0,
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &total,
+            [r[0] + r[2] - 8.0 - total_w, r[1] + 18.0],
+            0x9aacc0,
+            false,
+        );
+        if crate::game::claim_borders_ui_style::contains(r, mouse) {
+            s.hover = Some(b.slot);
+        }
+        s.hits.push((r, Hit::Server(b.clone())));
+        return;
+    }
     ui::text(
         game,
         batch,
@@ -513,14 +600,24 @@ pub(super) fn render(
                 })
             });
         let bw = (w * 0.45).min(220.0);
+        let balance = ui::clip(game, &balance, bw);
+        let balance_w = game.native_text_width(&balance);
+        ui::rounded(
+            game,
+            batch,
+            [x + w - balance_w - 49.0, y + 7.0, balance_w + 14.0, 17.0],
+            8.0,
+            0x30f0d68a,
+        );
         ui::text(
             game,
             batch,
-            &ui::clip(game, &balance, bw),
-            [x + w - bw - 36.0, y + 12.0],
+            &balance,
+            [x + w - balance_w - 42.0, y + 12.0],
             0xf0d68a,
             false,
         );
+        ui::fill(game, batch, [x + 8.0, y + 28.0, w - 16.0, 1.0], 0x22ffffff);
         if let Some(b) = page.buttons.iter().find(|b| scan::role(&page, b) == Close) {
             control(
                 game,
@@ -533,6 +630,8 @@ pub(super) fn render(
                 ui::Icon::Close,
             );
         }
+        // One button per kind: some pages carry two Back buttons.
+        let mut seen_roles = Vec::new();
         let services: Vec<_> = page
             .buttons
             .iter()
@@ -541,6 +640,15 @@ pub(super) fn render(
                     scan::role(&page, b),
                     Back | News | Help | Mine | Mail | ClaimAll
                 )
+            })
+            .filter(|b| {
+                let role = scan::role(&page, b);
+                if seen_roles.contains(&role) {
+                    false
+                } else {
+                    seen_roles.push(role);
+                    true
+                }
             })
             .collect();
         let cw = (w - 16.0) / services.len().max(1) as f32;
@@ -591,24 +699,40 @@ pub(super) fn render(
                 if h < 300.0 {
                     lore.sort_by_key(|l| !l.starts_with("You may still sell "));
                 }
-                for (i, l) in lore.into_iter().take(lines).enumerate() {
+                // The figures of the item as tiles: the colour stripe says up, down or neutral.
+                let cols = if w >= 480.0 { 3 } else { 2 };
+                let shown = lore.len().min(if lines == 0 { 0 } else { cols * 2 });
+                let tile_w = (w - 16.0 - (cols as f32 - 1.0) * 4.0) / cols as f32;
+                for (i, l) in lore.into_iter().take(shown).enumerate() {
+                    let text = crate::game::claim_borders_economy_view::market_lore(game, l);
+                    let tile = [
+                        x + 8.0 + (i % cols) as f32 * (tile_w + 4.0),
+                        y + 92.0 + (i / cols) as f32 * 24.0,
+                        tile_w,
+                        21.0,
+                    ];
+                    let stripe = if text.contains('▲') {
+                        0xff87e4af
+                    } else if text.contains('▼') {
+                        0xffe39ca8
+                    } else {
+                        0xff5d7690
+                    };
+                    ui::rounded(game, batch, tile, 4.0, 0xff1c2a39);
+                    ui::fill(game, batch, [tile[0], tile[1] + 3.0, 2.0, 15.0], stripe);
                     ui::text(
                         game,
                         batch,
-                        &ui::clip(
-                            game,
-                            &crate::game::claim_borders_economy_view::market_lore(game, l),
-                            w - 24.0,
-                        ),
-                        [x + 12.0, y + 92.0 + i as f32 * 11.0],
-                        0xb6c7d9,
+                        &ui::clip(game, &text, tile_w - 14.0),
+                        [tile[0] + 8.0, tile[1] + 6.0],
+                        0xc9d6e3,
                         false,
                     );
                 }
-                let top = if lines == 0 {
+                let top = if shown == 0 {
                     y + 86.0
                 } else {
-                    y + 96.0 + lines as f32 * 11.0
+                    y + 96.0 + shown.div_ceil(cols) as f32 * 24.0
                 };
                 let tw = (w - 16.0) / 3.0;
                 let th = if h >= 300.0 {
@@ -679,30 +803,75 @@ pub(super) fn render(
                     .buttons
                     .iter()
                     .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
-            let query = [x + 8.0, y + 58.0, w - 16.0, 18.0];
+            let sort_w = 96.0_f32.min(w * 0.25);
+            let query = [x + 8.0, y + 58.0, w - 20.0 - sort_w, 18.0];
             if !confirming {
-                let caption = if let Some((item, edit)) = &s.watch_edit {
-                    let name = item.rsplit(':').next().unwrap_or(item);
-                    if russian() {
-                        format!("{name} · монет/шт. ≤ {}│", edit.value)
-                    } else {
-                        format!("{name} · coins/each ≤ {}│", edit.value)
-                    }
-                } else {
-                    let cursor = if s.focus { "│" } else { "" };
-                    if russian() {
-                        format!("Поиск: {}{cursor}", s.query.value)
-                    } else {
-                        format!("Search: {}{cursor}", s.query.value)
-                    }
-                };
+                let sort_rect = [x + w - 8.0 - sort_w, y + 58.0, sort_w, 18.0];
                 ui::button(
                     game,
                     batch,
-                    query,
-                    &caption,
-                    s.focus || s.watch_edit.is_some(),
+                    sort_rect,
+                    match s.sort {
+                        1 => t("Цена/шт. ↑", "Unit price ↑"),
+                        2 => t("Цена лота ↑", "Lot price ↑"),
+                        _ => t("Порядок: сервер", "Order: server"),
+                    },
+                    s.sort != 0,
                     screen.mouse,
+                );
+                s.hits.push((sort_rect, Hit::Sort));
+                let editing = s.focus || s.watch_edit.is_some();
+                let accent = ui::preferences(game).accent.color();
+                ui::rounded(
+                    game,
+                    batch,
+                    query,
+                    4.0,
+                    if editing { 0xff16303a } else { 0xff0e1620 },
+                );
+                if editing {
+                    for edge in [
+                        [query[0], query[1], query[2], 1.0],
+                        [query[0], query[1] + query[3] - 1.0, query[2], 1.0],
+                        [query[0], query[1], 1.0, query[3]],
+                        [query[0] + query[2] - 1.0, query[1], 1.0, query[3]],
+                    ] {
+                        ui::fill(game, batch, edge, 0xff000000 | accent);
+                    }
+                }
+                ui::icon(
+                    game,
+                    batch,
+                    ui::Icon::Search,
+                    [query[0] + 6.0, query[1] + 4.0, 10.0, 10.0],
+                    if editing { accent } else { 0x8fa9bb },
+                );
+                let (caption, color) = if let Some((item, edit)) = &s.watch_edit {
+                    let name = item.rsplit(':').next().unwrap_or(item);
+                    (
+                        if russian() {
+                            format!("{name} · монет/шт. ≤ {}│", edit.value)
+                        } else {
+                            format!("{name} · coins/each ≤ {}│", edit.value)
+                        },
+                        0xe3ebf3,
+                    )
+                } else if s.query.value.is_empty() && !s.focus {
+                    (
+                        t("Поиск по названию…", "Search by name…").to_string(),
+                        0x7b8fa3,
+                    )
+                } else {
+                    let cursor = if s.focus { "│" } else { "" };
+                    (format!("{}{cursor}", s.query.value), 0xe3ebf3)
+                };
+                ui::text(
+                    game,
+                    batch,
+                    &ui::clip(game, &caption, query[2] - 28.0),
+                    [query[0] + 22.0, query[1] + 5.0],
+                    color,
+                    false,
                 );
                 s.hits.push((query, Hit::Search));
             }
@@ -729,6 +898,19 @@ pub(super) fn render(
                     )
                 })
                 .collect();
+            let mut entries = entries;
+            if s.sort != 0 {
+                let price = |b: &scan::Button| {
+                    fixed_listing(&page, b).map_or(f64::MAX, |l| {
+                        if s.sort == 1 {
+                            l.cost as f64 / f64::from(l.count.max(1))
+                        } else {
+                            l.cost as f64
+                        }
+                    })
+                };
+                entries.sort_by(|a, b| price(a).total_cmp(&price(b)));
+            }
             let pages = entries.len().div_ceil(per).max(1);
             s.page = s.page.min(pages - 1);
             let gw = (w - 16.0) / cols as f32;
@@ -759,7 +941,7 @@ pub(super) fn render(
                 );
             }
             // These controls change actual server pages and do not disappear under a search filter.
-            let bottom = y + h - 53.0;
+            let bottom = y + h - 46.0;
             if let Some(b) = page
                 .buttons
                 .iter()
@@ -856,6 +1038,13 @@ pub(super) fn render(
                 .into()
             }
         });
+        ui::fill(
+            game,
+            batch,
+            [x + 8.0, y + h - 24.0, w - 16.0, 1.0],
+            0x22ffffff,
+        );
+        let raw_w = (w * 0.3).clamp(96.0, 168.0);
         ui::text(
             game,
             batch,
@@ -871,21 +1060,18 @@ pub(super) fn render(
                 } else {
                     &status
                 },
-                w - 16.0,
+                w - raw_w - 24.0,
             ),
-            [x + 8.0, y + h - 30.0],
+            [x + 10.0, y + h - 16.0],
             0xb8cdce,
             false,
         );
-        let raw = [x + 8.0, y + h - 18.0, w - 16.0, 14.0];
+        let raw = [x + w - raw_w - 8.0, y + h - 20.0, raw_w, 16.0];
         ui::button(
             game,
             batch,
             raw,
-            t(
-                "Стандартный вид · F8 (сохранить)",
-                "Standard view · F8 (save)",
-            ),
+            t("Стандартный вид · F8", "Standard view · F8"),
             false,
             screen.mouse,
         );
@@ -1159,6 +1345,10 @@ pub(super) fn mouse(
                 }
             }
             Some(Hit::Search) => s.focus = true,
+            Some(Hit::Sort) => {
+                s.sort = (s.sort + 1) % 3;
+                s.page = 0;
+            }
             Some(Hit::Standard) => return true,
             _ => {}
         }

@@ -128,8 +128,12 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
-    /// Eating on its own during a task (on by default).
+    /// The contents of a shulker box in its tooltip (on by default).
+    pub shulker_peek: bool,
+    /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
+    pub helpers: [bool; 3],
     /// The farm's storage container, when one is set.
     pub farm_storage: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
@@ -230,6 +234,8 @@ impl PlayerRequest {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetHelper(Helper, bool),
+    SetShulkerPeek(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage,
     RefreshSchematics,
@@ -328,6 +334,10 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage => f.write_str("FarmStorage"),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetHelper(helper, on) => {
+                f.debug_tuple("SetHelper").field(helper).field(on).finish()
+            }
+            Self::SetShulkerPeek(on) => f.debug_tuple("SetShulkerPeek").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -461,11 +471,43 @@ pub enum ChatSection {
     DeepL,
     Priority,
 }
+/// Width of the tab rail on the left of the J menu; the layout and the drawing share it.
+pub const RAIL_WIDTH: f32 = 112.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ExperimentalSection {
     #[default]
     Ores,
     Baritone,
+    /// Switches for the helpers that work on their own: eating, totem, refill, tools.
+    Helpers,
+}
+/// A helper that works while the player plays by hand (eating is separate: `Control::AutoEat`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Helper {
+    /// A totem from the inventory goes to the off hand when it is empty.
+    Totem,
+    /// A used-up stack in the hotbar is replaced from the inventory in the same slot.
+    Fill,
+    /// The right tool is taken for the block being broken.
+    Tools,
+}
+impl Helper {
+    pub const ALL: [Helper; 3] = [Helper::Totem, Helper::Fill, Helper::Tools];
+    pub fn index(self) -> usize {
+        match self {
+            Self::Totem => 0,
+            Self::Fill => 1,
+            Self::Tools => 2,
+        }
+    }
+    /// The settings key the choice is kept under.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Totem => "auto_totem",
+            Self::Fill => "auto_fill",
+            Self::Tools => "auto_tools",
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BaritoneMode {
@@ -494,8 +536,12 @@ pub enum ChatOption {
 pub enum Control {
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
     FarmStorage,
-    /// Switches eating on its own while a task runs.
+    /// Switches eating on its own.
     AutoEat,
+    /// Switches one of the helpers of the Helpers tab.
+    Helper(Helper),
+    /// Switches the contents preview in shulker box tooltips.
+    ToggleShulkerPeek,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -1060,7 +1106,7 @@ impl Menu {
         }
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
-        let sidebar = if panel_w >= 380.0 { 96.0 } else { 0.0 };
+        let sidebar = if panel_w >= 380.0 { RAIL_WIDTH } else { 0.0 };
         let nav_step = ((panel_h - 80.0) / 6.0).min(26.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
@@ -1667,6 +1713,17 @@ impl Menu {
                     ),
                     Some(Control::ToggleReconnect),
                     model.auto_reconnect,
+                ));
+                out.push(widget(
+                    [x, body_top + 56.0, w, 22.0],
+                    localized!(
+                        self.language,
+                        "Содержимое шалкеров: {}",
+                        "Shulker preview: {}",
+                        self.on(model.shulker_peek)
+                    ),
+                    Some(Control::ToggleShulkerPeek),
+                    model.shulker_peek,
                 ));
                 return out;
             }
@@ -2595,7 +2652,7 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let tab_width = (w - 4.0) * 0.5;
+        let tab_width = (w - 8.0) / 3.0;
         for (index, section, label) in [
             (
                 0,
@@ -2603,6 +2660,11 @@ impl Menu {
                 self.language.text("Руды", "Ores"),
             ),
             (1, ExperimentalSection::Baritone, "Baritone"),
+            (
+                2,
+                ExperimentalSection::Helpers,
+                self.language.text("Вспомогательные", "Helpers"),
+            ),
         ] {
             out.push(widget(
                 [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
@@ -2905,7 +2967,7 @@ impl Menu {
                 // Icon tiles: the name is the tooltip. Square, so many fit in a row.
                 let tile = 22.0;
                 let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
-                let rows = (((height - 50.0 - top) / (tile + 2.0)).floor() as usize).max(1);
+                let rows = (((height - 66.0 - top) / (tile + 2.0)).floor() as usize).max(1);
                 let per_page = rows * cols;
                 let pages = mining::COUNT.div_ceil(per_page);
                 let page = self.mining_page % pages;
@@ -2948,6 +3010,29 @@ impl Menu {
                         self.mining_targets & (1 << index) != 0,
                     ));
                 }
+                // The storage the miner unloads into when the inventory is full (the farm's).
+                out.push(widget(
+                    [x, height - 30.0, w, 14.0],
+                    match model.farm_storage {
+                        Some([sx, sy, sz]) => localized!(
+                            self.language,
+                            "Склад: {} {} {}",
+                            "Storage: {} {} {}",
+                            sx,
+                            sy,
+                            sz
+                        ),
+                        None => self
+                            .language
+                            .text(
+                                "Склад: не задан (прицел на сундук)",
+                                "Storage: not set (aim at a chest)",
+                            )
+                            .into(),
+                    },
+                    Some(Control::FarmStorage),
+                    model.farm_storage.is_some(),
+                ));
             } else {
                 let waypoint = self
                     .navigation_waypoint
@@ -3059,6 +3144,9 @@ impl Menu {
             }
             return out;
         }
+        if self.experimental_section == ExperimentalSection::Helpers {
+            return self.helpers_layout(model, x, w, height, out);
+        }
         let p = model.experimental;
         let selected = usize::from(p.selected);
         for (index, (label, control, on)) in [
@@ -3147,6 +3235,96 @@ impl Menu {
             None,
             false,
         ));
+        out
+    }
+    /// The Helpers tab: a switch per helper, with a line under it saying what it does.
+    fn helpers_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        let state = |on: bool| {
+            if on {
+                self.language.text("вкл", "on")
+            } else {
+                self.language.text("выкл", "off")
+            }
+        };
+        let rows = [
+            (
+                localized!(
+                    self.language,
+                    "Авто-еда: {}",
+                    "Auto Eat: {}",
+                    state(model.auto_eat)
+                ),
+                Control::AutoEat,
+                model.auto_eat,
+                self.language.text(
+                    "ест сама при голоде, всегда, не только в задачах",
+                    "eats by itself when hungry, always, not only in tasks",
+                ),
+            ),
+            (
+                localized!(
+                    self.language,
+                    "Авто-тотем: {}",
+                    "Auto Totem: {}",
+                    state(model.helpers[Helper::Totem.index()])
+                ),
+                Control::Helper(Helper::Totem),
+                model.helpers[Helper::Totem.index()],
+                self.language.text(
+                    "пустая вторая рука: тотем берётся из инвентаря",
+                    "empty off hand: a totem is taken from the inventory",
+                ),
+            ),
+            (
+                localized!(
+                    self.language,
+                    "Авто-пополнение: {}",
+                    "Auto Fill: {}",
+                    state(model.helpers[Helper::Fill.index()])
+                ),
+                Control::Helper(Helper::Fill),
+                model.helpers[Helper::Fill.index()],
+                self.language.text(
+                    "стак закончился: тот же предмет встаёт в тот же слот",
+                    "a stack ran out: the same item goes into the same slot",
+                ),
+            ),
+            (
+                localized!(
+                    self.language,
+                    "Авто-инструменты: {}",
+                    "Auto Tools: {}",
+                    state(model.helpers[Helper::Tools.index()])
+                ),
+                Control::Helper(Helper::Tools),
+                model.helpers[Helper::Tools.index()],
+                self.language.text(
+                    "для ломаемого блока берётся нужный инструмент",
+                    "the right tool is taken for the block being broken",
+                ),
+            ),
+        ];
+        let step = ((height - 92.0) / 4.0).clamp(20.0, 34.0);
+        let note = step >= 30.0;
+        for (index, (label, control, on, hint)) in rows.into_iter().enumerate() {
+            let y = 84.0 + index as f32 * step;
+            out.push(widget(
+                [x, y, w, if note { 20.0 } else { (step - 2.0).min(20.0) }],
+                label,
+                Some(control),
+                on,
+            ));
+            if note {
+                out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
+            }
+        }
         out
     }
     fn important_names(&self, model: &ViewModel) -> Vec<String> {
@@ -3619,6 +3797,10 @@ impl Menu {
             }
             Control::FarmStorage => Some(Action::FarmStorage),
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
+            Control::Helper(helper) => {
+                Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
+            }
+            Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -5229,7 +5411,11 @@ mod tests {
                 language,
                 ..Menu::default()
             };
-            for section in [ExperimentalSection::Baritone, ExperimentalSection::Ores] {
+            for section in [
+                ExperimentalSection::Baritone,
+                ExperimentalSection::Ores,
+                ExperimentalSection::Helpers,
+            ] {
                 for height in [200.0, 216.0, 500.0] {
                     let rows = menu.layout(&model, 360.0, height);
                     let tab = rows

@@ -1534,6 +1534,17 @@ pub fn strokes(icon: Icon) -> &'static [[f32; 4]] {
         ],
     }
 }
+/// Splits a toggle caption such as "Миникарта: вкл." or "Shadows: off" into the name and whether
+/// it is on; `None` for anything that is not an on/off caption.
+pub fn switch_label(text: &str) -> Option<(&str, bool)> {
+    let (name, state) = text.rsplit_once(": ")?;
+    let on = match state.trim_end_matches('.').to_lowercase().as_str() {
+        "вкл" | "on" => true,
+        "выкл" | "off" => false,
+        _ => return None,
+    };
+    (!name.is_empty()).then_some((name, on))
+}
 pub fn icon_for(label: &str) -> Option<Icon> {
     use Icon::*;
     match label {
@@ -1544,6 +1555,17 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Эксперименты" | "Experiments" => Some(Star),
         "Торги" | "Trading" | "AH" | "Аукц." => Some(Market),
         "Цены" | "Prices" => Some(Wallet),
+        "Аукцион" | "Auction" | "Market" | "AH: найти" | "AH: find" => Some(Market),
+        "План" | "Plan" => Some(Clock),
+        "Проверить руку" | "Check hand" => Some(Search),
+        "Основное" | "General" => Some(Settings),
+        "Связь" | "Connection" => Some(Signal),
+        "Карта" | "Map" => Some(Map),
+        "TAB" => Some(Gauge),
+        "HUD" => Some(Layers),
+        "Границы" | "Borders" => Some(Grid),
+        "Цвета" | "Colours" => Some(Eye),
+        "Память" | "Storage" => Some(Save),
         "Обзор" | "Профит" | "Прибыль" | "Overview" | "Profit" => Some(Chart),
         "Опции" | "Настройки" | "Settings" | "E" => Some(Settings),
         "X" | "Закрыть" | "Close" | "Отклонить" | "Decline" | "Отмена [Esc]" | "Cancel [Esc]" => {
@@ -1575,6 +1597,21 @@ pub fn icon_for(label: &str) -> Option<Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn toggle_captions_split_into_a_name_and_a_state() {
+        assert_eq!(switch_label("Миникарта: вкл."), Some(("Миникарта", true)));
+        assert_eq!(switch_label("Тени: выкл."), Some(("Тени", false)));
+        assert_eq!(switch_label("Auto Eat: on"), Some(("Auto Eat", true)));
+        assert_eq!(switch_label("Shadows: off"), Some(("Shadows", false)));
+        assert_eq!(
+            switch_label("Плавные эффекты: Вкл."),
+            Some(("Плавные эффекты", true))
+        );
+        assert_eq!(switch_label("Contrast: Off"), Some(("Contrast", false)));
+        assert_eq!(switch_label("Рельеф: Поверхность"), None);
+        assert_eq!(switch_label("вкл"), None);
+        assert_eq!(switch_label(": вкл"), None);
+    }
     #[test]
     fn colors_keep_alpha_and_channels_separate() {
         assert_eq!(mix(0, 0xff_ff_ff, 0.5), 0x80_80_80);

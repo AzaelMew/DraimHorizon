@@ -12,6 +12,13 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
     if *ran {
         return;
     }
+    // /shop is /market on this server: the typed command is answered with the one the mod knows.
+    if command.trim() == "shop" {
+        *ran = true;
+        crate::game::claim_borders_economy_client::command("market");
+        game.send_unattended_command("market");
+        return;
+    }
     let (verb, body) = command.split_once(' ').unwrap_or((command, ""));
     if matches!(verb, "r" | "reply") {
         *ran = true;

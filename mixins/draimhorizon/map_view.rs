@@ -522,26 +522,92 @@ pub(super) fn hud(
         true,
     );
     if p.coordinates {
-        let text = format!(
-            "X {:.0}  ·  Y {:.0}  ·  Z {:.0}",
-            source.player[0].floor(),
-            source.player[1].floor(),
-            source.player[2].floor()
-        );
-        let width = (game.native_text_width(&text) + 14.0).min(batch.width - 12.0);
-        let (x, y) = corners.place(corner(p.corner), width, 18.0);
-        ui::rounded(game, batch, [x, y, width, 16.0], 4.0, 0xe0182230);
-        ui::fill(
-            game,
-            batch,
-            [x + 5.0, y + 4.0, 2.0, 8.0],
-            0xff000000 | ui::preferences(game).accent.color(),
-        );
-        let scale = ((width - 14.0) / game.native_text_width(&text).max(1.0)).min(1.0);
-        let start = batch.vertices.len();
-        let at = [x + 10.0, y + (16.0 - 8.0 * scale) * 0.5];
-        ui::text(game, batch, &text, at, 0xe0e7f0, false);
-        batch.scale_since(start, at[0], at[1], scale, scale);
+        coordinate_chip(game, batch, &dimension, source.player, &p, corners);
+    }
+}
+/// The coordinates under the minimap: a tag, then each axis as a dim letter and a bright value.
+/// In the Nether a second row gives where that is in the overworld (the game's 8:1 rule).
+fn coordinate_chip(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    dimension: &str,
+    player: [f64; 3],
+    p: &model::Preferences,
+    corners: &mut horizon_client::extras_hud::Corners,
+) {
+    let language = crate::game::claim_borders_chat_view::language(game);
+    let block = |v: f64| (v.floor() as i64).to_string();
+    let mut rows: Vec<(&str, u32, Vec<(&str, String)>)> = Vec::new();
+    if dimension == "minecraft:the_nether" {
+        rows.push((
+            language.text("Незер", "Nether"),
+            0xe39ca8,
+            vec![
+                ("X", block(player[0])),
+                ("Y", block(player[1])),
+                ("Z", block(player[2])),
+            ],
+        ));
+        rows.push((
+            language.text("Мир", "Overworld"),
+            0x9ce3ba,
+            vec![("X", block(player[0] * 8.0)), ("Z", block(player[2] * 8.0))],
+        ));
+    } else {
+        rows.push((
+            "",
+            0,
+            vec![
+                ("X", block(player[0])),
+                ("Y", block(player[1])),
+                ("Z", block(player[2])),
+            ],
+        ));
+    }
+    let tag_w = rows
+        .iter()
+        .map(|(tag, _, _)| {
+            if tag.is_empty() {
+                0.0
+            } else {
+                game.native_text_width(tag) + 8.0
+            }
+        })
+        .fold(0.0, f32::max);
+    let row_w = |axes: &[(&str, String)]| {
+        axes.iter()
+            .map(|(label, value)| {
+                game.native_text_width(label) + 3.0 + game.native_text_width(value) + 9.0
+            })
+            .sum::<f32>()
+    };
+    let inner = rows
+        .iter()
+        .map(|(_, _, axes)| tag_w + row_w(axes))
+        .fold(0.0, f32::max);
+    let width = (inner + 14.0).min(batch.width - 12.0);
+    let height = if rows.len() > 1 { 30.0 } else { 16.0 };
+    let (x, y) = corners.place(corner(p.corner), width, height + 2.0);
+    ui::rounded(game, batch, [x, y, width, height], 4.0, 0xe0182230);
+    ui::fill(
+        game,
+        batch,
+        [x + 5.0, y + 4.0, 2.0, height - 8.0],
+        0xff000000 | ui::preferences(game).accent.color(),
+    );
+    for (i, (tag, tag_color, axes)) in rows.iter().enumerate() {
+        let ty = y + 4.0 + i as f32 * 13.0;
+        let mut tx = x + 10.0;
+        if !tag.is_empty() {
+            ui::text(game, batch, tag, [tx, ty], *tag_color, false);
+        }
+        tx += tag_w;
+        for (label, value) in axes {
+            ui::text(game, batch, label, [tx, ty], 0x8fa9bb, false);
+            tx += game.native_text_width(label) + 3.0;
+            ui::text(game, batch, value, [tx, ty], 0xf0f4f8, false);
+            tx += game.native_text_width(value) + 9.0;
+        }
     }
 }
 pub(super) fn label(

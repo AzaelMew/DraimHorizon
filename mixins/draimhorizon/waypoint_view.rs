@@ -44,7 +44,8 @@ impl Draft {
     }
 }
 fn coordinate_inputs(position: [f64; 3]) -> [TextInput; 3] {
-    position.map(|value| TextInput::new(value.to_string()))
+    // Whole blocks: "-1897.5993" is not something to read or type.
+    position.map(|value| TextInput::new((value.floor() as i64).to_string()))
 }
 #[derive(Clone, Copy)]
 enum Hit {
@@ -243,10 +244,14 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
     }
     let pw = (screen.rect[2] - 16.).clamp(220., 720.);
     let ph = (screen.rect[3] - 16.).clamp(200., 400.);
-    let sidebar = if pw >= 380. { 96. } else { 0. };
-    let x = (screen.rect[2] - pw) * 0.5 + sidebar + 8.;
+    let sidebar = if pw >= 380. {
+        crate::game::claim_borders_menu::RAIL_WIDTH
+    } else {
+        0.
+    };
+    let x = (screen.rect[2] - pw) * 0.5 + sidebar + 9.;
     let y = (screen.rect[3] - ph) * 0.5 + 54.;
-    let width = pw - sidebar - 16.;
+    let width = pw - sidebar - 18.;
     let h = ph - 88.;
     let language = crate::game::claim_borders_chat_view::language(game);
     state(|s| {
@@ -464,97 +469,136 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
         return;
     }
     let start = batch.vertices.len();
-    let w = (batch.width - 20.).min(320.);
-    let h = 210.;
+    let w = (batch.width - 20.).min(360.);
+    let h = 262.;
     let x = (batch.width - w) * 0.5;
     let y = (batch.height - h) * 0.5;
     let language = crate::game::claim_borders_chat_view::language(game);
-    game.native_fill(batch, [0., 0., batch.width, batch.height], 0x55080d16);
-    ui::rounded(game, batch, [x, y, w, h], 8., 0xf21d2a3a);
+    game.native_fill(batch, [0., 0., batch.width, batch.height], 0x7a09111c);
     state(|s| {
         s.hits.clear();
         let Some(d) = s.draft.clone() else {
             return;
         };
-        ui::icon(
+        ui::popup_frame(
             game,
             batch,
+            [x, y, w, h],
             icon(d.kind),
-            [x + 12., y + 12., 12., 12.],
-            ui::preferences(game).accent.color(),
-        );
-        ui::text(
-            game,
-            batch,
             if d.id.is_some() {
                 language.text("Редактировать метку", "Edit waypoint")
             } else {
                 language.text("Новая метка", "New waypoint")
             },
-            [x + 32., y + 12.],
-            0xe3ebf3,
-            false,
         );
-        let name = [x + 12., y + 34., w - 24., 21.];
+        let inner = w - 28.;
+        let caption = |batch: &mut HudBatch, text: &str, at: [f32; 2]| {
+            ui::text(game, batch, text, at, 0x8fa9bb, false);
+        };
+        // Name.
+        caption(batch, language.text("Название", "Name"), [x + 14., y + 46.]);
+        let name = [x + 14., y + 57., inner, 22.];
         field(game, batch, name, &d.name, d.focus == 0);
         s.hits.push((name, Hit::Name));
+        // Type and colour side by side.
+        let half = (inner - 8.) * 0.5;
+        caption(batch, language.text("Вид", "Type"), [x + 14., y + 87.]);
+        caption(
+            batch,
+            language.text("Цвет (HEX)", "Colour (HEX)"),
+            [x + 22. + half, y + 87.],
+        );
         button(
             game,
             batch,
             screen,
             s,
-            [x + 12., y + 62., w - 24., 21.],
-            &format!(
-                "{}: {}",
-                language.text("Вид", "Type"),
-                language.text(
-                    d.kind.label(),
-                    match d.kind {
-                        model::MarkerKind::Pin => "Pin",
-                        model::MarkerKind::Home => "Home",
-                        model::MarkerKind::Portal => "Portal",
-                        model::MarkerKind::Chest => "Chest",
-                        model::MarkerKind::Star => "Star",
-                    },
-                ),
+            [x + 14., y + 98., half, 22.],
+            language.text(
+                d.kind.label(),
+                match d.kind {
+                    model::MarkerKind::Pin => "Pin",
+                    model::MarkerKind::Home => "Home",
+                    model::MarkerKind::Portal => "Portal",
+                    model::MarkerKind::Chest => "Chest",
+                    model::MarkerKind::Star => "Star",
+                },
             ),
             Hit::Kind,
         );
+        let color = [x + 22. + half, y + 98., half, 22.];
+        field(game, batch, color, &d.color, d.focus == 1);
+        s.hits.push((color, Hit::Color));
+        // Swatches, the chosen one ringed.
+        let swatch_w = (inner - 7. * 4.) / 8.;
         for (i, color) in [
-            0xffcc55, 0xa4d3c9, 0xa6c9e5, 0xbcb8e3, 0xdfa8b5, 0xa2d0b7, 0xffffff, 0xff8866,
+            0xffcc55u32,
+            0xa4d3c9,
+            0xa6c9e5,
+            0xbcb8e3,
+            0xdfa8b5,
+            0xa2d0b7,
+            0xffffff,
+            0xff8866,
         ]
         .into_iter()
         .enumerate()
         {
-            let r = [x + 12. + i as f32 * 23., y + 90., 18., 17.];
+            let r = [
+                x + 14. + i as f32 * (swatch_w + 4.),
+                y + 128.,
+                swatch_w,
+                20.,
+            ];
+            if d.color.value.eq_ignore_ascii_case(&format!("#{color:06X}")) {
+                ui::rounded(
+                    game,
+                    batch,
+                    [r[0] - 2., r[1] - 2., r[2] + 4., r[3] + 4.],
+                    5.,
+                    0xffe3ebf3,
+                );
+            }
             ui::rounded(game, batch, r, 3., 0xff000000 | color);
             s.hits.push((r, Hit::Swatch(color)));
         }
-        let color = [x + 12., y + 112., w - 24., 20.];
-        field(game, batch, color, &d.color, d.focus == 1);
-        s.hits.push((color, Hit::Color));
-        for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
-            let cw = (w - 24.0) / 3.0;
-            let left = x + 12.0 + i as f32 * cw;
-            ui::text(game, batch, axis, [left, y + 146.0], 0x9aacc0, false);
-            let r = [left + 12.0, y + 140.0, cw - 16.0, 21.0];
-            field(game, batch, r, &d.coordinates[i], d.focus == i + 2);
-            s.hits.push((r, Hit::Coordinate(i)));
-        }
+        // Coordinates: a letter over each box, the world named on the right.
+        caption(
+            batch,
+            language.text("Координаты", "Coordinates"),
+            [x + 14., y + 160.],
+        );
+        let world_name = world(&d.dimension);
+        let world_w = game.native_text_width(&world_name);
         ui::text(
             game,
             batch,
-            &world(&d.dimension),
-            [x + 12.0, y + 162.0],
-            0x9aacc0,
+            &world_name,
+            [x + w - 14. - world_w, y + 160.],
+            0xa6c9e5,
             false,
         );
+        let col = (inner - 12.) / 3.;
+        for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+            let left = x + 14. + i as f32 * (col + 6.);
+            ui::text(
+                game,
+                batch,
+                axis,
+                [left + 3., y + 173.],
+                ui::preferences(game).accent.color(),
+                false,
+            );
+            let r = [left, y + 184., col, 22.];
+            field(game, batch, r, &d.coordinates[i], d.focus == i + 2);
+            s.hits.push((r, Hit::Coordinate(i)));
+        }
         if !s.error.is_empty() {
             ui::text(
                 game,
                 batch,
-                &ui::clip(game, &s.error, w - 24.),
-                [x + 12., y + 171.],
+                &ui::clip(game, &s.error, inner),
+                [x + 14., y + 212.],
                 0xdfa8b5,
                 false,
             );
@@ -564,7 +608,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             batch,
             screen,
             s,
-            [x + 12., y + h - 27., (w - 30.) * 0.5, 20.],
+            [x + 14., y + h - 32., (inner - 8.) * 0.5, 22.],
             language.text("Отмена [Esc]", "Cancel [Esc]"),
             Hit::Cancel,
         );
@@ -573,7 +617,12 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             batch,
             screen,
             s,
-            [x + w * 0.5 + 3., y + h - 27., (w - 30.) * 0.5, 20.],
+            [
+                x + 22. + (inner - 8.) * 0.5,
+                y + h - 32.,
+                (inner - 8.) * 0.5,
+                22.,
+            ],
             language.text("Сохранить", "Save"),
             Hit::Save,
         );

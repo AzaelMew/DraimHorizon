@@ -7,7 +7,7 @@ use crate::game::{
 };
 use std::{
     sync::{Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 struct External {
     request: schematic::PlacementRequest,
@@ -97,21 +97,61 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
         falling: crate::game::claim_borders_mining::falling(&facts.name),
     }
 }
+/// Gravity blocks seen where they are, with when each was first seen and last looked at.
+fn seen<T>(f: impl FnOnce(&mut std::collections::HashMap<nav::Pos, (Instant, Instant)>) -> T) -> T {
+    static SEEN: OnceLock<Mutex<std::collections::HashMap<nav::Pos, (Instant, Instant)>>> =
+        OnceLock::new();
+    f(&mut SEEN
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))
+}
+/// Whether a sand or gravel block has stayed where it is for a while (1.5 s): a block that was
+/// just dropped into the water is there for a moment and then sinks, one that has been there
+/// has something under it. The count starts anew when the cell was seen empty (`forget`) or not
+/// looked at for 20 s; a job that scans only every second or two still counts.
+fn settled(at: nav::Pos) -> bool {
+    let now = Instant::now();
+    seen(|seen| {
+        if seen.len() > 4096 {
+            seen.clear();
+        }
+        let entry = seen.entry(at).or_insert((now, now));
+        if now.duration_since(entry.1) > Duration::from_secs(20) {
+            *entry = (now, now);
+        } else {
+            entry.1 = now;
+        }
+        now.duration_since(entry.0) >= Duration::from_millis(1500)
+    })
+}
 /// Whether the block at `at` is something to stand or hang on: solid, and if it can fall (sand,
-/// gravel) resting on something solid that cannot. A sand block just dropped into the water is
-/// solid for a moment and then sinks; whoever stands on it sinks with it.
+/// gravel) either resting on something solid that cannot, or having stayed put for a while. A
+/// sand block just dropped into the water is solid for a moment and then sinks; whoever stands
+/// on it sinks with it.
+/// The cell is empty (water, air): whatever lands there next starts its settling count anew.
+pub(super) fn forget(at: nav::Pos) {
+    seen(|seen| {
+        seen.remove(&at);
+    });
+}
 pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
+    let origin = at;
     let mut at = at;
     for _ in 0..24 {
         if block(game, at).cell != nav::Cell::Solid {
-            return false;
+            break;
         }
         if !model::gravity(&game.native_block(at)) {
             return true;
         }
         at[1] -= 1;
     }
-    false
+    if block(game, origin).cell != nav::Cell::Solid {
+        forget(origin);
+        return false;
+    }
+    settled(origin)
 }
 pub(super) fn reset() {
     state(|s| {
@@ -592,7 +632,7 @@ pub(super) fn tick(game: &Game<'_>) {
         world_reset();
         return;
     }
-    if !game.native_playing() {
+    if !navigation::in_world(game) {
         pause();
         return;
     }
@@ -706,7 +746,7 @@ pub(super) fn movement(
         return false;
     }
     if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
-        || !game.native_playing()
+        || !navigation::in_world(game)
     {
         pause();
         navigation::pause();
@@ -822,7 +862,7 @@ fn pier_walk(
     sneak: &mut bool,
 ) -> bool {
     if !game.native_on(claims::ID)
-        || !game.native_playing()
+        || !navigation::in_world(game)
         || !crate::game::claim_borders_workshop_view::draining()
         || game
             .player
@@ -855,7 +895,7 @@ fn swim_back(
     sneak: &mut bool,
 ) -> bool {
     if !game.native_on(claims::ID)
-        || !game.native_playing()
+        || !navigation::in_world(game)
         || !crate::game::claim_borders_workshop_view::draining()
         || game
             .player
@@ -908,7 +948,7 @@ fn edge_drive(
         return false;
     };
     if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
-        || !game.native_playing()
+        || !navigation::in_world(game)
     {
         pause();
         navigation::pause();
@@ -1045,8 +1085,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     let Some((job, placement, last_aim, external)) = data else {
         return false;
     };
-    if !game.native_playing() {
+    if !navigation::in_world(game) {
         pause();
+        return false;
+    }
+    // A screen is open (the inventory, the chat, a menu): no click is made until it is closed,
+    // the job just waits.
+    if !game.native_playing() {
         return false;
     }
     if let Some([yaw, pitch]) = last_aim
@@ -1175,7 +1220,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 by_entity = true;
                 continue;
             }
-            if let Some(h) = game.pick().filter(|h| h.pos == anchor && h.face == face) {
+            let eye = game.eye_position();
+            if let Some(h) = game.pick().filter(|h| {
+                h.pos == anchor
+                    && h.face == face
+                    && (external.is_none()
+                        || eye.is_none_or(|e| nav::distance(h.point, e) <= drain::CLICK_REACH))
+            }) {
                 found = Some(h);
                 break;
             }

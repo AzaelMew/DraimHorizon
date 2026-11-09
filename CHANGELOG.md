@@ -1,5 +1,147 @@
 # История версий
 
+## 0.38.2
+
+- Mining no longer goes idle when the player stands where the planner sees no floor: on an edge with the middle of the body over a gap, in the air after a jump or a fall, at the lip of a pit. The planner refused to start from such a spot, so every route read "no route" (31 of 31 in the screenshot). It now plans from the nearest place that can be stood on: the cell itself, one up, down to the three-block drop limit, then the four neighbours. The real position is still the one the answer is checked against. This covers the mining search, the dig route and the walk.
+- New test for the start finder (flat ground, a jump, an edge, nothing firm anywhere).
+- Not verified in game.
+
+## 0.38.1
+
+- Mining with nothing open around: standing in sandstone with sand overhead, the planner digs a stair up through the rock to the sand. A new test pins it (sand seven blocks up, rock everywhere else: a route of at least five steps that breaks blocks). 
+- Mining no longer stops for good after a fixed number of dug routes: the budget (24 routes, 3 failures) now counts only those without a mined block in between, and a confirmed break resets it. A long job in a desert, which needs many routes one after the other, goes on; a route that keeps failing still ends it.
+- After a storage trip the miner walks back to where it stopped before it goes on (0.38.0), and the farm walks back to its beds when it is far from them (0.36.1), so a distant storage is not a problem for either.
+- Not verified in game.
+
+## 0.38.0
+
+- Mining has a storage, like the farm: a chest, barrel or shulker box set from the Mining tab ("Storage: ..." under the targets; aim at the container and press it, press again elsewhere to clear). It is the same storage the farm uses.
+- When the inventory is full (every slot taken and every stack of the mined kind at its limit), the miner no longer just waits: it walks to the storage (a spot within reach with a clear line to it, another spot if the chest is hidden from the first), opens it, shift-clicks everything it does not need across and walks back to where it stopped, then goes on mining by itself. It keeps tools and armour (anything that wears), food, a totem and one stack of the mined block to build with; the rest, sand and gravel included, goes into the container.
+- If the container is full or cannot be reached, the miner stands idle ("Idle: free an inventory slot") and tries again after one to two minutes. Without a storage set, nothing changes.
+- The walk to the storage starts the navigator over, which would drop the mining job; the job is put aside for the trip and put back after it.
+- New pure `deposit_mined` plan in `farm_storage.rs` with a test.
+- Not verified in game.
+
+## 0.37.13
+
+- Walking: the route planner now steps off drops of up to three blocks (three blocks cost no health); before it only managed one. Dunes and pits are full of drops of two and three blocks, so on a ridge between pits every walk ended at once: "seen/open 131/65, no route 32" while sand lay all around. This also helps every other walking task. The longer drops are refused as before.
+- Mining: before any search, a block of the kind within reach (4.2 blocks of the eye) and in plain sight is dug at once from where the player stands. No route is needed for it, and none can exist on a ridge. Walking, and digging a way, come only when nothing is in reach.
+- New tests: a walk down a three-block drop to the sand; the planner refuses drops over three blocks as before.
+- Not verified in game.
+
+## 0.37.12
+
+- Mining: "seen: 483, unsafe 32/0/0" meant that the 32 nearest blocks of sand were all buried (the ones under the player's feet), so none could be mined from outside and the open ones farther away were never looked at. The search now looks only at blocks with an open side (the buried ones are dug to by the route planner) and counts how many it saw and how many are open: "Finding ore… · seen/open: 483/57 · ...".
+- Mining digs a way when it cannot walk: the "dig and place blocks to get there" route is allowed with any digging tool in the inventory (the right one is taken for each block) instead of only with a pickaxe and a free slot, so a buried or unreachable block is reached by breaking through and building up, as the tunnel and the bridge do.
+- "Inventory full" for mining now means that every slot is taken and every stack of the mined kind is at its limit: sand laid one by one across the inventory still has room, so the miner goes on picking it up. The same rule applies when a mining job is started or resumed.
+- Not verified in game.
+
+## 0.37.11
+
+- Mining goes on block after block: right after a break is confirmed, the job looks for the next block of the chosen kind that is within reach (4.2 blocks of the eye), in plain sight and safe to break, takes the one nearest to the block just broken (the next of a vein, the next of a column of sand, the next log) and hits it at once, with no stop to pick up drops, no search and no step. Only when nothing is left in reach does it pick up the drops around and search for the next place, as before. In a desert this means sand is dug without a pause for as long as there is sand within reach, then the player walks on to the next spot.
+- Targets that sight does not confirm are not chained: the existing check (aim, the block really under the crosshair, grass and leaves cleared) still decides, and a block that cannot be hit is left and another is taken.
+- New pure `next_in_reach` in `mining.rs` with a test.
+- Not verified in game.
+
+## 0.37.10
+
+- Mining sand and gravel (a desert): the search threw out any block with sand or gravel above it, and in a desert or under a dune wall that is nearly every block, so it found nothing and sat on "Finding ore… 0". Sand and gravel are now mined with more of the same above them (the block above only drops into the gap); other ore with a falling block above it is still left alone. Digging to buried sand or gravel goes through more of it.
+- The search looks at the blocks next to the player first (cubes of 3, 6, 10 and 16 blocks), looks at up to 32 candidates, and a slow scan keeps what it found instead of giving up with nothing.
+- When blocks of the chosen kind are around but none can be mined, the status line says why: "Finding ore… · seen: 41 · unsafe/no footing/no route: 0/3/38". If it ever stays at "Finding ore…" again, those three numbers say which step to fix.
+- New test: sand in a desert, in a dune wall, and ore with a falling block above it.
+- Not verified in game.
+
+## 0.37.9
+
+- /shop is redirected to /market: when you type /shop (or click it in chat), the mod runs /market instead, so the one Market view and its prices are used. Typed with arguments (/shop something) it goes to the server unchanged. The menu title "Shop" / "Магазин" is still read as the Market as in 0.37.8.
+- Not verified in game.
+
+## 0.37.8
+
+- /shop is the same menu as /market on the server: a menu titled "Shop" or "Магазин" is now read and shown as the Market (the custom Market view, prices and the hover note) the way "Market" is. The mod still asks for the market with /market itself.
+- Not verified in game (the title the server gives /shop was assumed to be "Shop" or "Market").
+
+## 0.37.7
+
+- Waypoints tab: the list used the old 96 px rail width, so its "World" bar and rows slid under the rail; it now uses the shared rail width and starts on the same left edge as the title.
+- Waypoint editor and the quick waypoint (X): a new pop-up on the shared pop-up frame (shadow, thin border, icon and title over a rule). Every field has a caption above it (Name, Type, Colour (HEX), Coordinates); the colour swatches are bigger and the chosen one is ringed; X, Y and Z are three equal boxes with the letter over each, and the world's name is on the right. Coordinates are whole blocks ("-1898"), not "-1897.59938...".
+- Appearance pop-up (Settings > General): the same frame, the title and the line under it no longer overlap, and the on/off rows are real switches.
+- Every button whose caption is "Name: on/off" and wide enough (120 px) is drawn with a switch in any window that uses the shared button, not only in the J menu; the match is case-insensitive.
+- Coordinates under the minimap: dim axis letters with bright values, in a chip with the accent stripe. In the Nether a second row gives the overworld position (x and z times 8), with a red "Nether" and a green "Overworld" tag.
+- Not verified in game.
+
+## 0.37.6
+
+- Shulker box tooltip: only the name and the grid of items now. The game's own list of the contents ("6 x Iron Ingot ... and 20 more...") is gone, since the grid shows the same thing. Lore that is not that list stays. The tooltip is drawn by the mod in the game's own tooltip style (box, text and the dye colour) for a shulker box that holds something; empty boxes and every other item keep the plain game tooltip. Recipe book and trading hovers still show the game's list.
+- Not verified in game.
+
+## 0.37.5
+
+- J menu shell, rebuilt on one grid: the rail is drawn as often as it is laid out (the selected tab no longer sticks out past the rail, a regression of 0.37.2: the rail background stayed 96 px while the buttons were 112), the window has rounded corners, a soft shadow and a thin border, the rail is an inset plate, and the line about the tab sits under the title on the same left edge.
+- Market item page: the figures of the item (1 h, 24 h, volume, base price) are tiles with a green or red stripe for up and down, in two or three columns instead of loose lines; "coins" is translated to "монет" everywhere in the Market text.
+- Auction lot page: a lot's "#7833 1 Wooden Pickaxe" subtitle reads "Lot #7833 · ×1"; the duplicate Back button is gone (one button per kind).
+- Translation: a failed translation service no longer writes a "[Translation] Service unavailable" line into the chat on every message; the translation button turns red for a minute and its tooltip says the original text was sent.
+- Not verified in game.
+
+## 0.37.4
+
+- Auction lots (F8 view): a fixed-price lot card now shows the price per unit on the right in gold (green when it is within your favorite threshold), the lot price below it, and the seller with the time left (1d 20h) on the second line, instead of one long line cut off at the seller's name. Bidding lots keep the old card.
+- Auction: a sort button next to the search field cycles the order of the page: the server's order, unit price (cheapest first), lot price (cheapest first). It sorts what the server shows on the current page.
+- Not verified in game.
+
+## 0.37.3
+
+- Market and Auction windows (the F8 custom view): the search is a real input field with a magnifier icon, an accent outline while you type and a "Search by name…" hint when empty (it used to be a flat "Search:" button). The balance sits in a pill, a thin divider separates the header, and the two cramped bottom lines became one row: the status on the left and the "Standard view · F8" switch on the right. The page arrows moved down a little to make room.
+- Not verified in game.
+
+## 0.37.2
+
+- Interface: every "Name: on/off" row in the J menu (the map, chat, HUD and TAB settings, the Helpers tab and so on) is now drawn as a name on the left and a real switch on the right (accent colour when on, grey when off) instead of "on"/"off" inside the text. Narrow buttons (under 120 px) keep the text. New pure `switch_label` in `ui_style.rs` with a test for both languages.
+- Not verified in game.
+
+## 0.37.1
+
+- Interface, first step: the Economy window grows with the screen (up to 640 x 360 instead of 520 x 300), and its Overview shows balance, priced items and auction lots as three cards. Every tab and button that had no icon now has one (Auction, Market, Plan, Check hand, and the settings tabs General, Connection, Map, TAB, HUD, and the map sub-tabs), all from the Lucide set. The sidebar of the J menu is wider (112 instead of 96 px) so "Experiments" is no longer cut off.
+- Not verified in game.
+
+## 0.37.0
+
+- New Experiments > Helpers tab (RU "Вспомогательные") with four switches, working while you play by hand, not only in tasks:
+  - Auto Eat: eats on its own when the food bar is low (on by default, as before). It no longer needs a task to be running; by hand it waits while the attack or use button is held and gives way if one is pressed during a meal.
+  - Auto Totem: when the off hand is empty (the totem was used), a totem from the inventory goes there.
+  - Auto Fill: when the last item of a hotbar stack is used up, the same item from the inventory goes into the same slot (a block you build with, a tool that broke). Nothing is refilled behind an open screen, so a stack you move out by hand stays out.
+  - Auto Tools: while you hold the attack button, the hotbar tool that fits the block under the crosshair is selected (axe for wood, pickaxe for stone, and so on); the held one stays if it fits. Tools only from the hotbar, bedrock and tasks are left alone.
+  - Totem, Fill and Tools are off until turned on. All swaps are spaced 350 ms apart so the server answers each one.
+- Not verified in game.
+
+## 0.36.3
+
+- Drain: faster filling. A column took about 0.8 s per block (a dropped block was waited for until it sank, then the next one went in). A cell that just received a falling block is now left alone for 450 ms and the next scan follows after 70 ms (was 800 and 120), and the wait-and-look poll is 50 ms. A pond should fill roughly twice as fast; the server still has to acknowledge every placement. If the server turns a placement down because the block has not sunk yet, the cell is retried later; tell me the timings if it does.
+- Not verified in game.
+
+## 0.36.2
+
+- Drain: a block was placed too far away. The reach was measured to the middle of the cell, but the click lands on the face of the block under it, up to a block further, so the server could refuse it. A cell is now chosen only within 3.3 blocks of the eye (was 3.7) and a face is clicked only when the real click point is within 4.1 blocks; otherwise the player walks closer first. The same click limit applies to farm and schematic placements.
+- Drain lines and grid: it stood on the line it had built and said "no firm block to click on at the edge" with cells left. A sand block counted as firm only after being watched for 1.5 s without a gap of a second, and a job that is waiting looks only every 1 to 2.5 s, so the count never got there. The count now restarts only when the cell was seen empty (or not looked at for 20 s), so the line it stands on is firm and it goes on along the line by itself.
+- Not verified in game.
+
+## 0.36.1
+
+- Shulker box preview (like the ShulkerPeek mod; not a Baritone feature): hover a shulker box that holds something, in the inventory, a chest, the creative tabs, the recipe book or chat, and its tooltip shows the contents as the familiar 9x3 grid with the items and their counts under the name and lore. The tooltip takes the colour of the box's dye (cyan box, teal tooltip; a black box gets a neutral grey). Empty boxes keep the plain tooltip. It is drawn through the game's tooltip component and colour hooks, so it works in every screen that shows an item tooltip. A switch in J > Settings > General ("Shulker preview") turns it off; on by default. New pure `shulker_peek.rs` with tests.
+- Farm: when the player is far from the beds, or the chunks they are in are not loaded, the field read as empty from a distance and the job went to "waiting for ripe crops". It now walks back to the beds first (status "walking back to the beds"); if there is no way back it idles and asks again instead of waiting for crops that are not there.
+- Not verified in game.
+
+## 0.36.0
+
+- A task no longer pauses when you open the inventory, the chat, the mod's own menu or the map. Before, any open screen paused navigation, mining, tunnel, bridge, drain, farm and schematics (and a click inside the inventory counted as taking the wheel). Now walking goes on as usual (the movement hook is not stopped by a screen) and the jobs keep their state; the things the game does not take behind a screen (a hit, a placed block, a use click, eating) simply wait and carry on the moment the screen is closed. Escape's pause menu, the title screen, signs and books still pause, as does your own movement, jump, sneak or attack input.
+- Not verified in game.
+
+## 0.35.2
+
+- Drain: "No firm block to click on at the edge" ended the job as finished-with-a-pause while water was still left. It no longer ends it: the job waits, keeps saying why ("no firm block to click on at the edge, waiting (stand on a block by the water)") and looks again every couple of seconds. Only when no water cell is left is it done.
+- Drain: a sand or gravel block now counts as something to stand or hang on when it rests on a solid block that cannot fall (as before) or has stayed where it is for 1.5 s. The 0.35.0 rule (support only) could not tell that a sand line you had built was firm if nothing solid could be found below it, and then no cell had an anchor at all, which is what stopped the job at the very start.
+- Not verified in game.
+
 ## 0.35.1
 
 - Removed the instruction requiring Russian replies to the owner from AGENTS.md. Public README and artwork remain English.

@@ -6,6 +6,8 @@ Open **J → Experiments → Baritone** and accept the experimental warning. The
 
 In **Options → Mods → DraimHorizon**, assign **Baritone: preview**, **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They replace the former on-screen buttons in all tabs. By default they are **Numpad 1** (preview), **Numpad 2** (start / resume), **Numpad 3** (pause) and **Numpad 4** (stop); the numeric keypad is unused by the game. Change them in the same page, for example on a laptop without a keypad. Horizon saves them with the other native-mod bindings. The keys also work while the menu is open on a Baritone tab (unless you are typing in a field); Start then closes the menu and begins the task. Choose and configure a tab, then press start; press preview first to see the route without acting. Pressing Start again while a task is active does not restart it.
 
+A running task is not paused by opening the inventory, the chat, the mod's menu or the map: it keeps walking, and a hit, a placed block or a bite waits for the screen to close. Escape's pause menu, signs, books and your own movement, jump, sneak or attack input still pause it.
+
 Bindings are ignored while a screen or text editor is open, the window is unfocused, modifiers are held, or experimental consent is absent. A binding shared with another automation action, an enabled native mod or a gameplay key does not trigger automation; choose a unique key. Native key repeats and key releases do not start actions.
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
@@ -14,6 +16,10 @@ Navigation executes dig and bridge routes step by step: it breaks blocks in the 
 
 While a task runs and the food bar is at 7 shanks or below, the mod eats on its own: it takes the best fitting safe food from the hotbar or inventory (never rotten flesh, spider eyes, raw chicken, golden apples or similar), holds the use button until the bar rises and puts the previous slot back. The **Eat** switch next to the status line turns it off; it is on by default.
 
+### Mining storage
+
+The Mining tab has the same **Storage** button: aim at a chest, barrel or shulker box and press it (it is the same container as the farm's, set per world). When the inventory is full, meaning every slot is taken and every stack of the mined kind is at its limit, the miner walks to the storage, opens it, shift-clicks across everything it does not need and walks back to where it stopped. It keeps tools and armour (anything that wears), food, a totem and one stack of the mined block for building; sand laid one by one across the inventory does not count as full. If the container is full or unreachable the miner idles and tries again after one to two minutes.
+
 ### Farm storage
 
 On the Farm tab, pick the crops from the icons (several at once; one always stays selected). With no seeds on hand and none in the storage the farm idles and waits for the crops to ripen. To set the storage, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
@@ -21,6 +27,10 @@ On the Farm tab, pick the crops from the icons (several at once; one always stay
 ## Idle instead of stopping
 
 A job does not stop because something is missing or went wrong. It stays up, shows "Idle: <reason>" in the status line and looks again after a few seconds: Mining waits for a suitable tool or a free slot, Tunnel and Bridge wait 3 s and try again, Drain waits for sand or gravel and for a route, Farm waits for ripe crops, light, seeds or a route, schematics for blocks or a route. Only your own stop key ends a job. A progress watchdog moves a job that does nothing for 20 s on to another target.
+
+## Shulker box preview
+
+Not a Baritone feature. Hover a shulker box that holds something (inventory, chest, creative tabs, recipe book, chat) and its tooltip shows the contents as a 9x3 grid, tinted with the dye colour of the box. Switch it off in J > Settings > General ("Shulker preview").
 
 ## Drain
 

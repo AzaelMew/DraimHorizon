@@ -226,13 +226,34 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
             .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
 }
 
+/// The longest drop a walk steps off: three blocks cost no health, and dunes and pits are full
+/// of them.
+pub const MAX_DROP: i32 = 3;
+/// Where to plan from when the player does not stand on firm ground by the planner's rule: on
+/// an edge with the middle over a gap, on a low block, in the air after a jump or a fall. The
+/// cell itself, one up, then down to the drop limit, then the neighbours; `None` when there is
+/// nowhere to stand around.
+pub fn nearest_standable(start: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> Option<Pos> {
+    let mut offsets = vec![[0, 0, 0], [0, 1, 0]];
+    offsets.extend((1..=MAX_DROP).map(|d| [0, -d, 0]));
+    for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+        for dy in [0, 1, -1, -2] {
+            offsets.push([dx, dy, dz]);
+        }
+    }
+    offsets
+        .into_iter()
+        .map(|d| [start[0] + d[0], start[1] + d[1], start[2] + d[2]])
+        .find(|at| standable(*at, cell))
+}
 pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
     let dy = to[1] - from[1];
     (to[0] - from[0]).abs() + (to[2] - from[2]).abs() == 1
-        && dy.abs() <= 1
+        && (-MAX_DROP..=1).contains(&dy)
         && standable(to, cell)
         && (dy <= 0 || cell([from[0], from[1] + 2, from[2]]) == Cell::Air)
-        && (dy >= 0 || cell([to[0], from[1] + 1, to[2]]) == Cell::Air)
+        // Stepping off an edge: the whole column down to the landing is open.
+        && (dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| cell([to[0], y, to[2]]) == Cell::Air))
 }
 
 /// One move of a route that may break and place blocks: what to remove and what to
@@ -479,7 +500,7 @@ pub fn search_near(
             break;
         }
         for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            for dy in [0, 1, -1] {
+            for dy in [0, 1, -1, -2, -3] {
                 let next = [at[0] + dx, at[1] + dy, at[2] + dz];
                 if (next[0] - start[0]).abs() > RADIUS
                     || (next[2] - start[2]).abs() > RADIUS
@@ -935,6 +956,28 @@ mod tests {
                 terrain(p)
             }
         ));
+    }
+    #[test]
+    fn planning_starts_from_the_nearest_place_to_stand() {
+        let mut ground = |p: Pos| if p[1] < 0 { Cell::Solid } else { Cell::Air };
+        assert_eq!(nearest_standable([0, 0, 0], &mut ground), Some([0, 0, 0]));
+        // In the air after a jump: the landing below.
+        assert_eq!(nearest_standable([0, 3, 0], &mut ground), Some([0, 0, 0]));
+        assert_eq!(nearest_standable([0, 2, 0], &mut ground), Some([0, 0, 0]));
+        // Higher than the drop limit there is nothing to plan from.
+        assert_eq!(nearest_standable([0, 4, 0], &mut ground), None);
+        // On the edge with the middle over a gap: the neighbouring cell that has a floor.
+        let mut ledge = |p: Pos| {
+            if p[1] < 0 && p[0] >= 1 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(!standable([0, 0, 0], &mut ledge));
+        assert_eq!(nearest_standable([0, 0, 0], &mut ledge), Some([1, 0, 0]));
+        // Nothing firm anywhere around.
+        assert_eq!(nearest_standable([0, 0, 0], &mut |_| Cell::Air), None);
     }
     #[test]
     fn refuses_unknown_terrain_hazards_and_large_drops() {
