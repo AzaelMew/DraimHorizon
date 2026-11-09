@@ -214,6 +214,8 @@ struct Answer {
     start: model::Pos,
     path: Option<model::Path>,
     dig_plan: Option<model::DigPath>,
+    /// What the search for a mining target saw, for the status line.
+    stats: Option<mining::PlanStats>,
 }
 struct Worker {
     tx: SyncSender<Query>,
@@ -269,8 +271,18 @@ impl Worker {
                         })
                     };
                     let mut dig_plan = None;
+                    let mut stats = None;
                     let (target, path) = if let Some((_, excluded)) = query.mine.as_ref() {
-                        match mining::plan(query.start, excluded, &mut read, canceled) {
+                        let mut seen = mining::PlanStats::default();
+                        let found = mining::plan_with_stats(
+                            query.start,
+                            excluded,
+                            &mut read,
+                            canceled,
+                            &mut seen,
+                        );
+                        stats = Some(seen);
+                        match found {
                             Some((target, path)) => (Some(target), Some(path)),
                             // Nothing is exposed: look for ore inside the rock and plan
                             // the route that digs to it.
@@ -337,6 +349,7 @@ impl Worker {
                             start: query.start,
                             path,
                             dig_plan,
+                            stats,
                         });
                     }
                 }
@@ -356,6 +369,9 @@ struct State {
     use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
+    /// What the last mining search saw, shown while it finds nothing.
+    mine_stats: Option<mining::PlanStats>,
+    mine_note: String,
     mine_aim: Option<[f32; 2]>,
     started: Instant,
     nav: model::Navigator,
@@ -379,6 +395,8 @@ impl Default for State {
             use_restore: None,
             attack_restore: None,
             mining: None,
+            mine_stats: None,
+            mine_note: String::new(),
             mine_aim: None,
             started: Instant::now(),
             nav: model::Navigator::default(),
@@ -1564,6 +1582,25 @@ pub(super) fn tick(game: &Game<'_>) {
             for answer in answers {
                 if answer.token == s.token && s.pending {
                     s.pending = false;
+                    s.mine_stats = answer.stats;
+                    // Blocks of the kind are around but none can be mined yet: say why.
+                    s.mine_note = answer
+                        .stats
+                        .filter(|st| st.candidates > 0 && answer.target.is_none())
+                        .map(|st| {
+                            let l = language();
+                            format!(
+                                "{} · {}: {} · {}: {}/{}/{}",
+                                l.text("Поиск руды…", "Finding ore…"),
+                                l.text("видно", "seen"),
+                                st.candidates,
+                                l.text("нельзя/нет опоры/нет пути", "unsafe/no footing/no route"),
+                                st.unsafe_,
+                                st.no_stand,
+                                st.no_path
+                            )
+                        })
+                        .unwrap_or_default();
                     if model::distance(position, model::center(answer.start)) > 1.5 {
                         s.nav.running = false;
                         s.nav.status = model::Status::Paused;
@@ -2303,6 +2340,7 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                 language.text("Добыча на паузе", "Mining paused")
             } else {
                 match job.phase {
+                    mining::Phase::Searching if !s.mine_note.is_empty() => s.mine_note.as_str(),
                     mining::Phase::Searching => language.text("Поиск руды…", "Finding ore…"),
                     mining::Phase::Approaching if s.nav.status == model::Status::Preview => {
                         language.text("Просмотр добычи", "Mining preview")

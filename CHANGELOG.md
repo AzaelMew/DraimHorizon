@@ -1,5 +1,13 @@
 # История версий
 
+## 0.37.10
+
+- Mining sand and gravel (a desert): the search threw out any block with sand or gravel above it, and in a desert or under a dune wall that is nearly every block, so it found nothing and sat on "Finding ore… 0". Sand and gravel are now mined with more of the same above them (the block above only drops into the gap); other ore with a falling block above it is still left alone. Digging to buried sand or gravel goes through more of it.
+- The search looks at the blocks next to the player first (cubes of 3, 6, 10 and 16 blocks), looks at up to 32 candidates, and a slow scan keeps what it found instead of giving up with nothing.
+- When blocks of the chosen kind are around but none can be mined, the status line says why: "Finding ore… · seen: 41 · unsafe/no footing/no route: 0/3/38". If it ever stays at "Finding ore…" again, those three numbers say which step to fix.
+- New test: sand in a desert, in a dune wall, and ore with a falling block above it.
+- Not verified in game.
+
 ## 0.37.9
 
 - /shop is redirected to /market: when you type /shop (or click it in chat), the mod runs /market instead, so the one Market view and its prices are used. Typed with arguments (/shop something) it goes to the server unchanged. The menu title "Shop" / "Магазин" is still read as the Market as in 0.37.8.
