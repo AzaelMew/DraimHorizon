@@ -158,6 +158,8 @@ struct State {
     store: Option<Store>,
     store_after: Instant,
     idle_deposit: bool,
+    // The harvest container is full and the harvest is to be sold (`/sell hand`).
+    sell_due: bool,
     // Failed placements in a row, and cells given up on, for the end message.
     errors: u8,
     missed: u16,
@@ -209,6 +211,7 @@ impl Default for State {
             store: None,
             store_after: Instant::now(),
             idle_deposit: false,
+            sell_due: false,
             errors: 0,
             missed: 0,
             falling: false,
@@ -437,6 +440,7 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
         s.parked = false;
         s.idle_since = None;
         s.idle_deposit = false;
+        s.sell_due = false;
         s.store_after = Instant::now();
         s.last = Instant::now()
             .checked_sub(Duration::from_secs(1))
@@ -574,8 +578,10 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
     }
     // Wheat to bales first, so that the bales go in with the same unload.
     if store::hay_plan(&inv, &crops).is_some()
+        && craft_allowed()
         && let Some(table) = purpose_chest(game, Purpose::Craft)
     {
+        craft_started();
         return Some((Purpose::Craft, table));
     }
     if !split.harvest.is_empty()
@@ -589,6 +595,55 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
         return Some((Purpose::DepositSeeds, chest));
     }
     None
+}
+/// Crafting is not tried again for a while after a trip to a table: one that cannot be opened
+/// must not hold the unload back.
+static CRAFT_RETRY: Mutex<Option<Instant>> = Mutex::new(None);
+fn craft_allowed() -> bool {
+    CRAFT_RETRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none_or(|t| Instant::now() >= t)
+}
+fn craft_started() {
+    *CRAFT_RETRY.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(Instant::now() + Duration::from_secs(90));
+}
+/// On the way to unload: with wheat in the inventory, a crafting table close by turns the trip
+/// into a crafting one first (the bales then go in with the unload). Without a table the wheat
+/// is put into the container as it is. Looked at twice a second at most.
+fn craft_on_the_way(game: &Game<'_>, t: Store) {
+    static LOOKED: Mutex<Option<Instant>> = Mutex::new(None);
+    if t.purpose != Purpose::Deposit || !craft_allowed() {
+        return;
+    }
+    {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        if looked.is_some_and(|l| l.elapsed() < Duration::from_millis(500)) {
+            return;
+        }
+        *looked = Some(Instant::now());
+    }
+    let crops: Vec<_> = state(|s| match &s.task {
+        Some(Task::Farm { config, .. }) => config.selected().collect(),
+        _ => Vec::new(),
+    });
+    if store::hay_plan(&inventory(game), &crops).is_none() {
+        return;
+    }
+    let Some(table) = table_near(game) else {
+        return;
+    };
+    craft_started();
+    state(|s| {
+        if let Some(t) = s.store.as_mut() {
+            t.purpose = Purpose::Craft;
+            t.tries = 0;
+            t.force_move = false;
+            t.since = Instant::now();
+        }
+        s.target = Some(table);
+    });
 }
 /// Walks within reach of the storage, then asks for the click that opens it.
 fn store_walk(game: &Game<'_>, s: &mut State) {
@@ -654,6 +709,7 @@ fn end_store_for(game: &mut Game<'_>, failure: Option<&str>, cooldown: u64) {
 /// Drives the storage window each tick: waits for it to open, moves a few stacks, closes it.
 pub(super) fn store_frame(game: &mut Game<'_>) {
     craft_frame(game);
+    sell_frame(game);
     let Some(t) = state(|s| s.store) else {
         return;
     };
@@ -667,7 +723,7 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                 || (t.purpose == Purpose::Craft && menu == "minecraft:crafting")
         });
     match t.step {
-        Step::Walk => {}
+        Step::Walk => craft_on_the_way(game, t),
         Step::Open => {
             if open {
                 state(|s| {
@@ -858,6 +914,15 @@ fn transfer(game: &mut Game<'_>, t: Store) {
         }
         return;
     }
+    if (stuck >= 3 || t.moved >= 200)
+        && t.purpose == Purpose::Deposit
+        && state(|s| matches!(&s.task, Some(Task::Farm { config, .. }) if config.autosell))
+    {
+        // The harvest container is full: sell what is left instead of giving up.
+        state(|s| s.sell_due = true);
+        end_store_for(game, None, 30);
+        return;
+    }
     if stuck >= 3 || t.moved >= 200 {
         // Nothing moves any more: the container is full or refuses the stacks.
         end_store(
@@ -1012,6 +1077,79 @@ fn craft_frame(game: &mut Game<'_>) {
     ops.push((Some(slot), 0, Input::Pickup));
     *last = Some(Instant::now());
     game.remote_menu_ops(&ops);
+}
+/// Sells the harvest with `/sell hand` once the harvest container turned out full: each stack
+/// of the crops' yield goes to the selected hotbar slot (a swap click), the command sells what is
+/// in the hand, and the next stack follows. A stack that does not shrink after three commands
+/// ends the selling (no such command here, or nothing is bought); it starts again after the next
+/// failed unload.
+fn sell_frame(game: &mut Game<'_>) {
+    use horizon_client::menu::Input;
+    static LAST: Mutex<Option<(Instant, u32, u8)>> = Mutex::new(None);
+    let (wanted, crops) = state(|s| match (&s.task, s.active, &s.store) {
+        (Some(Task::Farm { config, .. }), true, None) if config.autosell && s.sell_due => {
+            (true, config.selected().collect::<Vec<_>>())
+        }
+        _ => (false, Vec::new()),
+    });
+    if !wanted
+        || !game.native_on(claims::ID)
+        || !game.native_playing()
+        || game.screen != Screen::Playing
+    {
+        return;
+    }
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|(t, _, _)| t.elapsed() < Duration::from_millis(900)) {
+        return;
+    }
+    let inv = inventory(game);
+    let Some(&slot) = store::sell_slots(&inv, &crops).first() else {
+        // Everything is sold.
+        *last = None;
+        state(|s| {
+            s.sell_due = false;
+            s.message.clear();
+        });
+        return;
+    };
+    let selected = usize::from(game.selected);
+    if slot != selected {
+        // Into the hand first (a number-key swap, the selected slot itself stays selected).
+        if !game.remote_menu_ops(&[(Some(slot), selected as i32, Input::Swap)]) {
+            state(|s| s.sell_due = false);
+        }
+        *last = Some((Instant::now(), 0, 0));
+        return;
+    }
+    let here = inv[slot].as_ref().map_or(0, |(_, n)| *n);
+    let same = match *last {
+        Some((_, count, tries)) if count == here => tries + 1,
+        _ => 0,
+    };
+    let sent = same < 3
+        && game.chat_abilities().send_commands
+        && game.native_send_chat("/sell hand").is_ok();
+    if !sent {
+        *last = None;
+        state(|s| {
+            s.sell_due = false;
+            s.message = text(
+                "/sell hand не сработал, урожай остаётся в инвентаре",
+                "/sell hand did not work, the harvest stays in the inventory",
+            )
+            .into();
+        });
+        return;
+    }
+    *last = Some((Instant::now(), here, same));
+    state(|s| {
+        s.message = text(
+            "продажа урожая: /sell hand",
+            "selling the harvest: /sell hand",
+        )
+        .into()
+    });
 }
 /// Stands idle instead of stopping: the job stays up, says why and looks again in a few seconds.
 /// Only the player's own stop ends a job; a missing block, a route that is not there, a refusal

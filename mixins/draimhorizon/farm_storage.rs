@@ -25,8 +25,20 @@ pub const HAY_BLOCK: &str = "minecraft:hay_block";
 /// Hay bales made per crafting round at most (nine wheat each).
 pub const HAY_ROUND: u32 = 4;
 /// Whether `name` is something these crops yield: the harvest itself, or hay bales from wheat.
-fn yields(crops: &[Crop], name: &str) -> bool {
+pub fn yields(crops: &[Crop], name: &str) -> bool {
     crops.iter().any(|c| product(*c) == name) || (name == HAY_BLOCK && crops.contains(&Crop::Wheat))
+}
+/// The inventory slots to sell: every stack of what the crops yield (harvest and hay bales),
+/// never the seeds.
+pub fn sell_slots(inventory: &[Stack], crops: &[Crop]) -> Vec<usize> {
+    inventory
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, stack)| match stack {
+            Some((name, _)) if yields(crops, name) => Some(slot),
+            _ => None,
+        })
+        .collect()
 }
 /// What to craft at a crafting table: the slot of a stack of at least nine wheat and how many
 /// bales to make from it this round. `None` when no stack has enough or wheat is not farmed.
@@ -459,6 +471,12 @@ mod tests {
             hay_plan(&[item("minecraft:wheat", 8)], &[Crop::Wheat]),
             None
         );
+        let mixed = vec![
+            item("minecraft:wheat_seeds", 9),
+            item("minecraft:wheat", 3),
+            item(HAY_BLOCK, 2),
+        ];
+        assert_eq!(sell_slots(&mixed, &[Crop::Wheat]), vec![1, 2]);
         let bales = vec![item(HAY_BLOCK, 3)];
         assert_eq!(deposit(&bales, &[Crop::Wheat], KEEP_SEEDS), vec![0]);
         assert!(deposit(&bales, &[Crop::Carrots], KEEP_SEEDS).is_empty());
