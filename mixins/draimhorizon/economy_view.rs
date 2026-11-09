@@ -227,6 +227,7 @@ pub(super) fn market_lore(game: &Game<'_>, text: &str) -> String {
         .replace("1 h ", "1 ч ")
         .replace("24 h ", "24 ч ")
         .replace("unchanged", "без изменений")
+        .replace(" coins", " монет")
 }
 fn value(v: Option<model::Coins>) -> String {
     v.map_or("—".into(), model::fmt)

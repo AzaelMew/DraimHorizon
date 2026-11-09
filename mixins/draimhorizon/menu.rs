@@ -471,6 +471,8 @@ pub enum ChatSection {
     DeepL,
     Priority,
 }
+/// Width of the tab rail on the left of the J menu; the layout and the drawing share it.
+pub const RAIL_WIDTH: f32 = 112.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ExperimentalSection {
     #[default]
@@ -1104,7 +1106,7 @@ impl Menu {
         }
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
-        let sidebar = if panel_w >= 380.0 { 112.0 } else { 0.0 };
+        let sidebar = if panel_w >= 380.0 { RAIL_WIDTH } else { 0.0 };
         let nav_step = ((panel_h - 80.0) / 6.0).min(26.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;

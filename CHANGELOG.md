@@ -1,5 +1,13 @@
 # История версий
 
+## 0.37.5
+
+- J menu shell, rebuilt on one grid: the rail is drawn as often as it is laid out (the selected tab no longer sticks out past the rail, a regression of 0.37.2: the rail background stayed 96 px while the buttons were 112), the window has rounded corners, a soft shadow and a thin border, the rail is an inset plate, and the line about the tab sits under the title on the same left edge.
+- Market item page: the figures of the item (1 h, 24 h, volume, base price) are tiles with a green or red stripe for up and down, in two or three columns instead of loose lines; "coins" is translated to "монет" everywhere in the Market text.
+- Auction lot page: a lot's "#7833 1 Wooden Pickaxe" subtitle reads "Lot #7833 · ×1"; the duplicate Back button is gone (one button per kind).
+- Translation: a failed translation service no longer writes a "[Translation] Service unavailable" line into the chat on every message; the translation button turns red for a minute and its tooltip says the original text was sent.
+- Not verified in game.
+
 ## 0.37.4
 
 - Auction lots (F8 view): a fixed-price lot card now shows the price per unit on the right in gold (green when it is within your favorite threshold), the lot price below it, and the seller with the time left (1d 20h) on the second line, instead of one long line cut off at the seller's name. Bidding lots keep the old card.

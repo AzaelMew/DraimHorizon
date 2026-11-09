@@ -1,9 +1,10 @@
-**DraimHorizon 0.37.4 - Auction lot cards and sorting**
+**DraimHorizon 0.37.5 - Menu shell, Market item page, no translation spam**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Auction lots show the price per unit on the right, the lot price, the seller and the time left.
-- A sort button (server order, unit price, lot price) next to the search field.
-- Builds on 0.37.3: the search field and footer of the Market and Auction windows.
+- The J menu shell is rebuilt on one grid (rail width fixed, rounded window with shadow and border, aligned header).
+- Market item page: figures as tiles, "coins" translated. Auction lot page: readable lot line, no duplicate Back.
+- A failed translation service no longer posts a system line in the chat; the translation button turns red instead.
+- Builds on 0.37.4: auction lot cards and sorting.
 
 Not verified in game. No installation or publication is implied.

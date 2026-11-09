@@ -244,17 +244,26 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         (part, failure)
     });
+    // No line in the chat: the translation button turns red for a minute instead.
     if failure {
-        game.native_chat(crate::game::claim_borders_chat_view::language(game).text(
-            "[Перевод] Сервис недоступен: отправляется исходный текст.",
-            "[Translation] Service unavailable. Sending the original text.",
-        ));
+        *failed_at().lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     }
     if let Some(message) = message
         && game.chat_abilities().send_messages
     {
         game.send_signed_chat(&message);
     }
+}
+/// When the translation service last failed, so the button can say so for a while.
+fn failed_at() -> &'static Mutex<Option<Instant>> {
+    static AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    AT.get_or_init(|| Mutex::new(None))
+}
+fn failed_lately() -> bool {
+    failed_at()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
 }
 pub(super) fn draw_toggle(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
     if game.screen != Screen::Chat || !game.native_on(claims::ID) {
@@ -277,20 +286,25 @@ pub(super) fn draw_toggle(game: &Game<'_>, batch: &mut horizon_client::hud::HudB
         batch,
         &label,
         [rect[0] + 4.0, rect[1] + 2.0],
-        0xe3ebf3,
+        if failed_lately() { 0xe39ca8 } else { 0xe3ebf3 },
         false,
     );
     if crate::game::claim_borders_ui_style::contains(rect, game.native_cursor()) {
         let language = crate::game::claim_borders_chat_view::language(game);
-        ui::tooltip(
-            game,
-            batch,
-            language.text(
+        let mut tip = language
+            .text(
                 "ЛКМ: перевод исходящих вкл./выкл. · ПКМ: языки (? = авто)",
                 "Left click: outgoing on/off · Right click: languages (? = auto)",
-            ),
-            game.native_cursor(),
-        );
+            )
+            .to_string();
+        if failed_lately() {
+            tip.push('\n');
+            tip.push_str(language.text(
+                "Сервис перевода недоступен: отправлен исходный текст",
+                "Translation service unavailable: the original text was sent",
+            ));
+        }
+        ui::tooltip(game, batch, &tip, game.native_cursor());
     }
 }
 pub(super) fn editing(game: &Game<'_>) -> bool {

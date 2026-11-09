@@ -290,6 +290,20 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
                 t("Лот сервера", "Server listing").into()
             }
         }
+        Goods | Preview
+            if page.family == scan::Kind::Auction
+                && b.lore.first().is_some_and(|l| l.starts_with('#')) =>
+        {
+            // "#7833 1 Wooden Pickaxe" -> "Lot #7833 · ×1"
+            let mut parts = b.lore[0].split_whitespace();
+            let id = parts.next().unwrap_or("");
+            let count = parts.next().unwrap_or("1");
+            if russian() {
+                format!("Лот {id} · ×{count}")
+            } else {
+                format!("Lot {id} · ×{count}")
+            }
+        }
         _ => {
             let lore = b
                 .lore
@@ -616,6 +630,8 @@ pub(super) fn render(
                 ui::Icon::Close,
             );
         }
+        // One button per kind: some pages carry two Back buttons.
+        let mut seen_roles = Vec::new();
         let services: Vec<_> = page
             .buttons
             .iter()
@@ -624,6 +640,15 @@ pub(super) fn render(
                     scan::role(&page, b),
                     Back | News | Help | Mine | Mail | ClaimAll
                 )
+            })
+            .filter(|b| {
+                let role = scan::role(&page, b);
+                if seen_roles.contains(&role) {
+                    false
+                } else {
+                    seen_roles.push(role);
+                    true
+                }
             })
             .collect();
         let cw = (w - 16.0) / services.len().max(1) as f32;
@@ -674,24 +699,40 @@ pub(super) fn render(
                 if h < 300.0 {
                     lore.sort_by_key(|l| !l.starts_with("You may still sell "));
                 }
-                for (i, l) in lore.into_iter().take(lines).enumerate() {
+                // The figures of the item as tiles: the colour stripe says up, down or neutral.
+                let cols = if w >= 480.0 { 3 } else { 2 };
+                let shown = lore.len().min(if lines == 0 { 0 } else { cols * 2 });
+                let tile_w = (w - 16.0 - (cols as f32 - 1.0) * 4.0) / cols as f32;
+                for (i, l) in lore.into_iter().take(shown).enumerate() {
+                    let text = crate::game::claim_borders_economy_view::market_lore(game, l);
+                    let tile = [
+                        x + 8.0 + (i % cols) as f32 * (tile_w + 4.0),
+                        y + 92.0 + (i / cols) as f32 * 24.0,
+                        tile_w,
+                        21.0,
+                    ];
+                    let stripe = if text.contains('▲') {
+                        0xff87e4af
+                    } else if text.contains('▼') {
+                        0xffe39ca8
+                    } else {
+                        0xff5d7690
+                    };
+                    ui::rounded(game, batch, tile, 4.0, 0xff1c2a39);
+                    ui::fill(game, batch, [tile[0], tile[1] + 3.0, 2.0, 15.0], stripe);
                     ui::text(
                         game,
                         batch,
-                        &ui::clip(
-                            game,
-                            &crate::game::claim_borders_economy_view::market_lore(game, l),
-                            w - 24.0,
-                        ),
-                        [x + 12.0, y + 92.0 + i as f32 * 11.0],
-                        0xb6c7d9,
+                        &ui::clip(game, &text, tile_w - 14.0),
+                        [tile[0] + 8.0, tile[1] + 6.0],
+                        0xc9d6e3,
                         false,
                     );
                 }
-                let top = if lines == 0 {
+                let top = if shown == 0 {
                     y + 86.0
                 } else {
-                    y + 96.0 + lines as f32 * 11.0
+                    y + 96.0 + shown.div_ceil(cols) as f32 * 24.0
                 };
                 let tw = (w - 16.0) / 3.0;
                 let th = if h >= 300.0 {

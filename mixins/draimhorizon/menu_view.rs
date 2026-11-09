@@ -128,53 +128,38 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     let ph = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
     let px = (screen.rect[2] - pw) * 0.5;
     let py = (screen.rect[3] - ph) * 0.5;
-    ui::fill(game, batch, [px, py, pw, ph], 0xf0181c28);
-    ui::fill(game, batch, [px, py, pw, 2.0], 0xff8b7bff);
+    // The window: a soft shadow, a thin border, rounded corners; the tab rail is a plate inset
+    // in the window and the content area is the rest.
+    ui::rounded(
+        game,
+        batch,
+        [px - 3.0, py - 3.0, pw + 6.0, ph + 6.0],
+        10.0,
+        0x38000000,
+    );
+    ui::rounded(game, batch, [px, py, pw, ph], 8.0, 0xff2b3548);
+    ui::rounded(
+        game,
+        batch,
+        [px + 1.0, py + 1.0, pw - 2.0, ph - 2.0],
+        7.0,
+        0xf0181c28,
+    );
     if pw >= 380.0 {
-        ui::fill(game, batch, [px, py + 2.0, 96.0, ph - 2.0], 0xff111520);
+        let rail = model::RAIL_WIDTH;
+        ui::rounded(
+            game,
+            batch,
+            [px + 4.0, py + 4.0, rail - 4.0, ph - 8.0],
+            6.0,
+            0xff111520,
+        );
         ui::text(
             game,
             batch,
             "DraimHorizon",
-            [px + 8.0, py + 17.0],
+            [px + 10.0, py + 17.0],
             0xe3ebf3,
-            false,
-        );
-        let hint = state(|s| {
-            let (ru, en) = match s.menu.tab {
-                model::Tab::Waypoints => (
-                    "Сохранённые места и быстрые ориентиры",
-                    "Saved places and quick waypoints",
-                ),
-                model::Tab::Party => (
-                    "Друзья, приглашения и игроки мода",
-                    "Friends, invitations and mod users",
-                ),
-                model::Tab::Claims => (
-                    "Территории, цвета и память карты",
-                    "Claims, colors and map storage",
-                ),
-                model::Tab::Chat => (
-                    "Внешний вид, уведомления и перевод",
-                    "Appearance, notifications and translation",
-                ),
-                model::Tab::Experimental => (
-                    "Необязательные функции, выключенные по умолчанию",
-                    "Optional features, off by default",
-                ),
-                model::Tab::Settings => (
-                    "Все параметры мода, по разделам",
-                    "Mod settings by category",
-                ),
-            };
-            s.menu.language.text(ru, en)
-        });
-        ui::text(
-            game,
-            batch,
-            &ui::clip(game, hint, pw - 128.0),
-            [px + 112.0, py + 34.0],
-            0x9aacc0,
             false,
         );
     }
@@ -267,6 +252,43 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Err(error) => error,
                     },
                 });
+            }
+            // The title and, under it, a line about the tab, on the same left edge as the content.
+            if widget.text == "DraimHorizon" && pw >= 380.0 {
+                let (ru, en) = match s.menu.tab {
+                    model::Tab::Waypoints => (
+                        "Сохранённые места и быстрые ориентиры",
+                        "Saved places and quick waypoints",
+                    ),
+                    model::Tab::Party => (
+                        "Друзья, приглашения и игроки мода",
+                        "Friends, invitations and mod users",
+                    ),
+                    model::Tab::Claims => (
+                        "Территории, цвета и память карты",
+                        "Claims, colors and map storage",
+                    ),
+                    model::Tab::Chat => (
+                        "Внешний вид, уведомления и перевод",
+                        "Appearance, notifications and translation",
+                    ),
+                    model::Tab::Experimental => (
+                        "Необязательные функции, выключенные по умолчанию",
+                        "Optional features, off by default",
+                    ),
+                    model::Tab::Settings => (
+                        "Все параметры мода, по разделам",
+                        "Mod settings by category",
+                    ),
+                };
+                ui::text(
+                    game,
+                    batch,
+                    &ui::clip(game, s.menu.language.text(ru, en), widget.rect[2]),
+                    [widget.rect[0] + 4.0, widget.rect[1] + widget.rect[3] + 1.0],
+                    0x9aacc0,
+                    false,
+                );
             }
             if s.menu.experiments_prompt {
                 if let Some(control) = widget.control {
