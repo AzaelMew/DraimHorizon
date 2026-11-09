@@ -1,8 +1,9 @@
-**DraimHorizon 0.38.2 - Planning from an edge or the air**
+**DraimHorizon 0.39.0 - Auto Click; Drain swims back again**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Mining no longer idles with "no route" when the player stands on an edge, at the lip of a pit or in the air: planning starts from the nearest place that can be stood on.
-- Builds on 0.38.1: digging up to sand overhead and a route budget that mined blocks reset.
+- Experiments > Helpers has Auto Click: a switch, the button (left or right) and the rate (1 to 20 clicks a second, or hold). It works by hand only, a key can switch it, and it does nothing behind a screen or while a task runs.
+- Drain no longer pauses when the bot slips off the edge, so it swims back to shore as before.
+- Builds on 0.38.2.
 
 Not verified in game. No installation or publication is implied.

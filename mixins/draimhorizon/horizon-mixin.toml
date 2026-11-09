@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.38.2"
+version = "0.39.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -42,6 +42,12 @@ id = "draining"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_draining"
 source = "draining.rs"
+
+[[module]]
+id = "autoclick"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_autoclick"
+source = "autoclick.rs"
 
 [[module]]
 id = "shulker-peek"

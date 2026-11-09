@@ -1,7 +1,10 @@
 // Native adapter for the helpers that work while the player plays by hand: a totem for the off
 // hand, a used-up hotbar stack replaced from the inventory, the right tool for the block hit.
 // Each one has its own switch (Experiments > Helpers) and is off until it is turned on.
-use crate::game::{Game, claim_borders as claims, claim_borders_menu::Helper};
+use crate::game::{
+    Game, claim_borders as claims, claim_borders_autoclick as pace, claim_borders_menu::Helper,
+    claim_borders_navigation_view as walk,
+};
 use horizon_client::menu::Input;
 use std::{
     sync::Mutex,
@@ -98,5 +101,63 @@ pub(super) fn tick(game: &mut Game<'_>) {
     drop(watch);
     if on(game, Helper::Tools) {
         crate::game::claim_borders_navigation_view::auto_tool(game);
+    }
+}
+/// When the auto-clicker's clock started, its pace, and whether its key was down last tick.
+struct Click {
+    clicker: pace::Clicker,
+    key_was_down: bool,
+}
+static CLICK: Mutex<Click> = Mutex::new(Click {
+    clicker: pace::Clicker::new(),
+    key_was_down: false,
+});
+fn clock() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+/// The auto-clicker's pace as chosen (an index into `autoclick::RATES`).
+pub(super) fn click_rate(game: &Game<'_>) -> u8 {
+    game.native_setting(claims::SETTINGS_ID, "auto_click_rate")
+        .and_then(|v| v.parse::<u8>().ok())
+        .filter(|i| usize::from(*i) < pace::RATES.len())
+        .unwrap_or(pace::DEFAULT_RATE)
+}
+/// The auto-clicker: while it is on and the player is playing by hand (no screen, no task
+/// running), the chosen mouse button is pressed in pulses at the chosen pace, on top of whatever
+/// the player holds. Called last, after the tasks have read the buttons, so that its presses
+/// are not taken for the player. A key (unbound until the player binds one) switches it.
+pub(super) fn autoclick(game: &mut Game<'_>) {
+    let playing = game.native_on(claims::ID)
+        && game.native_playing()
+        && !game.screen_over_playing()
+        && game.player.is_some();
+    let mut click = CLICK.lock().unwrap_or_else(|e| e.into_inner());
+    if playing {
+        let key = game.native_mod_key(claims::ID, "autoclick", "key.keyboard.unknown");
+        let down = horizon_client::keybinds::key_code(&key)
+            .is_some_and(|code| game.physical_keys.contains(&code));
+        if down && !click.key_was_down {
+            let now = !on(game, Helper::AutoClick);
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                Helper::AutoClick.key(),
+                if now { "true" } else { "false" },
+            );
+        }
+        click.key_was_down = down;
+    }
+    if !(playing && on(game, Helper::AutoClick)) || walk::task_running() {
+        click.clicker.reset();
+        return;
+    }
+    let right = game
+        .native_setting(claims::SETTINGS_ID, "auto_click_button")
+        .as_deref()
+        == Some("right");
+    let rate = pace::rate(click_rate(game));
+    if click.clicker.down(clock(), rate) {
+        drop(click);
+        walk::press_for_click(game, right);
     }
 }

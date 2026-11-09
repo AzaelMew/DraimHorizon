@@ -430,6 +430,10 @@ pub(super) fn clear_storage() {
 pub(super) fn draining() -> bool {
     state(|s| s.active && matches!(s.task, Some(Task::Drain { .. })))
 }
+/// Whether the current task is a drain, running or paused.
+pub(super) fn drain_task() -> bool {
+    state(|s| matches!(s.task, Some(Task::Drain { .. })))
+}
 /// Whether the storage window is being used (the movement hook must not pause the job then).
 pub(super) fn storing() -> bool {
     state(|s| s.store.is_some_and(|t| t.step != Step::Walk))

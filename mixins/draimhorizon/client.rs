@@ -56,6 +56,13 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                 "key.keyboard.j".into(),
             ],
             [
+                "autoclick".into(),
+                language
+                    .text("DraimHorizons: авто-клик", "DraimHorizons: auto click")
+                    .into(),
+                "key.keyboard.unknown".into(),
+            ],
+            [
                 "zoom".into(),
                 language
                     .text("DraimHorizons: зум камеры", "DraimHorizons: camera zoom")
@@ -1509,6 +1516,11 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storage(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            click_right: game
+                .native_setting(claims::SETTINGS_ID, "auto_click_button")
+                .as_deref()
+                == Some("right"),
+            click_rate: crate::game::claim_borders_helpers::click_rate(game),
             helpers: menu::Helper::ALL.map(|helper| {
                 game.native_setting(claims::SETTINGS_ID, helper.key())
                     .as_deref()
@@ -1681,6 +1693,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "shulker_peek",
                 if on { "true" } else { "false" },
             );
+            Ok(Vec::new())
+        }
+        Action::SetAutoClickButton(right) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "auto_click_button",
+                if right { "right" } else { "left" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoClickRate(rate) => {
+            game.native_set_setting(claims::SETTINGS_ID, "auto_click_rate", &rate.to_string());
             Ok(Vec::new())
         }
         Action::SetHelper(helper, on) => {

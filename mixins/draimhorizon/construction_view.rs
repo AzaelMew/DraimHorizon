@@ -896,7 +896,8 @@ fn swim_back(
 ) -> bool {
     if !game.native_on(claims::ID)
         || !navigation::in_world(game)
-        || !crate::game::claim_borders_workshop_view::draining()
+        // Even a drain job that was paused gets its player out of the water.
+        || !crate::game::claim_borders_workshop_view::drain_task()
         || game
             .player
             .as_ref()
@@ -963,8 +964,12 @@ fn edge_drive(
         .as_ref()
         .is_none_or(|b| !b.ground.on_ground || b.fluids.was_touching_water || b.flying)
     {
-        pause();
-        navigation::pause();
+        // Slipping off the edge into the water is not the player taking over: the drain job is
+        // not paused (it could not swim back then), `swim_back` takes the player out.
+        if !crate::game::claim_borders_workshop_view::draining() {
+            pause();
+            navigation::pause();
+        }
         return false;
     }
     let position = [p.x, p.y, p.z];

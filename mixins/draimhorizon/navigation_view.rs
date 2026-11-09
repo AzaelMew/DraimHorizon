@@ -1396,6 +1396,28 @@ pub(super) fn haul_ended(ok: bool) {
         }
     });
 }
+/// Whether a task (walking, mining, a build, the farm) is running: nothing is clicked for the
+/// player then.
+pub(super) fn task_running() -> bool {
+    control().0
+}
+/// Holds a mouse button for this tick, on top of what the player holds; the player's own state
+/// is put back when the input has been handled.
+pub(super) fn press_for_click(game: &mut Game<'_>, right: bool) {
+    if right {
+        let physical = game.right;
+        state(|s| {
+            s.use_restore.get_or_insert(physical);
+        });
+        game.right = true;
+    } else {
+        let physical = game.left;
+        state(|s| {
+            s.attack_restore.get_or_insert(physical);
+        });
+        game.left = true;
+    }
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     crate::game::claim_borders_haul_view::frame(game);
@@ -1413,6 +1435,8 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
         state(|s| s.use_restore = Some(physical_right));
         game.right = true;
     }
+    // Last: the auto-clicker's presses must not be read as the player taking the wheel.
+    crate::game::claim_borders_helpers::autoclick(game);
 }
 pub(super) fn mining_attack_end(game: &mut Game<'_>) {
     if let Some(physical) = state(|s| s.attack_restore.take()) {
