@@ -226,13 +226,17 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
             .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
 }
 
+/// The longest drop a walk steps off: three blocks cost no health, and dunes and pits are full
+/// of them.
+pub const MAX_DROP: i32 = 3;
 pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
     let dy = to[1] - from[1];
     (to[0] - from[0]).abs() + (to[2] - from[2]).abs() == 1
-        && dy.abs() <= 1
+        && (-MAX_DROP..=1).contains(&dy)
         && standable(to, cell)
         && (dy <= 0 || cell([from[0], from[1] + 2, from[2]]) == Cell::Air)
-        && (dy >= 0 || cell([to[0], from[1] + 1, to[2]]) == Cell::Air)
+        // Stepping off an edge: the whole column down to the landing is open.
+        && (dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| cell([to[0], y, to[2]]) == Cell::Air))
 }
 
 /// One move of a route that may break and place blocks: what to remove and what to
@@ -479,7 +483,7 @@ pub fn search_near(
             break;
         }
         for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            for dy in [0, 1, -1] {
+            for dy in [0, 1, -1, -2, -3] {
                 let next = [at[0] + dx, at[1] + dy, at[2] + dz];
                 if (next[0] - start[0]).abs() > RADIUS
                     || (next[2] - start[2]).abs() > RADIUS

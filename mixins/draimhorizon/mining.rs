@@ -814,6 +814,31 @@ mod tests {
         assert!(plan_with_stats([0, 0, 0], &[], risky, || false, &mut stats).is_none());
         assert_eq!((stats.candidates, stats.unsafe_), (1, 1));
     }
+    /// A ridge: one sand column to y = -1 in the middle of pits whose floor is at y = -4.
+    fn ridge(at: nav::Pos) -> Block {
+        let sand = Block {
+            cell: nav::Cell::Solid,
+            ore: true,
+            falling: true,
+            breakable: true,
+        };
+        if at[1] <= -4 || (at[0] == 0 && at[2] == 0 && at[1] <= -1) {
+            sand
+        } else {
+            Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            }
+        }
+    }
+    #[test]
+    fn the_player_walks_down_a_three_block_drop_to_reach_the_sand() {
+        // On the ridge every neighbour is three blocks lower: a walk steps off the edge.
+        let (target, path) =
+            plan([0, 0, 0], &[], ridge, || false).expect("a walk down into the pit");
+        assert!(ridge(target).ore && path.complete);
+        assert!(path.nodes.iter().any(|n| n[1] <= -3));
+    }
     #[test]
     fn the_next_block_is_the_one_beside_the_last_break() {
         let eye = [0.5, 1.6, 0.5];

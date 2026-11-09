@@ -1,5 +1,12 @@
 # История версий
 
+## 0.37.13
+
+- Walking: the route planner now steps off drops of up to three blocks (three blocks cost no health); before it only managed one. Dunes and pits are full of drops of two and three blocks, so on a ridge between pits every walk ended at once: "seen/open 131/65, no route 32" while sand lay all around. This also helps every other walking task. The longer drops are refused as before.
+- Mining: before any search, a block of the kind within reach (4.2 blocks of the eye) and in plain sight is dug at once from where the player stands. No route is needed for it, and none can exist on a ridge. Walking, and digging a way, come only when nothing is in reach.
+- New tests: a walk down a three-block drop to the sand; the planner refuses drops over three blocks as before.
+- Not verified in game.
+
 ## 0.37.12
 
 - Mining: "seen: 483, unsafe 32/0/0" meant that the 32 nearest blocks of sand were all buried (the ones under the player's feet), so none could be mined from outside and the open ones farther away were never looked at. The search now looks only at blocks with an open side (the buried ones are dug to by the route planner) and counts how many it saw and how many are open: "Finding ore… · seen/open: 483/57 · ...".

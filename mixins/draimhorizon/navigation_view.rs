@@ -908,7 +908,10 @@ fn in_plain_sight(game: &Game<'_>, ore: u8, eye: [f64; 3], target: model::Pos) -
 /// sight, safe to break, beside the one just broken. `None` when the player has to move.
 fn chain_target(game: &Game<'_>, job: &mining::Job, position: [f64; 3]) -> Option<model::Pos> {
     // A job that digs a route (a tunnel, a bridge) or clears the way has its own order.
-    if job.ore == u8::MAX || job.blocker {
+    if job.ore == u8::MAX
+        || job.blocker
+        || crate::game::claim_borders_farming::Crop::from_code(job.ore).is_some()
+    {
         return None;
     }
     let eye = game.eye_position()?;
@@ -941,6 +944,19 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let now = s.started.elapsed().as_millis() as u64;
     match job.phase {
         mining::Phase::Searching => {
+            // Anything of the kind within reach and in sight is dug at once, from where the
+            // player stands: no route is needed for it, and none can exist when the player is
+            // on a ridge between pits. Walking and digging a way come only when none is in reach.
+            if let Some(next) = chain_target(game, job, position) {
+                job.select(next);
+                job.phase = mining::Phase::Breaking;
+                job.started_ms = now;
+                s.mine_aim = None;
+                s.nav.running = true;
+                s.nav.status = model::Status::Mining;
+                cancel_pending(s);
+                return;
+            }
             s.nav.running = true;
             // A search that found nothing is repeated every couple of seconds, not every tick.
             if !s.pending && s.last_query.elapsed() >= Duration::from_millis(1500) {
