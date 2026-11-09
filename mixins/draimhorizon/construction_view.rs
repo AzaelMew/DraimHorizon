@@ -19,8 +19,10 @@ struct External {
     verify_since: Option<u64>,
 }
 struct State {
-    /// A container to open with one use click (the farm's storage).
+    /// A container to open with one use click (the farm's storage), and how many ticks no
+    /// point of it was in the line of sight.
     interact: Option<nav::Pos>,
+    interact_miss: u32,
     external: Option<External>,
     job: Option<model::Job>,
     scope: String,
@@ -38,6 +40,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             interact: None,
+            interact_miss: 0,
             external: None,
             job: None,
             scope: String::new(),
@@ -75,10 +78,13 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
         return model::Block::default();
     }
     let facts = game.res.facts().get(game.world.block(at[0], at[1], at[2]));
-    let cell = nav::classify(
+    // For passages that dig and build a half block is something solid to stand on or break.
+    let cell = nav::classify_shape(
         &facts.name,
         facts.full_collision,
         facts.fluid_level > 0 || facts.waterlogged,
+        &facts.outline,
+        nav::Cell::Solid,
     );
     model::Block {
         cell,
@@ -907,7 +913,15 @@ fn aim(game: &mut Game<'_>, point: [f64; 3]) {
 }
 /// Asks for one use click on the container at `pos`: the next tick aims at it and clicks.
 pub(super) fn open_container(pos: nav::Pos) {
-    state(|s| s.interact = Some(pos));
+    state(|s| {
+        s.interact = Some(pos);
+        s.interact_miss = 0;
+    });
+}
+/// Whether the container to open has been out of sight from here for a while (crops, a wall or
+/// a corner in the way): the job should try another spot.
+pub(super) fn container_blocked() -> bool {
+    state(|s| s.interact.is_some() && s.interact_miss >= 10)
 }
 pub(super) fn cancel_container() {
     state(|s| s.interact = None);
@@ -919,17 +933,32 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     if !game.native_playing() {
         return Some(false);
     }
-    aim(
-        game,
-        [
-            f64::from(pos[0]) + 0.5,
-            f64::from(pos[1]) + 0.5,
-            f64::from(pos[2]) + 0.5,
-        ],
-    );
-    game.pick().filter(|h| h.pos == pos)?;
-    state(|s| s.interact = None);
-    Some(true)
+    // The middle first, then the top and the four sides: a chest behind a bed of crops has a
+    // clear line only to some of them.
+    for [x, y, z] in [
+        [0.5, 0.5, 0.5],
+        [0.5, 0.9, 0.5],
+        [0.15, 0.5, 0.5],
+        [0.85, 0.5, 0.5],
+        [0.5, 0.5, 0.15],
+        [0.5, 0.5, 0.85],
+        [0.5, 0.2, 0.5],
+    ] {
+        aim(
+            game,
+            [
+                f64::from(pos[0]) + x,
+                f64::from(pos[1]) + y,
+                f64::from(pos[2]) + z,
+            ],
+        );
+        if game.pick().is_some_and(|h| h.pos == pos) {
+            state(|s| s.interact = None);
+            return Some(true);
+        }
+    }
+    state(|s| s.interact_miss += 1);
+    None
 }
 pub(super) fn input(game: &mut Game<'_>) -> bool {
     if let Some(click) = interact_input(game) {

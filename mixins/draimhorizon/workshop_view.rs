@@ -90,6 +90,8 @@ struct Store {
     since: Instant,
     last: Instant,
     tries: u8,
+    /// Go to another spot before trying again (the chest was not in sight from this one).
+    force_move: bool,
     moved: u16,
     stuck: u8,
     sig: usize,
@@ -465,7 +467,11 @@ fn store_walk(game: &Game<'_>, s: &mut State) {
         f64::from(chest[1]) + 0.5,
         f64::from(chest[2]) + 0.5,
     ];
-    if nav::distance(middle, [p.x, p.y + 1.2, p.z]) > 3.4 {
+    let force = s.store.is_some_and(|t| t.force_move);
+    if force || nav::distance(middle, [p.x, p.y + 1.2, p.z]) > 3.4 {
+        if let Some(t) = s.store.as_mut() {
+            t.force_move = false;
+        }
         approach(game, s, chest);
         return;
     }
@@ -524,20 +530,26 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                         t.last = Instant::now();
                     }
                 });
-            } else if t.since.elapsed() > Duration::from_millis(2500) {
-                if t.tries >= 2 {
+            } else if placement::container_blocked()
+                || t.since.elapsed() > Duration::from_millis(2500)
+            {
+                if t.tries >= 3 {
                     end_store(
                         game,
                         Some(text(
-                            "Не удалось открыть склад",
-                            "Could not open the storage",
+                            "Не удалось открыть склад: к нему нет свободного пути взгляда",
+                            "Could not open the storage: no clear line of sight to it",
                         )),
                     );
-                } else if let Some(chest) = state(|s| s.target) {
-                    placement::open_container(chest);
+                } else {
+                    // From here the chest is hidden (crops, a wall) or the click did not open
+                    // it: stand somewhere else and try again.
+                    placement::cancel_container();
                     state(|s| {
                         if let Some(t) = s.store.as_mut() {
                             t.tries += 1;
+                            t.step = Step::Walk;
+                            t.force_move = true;
                             t.since = Instant::now();
                         }
                     });
@@ -698,6 +710,36 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
         Ok(facts.item.to_string())
     }
 }
+/// Whether a ray from the eye of someone standing at `feet` reaches the middle of `target`
+/// through nothing but air (plants and crops count: they stop the aim ray).
+fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
+    let eye = [
+        f64::from(feet[0]) + 0.5,
+        f64::from(feet[1]) + 1.62,
+        f64::from(feet[2]) + 0.5,
+    ];
+    let goal = [
+        f64::from(target[0]) + 0.5,
+        f64::from(target[1]) + 0.5,
+        f64::from(target[2]) + 0.5,
+    ];
+    let length = nav::distance(eye, goal);
+    let steps = (length / 0.1).ceil() as i32;
+    (1..steps).all(|i| {
+        let t = f64::from(i) / f64::from(steps);
+        let at = [
+            (eye[0] + (goal[0] - eye[0]) * t).floor() as i32,
+            (eye[1] + (goal[1] - eye[1]) * t).floor() as i32,
+            (eye[2] + (goal[2] - eye[2]) * t).floor() as i32,
+        ];
+        at == target
+            || at == feet
+            || matches!(
+                game.native_block(at).as_str(),
+                "minecraft:air" | "minecraft:cave_air"
+            )
+    })
+}
 /// Leaves a drain cell for a while (no route to it, or it keeps failing) and goes on.
 fn give_up_cell(s: &mut State, target: nav::Pos) {
     s.errors += 1;
@@ -802,6 +844,18 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     }
     candidates.sort_unstable();
     candidates.dedup();
+    if s.store.is_some() {
+        // To open the chest the ray from the eye has to reach it: no spot behind crops or a
+        // corner. When none has a clear line, any spot will do.
+        let clear: Vec<_> = candidates
+            .iter()
+            .copied()
+            .filter(|at| clear_line(game, *at, target))
+            .collect();
+        if !clear.is_empty() {
+            candidates = clear;
+        }
+    }
     if matches!(s.task, Some(Task::Farm { .. })) {
         // Seeds go onto the farmland next to the player's feet. Standing right beside the
         // target keeps the aim ray from meeting the neighbouring crops first.
@@ -822,10 +876,10 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     candidates.truncate(16);
     if let Some(at) = candidates.get(s.attempt).copied() {
         s.attempt += 1;
-        // Among the crops the route stays level (no jumping onto farmland); on the way to the
-        // storage chest it may climb, whatever height the chest is at.
+        // A farm never breaks or places blocks on the way, but it may jump: a raised bed has to
+        // be climbed to reach the crops in its middle (jumping up onto farmland is harmless).
         let farm = matches!(s.task, Some(Task::Farm { .. }));
-        match driver::workshop_walk(game, at, farm, farm && s.store.is_none()) {
+        match driver::workshop_walk(game, at, farm, false) {
             Ok(()) => {
                 s.phase = Phase::Walking;
                 true
@@ -1044,6 +1098,7 @@ pub(super) fn tick(game: &Game<'_>) {
                 since: Instant::now(),
                 last: Instant::now(),
                 tries: 0,
+                force_move: false,
                 moved: 0,
                 stuck: 0,
                 sig: usize::MAX,

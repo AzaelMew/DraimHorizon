@@ -1,10 +1,10 @@
-**DraimHorizon 0.34.4 - Tool wear, tools by hand, tunnel placement**
+**DraimHorizon 0.34.5 - Farm jumps, storage in sight, half blocks**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Tool durability reserve scales with the tool; fresh tools are used first, so two pickaxes share the wear.
-- Dirt, sand and gravel are broken by hand when no tool fits.
-- Tunnel and Bridge try more points of a face and wait a moment before "No face to place a block on".
-- Builds on 0.34.3: mining clears grass and leaves in the way.
+- The farm can climb a raised bed again (jumping up onto farmland is harmless).
+- The storage chest is opened from a spot with a clear line to it, and from another spot when it is hidden.
+- Slabs, carpets and snow layers are walked over; stairs are climbed.
+- Builds on 0.34.4: tool wear, hand-breakable blocks, tunnel placement.
 
 Not verified in game. No installation or publication is implied.

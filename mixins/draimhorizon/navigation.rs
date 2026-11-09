@@ -131,6 +131,39 @@ pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
     }
 }
 
+/// Whether a block's shape (boxes in block space, `[min x, y, z, max x, y, z]`) is at most half a
+/// block high: a bottom slab, a carpet, a snow layer, a pressure plate. A player steps onto
+/// these without jumping.
+pub fn low_shape(outline: &[[f64; 6]]) -> bool {
+    !outline.is_empty() && outline.iter().all(|b| b[4] <= 0.5 + 1e-6)
+}
+/// `classify`, with the shapes it cannot judge by name looked up in the block's outline: stairs
+/// and top slabs are blocks to stand on, and a low shape is `low` (open to walk through for the
+/// walking planner, solid for the passages that dig and build).
+pub fn classify_shape(
+    name: &str,
+    full_collision: bool,
+    fluid: bool,
+    outline: &[[f64; 6]],
+    low: Cell,
+) -> Cell {
+    let cell = classify(name, full_collision, fluid);
+    if cell != Cell::Blocked {
+        return cell;
+    }
+    let short = name.strip_prefix("minecraft:").unwrap_or(name);
+    if short.ends_with("_stairs") {
+        Cell::Solid
+    } else if low_shape(outline) {
+        low
+    } else if short.ends_with("_slab") {
+        // A top slab: its top is a full block's.
+        Cell::Solid
+    } else {
+        Cell::Blocked
+    }
+}
+
 /// Blocks with no collision shape that a player walks straight through: grass, ferns, flowers,
 /// crops, saplings and similar plants, torches, rails and redstone parts. Treated as open air
 /// (they are replaced when something is placed there, or broken in an instant).
@@ -931,6 +964,25 @@ mod tests {
             );
         }
         assert_eq!(classify("minecraft:grass_block", true, false), Cell::Solid);
+        // Half blocks are walked over, not an obstacle.
+        let bottom = [[0.0, 0.0, 0.0, 1.0, 0.5, 1.0]];
+        let top = [[0.0, 0.5, 0.0, 1.0, 1.0, 1.0]];
+        let carpet = [[0.0, 0.0, 0.0, 1.0, 0.0625, 1.0]];
+        let stair = [
+            [0.0, 0.0, 0.0, 1.0, 0.5, 1.0],
+            [0.0, 0.5, 0.0, 0.5, 1.0, 1.0],
+        ];
+        let fence = [[0.375, 0.0, 0.375, 0.625, 1.5, 0.625]];
+        let shaped = |name: &str, outline: &[[f64; 6]], low| {
+            classify_shape(&format!("minecraft:{name}"), false, false, outline, low)
+        };
+        assert_eq!(shaped("oak_slab", &bottom, Cell::Air), Cell::Air);
+        assert_eq!(shaped("oak_slab", &bottom, Cell::Solid), Cell::Solid);
+        assert_eq!(shaped("oak_slab", &top, Cell::Air), Cell::Solid);
+        assert_eq!(shaped("white_carpet", &carpet, Cell::Air), Cell::Air);
+        assert_eq!(shaped("oak_stairs", &stair, Cell::Air), Cell::Solid);
+        assert_eq!(shaped("oak_fence", &fence, Cell::Air), Cell::Blocked);
+        assert!(!low_shape(&[]));
         assert_eq!(
             classify("minecraft:oak_stairs", false, false),
             Cell::Blocked

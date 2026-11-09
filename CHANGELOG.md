@@ -1,5 +1,12 @@
 # История версий
 
+## 0.34.5
+
+- Farm: it can jump again. Routes among the crops were kept level (no jumps) to spare the farmland, which also stopped the bot from climbing a raised bed to reach the crops in its middle. Jumping up onto farmland is harmless (only landing on it from a drop tramples it), so the farm walks normally, still without breaking or placing blocks on the way.
+- Farm storage: a chest in sight of the farm bed was not opened because crops stood in the line of the aim ray. The click now tries the middle, the top and the four sides of the chest; the spots the bot walks to for it are limited to those with a clear line to the chest (checked block by block, plants count); and when nothing of the chest is in sight from where it stands, it moves to another spot (up to three tries) instead of clicking at the same place.
+- Half blocks in passages: slabs, carpets, snow layers and pressure plates (anything at most half a block high) are walked through by Navigation and the farm instead of being obstacles, and stairs and top slabs count as blocks to climb. Tunnel and Bridge treat a half block as something solid to stand on or to break. The shape is read from the block's real outline, new pure `navigation::low_shape` and `classify_shape` with tests.
+- Not verified in game.
+
 ## 0.34.4
 
 - Tools: a tool is kept in reserve before it breaks, now in proportion to its durability (about half a percent: 10 points on a netherite tool, 7 on a diamond one, at least 3) instead of a flat 10, and a fresh tool (over a fifth of its durability left) is used before a worn one, so two pickaxes (hotbar and inventory) share the wear and the job only stops when every suitable one is nearly worn out.

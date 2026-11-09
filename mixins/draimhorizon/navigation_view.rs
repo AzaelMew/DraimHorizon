@@ -238,10 +238,12 @@ impl Worker {
                         *table.entry(id).or_insert_with(|| {
                             let f = query.resources.facts().get(BlockStateId(id));
                             mining::Block {
-                                cell: model::classify(
+                                cell: model::classify_shape(
                                     &f.name,
                                     f.full_collision,
                                     f.fluid_level > 0 || f.waterlogged,
+                                    &f.outline,
+                                    model::Cell::Air,
                                 ),
                                 ore: query
                                     .mine
@@ -453,10 +455,12 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
     }
     let f = game.res.facts().get(game.world.block(at[0], at[1], at[2]));
     mining::Block {
-        cell: model::classify(
+        cell: model::classify_shape(
             &f.name,
             f.full_collision,
             f.fluid_level > 0 || f.waterlogged,
+            &f.outline,
+            model::Cell::Air,
         ),
         ore: if let Some(crop) = crate::game::claim_borders_farming::Crop::from_code(ore) {
             crop.block() == f.name.as_ref()
@@ -639,9 +643,9 @@ pub(super) fn farm_dig(
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
-        // Harvesting never breaks or places blocks on the way and never jumps.
+        // Harvesting never breaks or places blocks on the way; it may climb a raised bed.
         s.flat = true;
-        s.level = true;
+        s.level = false;
         s.nav.begin(target, true);
         s.nav.status = model::Status::Mining;
         let mut j = mining::Job::excavation(target);
@@ -2118,10 +2122,12 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
     }
     let block = game.world.block(at[0], at[1], at[2]);
     let f = game.res.facts().get(block);
-    model::classify(
+    model::classify_shape(
         &f.name,
         f.full_collision,
         f.fluid_level > 0 || f.waterlogged,
+        &f.outline,
+        model::Cell::Air,
     )
 }
 pub(super) fn movement(
