@@ -18,6 +18,9 @@ macro_rules! tr {
 fn lang() -> Language {
     crate::game::claim_borders_chat_view::current_language()
 }
+const TAB_CELL: f32 = 168.0;
+const TAB_ROW: f32 = 16.0;
+const TAB_HEAD: f32 = 24.0;
 static PAGE: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn page(game: &Game<'_>, key: &str) -> bool {
     if game.native_on(claims::ID)
@@ -47,6 +50,24 @@ fn money(value: Option<(i64, u64)>) -> String {
         crate::game::claim_borders_economy::fmt(v)
     })
 }
+/// One line of a sidebar card: an icon, a muted name and a coloured value on the right.
+struct Row {
+    icon: Option<ui::Icon>,
+    label: String,
+    value: String,
+    color: u32,
+}
+fn row(icon: ui::Icon, label: &str, value: String, color: u32) -> Row {
+    Row {
+        icon: Some(icon),
+        label: label.into(),
+        value,
+        color,
+    }
+}
+const ROW: f32 = 14.0;
+const HEAD: f32 = 21.0;
+#[allow(clippy::too_many_arguments)]
 fn card(
     game: &Game<'_>,
     batch: &mut HudBatch,
@@ -54,10 +75,10 @@ fn card(
     p: &crate::game::claim_borders_economy::Preferences,
     title: &str,
     icon: ui::Icon,
-    lines: &[(String, u32)],
+    rows: &[Row],
     key: &str,
 ) {
-    let natural_height = 27.0 + lines.len() as f32 * 13.0;
+    let natural_height = HEAD + 6.0 + rows.len() as f32 * ROW;
     let scale = (p.get("sidebar_scale") as f32 / 100.0)
         .min((batch.height - 8.0) / natural_height)
         .max(0.25);
@@ -82,39 +103,89 @@ fn card(
     let left = x / scale;
     let top = y / scale;
     let w = width / scale;
+    let accent = ui::preferences(game).accent.color();
     ui::fill(
         game,
         batch,
         [left, top, w, height / scale],
         ((p.get("sidebar_opacity") as u32 * 255 / 100) << 24) | 0x101c29,
     );
+    // A short accent bar and a hairline under the title give the card a header.
+    ui::rounded(
+        game,
+        batch,
+        [left + 5.0, top + 6.0, 2.0, 10.0],
+        1.0,
+        0xff000000 | accent,
+    );
     ui::icon(
         game,
         batch,
         icon,
-        [left + 8.0, top + 7.0, 11.0, 11.0],
-        ui::preferences(game).accent.color(),
+        [left + 11.0, top + 5.0, 12.0, 12.0],
+        accent,
     );
     label(
         game,
         batch,
         title,
-        [left + 25.0, top + 8.0],
-        w - 33.0,
+        [left + 27.0, top + 7.0],
+        w - 35.0,
         0xbce8d7,
     );
-    for (i, (text, color)) in lines.iter().enumerate() {
+    ui::fill(
+        game,
+        batch,
+        [left + 6.0, top + HEAD, w - 12.0, 1.0],
+        0x22ffffff,
+    );
+    for (i, r) in rows.iter().enumerate() {
+        let at = top + HEAD + 6.0 + i as f32 * ROW;
+        if i % 2 == 1 {
+            ui::rounded(
+                game,
+                batch,
+                [left + 4.0, at - 2.0, w - 8.0, ROW],
+                3.0,
+                0x14ffffff,
+            );
+        }
+        let mut text_x = left + 9.0;
+        if let Some(icon) = r.icon {
+            ui::icon(game, batch, icon, [left + 8.0, at, 9.0, 9.0], 0x8da5b8);
+            text_x = left + 21.0;
+        }
+        let value_w = game.native_text_width(&r.value);
+        let value_x = left + w - 8.0 - value_w;
         label(
             game,
             batch,
-            text,
-            [left + 9.0, top + 25.0 + i as f32 * 13.0],
-            w - 18.0,
-            *color,
+            &r.label,
+            [text_x, at + 1.0],
+            (value_x - text_x - 4.0).max(0.0),
+            0x9aacc0,
         );
+        ui::text(game, batch, &r.value, [value_x, at + 1.0], r.color, false);
     }
     ui::finish(game, batch, start, &format!("sidebar-{key}"), "card");
     batch.scale_since(start, 0.0, 0.0, scale, scale);
+}
+/// Green, amber or red by how healthy a value is.
+fn health(good: bool, fair: bool) -> u32 {
+    if good {
+        0x9be6c2
+    } else if fair {
+        0xf0d68a
+    } else {
+        0xe39b87
+    }
+}
+/// The number in a `TPS ≈ 18.3` label.
+fn tps_value(label: &str) -> Option<f32> {
+    label
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|part| !part.is_empty())
+        .and_then(|part| part.parse().ok())
 }
 pub(super) fn sidebar(
     game: &Game<'_>,
@@ -141,28 +212,32 @@ pub(super) fn sidebar(
                 })
                 .map(|(_, v)| v.trim().to_owned())
         };
-        let mut performance = vec![(format!("FPS  {:.0}", game.fps), 0xdce5ed)];
+        let fps = game.fps;
+        let mut performance = vec![row(
+            ui::Icon::Gauge,
+            "FPS",
+            format!("{fps:.0}"),
+            health(fps >= 60.0, fps >= 30.0),
+        )];
         if p.flag("sidebar_tps") {
-            performance.push((
-                crate::game::claim_borders_server_tps_view::label(),
-                0x9edccb,
-            ));
+            let label = crate::game::claim_borders_server_tps_view::label();
+            let (value, color) = match tps_value(&label) {
+                Some(t) => (format!("{t:.1}"), health(t >= 19.0, t >= 15.0)),
+                None => (label.trim_start_matches("TPS:").trim().to_owned(), 0x9aacc0),
+            };
+            performance.push(row(ui::Icon::Activity, "TPS", value, color));
         }
-        performance.push((
-            tr!(
-                "Онлайн  {}",
-                "Online  {}",
-                value(&["Online", "Онлайн"]).unwrap_or_else(|| "—".into())
-            ),
-            0xdce5ed,
+        performance.push(row(
+            ui::Icon::People,
+            lang().text("Онлайн", "Online"),
+            value(&["Online", "Онлайн"]).unwrap_or_else(|| "—".into()),
+            0xe6edf5,
         ));
-        performance.push((
-            tr!(
-                "В игре  {}",
-                "Playtime  {}",
-                value(&["Playtime", "Время игры"]).unwrap_or("—".into())
-            ),
-            0xdce5ed,
+        performance.push(row(
+            ui::Icon::Clock,
+            lang().text("В игре", "Playtime"),
+            value(&["Playtime", "Время игры"]).unwrap_or("—".into()),
+            0xe6edf5,
         ));
         card(
             game,
@@ -174,8 +249,10 @@ pub(super) fn sidebar(
             &performance,
             "performance",
         );
-        let mut economy = vec![(
-            tr!("Баланс  {} монет", "Balance  {} coins", money(book.balance)),
+        let mut economy = vec![row(
+            ui::Icon::Coins,
+            lang().text("Баланс", "Balance"),
+            money(book.balance),
             0xf0d68a,
         )];
         let richest: Vec<_> = status
@@ -188,16 +265,14 @@ pub(super) fn sidebar(
             .take(3)
             .collect();
         if !richest.is_empty() && batch.height >= 230.0 {
-            economy.push((
-                lang().text("Богатейшие игроки", "Richest players").into(),
-                0x9aacc0,
-            ));
-            for (k, v) in richest {
-                let budget = p.get("sidebar_width") as f32 - 28.0 - game.native_text_width(v);
-                economy.push((
-                    format!("{}  {}", ui::clip(game, k.trim(), budget), v.trim()),
-                    0xb8c9d7,
-                ));
+            for (i, (k, v)) in richest.into_iter().enumerate() {
+                let budget = p.get("sidebar_width") as f32 - 64.0 - game.native_text_width(v);
+                economy.push(Row {
+                    icon: (i == 0).then_some(ui::Icon::Star),
+                    label: ui::clip(game, k.trim(), budget),
+                    value: v.trim().to_owned(),
+                    color: 0xb8c9d7,
+                });
             }
         }
         card(
@@ -239,33 +314,40 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             })
         });
         let columns = (p.get("tab_columns") as usize)
-            .min(((batch.width - 24.0) / 150.0).max(1.0) as usize)
+            .min(((batch.width - 16.0) / TAB_CELL).max(1.0) as usize)
             .max(1);
-        let max_rows = (((batch.height - 78.0) / 22.0).floor() as usize).max(1);
+        let max_rows = (((batch.height - 52.0) / TAB_ROW).floor() as usize).max(1);
         let per = columns * max_rows;
         let pages = players.len().div_ceil(per).max(1);
         let page = PAGE.load(Ordering::Relaxed).min(pages - 1);
         PAGE.store(page, Ordering::Relaxed);
         let count = players.len().saturating_sub(page * per).min(per);
         let rows = count.div_ceil(columns).max(1);
-        let width = (columns as f32 * 230.0 + 20.0).min(batch.width - 24.0);
-        let cw = (width - 20.0) / columns as f32;
-        let height = 60.0 + rows as f32 * 22.0;
+        let width = (columns as f32 * TAB_CELL + 16.0).min(batch.width - 16.0);
+        let cw = (width - 16.0) / columns as f32;
+        let height = TAB_HEAD + 8.0 + rows as f32 * TAB_ROW + if pages > 1 { 16.0 } else { 4.0 };
         let x = (batch.width - width) / 2.0;
-        let y = 10.0;
+        let y = 8.0;
+        let accent = ui::preferences(game).accent.color();
         ui::fill(
             game,
             batch,
             [x, y, width, height],
             ((p.get("tab_opacity") as u32 * 255 / 100) << 24) | 0x0b1621,
         );
-        ui::fill(game, batch, [x, y, width, 2.0], 0x9972cbb5);
+        ui::rounded(
+            game,
+            batch,
+            [x + 8.0, y + 1.0, width - 16.0, 2.0],
+            1.0,
+            0xcc000000 | accent,
+        );
         ui::icon(
             game,
             batch,
             ui::Icon::People,
-            [x + 11.0, y + 8.0, 12.0, 12.0],
-            ui::preferences(game).accent.color(),
+            [x + 10.0, y + 7.0, 12.0, 12.0],
+            accent,
         );
         let title = if columns == 1 {
             tr!("Игроки · {}", "Players · {}", players.len())
@@ -280,64 +362,59 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             game,
             batch,
             &title,
-            [x + 29.0, y + 9.0],
-            width - 139.0,
+            [x + 27.0, y + 9.0],
+            width - 130.0,
             0xa9e0d2,
         );
         if p.flag("tab_tps") {
-            label(
+            let text = crate::game::claim_borders_server_tps_view::label();
+            let color = match tps_value(&text) {
+                Some(t) => health(t >= 19.0, t >= 15.0),
+                None => 0xd0dfe8,
+            };
+            let shown = text.replace("TPS ≈ ", "").replace("TPS: ", "");
+            let tw = game.native_text_width(&shown);
+            ui::text(
                 game,
                 batch,
-                &crate::game::claim_borders_server_tps_view::label(),
-                [x + width - 106.0, y + 9.0],
-                96.0,
-                0xd0dfe8,
+                &shown,
+                [x + width - 12.0 - tw, y + 9.0],
+                color,
+                false,
+            );
+            ui::icon(
+                game,
+                batch,
+                ui::Icon::Activity,
+                [x + width - 26.0 - tw, y + 7.0, 11.0, 11.0],
+                color,
             );
         }
-        for col in 0..columns {
-            let left = x + 10.0 + col as f32 * cw;
-            ui::fill(
-                game,
-                batch,
-                [left - 2.0, y + 25.0, cw - 4.0, rows as f32 * 22.0 + 23.0],
-                0x70111e2c,
-            );
-            label(
-                game,
-                batch,
-                lang().text("ИГРОК", "PLAYER"),
-                [left + 14.0, y + 27.0],
-                cw - 57.0,
-                0x8da5b8,
-            );
-            if p.flag("tab_ping") {
-                label(
-                    game,
-                    batch,
-                    lang().text("мс", "ms"),
-                    [left + cw - 25.0, y + 27.0],
-                    24.0,
-                    0x8da5b8,
-                );
-            }
-        }
+        ui::fill(
+            game,
+            batch,
+            [x + 8.0, y + TAB_HEAD, width - 16.0, 1.0],
+            0x22ffffff,
+        );
         let me = game.native_player();
         for (i, player) in players.iter().skip(page * per).take(per).enumerate() {
             let col = i / rows;
             let row = i % rows;
-            let left = x + 10.0 + col as f32 * cw;
-            let top = y + 42.0 + row as f32 * 22.0;
+            let left = x + 8.0 + col as f32 * cw;
+            let top = y + TAB_HEAD + 6.0 + row as f32 * TAB_ROW;
             let friend = is_friend(player.uuid);
-            ui::fill(
+            ui::rounded(
                 game,
                 batch,
-                [left + 1.0, top - 1.0, cw - 10.0, 19.0],
-                if friend { 0x8033474a } else { 0x80233142 },
+                [left, top, cw - 4.0, TAB_ROW - 2.0],
+                3.0,
+                if friend { 0x7033474a } else { 0x60233142 },
             );
-            ui::fill(
+            ui::rounded(
                 game,
                 batch,
-                [left + 1.0, top + 3.0, 2.0, 11.0],
+                [left + 1.0, top + 3.0, 2.0, 8.0],
+                1.0,
                 if friend { 0xff91cfac } else { 0xff7798b9 },
             );
             let skin = game.face_skin(player.uuid, &player.skin);
@@ -345,32 +422,53 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 game,
                 batch,
                 &skin,
-                [left + 13.0, top + 8.0],
-                12.0,
+                [left + 11.0, top + 7.0],
+                10.0,
                 0xffffffff,
             );
-            if is_friend(player.uuid) {
+            if friend {
                 ui::icon(
                     game,
                     batch,
                     ui::Icon::Check,
-                    [left + 16.0, top + 11.0, 6.0, 6.0],
+                    [left + 13.0, top + 9.0, 5.0, 5.0],
                     0xa2d0b7,
                 );
             }
-            let ping = if player.latency < 0 {
-                "?".into()
-            } else {
-                player.latency.to_string()
-            };
-            let ping_width = if p.flag("tab_ping") {
-                game.native_text_width(&ping).max(23.0) + 7.0
-            } else {
-                0.0
-            };
+            // Ping: four bars that fill with connection quality, the number beside them.
+            let mut right = left + cw - 9.0;
+            if p.flag("tab_ping") {
+                let (bars, color) = match player.latency {
+                    l if l < 0 => (0, 0x8da5b8),
+                    l if l < 60 => (4, 0x91cfac),
+                    l if l < 120 => (3, 0x91cfac),
+                    l if l < 200 => (2, 0xdec184),
+                    _ => (1, 0xe39b87),
+                };
+                for n in 0..4 {
+                    let h = 2.0 + n as f32 * 2.0;
+                    ui::fill(
+                        game,
+                        batch,
+                        [right - 11.0 + n as f32 * 3.0, top + 11.0 - h, 2.0, h],
+                        if n < bars {
+                            0xff000000 | color
+                        } else {
+                            0x40ffffff
+                        },
+                    );
+                }
+                right -= 14.0;
+                if player.latency >= 0 && cw >= 150.0 {
+                    let ping = player.latency.to_string();
+                    let tw = game.native_text_width(&ping);
+                    ui::text(game, batch, &ping, [right - tw, top + 3.0], 0x8da5b8, false);
+                    right -= tw + 5.0;
+                }
+            }
             let mut distance = String::new();
             if p.flag("tab_distance")
-                && is_friend(player.uuid)
+                && friend
                 && let (Some(me), Some(pos)) = (
                     &me,
                     crate::game::claim_borders_client::entity_position(game, player.uuid),
@@ -390,40 +488,17 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 game,
                 batch,
                 &player.name,
-                [left + 24.0, top + 5.0],
-                cw - ping_width - dw - 38.0,
-                if is_friend(player.uuid) {
-                    0x9be6c2
-                } else {
-                    0xd0dfe8
-                },
+                [left + 20.0, top + 3.0],
+                right - left - 20.0 - dw,
+                if friend { 0x9be6c2 } else { 0xd0dfe8 },
             );
             if dw > 0.0 {
                 ui::text(
                     game,
                     batch,
                     &distance,
-                    [left + cw - ping_width - dw - 9.0, top + 5.0],
+                    [right - dw + 2.0, top + 3.0],
                     0x8fb9c9,
-                    false,
-                );
-            }
-            if p.flag("tab_ping") {
-                let color = if player.latency < 0 {
-                    0x8da5b8
-                } else if player.latency < 100 {
-                    0x91cfac
-                } else if player.latency < 250 {
-                    0xdec184
-                } else {
-                    0xe39b87
-                };
-                ui::text(
-                    game,
-                    batch,
-                    &ping,
-                    [left + cw - ping_width - 7.0, top + 5.0],
-                    color,
                     false,
                 );
             }
@@ -438,7 +513,7 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                     page + 1,
                     pages
                 ),
-                [x + 10.0, y + height - 10.0],
+                [x + 10.0, y + height - 12.0],
                 width - 20.0,
                 0x8da5b8,
             );

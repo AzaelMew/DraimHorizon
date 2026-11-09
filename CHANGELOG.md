@@ -1,5 +1,12 @@
 # История версий
 
+## 0.30.0
+
+- Player list (TAB): compact and redrawn. Rows are 16 px instead of 22, cells 168 px instead of 230, so more players fit on screen and more columns open on a normal window. The "PLAYER / ms" header rows are gone; the title carries the online count and a coloured TPS badge. Ping is shown as four signal bars that fill with connection quality, with the milliseconds beside them when the cell is wide enough. Rounded rows, a thin accent line, smaller faces; friends keep the green tint, the check mark and the distance.
+- Sidebar: the two plain text cards are now a header with an accent bar and icon rows: FPS (gauge), TPS (activity), Online (people), Playtime (clock), Balance (coins) and the richest players, with muted names, right-aligned coloured values (FPS and TPS turn green, amber or red) and zebra striping. Three new official Lucide icons (`gauge`, `activity`, `coins`) added through `tools/update_lucide.py`; existing icon geometry is unchanged.
+- Existing settings (columns, opacity, TPS, ping, distance, sidebar scale, width, corner and opacity) keep working.
+- Not verified in game; layout checked only by compiling the real client.
+
 ## 0.29.7
 
 - Mining: the target grid shows item icons (diamond, ingots, redstone, logs, stone, …) instead of text chips. The name appears as a tooltip on hover, in Russian or English; the selected state is unchanged. Tiles are 22 px squares, so far more fit in a row and the grid pages less. New `mining::icon` with a test that every target has an icon.
