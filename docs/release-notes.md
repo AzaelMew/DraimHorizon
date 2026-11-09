@@ -1,4 +1,4 @@
-**DraimHorizon 0.39.0 - Auto Click; Drain swims back again**
+**DraimHorizon 0.38.3 - Auto Click; Drain swims back again**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 

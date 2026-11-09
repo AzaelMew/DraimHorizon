@@ -1,6 +1,6 @@
 # История версий
 
-## 0.39.0
+## 0.38.3
 
 - Auto Click, in Experiments > Helpers: presses a mouse button again and again at a pace you choose. A switch ("Auto Click: on/off"), the button (left or right, "Button: left"/"right") and the rate (1, 2, 3, 4, 5, 6, 8, 10, 12, 15 or 20 clicks a second; the last one holds the button down). It works while you play by hand: with a screen open (inventory, chat, menu) or a task running (walking, mining, a build, the farm, drain) it does nothing, and it presses on top of whatever you hold yourself. It is applied last, after the tasks have read the buttons, so its presses are not taken for you taking the wheel. A key can switch it too: "DraimHorizons: auto click" in Controls, unbound until you bind one. The press count follows the rate whatever the frame rate (tested at 4, 7 and 16 ms frames); a stall is not paid back with a burst. Pure pace logic in `autoclick.rs` with tests.
 - Drain: falling into the water swims back to shore again. A regression from 0.35: when the bot hung over the edge to place a block and slipped off, the first tick in the air (not on the ground yet) paused the whole drain job, so by the time it was in the water the swim-back found no running job. Slipping off the edge no longer pauses a drain job, and the swim-back also takes the player out of the water when a drain job is paused.
