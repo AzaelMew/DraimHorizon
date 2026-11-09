@@ -692,6 +692,14 @@ impl Navigator {
         self.stalled = 0;
         self.status = Status::Waiting;
     }
+    /// How many ticks in a row the walker has made no progress.
+    pub fn stalled(&self) -> u16 {
+        self.stalled
+    }
+    /// The walker gave way to something in its path (a player): that is not being stuck.
+    pub fn yielded(&mut self) {
+        self.stalled = 0;
+    }
     /// Bound automatic recovery attempts at one location; moving away resets the budget.
     pub fn blocked(&mut self, position: [f64; 3]) {
         if self
@@ -735,8 +743,15 @@ impl Navigator {
             return Input::default();
         }
         let target = center(self.path[self.next]);
-        if distance(position, target) > 2.6 {
-            self.pause();
+        let off = distance(position, target);
+        if off > 2.6 {
+            // Shoved off the route (a player walking into the walker): plan again from where
+            // it stands. Only a long way off (a teleport) is a pause.
+            if off > 8.0 {
+                self.pause();
+            } else {
+                self.replan();
+            }
             return Input::default();
         }
         if let Some(last) = self.progress {
@@ -978,6 +993,32 @@ mod tests {
         assert_eq!(nearest_standable([0, 0, 0], &mut ledge), Some([1, 0, 0]));
         // Nothing firm anywhere around.
         assert_eq!(nearest_standable([0, 0, 0], &mut |_| Cell::Air), None);
+    }
+    #[test]
+    fn a_shove_off_the_route_replans_and_a_teleport_pauses() {
+        let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
+        let mut n = Navigator::default();
+        n.begin([6, 0, 0], true);
+        n.accept(Some(path));
+        // Pushed four blocks off the path by a passer-by: plan again, do not stop.
+        let _ = n.input([2.5, 0., 5.5], 0., true);
+        assert_eq!(n.status, Status::Waiting);
+        assert!(n.running);
+        // A long way off (a teleport) is a pause.
+        let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
+        n.accept(Some(path));
+        let _ = n.input([2.5, 0., 40.5], 0., true);
+        assert_eq!(n.status, Status::Paused);
+        // Giving way to someone in the path clears the stall: it is not being stuck.
+        let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
+        n.begin([6, 0, 0], true);
+        n.accept(Some(path));
+        for _ in 0..5 {
+            let _ = n.input([0.5, 0., 0.5], 0., true);
+        }
+        assert!(n.stalled() >= 4);
+        n.yielded();
+        assert_eq!(n.stalled(), 0);
     }
     #[test]
     fn refuses_unknown_terrain_hazards_and_large_drops() {

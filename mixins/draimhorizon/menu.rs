@@ -139,7 +139,7 @@ pub struct ViewModel {
     /// The auto-clicker's pace: an index into `autoclick::RATES`.
     pub click_rate: u8,
     /// The farm's storage container, when one is set.
-    pub farm_storage: Option<[i32; 3]>,
+    pub farm_storage: [Option<[i32; 3]>; 3],
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -245,7 +245,7 @@ pub enum Action {
     SetAutoClickRate(u8),
     SetShulkerPeek(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
-    FarmStorage,
+    FarmStorage(super::claim_borders_farm_storage::Role),
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -340,7 +340,7 @@ impl std::fmt::Debug for Action {
                 .field("running", running)
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
-            Self::FarmStorage => f.write_str("FarmStorage"),
+            Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -562,7 +562,9 @@ pub enum ChatOption {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
-    FarmStorage,
+    FarmStorage(super::claim_borders_farm_storage::Role),
+    /// Bone meal on the crops that are still growing, on or off.
+    FarmBonemeal,
     /// Switches eating on its own.
     AutoEat,
     /// Switches one of the helpers of the Helpers tab.
@@ -719,6 +721,7 @@ pub struct Menu {
     pub farm_radius: u8,
     pub farm_limit: u16,
     pub farm_replant: bool,
+    pub farm_bonemeal: bool,
     pub drain_radius: u8,
     pub drain_pattern: super::claim_borders_draining::Pattern,
     pub drain_spacing: u8,
@@ -782,6 +785,7 @@ impl Default for Menu {
             farm_radius: 6,
             farm_limit: 16,
             farm_replant: true,
+            farm_bonemeal: true,
             drain_radius: 6,
             drain_pattern: super::claim_borders_draining::Pattern::Fill,
             drain_spacing: 4,
@@ -878,6 +882,7 @@ impl Menu {
         self.farm_radius = from.farm_radius;
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
+        self.farm_bonemeal = from.farm_bonemeal;
         self.drain_radius = from.drain_radius;
         self.drain_pattern = from.drain_pattern;
         self.drain_spacing = from.drain_spacing;
@@ -1003,6 +1008,7 @@ impl Menu {
                     radius: self.farm_radius,
                     limit: self.farm_limit,
                     replant: self.farm_replant,
+                    bonemeal: self.farm_bonemeal,
                 }),
                 running,
             }),
@@ -2765,23 +2771,6 @@ impl Menu {
                             Control::FarmLimit,
                         ),
                         (
-                            match model.farm_storage {
-                                Some([x, y, z]) => localized!(
-                                    self.language,
-                                    "Склад: {} {} {}",
-                                    "Storage: {} {} {}",
-                                    x,
-                                    y,
-                                    z
-                                ),
-                                None => self
-                                    .language
-                                    .text("Склад: не задан", "Storage: not set")
-                                    .into(),
-                            },
-                            Control::FarmStorage,
-                        ),
-                        (
                             localized!(
                                 self.language,
                                 "Пересадка: {}",
@@ -2793,6 +2782,19 @@ impl Menu {
                                 }
                             ),
                             Control::FarmReplant,
+                        ),
+                        (
+                            localized!(
+                                self.language,
+                                "Костная мука: {}",
+                                "Bone meal: {}",
+                                if self.farm_bonemeal {
+                                    self.language.text("Вкл", "On")
+                                } else {
+                                    self.language.text("Выкл", "Off")
+                                }
+                            ),
+                            Control::FarmBonemeal,
                         ),
                     ]
                 } else {
@@ -2834,6 +2836,27 @@ impl Menu {
                             name,
                             Some(Control::FarmCropPick(crop)),
                             self.farm_crops & crop.bit() != 0,
+                        ));
+                    }
+                    // The three containers share the row with the crops: harvest, seeds, bone
+                    // meal. Aim at a chest, barrel or shulker box and press; press with the
+                    // crosshair elsewhere to clear. A highlighted button has its container set.
+                    use super::claim_borders_farm_storage::Role;
+                    let from = x + Crop::ALL.len() as f32 * (tile + 2.0) + 4.0;
+                    let width = ((x + w - from - 4.0) / 3.0).max(20.0);
+                    for (i, (role, ru, en)) in [
+                        (Role::Harvest, "Урожай", "Harvest"),
+                        (Role::Seeds, "Семена", "Seeds"),
+                        (Role::Meal, "Мука", "Meal"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        out.push(widget(
+                            [from + i as f32 * (width + 2.0), 100.0, width, tile],
+                            self.language.text(ru, en),
+                            Some(Control::FarmStorage(role)),
+                            model.farm_storage[role.index()].is_some(),
                         ));
                     }
                     below = tile + 2.0;
@@ -3044,7 +3067,7 @@ impl Menu {
                 // The storage the miner unloads into when the inventory is full (the farm's).
                 out.push(widget(
                     [x, height - 30.0, w, 14.0],
-                    match model.farm_storage {
+                    match model.farm_storage[0] {
                         Some([sx, sy, sz]) => localized!(
                             self.language,
                             "Склад: {} {} {}",
@@ -3061,8 +3084,10 @@ impl Menu {
                             )
                             .into(),
                     },
-                    Some(Control::FarmStorage),
-                    model.farm_storage.is_some(),
+                    Some(Control::FarmStorage(
+                        super::claim_borders_farm_storage::Role::Harvest,
+                    )),
+                    model.farm_storage[0].is_some(),
                 ));
             } else {
                 let waypoint = self
@@ -3888,7 +3913,11 @@ impl Menu {
                 self.farm_replant = !self.farm_replant;
                 None
             }
-            Control::FarmStorage => Some(Action::FarmStorage),
+            Control::FarmStorage(role) => Some(Action::FarmStorage(role)),
+            Control::FarmBonemeal => {
+                self.farm_bonemeal = !self.farm_bonemeal;
+                None
+            }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
@@ -6844,7 +6873,8 @@ mod tests {
                             w.control,
                             Some(
                                 Control::FarmCropPick(_)
-                                    | Control::FarmStorage
+                                    | Control::FarmStorage(_)
+                                    | Control::FarmBonemeal
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant

@@ -648,12 +648,103 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
 /// Walks to `goal` for a workshop job. `flat` forbids breaking and placing blocks on the way;
 /// `level` also keeps the route on one height (no jumps), which a farm wants among its crops
 /// but not on the way to a chest on another level.
+/// A walk to a far goal, taken in legs: the planner only sees 32 blocks around its start, so a
+/// goal farther than that (a storage 40 blocks from the beds) is reached by walking to a point
+/// on the way, then planning again from there.
+struct Legs {
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+    /// The last leg is under way: the walk is over when it arrives.
+    last: bool,
+}
+static LEGS: Mutex<Option<Legs>> = Mutex::new(None);
+/// Farthest a single leg goes.
+const LEG: f64 = 24.0;
+/// A standable cell near `at` (columns within two blocks, heights from six above to eight
+/// below the player), for the end of a leg.
+fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32) -> Option<model::Pos> {
+    let column = model::block(near);
+    let mut best: Option<(i32, model::Pos)> = None;
+    for dz in -2..=2_i32 {
+        for dx in -2..=2_i32 {
+            for y in (from_y - 8..=from_y + 6).rev() {
+                let at = [column[0] + dx, y, column[2] + dz];
+                if model::standable(at, &mut |p| live_cell(game, p)) {
+                    let d = dx * dx + dz * dz + (y - from_y).abs();
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, at));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    best.map(|(_, at)| at)
+}
+/// The next point toward `goal` from `from`: the goal itself when it is within a leg,
+/// otherwise a standable cell about a leg's length on the line there (shorter if there is
+/// none).
+fn leg_point(game: &Game<'_>, from: [f64; 3], goal: model::Pos) -> (model::Pos, bool) {
+    let g = model::center(goal);
+    let (dx, dz) = (g[0] - from[0], g[2] - from[2]);
+    let length = dx.hypot(dz);
+    if length <= LEG + 2.0 {
+        return (goal, true);
+    }
+    let from_y = from[1].floor() as i32;
+    for reach in [LEG, 16.0, 10.0] {
+        let t = reach / length;
+        let near = [from[0] + dx * t, from[1], from[2] + dz * t];
+        if let Some(at) = leg_cell(game, near, from_y) {
+            return (at, false);
+        }
+    }
+    // Nothing standable on the way (unloaded ground): try the goal and let it fail.
+    (goal, true)
+}
 pub(super) fn workshop_walk(
     game: &Game<'_>,
     goal: model::Pos,
     flat: bool,
     level: bool,
 ) -> Result<(), String> {
+    let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+    let (point, last) = leg_point(game, from, goal);
+    *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = (!last).then_some(Legs {
+        goal,
+        flat,
+        level,
+        last: false,
+    });
+    walk_to(game, point, flat, level)
+}
+/// Starts the next leg of a far walk when the last one has arrived. Every tick.
+pub(super) fn leg_frame(game: &Game<'_>) {
+    let Some((goal, flat, level)) = LEGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|l| !l.last)
+        .map(|l| (l.goal, l.flat, l.level))
+    else {
+        return;
+    };
+    if state(|s| s.nav.status) != model::Status::Arrived {
+        return;
+    }
+    let Some(p) = game.native_player() else {
+        return;
+    };
+    let (point, last) = leg_point(game, [p.x, p.y, p.z], goal);
+    if let Some(l) = LEGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        l.last = last;
+    }
+    if walk_to(game, point, flat, level).is_err() {
+        *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+fn walk_to(game: &Game<'_>, goal: model::Pos, flat: bool, level: bool) -> Result<(), String> {
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
@@ -664,11 +755,25 @@ pub(super) fn workshop_walk(
     })
 }
 pub(super) fn workshop_walk_result() -> Option<bool> {
-    state(|s| match s.nav.status {
+    let more = LEGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|l| !l.last);
+    let result = state(|s| match s.nav.status {
         model::Status::Arrived => Some(true),
         model::Status::NoPath | model::Status::Stuck | model::Status::Paused => Some(false),
         _ => None,
-    })
+    });
+    match result {
+        // A leg arrived but the goal is farther: the next leg starts on the next tick.
+        Some(true) if more => None,
+        Some(false) => {
+            *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            Some(false)
+        }
+        other => other,
+    }
 }
 pub(super) fn farm_dig(
     game: &Game<'_>,
@@ -1422,6 +1527,7 @@ pub(super) fn press_for_click(game: &mut Game<'_>, right: bool) {
 }
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
+    leg_frame(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
     if auto_eat(game) {
@@ -2402,6 +2508,27 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         model::Cell::Air,
     )
 }
+/// The direction (horizontal, unit) away from another body (a player, a mob) that touches the
+/// walker, if one does: within a body's width and a head's height of it.
+fn body_in_the_way(game: &Game<'_>, position: [f64; 3]) -> Option<[f64; 2]> {
+    game.mobs
+        .iter()
+        .filter(|m| !m.removed)
+        .filter_map(|m| {
+            let (dx, dz) = (position[0] - m.position.x, position[2] - m.position.z);
+            let near = dx.hypot(dz);
+            ((position[1] - m.position.y).abs() < 1.6 && near < 1.0).then_some((near, dx, dz))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(near, dx, dz)| {
+            if near < 0.05 {
+                // Exactly on top of each other: any way out will do.
+                [1.0, 0.0]
+            } else {
+                [dx / near, dz / near]
+            }
+        })
+}
 pub(super) fn movement(
     game: &Game<'_>,
     forward: &mut f32,
@@ -2452,11 +2579,33 @@ pub(super) fn movement(
             pause_state(s);
             return;
         }
-        let input = s.nav.input(position, p.yaw, body.ground.on_ground);
+        let mut input = s.nav.input(position, p.yaw, body.ground.on_ground);
         if s.nav.status == model::Status::Stuck {
             cancel_pending(s);
             s.nav.blocked(position);
             return;
+        }
+        // Someone is in the way (a player passing, touching the walker): step away from them
+        // instead of pushing into them until the stall counts as stuck, and carry on.
+        if s.nav.status == model::Status::Walking
+            && s.nav.stalled() >= 4
+            && let Some(away) = body_in_the_way(game, position)
+        {
+            s.nav.yielded();
+            let yaw = f64::from(p.yaw).to_radians();
+            let forward_away = -away[0] * yaw.sin() + away[1] * yaw.cos();
+            let left_away = away[0] * yaw.cos() + away[1] * yaw.sin();
+            input.forward = if forward_away.abs() > 0.3 {
+                forward_away.signum() as f32
+            } else {
+                0.0
+            };
+            input.strafe = if left_away.abs() > 0.3 {
+                left_away.signum() as f32
+            } else {
+                0.0
+            };
+            input.jump = false;
         }
         if s.nav.status == model::Status::Walking
             && let Some(&next) = s.nav.path.get(s.nav.next)

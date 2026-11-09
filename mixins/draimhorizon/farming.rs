@@ -64,6 +64,13 @@ impl Crop {
             .find(|c| c.block() == name)
     }
 }
+/// How good a cell is to wait in while the farm has nothing to do (lower is better): few open
+/// sides around the feet and head (`open`, of 16), a roof over it, little distance from the
+/// beds, and the light of a torch or the sun so that nothing spawns there. A cell that is dark
+/// is never chosen.
+pub fn park_score(open: u8, roofed: bool, lit: bool, distance: i32) -> Option<i32> {
+    lit.then_some(i32::from(open) * 10 + if roofed { 0 } else { 15 } + distance)
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
     /// The crops to farm, one bit each (`Crop::bit`); at least one.
@@ -71,6 +78,8 @@ pub struct Config {
     pub radius: u8,
     pub limit: u16,
     pub replant: bool,
+    /// Bone meal is used on crops that are still growing (it comes from its own container).
+    pub bonemeal: bool,
 }
 impl Config {
     pub fn valid(self) -> bool {
@@ -85,6 +94,17 @@ impl Config {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_safest_cell_is_the_closed_roofed_lit_one() {
+        // A nook (three sides closed) under a roof beats an open cell, whatever the distance.
+        let nook = park_score(6, true, true, 8).unwrap();
+        let open_field = park_score(16, false, true, 0).unwrap();
+        assert!(nook < open_field);
+        // Closer wins between equals; a dark cell is never an option.
+        assert!(park_score(6, true, true, 2) < park_score(6, true, true, 5));
+        assert_eq!(park_score(0, true, false, 0), None);
+    }
+
     use super::*;
     #[test]
     fn harvests_only_mature_supported_crops() {
@@ -107,6 +127,7 @@ mod tests {
             radius: 6,
             limit: 0,
             replant: true,
+            bonemeal: true,
         };
         assert!(both.valid());
         assert_eq!(
