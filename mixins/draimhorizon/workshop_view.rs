@@ -922,6 +922,9 @@ fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
     })
 }
 /// Leaves a drain cell for a while (no route to it, or it keeps failing) and goes on.
+/// How long a cell that just received a falling block is left alone: about the time the block
+/// needs to sink out of it. A line is laid at a few blocks a second, as when bridging by hand.
+const SINK_MS: u64 = 450;
 fn give_up_cell(s: &mut State, target: nav::Pos) {
     s.errors += 1;
     s.missed += 1;
@@ -1306,7 +1309,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 && let Some(at) = s.target
                             {
                                 s.skip
-                                    .push((at, Instant::now() + Duration::from_millis(800)));
+                                    .push((at, Instant::now() + Duration::from_millis(SINK_MS)));
                             }
                         }
                         s.target = None;
@@ -1525,7 +1528,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
                     let surface = falling || pattern;
                     s.falling = falling;
-                    s.settle = Duration::from_millis(if falling { 120 } else { 80 });
+                    s.settle = Duration::from_millis(if falling { 70 } else { 80 });
                     let held = |at: nav::Pos| s.skip.iter().any(|(p, _)| *p == at);
                     let eye = [p.x, p.y + 1.2, p.z];
                     let r = i32::from(config.radius);
@@ -1626,9 +1629,9 @@ pub(super) fn tick(game: &Game<'_>) {
                                 // one when it has, right here.
                                 Some((y, true))
                                     if hold(y)
-                                        .is_some_and(|d| d <= Duration::from_millis(1000)) =>
+                                        .is_some_and(|d| d <= Duration::from_millis(SINK_MS)) =>
                                 {
-                                    s.wait = Duration::from_millis(120);
+                                    s.wait = Duration::from_millis(50);
                                     return;
                                 }
                                 Some((y, true)) if hold(y).is_none() => {

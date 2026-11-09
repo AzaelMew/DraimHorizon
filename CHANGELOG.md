@@ -1,5 +1,10 @@
 # История версий
 
+## 0.36.3
+
+- Drain: faster filling. A column took about 0.8 s per block (a dropped block was waited for until it sank, then the next one went in). A cell that just received a falling block is now left alone for 450 ms and the next scan follows after 70 ms (was 800 and 120), and the wait-and-look poll is 50 ms. A pond should fill roughly twice as fast; the server still has to acknowledge every placement. If the server turns a placement down because the block has not sunk yet, the cell is retried later; tell me the timings if it does.
+- Not verified in game.
+
 ## 0.36.2
 
 - Drain: a block was placed too far away. The reach was measured to the middle of the cell, but the click lands on the face of the block under it, up to a block further, so the server could refuse it. A cell is now chosen only within 3.3 blocks of the eye (was 3.7) and a face is clicked only when the real click point is within 4.1 blocks; otherwise the player walks closer first. The same click limit applies to farm and schematic placements.
