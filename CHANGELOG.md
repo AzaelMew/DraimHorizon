@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.9
+
+- /shop is redirected to /market: when you type /shop (or click it in chat), the mod runs /market instead, so the one Market view and its prices are used. Typed with arguments (/shop something) it goes to the server unchanged. The menu title "Shop" / "Магазин" is still read as the Market as in 0.37.8.
+- Not verified in game.
+
 ## 0.37.8
 
 - /shop is the same menu as /market on the server: a menu titled "Shop" or "Магазин" is now read and shown as the Market (the custom Market view, prices and the hover note) the way "Market" is. The mod still asks for the market with /market itself.
