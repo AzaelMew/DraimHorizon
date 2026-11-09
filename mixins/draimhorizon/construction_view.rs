@@ -108,7 +108,8 @@ fn seen<T>(f: impl FnOnce(&mut std::collections::HashMap<nav::Pos, (Instant, Ins
 }
 /// Whether a sand or gravel block has stayed where it is for a while (1.5 s): a block that was
 /// just dropped into the water is there for a moment and then sinks, one that has been there
-/// has something under it. Looked at often enough for a gap of a second to start the count anew.
+/// has something under it. The count starts anew when the cell was seen empty (`forget`) or not
+/// looked at for 20 s; a job that scans only every second or two still counts.
 fn settled(at: nav::Pos) -> bool {
     let now = Instant::now();
     seen(|seen| {
@@ -116,7 +117,7 @@ fn settled(at: nav::Pos) -> bool {
             seen.clear();
         }
         let entry = seen.entry(at).or_insert((now, now));
-        if now.duration_since(entry.1) > Duration::from_secs(1) {
+        if now.duration_since(entry.1) > Duration::from_secs(20) {
             *entry = (now, now);
         } else {
             entry.1 = now;
@@ -128,6 +129,12 @@ fn settled(at: nav::Pos) -> bool {
 /// gravel) either resting on something solid that cannot, or having stayed put for a while. A
 /// sand block just dropped into the water is solid for a moment and then sinks; whoever stands
 /// on it sinks with it.
+/// The cell is empty (water, air): whatever lands there next starts its settling count anew.
+pub(super) fn forget(at: nav::Pos) {
+    seen(|seen| {
+        seen.remove(&at);
+    });
+}
 pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
     let origin = at;
     let mut at = at;
@@ -140,7 +147,11 @@ pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
         }
         at[1] -= 1;
     }
-    block(game, origin).cell == nav::Cell::Solid && settled(origin)
+    if block(game, origin).cell != nav::Cell::Solid {
+        forget(origin);
+        return false;
+    }
+    settled(origin)
 }
 pub(super) fn reset() {
     state(|s| {
@@ -1209,7 +1220,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 by_entity = true;
                 continue;
             }
-            if let Some(h) = game.pick().filter(|h| h.pos == anchor && h.face == face) {
+            let eye = game.eye_position();
+            if let Some(h) = game.pick().filter(|h| {
+                h.pos == anchor
+                    && h.face == face
+                    && (external.is_none()
+                        || eye.is_none_or(|e| nav::distance(h.point, e) <= drain::CLICK_REACH))
+            }) {
                 found = Some(h);
                 break;
             }

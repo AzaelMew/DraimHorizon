@@ -1,8 +1,11 @@
 // Filling a pond from the bottom up: only cells that rest on something solid are chosen, so
 // a placed block never has to fall and every placement has a floor to click on.
 use super::claim_borders_navigation::{self as nav, Pos};
-/// Farthest eye-to-cell distance the placement driver aims at.
-pub const REACH: f64 = 3.7;
+/// Farthest eye-to-cell distance the placement driver aims at. The click lands on the face
+/// of the block under the cell, up to a block further, and the server refuses far clicks.
+pub const REACH: f64 = 3.3;
+/// Farthest eye-to-click-point distance a drain placement is made from.
+pub const CLICK_REACH: f64 = 4.1;
 /// How far below the player's feet the pond is scanned.
 pub const DEPTH: i32 = 12;
 /// What to build in the water.

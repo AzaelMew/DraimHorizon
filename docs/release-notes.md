@@ -1,9 +1,9 @@
-**DraimHorizon 0.36.1 - Shulker box preview, farm walks back to its beds**
+**DraimHorizon 0.36.2 - Drain places within reach**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Hovering a shulker box shows its contents as a 9x3 grid in the tooltip, in every screen that shows tooltips; the tooltip takes the colour of the dye. Switch: Settings > General.
-- The farm walks back to its beds when the player is far from them.
-- Builds on 0.36.0: tasks go on behind the inventory, chat, menu and map.
+- Drain no longer clicks a face that is too far away: cells are chosen within 3.3 blocks of the eye and the real click point must be within 4.1 blocks, otherwise the player walks closer.
+- Drain lines and grid no longer stop with "no firm block to click on" while standing on the line already built: a settled sand block counts as firm even when the job looks only every second or two.
+- Builds on 0.36.1: shulker box preview and the farm walking back to its beds.
 
 Not verified in game. No installation or publication is implied.

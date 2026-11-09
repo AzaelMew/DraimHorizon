@@ -1,5 +1,11 @@
 # История версий
 
+## 0.36.2
+
+- Drain: a block was placed too far away. The reach was measured to the middle of the cell, but the click lands on the face of the block under it, up to a block further, so the server could refuse it. A cell is now chosen only within 3.3 blocks of the eye (was 3.7) and a face is clicked only when the real click point is within 4.1 blocks; otherwise the player walks closer first. The same click limit applies to farm and schematic placements.
+- Drain lines and grid: it stood on the line it had built and said "no firm block to click on at the edge" with cells left. A sand block counted as firm only after being watched for 1.5 s without a gap of a second, and a job that is waiting looks only every 1 to 2.5 s, so the count never got there. The count now restarts only when the cell was seen empty (or not looked at for 20 s), so the line it stands on is firm and it goes on along the line by itself.
+- Not verified in game.
+
 ## 0.36.1
 
 - Shulker box preview (like the ShulkerPeek mod; not a Baritone feature): hover a shulker box that holds something, in the inventory, a chest, the creative tabs, the recipe book or chat, and its tooltip shows the contents as the familiar 9x3 grid with the items and their counts under the name and lore. The tooltip takes the colour of the box's dye (cyan box, teal tooltip; a black box gets a neutral grey). Empty boxes keep the plain tooltip. It is drawn through the game's tooltip component and colour hooks, so it works in every screen that shows an item tooltip. A switch in J > Settings > General ("Shulker preview") turns it off; on by default. New pure `shulker_peek.rs` with tests.

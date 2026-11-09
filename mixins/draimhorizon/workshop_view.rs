@@ -1557,6 +1557,9 @@ pub(super) fn tick(game: &Game<'_>) {
                                     ) {
                                         continue;
                                     }
+                                    if drain::replaceable(&name) {
+                                        placement::forget([cx, y, cz]);
+                                    }
                                     if drain::replaceable(&name) && !own(y) && !held([cx, y, cz]) {
                                         let anchored = [[1, 0], [-1, 0], [0, 1], [0, -1]]
                                             .iter()
