@@ -31,6 +31,9 @@ pub use farming as claim_borders_farming;
 #[path = "../mixins/draimhorizon/draining.rs"]
 pub mod draining;
 pub use draining as claim_borders_draining;
+#[path = "../mixins/draimhorizon/autoclick.rs"]
+pub mod autoclick;
+pub use autoclick as claim_borders_autoclick;
 #[path = "../mixins/draimhorizon/shulker_peek.rs"]
 pub mod shulker_peek;
 pub use shulker_peek as claim_borders_shulker_peek;

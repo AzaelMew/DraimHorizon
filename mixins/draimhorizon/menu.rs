@@ -133,7 +133,11 @@ pub struct ViewModel {
     /// Eating on its own (on by default).
     pub auto_eat: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
-    pub helpers: [bool; 3],
+    pub helpers: [bool; 4],
+    /// The auto-clicker presses the right button (the left one when false).
+    pub click_right: bool,
+    /// The auto-clicker's pace: an index into `autoclick::RATES`.
+    pub click_rate: u8,
     /// The farm's storage container, when one is set.
     pub farm_storage: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
@@ -235,6 +239,10 @@ impl PlayerRequest {
 pub enum Action {
     SetAutoEat(bool),
     SetHelper(Helper, bool),
+    /// The auto-clicker's button: true for the right one.
+    SetAutoClickButton(bool),
+    /// The auto-clicker's pace, an index into `autoclick::RATES`.
+    SetAutoClickRate(u8),
     SetShulkerPeek(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage,
@@ -334,6 +342,10 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage => f.write_str("FarmStorage"),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetAutoClickButton(right) => {
+                f.debug_tuple("SetAutoClickButton").field(right).finish()
+            }
+            Self::SetAutoClickRate(rate) => f.debug_tuple("SetAutoClickRate").field(rate).finish(),
             Self::SetHelper(helper, on) => {
                 f.debug_tuple("SetHelper").field(helper).field(on).finish()
             }
@@ -490,14 +502,22 @@ pub enum Helper {
     Fill,
     /// The right tool is taken for the block being broken.
     Tools,
+    /// A mouse button is pressed again and again at a chosen pace.
+    AutoClick,
 }
 impl Helper {
-    pub const ALL: [Helper; 3] = [Helper::Totem, Helper::Fill, Helper::Tools];
+    pub const ALL: [Helper; 4] = [
+        Helper::Totem,
+        Helper::Fill,
+        Helper::Tools,
+        Helper::AutoClick,
+    ];
     pub fn index(self) -> usize {
         match self {
             Self::Totem => 0,
             Self::Fill => 1,
             Self::Tools => 2,
+            Self::AutoClick => 3,
         }
     }
     /// The settings key the choice is kept under.
@@ -506,6 +526,7 @@ impl Helper {
             Self::Totem => "auto_totem",
             Self::Fill => "auto_fill",
             Self::Tools => "auto_tools",
+            Self::AutoClick => "auto_click",
         }
     }
 }
@@ -540,6 +561,10 @@ pub enum Control {
     AutoEat,
     /// Switches one of the helpers of the Helpers tab.
     Helper(Helper),
+    /// Cycles the auto-clicker's button: left or right.
+    AutoClickButton,
+    /// Cycles the auto-clicker's pace.
+    AutoClickRate,
     /// Switches the contents preview in shulker box tooltips.
     ToggleShulkerPeek,
     /// Cycles what Drain builds: a fill, lines or a grid.
@@ -3311,9 +3336,24 @@ impl Menu {
                 ),
             ),
         ];
-        let step = ((height - 92.0) / 4.0).clamp(20.0, 34.0);
+        // The auto-clicker: its switch is the fifth row and its two choices share the sixth.
+        let rows = rows.into_iter().chain([(
+            localized!(
+                self.language,
+                "Авто-клик: {}",
+                "Auto Click: {}",
+                state(model.helpers[Helper::AutoClick.index()])
+            ),
+            Control::Helper(Helper::AutoClick),
+            model.helpers[Helper::AutoClick.index()],
+            self.language.text(
+                "нажимает выбранную кнопку мыши в заданном темпе",
+                "presses the chosen mouse button at the chosen pace",
+            ),
+        )]);
+        let step = ((height - 92.0) / 6.0).clamp(17.0, 34.0);
         let note = step >= 30.0;
-        for (index, (label, control, on, hint)) in rows.into_iter().enumerate() {
+        for (index, (label, control, on, hint)) in rows.enumerate() {
             let y = 84.0 + index as f32 * step;
             out.push(widget(
                 [x, y, w, if note { 20.0 } else { (step - 2.0).min(20.0) }],
@@ -3325,6 +3365,36 @@ impl Menu {
                 out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
             }
         }
+        let y = 84.0 + 5.0 * step;
+        let half = (w - 4.0) * 0.5;
+        let row_h = if note { 20.0 } else { (step - 2.0).min(20.0) };
+        let russian = self.language == Language::Russian;
+        out.push(widget(
+            [x, y, half, row_h],
+            localized!(
+                self.language,
+                "Кнопка: {}",
+                "Button: {}",
+                if model.click_right {
+                    self.language.text("ПКМ", "right")
+                } else {
+                    self.language.text("ЛКМ", "left")
+                }
+            ),
+            Some(Control::AutoClickButton),
+            false,
+        ));
+        out.push(widget(
+            [x + half + 4.0, y, half, row_h],
+            localized!(
+                self.language,
+                "Частота: {}",
+                "Rate: {}",
+                super::claim_borders_autoclick::label(model.click_rate, russian)
+            ),
+            Some(Control::AutoClickRate),
+            false,
+        ));
         out
     }
     fn important_names(&self, model: &ViewModel) -> Vec<String> {
@@ -3800,6 +3870,10 @@ impl Menu {
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
             }
+            Control::AutoClickButton => Some(Action::SetAutoClickButton(!model.click_right)),
+            Control::AutoClickRate => Some(Action::SetAutoClickRate(
+                super::claim_borders_autoclick::next_rate(model.click_rate),
+            )),
             Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
