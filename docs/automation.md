@@ -18,6 +18,10 @@ While a task runs and the food bar is at 7 shanks or below, the mod eats on its 
 
 On the Farm tab, pick the crops from the icons (several at once; one always stays selected). With no seeds on hand and none in the storage the farm idles and waits for the crops to ripen. To set the storage, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
 
+## Idle instead of stopping
+
+A job does not stop because something is missing or went wrong. It stays up, shows "Idle: <reason>" in the status line and looks again after a few seconds: Mining waits for a suitable tool or a free slot, Tunnel and Bridge wait 3 s and try again, Drain waits for sand or gravel and for a route, Farm waits for ripe crops, light, seeds or a route, schematics for blocks or a route. Only your own stop key ends a job. A progress watchdog moves a job that does nothing for 20 s on to another target.
+
 ## Drain
 
 Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry sand, red sand or gravel (hotbar, off hand or inventory) and press the start key. Drain places only those blocks, never an ordinary block that would be left standing in the water.

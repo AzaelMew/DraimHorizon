@@ -122,6 +122,11 @@ struct State {
     settle: Duration,
     // Consecutive scans that found nothing to fill; the task ends after a few.
     idle: u8,
+    // Progress watchdog: the count of things done (cells, crops, blocks) and since when it has
+    // not changed; a job stuck for too long is moved on and says so.
+    progress: (u32, Instant),
+    // Things done so far: a harvest, a placement. Feeds the watchdog.
+    done: u32,
     // The column being filled: the bot stays on it until its surface cell is solid, then moves
     // on to the next one instead of wandering between columns.
     column: Option<(i32, i32)>,
@@ -168,6 +173,8 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            progress: (0, Instant::now()),
+            done: 0,
             loot: None,
             ignored_items: Vec::new(),
             column: None,
@@ -514,7 +521,11 @@ fn end_store_for(game: &mut Game<'_>, failure: Option<&str>, cooldown: u64) {
         // Not again at once, whatever the trip did.
         s.store_after = Instant::now() + Duration::from_secs(cooldown);
         match failure {
-            Some(message) => fail(s, message),
+            // The trip ended badly: carry on with the field, say why, ask again later.
+            Some(message) => {
+                s.message = message.into();
+                s.waiting = true;
+            }
             None => s.message.clear(),
         }
     });
@@ -678,6 +689,19 @@ fn transfer(game: &mut Game<'_>, t: Store) {
         }
     });
 }
+/// Stands idle instead of stopping: the job stays up, says why and looks again in a few seconds.
+/// Only the player's own stop ends a job; a missing block, a route that is not there, a refusal
+/// are things that change.
+fn idle(s: &mut State, message: impl Into<String>) {
+    s.message = message.into();
+    s.waiting = true;
+    s.target = None;
+    s.column = None;
+    s.pier = None;
+    s.attempt = 0;
+    s.phase = Phase::Ready;
+    s.last = Instant::now() + Duration::from_secs(3);
+}
 fn fail(s: &mut State, message: impl Into<String>) {
     s.active = false;
     s.message = message.into();
@@ -840,17 +864,20 @@ fn give_up_cell(s: &mut State, target: nav::Pos) {
     s.errors += 1;
     s.missed += 1;
     if s.errors >= 10 {
-        fail(
-            s,
-            text(
-                "Нет пути к клеткам узора",
-                "No route to the cells of the pattern",
-            ),
-        );
+        // Not a reason to stop: wait a little, then try the cells again.
+        s.errors = 0;
+        s.waiting = true;
+        s.message = text(
+            "нет пути к клеткам узора, жду и пробую снова",
+            "no route to the cells of the pattern, waiting to try again",
+        )
+        .into();
+        s.last = Instant::now() + Duration::from_secs(3);
     }
     s.skip
         .push((target, Instant::now() + Duration::from_secs(6)));
     s.target = None;
+    s.column = None;
     s.attempt = 0;
     s.phase = Phase::Ready;
 }
@@ -870,13 +897,13 @@ fn pier_plan(
     let walkable = |at: nav::Pos| {
         cell(at) == nav::Cell::Air
             && cell([at[0], at[1] + 1, at[2]]) == nav::Cell::Air
-            && cell([at[0], at[1] - 1, at[2]]) == nav::Cell::Solid
+            && placement::stable(game, [at[0], at[1] - 1, at[2]])
     };
     let mut best: Option<Vec<nav::Pos>> = None;
     for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
         let neighbour = [target[0] + dx, target[1], target[2] + dz];
         let spot = [neighbour[0], neighbour[1] + 1, neighbour[2]];
-        if cell(neighbour) != nav::Cell::Solid || !walkable(spot) {
+        if !placement::stable(game, neighbour) || !walkable(spot) {
             continue;
         }
         if feet == spot {
@@ -989,7 +1016,7 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
                 true
             }
             Err(e) => {
-                fail(s, e);
+                idle(s, e);
                 false
             }
         }
@@ -1028,16 +1055,18 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
         s.skip
             .push((target, Instant::now() + Duration::from_secs(6)));
         s.target = None;
+        s.column = None;
         s.attempt = 0;
         s.phase = Phase::Ready;
         false
     } else {
+        // No spot to place or harvest from can be reached right now: wait and look again.
         let why = placement::diagnostic();
         let message = text(
-            "Нет доступной грани; подойдите ближе и продолжите",
-            "No reachable placement face",
+            "нет доступной грани, жду и ищу снова",
+            "no reachable placement face, waiting to look again",
         );
-        fail(
+        idle(
             s,
             if why.is_empty() {
                 message.to_owned()
@@ -1090,6 +1119,32 @@ pub(super) fn tick(game: &Game<'_>) {
             s.active = false;
             return;
         }
+        // A job that does nothing for a long time without saying why (a cell it cannot place, a
+        // route it cannot walk, a wait that never ends) is shaken loose: the cell it was on is
+        // left for a while and it looks for another.
+        if !s.waiting && s.store.is_none() && s.loot.is_none() && s.pier.is_none() {
+            let done = s.done;
+            if done != s.progress.0 {
+                s.progress = (done, Instant::now());
+            } else if s.progress.1.elapsed() > Duration::from_secs(20) {
+                s.progress.1 = Instant::now();
+                if let Some(at) = s.target {
+                    s.skip.push((at, Instant::now() + Duration::from_secs(10)));
+                }
+                s.target = None;
+                s.column = None;
+                s.pier = None;
+                s.attempt = 0;
+                s.phase = Phase::Ready;
+                s.message = text(
+                    "застрял, ищу другую цель",
+                    "got stuck, looking for another target",
+                )
+                .into();
+                driver::clear_construction_driver();
+                placement::reset();
+            }
+        }
         // Fallen into the water: the movement hook swims back to dry ground, no new cell until then.
         if matches!(s.task, Some(Task::Drain { .. }))
             && game
@@ -1137,10 +1192,19 @@ pub(super) fn tick(game: &Game<'_>) {
                     return;
                 }
                 Some(Err(e)) => {
-                    fail(s, format!("{}: {}", text("Сбор", "Harvest"), reason(e)));
+                    // This crop would not come: leave it for a while and go on.
+                    let _ = e;
+                    if let Some(at) = s.target {
+                        s.skip.push((at, Instant::now() + Duration::from_secs(8)));
+                    }
+                    driver::clear_construction_driver();
+                    s.target = None;
+                    s.phase = Phase::Ready;
                     return;
                 }
                 Some(Ok(())) => {
+                    s.done = s.done.wrapping_add(1);
+                    s.waiting = false;
                     if let Some(Task::Farm {
                         harvested, config, ..
                     }) = s.task.as_mut()
@@ -1164,6 +1228,8 @@ pub(super) fn tick(game: &Game<'_>) {
                 }
                 match result {
                     Ok(_) => {
+                        s.done = s.done.wrapping_add(1);
+                        s.waiting = false;
                         if let Some(Task::Drain { filled, .. }) = s.task.as_mut() {
                             *filled += 1;
                             s.wait = s.settle;
@@ -1201,15 +1267,19 @@ pub(super) fn tick(game: &Game<'_>) {
                             s.skip.push((at, Instant::now() + Duration::from_secs(5)));
                         }
                         s.target = None;
+                        s.column = None;
                         s.attempt = 0;
                         s.phase = Phase::Ready;
                         return;
                     }
                     Err(e) => {
-                        fail(
-                            s,
-                            format!("{}: {}", text("Установка", "Placement"), reason(e)),
-                        );
+                        // A refused or late placement is no reason to stop: leave that cell for
+                        // a while (a farm) or wait and place it again (a schematic).
+                        let message = format!("{}: {}", text("установка", "placement"), reason(e));
+                        if let (Some(Task::Farm { .. }), Some(at)) = (&s.task, s.target) {
+                            s.skip.push((at, Instant::now() + Duration::from_secs(8)));
+                        }
+                        idle(s, message);
                         return;
                     }
                 }
@@ -1217,6 +1287,10 @@ pub(super) fn tick(game: &Game<'_>) {
             Phase::Ready => {}
         }
         if !placement::external_settled() {
+            return;
+        }
+        // Idling after a problem: nothing new until the wait is over.
+        if s.last > Instant::now() && s.target.is_none() {
             return;
         }
         // Between two crops: first pick up what the last one dropped.
@@ -1385,7 +1459,8 @@ pub(super) fn tick(game: &Game<'_>) {
                     let eye = [p.x, p.y + 1.2, p.z];
                     let r = i32::from(config.radius);
                     let body = p.y.floor() as i32;
-                    let solid = |at: nav::Pos| placement::block(game, at).cell == nav::Cell::Solid;
+                    // Only a block that will stay counts as something to click on or stand on.
+                    let solid = |at: nav::Pos| placement::stable(game, at);
                     let mut cells = Vec::new();
                     for z in -r..=r {
                         for x in -r..=r {
@@ -1464,15 +1539,28 @@ pub(super) fn tick(game: &Game<'_>) {
                                     Some((y, drain::replaceable(&name)))
                                 }
                             });
+                            // How long the cell is still held: a block that just sank (under a
+                            // second) is waited for, a cell given up on (seconds) is left.
+                            let hold = |y: i32| {
+                                s.skip
+                                    .iter()
+                                    .find(|(p, _)| *p == [sx, y, sz])
+                                    .map(|(_, until)| until.saturating_duration_since(now))
+                            };
                             match top {
                                 // Still water on top: this block is sinking, drop the next
                                 // one when it has, right here.
-                                Some((y, true)) if held([sx, y, sz]) => {
+                                Some((y, true))
+                                    if hold(y)
+                                        .is_some_and(|d| d <= Duration::from_millis(1000)) =>
+                                {
                                     s.wait = Duration::from_millis(120);
                                     return;
                                 }
-                                Some((y, true)) => picked = Some(([sx, y, sz], true)),
-                                // Solid on top: the column is done, take the nearest next one.
+                                Some((y, true)) if hold(y).is_none() => {
+                                    picked = Some(([sx, y, sz], true))
+                                }
+                                // Solid on top, or a cell given up on: take the nearest next one.
                                 _ => s.column = None,
                             }
                         }
@@ -1602,13 +1690,14 @@ pub(super) fn tick(game: &Game<'_>) {
                     }
                     match driver::farm_dig(game, target, crop) {
                         Ok(()) => s.phase = Phase::Digging,
-                        Err(e) => fail(s, e),
+                        Err(e) => idle(s, e),
                     }
                     return;
                 }
                 if game.native_block([target[0], target[1] - 1, target[2]]) != "minecraft:farmland"
                 {
-                    fail(s, text("Грядка изменилась", "Farmland changed"));
+                    // The bed changed under it: look at the field again.
+                    s.target = None;
                     return;
                 }
                 let wanted = schema::BlockState::parse(crop.block()).unwrap();
@@ -1625,11 +1714,11 @@ pub(super) fn tick(game: &Game<'_>) {
                     return;
                 }
                 let Some((item, _)) = placement::drain_item(game) else {
-                    fail(
+                    idle(
                         s,
                         text(
-                            "Нужны песок или гравий (хотбар, 2-я рука или инвентарь)",
-                            "Sand or gravel required (hotbar, off hand or inventory)",
+                            "нужны песок или гравий (хотбар, 2-я рука или инвентарь)",
+                            "sand or gravel needed (hotbar, off hand or inventory)",
                         ),
                     );
                     return;
@@ -1650,7 +1739,7 @@ pub(super) fn tick(game: &Game<'_>) {
                 let item = match desired(game, &wanted) {
                     Ok(i) => i,
                     Err(e) => {
-                        fail(s, e);
+                        idle(s, e);
                         return;
                     }
                 };
@@ -1683,7 +1772,7 @@ pub(super) fn tick(game: &Game<'_>) {
             || current == "minecraft:cave_air"
             || (matches!(s.task, Some(Task::Drain { .. })) && drain::replaceable(&current));
         if !free {
-            fail(
+            idle(
                 s,
                 format!(
                     "{}: {} {} {}",
@@ -1698,7 +1787,7 @@ pub(super) fn tick(game: &Game<'_>) {
         driver::clear_construction_driver();
         match placement::place_external(game, request) {
             Ok(()) => s.phase = Phase::Placing,
-            Err(e) => fail(s, e),
+            Err(e) => idle(s, e),
         }
     });
 }

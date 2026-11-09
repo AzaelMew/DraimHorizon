@@ -23,6 +23,8 @@ struct State {
     /// point of it was in the line of sight.
     interact: Option<nav::Pos>,
     interact_miss: u32,
+    /// Since when a stopped job has been waiting to try again (ms on this state's clock).
+    idle_since: Option<u64>,
     external: Option<External>,
     job: Option<model::Job>,
     scope: String,
@@ -41,6 +43,7 @@ impl Default for State {
         Self {
             interact: None,
             interact_miss: 0,
+            idle_since: None,
             external: None,
             job: None,
             scope: String::new(),
@@ -93,6 +96,22 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
             && !facts.block_entity,
         falling: crate::game::claim_borders_mining::falling(&facts.name),
     }
+}
+/// Whether the block at `at` is something to stand or hang on: solid, and if it can fall (sand,
+/// gravel) resting on something solid that cannot. A sand block just dropped into the water is
+/// solid for a moment and then sinks; whoever stands on it sinks with it.
+pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
+    let mut at = at;
+    for _ in 0..24 {
+        if block(game, at).cell != nav::Cell::Solid {
+            return false;
+        }
+        if !model::gravity(&game.native_block(at)) {
+            return true;
+        }
+        at[1] -= 1;
+    }
+    false
 }
 pub(super) fn reset() {
     state(|s| {
@@ -577,6 +596,25 @@ pub(super) fn tick(game: &Game<'_>) {
         pause();
         return;
     }
+    // A job that stopped for any reason but the player's own pause stands idle for a few
+    // seconds and tries again: a tool turns up, a chunk loads, the world changes.
+    let retry = state(|s| {
+        let now = s.started.elapsed().as_millis() as u64;
+        let waiting = s.job.as_ref().is_some_and(|j| {
+            !j.active
+                && !j.preview
+                && matches!(j.phase, model::Phase::Stopped(r) if r != model::Stop::Manual)
+        });
+        if !waiting {
+            s.idle_since = None;
+            return false;
+        }
+        now.saturating_sub(*s.idle_since.get_or_insert(now)) > 3000
+    });
+    if retry {
+        state(|s| s.idle_since = None);
+        let _ = resume(game);
+    }
     let dig = navigation::construction_dig_result();
     let action = state(|s| {
         let now = s.started.elapsed().as_millis() as u64;
@@ -763,10 +801,7 @@ fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
             for dx in -8..=8 {
                 let at = [here[0] + dx, here[1] + dy, here[2] + dz];
                 let open = |y: i32| block(game, [at[0], y, at[2]]).cell == nav::Cell::Air;
-                if open(at[1])
-                    && open(at[1] + 1)
-                    && block(game, [at[0], at[1] - 1, at[2]]).cell == nav::Cell::Solid
-                {
+                if open(at[1]) && open(at[1] + 1) && stable(game, [at[0], at[1] - 1, at[2]]) {
                     let d = dx * dx + dz * dz + dy * dy * 4;
                     if best.is_none_or(|(b, _)| d < b) {
                         best = Some((d, at));
@@ -853,7 +888,7 @@ fn edge_goal(game: &Game<'_>, target: nav::Pos, player: [f64; 3]) -> Option<([f6
     drain::edge_stand(
         target,
         player,
-        |at| block(game, at).cell == nav::Cell::Solid,
+        |at| stable(game, at),
         |at| block(game, at).cell == nav::Cell::Air,
     )
 }
@@ -1424,8 +1459,18 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                     _ => l.text("Движение", "Moving"),
                 }
             };
+            let idle = matches!(j.phase, model::Phase::Stopped(r) if r != model::Stop::Manual);
             (
-                format!("{kind} · {phase} · {}/{}", j.completed, j.config.length),
+                if idle {
+                    format!(
+                        "{kind} · {} · {phase} · {}/{}",
+                        l.text("Простой", "Idle"),
+                        j.completed,
+                        j.config.length
+                    )
+                } else {
+                    format!("{kind} · {phase} · {}/{}", j.completed, j.config.length)
+                },
                 !j.active,
             )
         })

@@ -1,5 +1,14 @@
 # История версий
 
+## 0.35.0
+
+- Idle mode everywhere: a job no longer stops because something is missing or went wrong; it stands idle, says why in the status line ("Idle: ...") and looks again, until you stop it yourself. Mining waits for a suitable tool or a free inventory slot, gives up a block that does not break after 30 s or that the server refuses three times and goes on to the next, and keeps asking the planner when it is slow. Tunnel and Bridge stopped for any reason except your own pause (no blocks, no floor, a chunk not loaded, protected or hazardous block, no face to place on, a server refusal, a timeout) wait 3 s and try again by themselves. Drain waits for sand or gravel, for a route to a cell, and leaves a cell it cannot place. Farm and schematics leave a refused cell for a while, wait for a route, a free slot or the blocks, and a trip to the storage that fails no longer pauses the job.
+- A progress watchdog for Farm, Drain and schematics: a job that does nothing for 20 s without saying why (a cell it cannot place, a route it cannot walk) is shaken loose; the cell is left for 10 s and the status says "got stuck, looking for another target".
+- Drain: the "stays on one column" rule could hold the bot on a column it could not reach for good, which looked like "it just stops" with the status still "Running". It now waits only for a block that has just sunk (under a second) and leaves any cell given up on.
+- Drain: sand and gravel only count as something to stand or hang on when they rest on a solid block that cannot fall. A block dropped into the surface is solid for a moment and then sinks; the bot used to stand on, or hang over, such a block and fall into the water with it. Routes along a laid line, the edge hang and the swim back to dry ground use the same rule.
+- Tunnel and mining: "Server refused the break" - the tool change had to reach the server before the first hit (the server works out the break time with the item it believes is in hand and refused a block the client broke too fast); now the slot change gets a tick first. A refused block is also broken again up to three times; an ore block refused three times in a row is left alone, a tunnel or dig route stops only after three.
+- Not verified in game.
+
 ## 0.34.6
 
 - Farm: the items a harvest drops (and anything else lying in or around the farm) are picked up. Between two crops the bot walks to the nearest item that is still on the ground within the farm's radius plus three blocks and waits for the pickup; an item it cannot reach or take is given up on after a few seconds. Before, a bed's drops stayed on the ground unless the bot happened to walk over them.

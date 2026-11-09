@@ -584,7 +584,13 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
         };
     };
     if slot < 9 {
-        game.selected = slot;
+        if game.selected != slot {
+            // The slot change has to reach the server before the first hit: the server works
+            // out the break time with the item it believes is in hand, and refuses a block the
+            // client broke too fast with a better tool.
+            game.selected = slot;
+            return Tool::Wait;
+        }
         return Tool::Ready;
     }
     let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
@@ -877,17 +883,20 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                     s.nav.replan();
                 }
             }
-            if now.saturating_sub(job.started_ms) > 30_000 {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
+            if job.wait.is_some() {
+                // Waiting for a tool or a free slot is not a timeout.
+                job.started_ms = now;
+            } else if now.saturating_sub(job.started_ms) > 30_000 {
+                // This block does not break: leave it and look for another.
+                job.skip();
+                s.nav.replan();
             }
         }
         mining::Phase::Confirming => {
             if now.saturating_sub(job.started_ms) > 5_000 {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
+                // No answer from the server: count it as a refusal (tried again, then left).
+                job.refuse();
+                job.started_ms = now;
             }
         }
         mining::Phase::Collecting => {
@@ -1020,20 +1029,19 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             match ensure_tool(game, Some(target)) {
                 Tool::Ready => {}
                 Tool::Wait => return false,
+                // No tool for this block: wait for one (the player picks one up, repairs one)
+                // rather than stopping; the job goes on by itself.
                 Tool::Missing => {
-                    job.active = false;
-                    job.phase = mining::Phase::Tool;
-                    s.nav.running = false;
+                    job.wait = Some(mining::Wait::Tool);
                     return false;
                 }
             }
         }
         if !free_slot(game) {
-            job.active = false;
-            job.phase = mining::Phase::Inventory;
-            s.nav.running = false;
+            job.wait = Some(mining::Wait::Inventory);
             return false;
         }
+        job.wait = None;
         if let Some([yaw, pitch]) = s.mine_aim
             && (((game.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0).abs() > 0.5
                 || (game.pitch - pitch).abs() > 0.5)
@@ -1597,11 +1605,10 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.pending && s.last_query.elapsed() > Duration::from_secs(5) {
             cancel_pending(s);
-            if let Some(job) = s.mining.as_mut() {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
-                s.nav.status = model::Status::NoPath;
+            if s.mining.is_some() {
+                // The planner was slow: ask again, do not stop the job.
+                s.last_query = Instant::now();
+                s.nav.replan();
             } else if s.nav.running {
                 // A delayed worker response is not proof that the destination is unreachable.
                 // Retry a bounded number of times without reusing the stale snapshot.
@@ -2222,7 +2229,18 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     let language = language();
     state(|s| {
         if let Some(job) = s.mining.as_ref() {
-            let text = if !job.active
+            let text = if let Some(wait) = job.wait.filter(|_| job.active) {
+                match wait {
+                    mining::Wait::Tool => language.text(
+                        "Простой: нужен подходящий инструмент",
+                        "Idle: a suitable tool is needed",
+                    ),
+                    mining::Wait::Inventory => language.text(
+                        "Простой: освободите слот в инвентаре",
+                        "Idle: free an inventory slot",
+                    ),
+                }
+            } else if !job.active
                 && matches!(
                     job.phase,
                     mining::Phase::Searching
@@ -2234,7 +2252,8 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                 && !matches!(
                     s.nav.status,
                     model::Status::Preview | model::Status::Planning
-                ) {
+                )
+            {
                 language.text("Добыча на паузе", "Mining paused")
             } else {
                 match job.phase {

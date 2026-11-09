@@ -399,6 +399,14 @@ pub enum Phase {
     Inventory,
     Timeout,
 }
+/// Why a mining job stands idle instead of stopping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wait {
+    /// No suitable tool with durability to spare is carried.
+    Tool,
+    /// The inventory has no free slot for the drops.
+    Inventory,
+}
 #[derive(Clone, Debug)]
 pub struct Job {
     pub ore: u8,
@@ -415,6 +423,10 @@ pub struct Job {
     /// The current target is something in the way of the real one (grass, leaves): breaking it
     /// is not counted, and the search starts again afterwards.
     pub blocker: bool,
+    /// How many times in a row the server refused the current block.
+    pub refusals: u8,
+    /// What the job is waiting for (shown as idle, not stopped).
+    pub wait: Option<Wait>,
     /// How many such things were cleared for the current block.
     pub blockers: u8,
     /// The dropped item being walked to, items given up on, and when the player got there.
@@ -447,6 +459,8 @@ impl Job {
             started_ms: 0,
             last: None,
             blocker: false,
+            refusals: 0,
+            wait: None,
             blockers: 0,
             collecting: None,
             ignored: Vec::new(),
@@ -505,6 +519,24 @@ impl Job {
             self.phase = Phase::Confirming;
         }
     }
+    /// The server did not let the block go (or never answered): break it again, up to three
+    /// times in a row, then leave an ore block alone; a dig route cannot go round it and stops.
+    pub fn refuse(&mut self) {
+        self.refusals += 1;
+        self.start_sequence = None;
+        self.await_sequence = None;
+        if self.refusals < 3 {
+            self.phase = Phase::Breaking;
+        } else {
+            self.refusals = 0;
+            if self.ore == u8::MAX {
+                self.active = false;
+                self.phase = Phase::Refused;
+            } else {
+                self.skip();
+            }
+        }
+    }
     pub fn acknowledge(&mut self, sequence: i32, still_ore: bool) {
         let awaited = if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
             self.await_sequence
@@ -518,11 +550,11 @@ impl Job {
         }
         if still_ore {
             if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
-                self.active = false;
-                self.phase = Phase::Refused;
+                self.refuse();
             }
             return;
         }
+        self.refusals = 0;
         if self.blocker {
             // Cleared: not a mined block. Look for the real target again.
             self.blocker = false;
@@ -615,9 +647,26 @@ mod tests {
         job.sent([3, 0, 0], 0, 7);
         job.sent([3, 0, 0], 3, 8);
         job.acknowledge(8, true);
-        assert_eq!(job.phase, Phase::Refused);
-        assert!(!job.active);
+        // A first refusal is tried again; three in a row leave an ore block alone.
+        assert_eq!(
+            (job.phase, job.active, job.refusals),
+            (Phase::Breaking, true, 1)
+        );
+        for n in 0..2 {
+            job.sent([3, 0, 0], 3, 20 + n);
+            job.acknowledge(20 + n, true);
+        }
+        assert_eq!(job.phase, Phase::Searching);
+        assert!(job.active && job.excluded.contains(&[3, 0, 0]));
         assert_eq!(job.confirmed, 1);
+        // A dig route (a tunnel) stops after three refusals: it cannot go round the block.
+        let mut dig = Job::excavation([4, 0, 0]);
+        for n in 0..3 {
+            dig.sent([4, 0, 0], 3, 30 + n);
+            dig.acknowledge(30 + n, true);
+        }
+        assert_eq!(dig.phase, Phase::Refused);
+        assert!(!dig.active);
     }
     #[test]
     fn instant_breaks_and_paused_inflight_confirmations_preserve_the_limit() {
