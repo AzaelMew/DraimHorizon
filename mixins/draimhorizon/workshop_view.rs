@@ -83,6 +83,8 @@ enum Purpose {
     Seeds(farm::Crop),
     /// Take bone meal (or bone blocks, to be crafted into meal) out of its container.
     Meal,
+    /// Craft hay bales from wheat at a crafting table nearby.
+    Craft,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Step {
@@ -488,7 +490,28 @@ fn purpose_chest(game: &Game<'_>, purpose: Purpose) -> Option<nav::Pos> {
         Purpose::Deposit => harvest,
         Purpose::DepositSeeds | Purpose::Seeds(_) => seeds.or(harvest),
         Purpose::Meal => meal,
+        Purpose::Craft => table_near(game),
     }
+}
+/// A crafting table close to the player (eight blocks around, three up and down), the nearest.
+fn table_near(game: &Game<'_>) -> Option<nav::Pos> {
+    let p = game.native_player()?;
+    let me = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
+    let mut best: Option<(i32, nav::Pos)> = None;
+    for dx in -8..=8 {
+        for dz in -8..=8 {
+            for dy in -3..=3 {
+                let at = [me[0] + dx, me[1] + dy, me[2] + dz];
+                let d = dx * dx + dz * dz + dy * dy;
+                if best.is_none_or(|(b, _)| d < b)
+                    && game.native_block(at) == "minecraft:crafting_table"
+                {
+                    best = Some((d, at));
+                }
+            }
+        }
+    }
+    best.map(|(_, at)| at)
 }
 /// Whether a drain job is running (a fall into the water is then recovered from, not a pause).
 pub(super) fn draining() -> bool {
@@ -548,6 +571,12 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
     let split = store::deposit_split(&inv, &crops, store::KEEP_SEEDS, seeds_chest.is_some());
     if !(store::free_slots(&inv) <= 2 || s.idle_deposit) {
         return None;
+    }
+    // Wheat to bales first, so that the bales go in with the same unload.
+    if store::hay_plan(&inv, &crops).is_some()
+        && let Some(table) = purpose_chest(game, Purpose::Craft)
+    {
+        return Some((Purpose::Craft, table));
     }
     if !split.harvest.is_empty()
         && let Some(chest) = purpose_chest(game, Purpose::Deposit)
@@ -633,9 +662,10 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
         return;
     }
     let open = game.screen == Screen::Inventory
-        && game
-            .remote_menu_type()
-            .is_some_and(store::is_container_menu);
+        && game.remote_menu_type().is_some_and(|menu| {
+            store::is_container_menu(menu)
+                || (t.purpose == Purpose::Craft && menu == "minecraft:crafting")
+        });
     match t.step {
         Step::Walk => {}
         Step::Open => {
@@ -740,6 +770,30 @@ fn transfer(game: &mut Game<'_>, t: Store) {
                 .collect();
             (plan, ops)
         }
+        Purpose::Craft => {
+            use horizon_client::menu::Input;
+            // The wheat stack goes into the 3x3 grid one item per cell, a round of up to four
+            // bales at a time; a shift-click on the result crafts them, the rest goes back.
+            let plan = store::hay_plan(&inv, &crops)
+                .map(|(slot, bales)| {
+                    vec![
+                        slot,
+                        bales as usize,
+                        store::count(&inv, "minecraft:wheat") as usize,
+                    ]
+                })
+                .unwrap_or_default();
+            let mut ops = Vec::new();
+            if let [slot, bales, _] = plan[..] {
+                ops.push((Some(slot), 0, Input::Pickup));
+                for _ in 0..bales {
+                    ops.extend((0..9).map(|cell| (Some(100 + cell), 1, Input::Pickup)));
+                }
+                ops.push((Some(200), 0, Input::QuickMove));
+                ops.push((Some(slot), 0, Input::Pickup));
+            }
+            (plan, ops)
+        }
         Purpose::Meal => {
             let plan = store::meal_withdraw(&chest, &inv);
             let ops = plan
@@ -764,11 +818,12 @@ fn transfer(game: &mut Game<'_>, t: Store) {
             _ => false,
         };
         // The harvest is in: the spare seeds are the next trip, soon.
-        let more = t.purpose == Purpose::Deposit
-            && seeds_set
-            && !store::deposit_split(&inv, &crops, store::KEEP_SEEDS, true)
-                .seeds
-                .is_empty();
+        let more = t.purpose == Purpose::Craft
+            || (t.purpose == Purpose::Deposit
+                && seeds_set
+                && !store::deposit_split(&inv, &crops, store::KEEP_SEEDS, true)
+                    .seeds
+                    .is_empty());
         end_store_for(
             game,
             None,
@@ -780,6 +835,11 @@ fn transfer(game: &mut Game<'_>, t: Store) {
                 15
             },
         );
+        if more {
+            // The unload trip reset the flag: keep the seeds trip due, or it never happens
+            // while there are fewer than three free slots missing.
+            state(|s| s.idle_deposit = true);
+        }
         if none {
             state(|s| {
                 s.message = match t.purpose {
