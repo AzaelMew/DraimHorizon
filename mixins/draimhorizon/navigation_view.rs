@@ -772,6 +772,22 @@ pub(super) fn construction_resume_dig() {
 fn free_slot(game: &Game<'_>) -> bool {
     game.inventory.iter().take(36).any(Option::is_none)
 }
+/// Whether what a mining job breaks can still be picked up: a free slot, or a stack of the same
+/// kind that is not full (sand laid one by one across the inventory still has room). The
+/// inventory is full only when every slot is taken and every stack of the kind is at its limit.
+fn room_for_mining(game: &Game<'_>, ore: u8) -> bool {
+    free_slot(game)
+        || (0..36).any(|slot| {
+            slot_stack(game, slot).is_some_and(|stack| {
+                let limit = game
+                    .res
+                    .items()
+                    .get(&stack.item)
+                    .map_or(64, |item| item.max_stack);
+                stack.count < limit && mining::matches(ore, &stack.item)
+            })
+        })
+}
 fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(), String> {
     let language = language();
     if !allowed(game) {
@@ -808,7 +824,7 @@ fn start_mining(game: &Game<'_>, ore: u8, limit: u16, running: bool) -> Result<(
             )
             .into());
     }
-    if running && !free_slot(game) {
+    if running && !room_for_mining(game, job.ore) {
         return Err(language
             .text("Освободите слот в инвентаре", "Free an inventory slot")
             .into());
@@ -850,7 +866,7 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
         let Some(job) = s.mining.as_mut() else {
             return Ok(());
         };
-        if !mining_tool(game, None) || !free_slot(game) {
+        if !mining_tool(game, None) || !room_for_mining(game, job.ore) {
             return Err(language()
                 .text(
                     "Нужен исправный инструмент и свободный слот",
@@ -1132,7 +1148,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 }
             }
         }
-        if !free_slot(game) {
+        if !room_for_mining(game, job.ore) {
             job.wait = Some(mining::Wait::Inventory);
             return false;
         }
@@ -1422,7 +1438,9 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     let query = Query {
         flat: s.flat,
         level: s.level,
-        dig: !s.flat && construction_tool(game) && free_slot(game),
+        // Breaking a way to the block is allowed with any digging tool in the inventory (the
+        // right one is taken per block); a full inventory only leaves drops on the ground.
+        dig: !s.flat && tool_slot(game, None, false).is_some(),
         place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
         force: s.force_dig,
         hints,
@@ -1643,13 +1661,14 @@ pub(super) fn tick(game: &Game<'_>) {
                     // Blocks of the kind are around but none can be mined yet: say why.
                     s.mine_note = answer
                         .stats
-                        .filter(|st| st.candidates > 0 && answer.target.is_none())
+                        .filter(|st| st.seen > 0 && answer.target.is_none())
                         .map(|st| {
                             let l = language();
                             format!(
-                                "{} · {}: {} · {}: {}/{}/{}",
+                                "{} · {}: {}/{} · {}: {}/{}/{}",
                                 l.text("Поиск руды…", "Finding ore…"),
-                                l.text("видно", "seen"),
+                                l.text("видно/снаружи", "seen/open"),
+                                st.seen,
                                 st.candidates,
                                 l.text("нельзя/нет опоры/нет пути", "unsafe/no footing/no route"),
                                 st.unsafe_,

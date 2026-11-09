@@ -276,6 +276,9 @@ pub fn safe_target(
 /// where each one was given up on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PlanStats {
+    /// Blocks of the kind seen in the scanned cubes, buried ones included.
+    pub seen: u32,
+    /// Those with an open side: the ones that can be mined without digging.
     pub candidates: u32,
     /// No side of the block was safe to mine it from.
     pub unsafe_: u32,
@@ -318,7 +321,26 @@ pub fn plan_with_stats(
                         continue;
                     }
                     let at = [start[0] + x, start[1] + y, start[2] + z];
-                    if block(at).ore && !excluded.contains(&at) {
+                    if !block(at).ore || excluded.contains(&at) {
+                        continue;
+                    }
+                    stats.seen += 1;
+                    // A block with every side closed is dug to by `plan_buried`; the nearest
+                    // ones are often the sand under the player's feet, which would crowd out
+                    // the blocks that are open.
+                    let open = [
+                        [1, 0, 0],
+                        [-1, 0, 0],
+                        [0, 1, 0],
+                        [0, -1, 0],
+                        [0, 0, 1],
+                        [0, 0, -1],
+                    ]
+                    .iter()
+                    .any(|d| {
+                        block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]).cell == nav::Cell::Air
+                    });
+                    if open {
                         candidates.push((x * x + y * y + z * z, at));
                     }
                 }

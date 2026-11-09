@@ -1,5 +1,12 @@
 # История версий
 
+## 0.37.12
+
+- Mining: "seen: 483, unsafe 32/0/0" meant that the 32 nearest blocks of sand were all buried (the ones under the player's feet), so none could be mined from outside and the open ones farther away were never looked at. The search now looks only at blocks with an open side (the buried ones are dug to by the route planner) and counts how many it saw and how many are open: "Finding ore… · seen/open: 483/57 · ...".
+- Mining digs a way when it cannot walk: the "dig and place blocks to get there" route is allowed with any digging tool in the inventory (the right one is taken for each block) instead of only with a pickaxe and a free slot, so a buried or unreachable block is reached by breaking through and building up, as the tunnel and the bridge do.
+- "Inventory full" for mining now means that every slot is taken and every stack of the mined kind is at its limit: sand laid one by one across the inventory still has room, so the miner goes on picking it up. The same rule applies when a mining job is started or resumed.
+- Not verified in game.
+
 ## 0.37.11
 
 - Mining goes on block after block: right after a break is confirmed, the job looks for the next block of the chosen kind that is within reach (4.2 blocks of the eye), in plain sight and safe to break, takes the one nearest to the block just broken (the next of a vein, the next of a column of sand, the next log) and hits it at once, with no stop to pick up drops, no search and no step. Only when nothing is left in reach does it pick up the drops around and search for the next place, as before. In a desert this means sand is dug without a pause for as long as there is sand within reach, then the player walks on to the next spot.
