@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.3
+
+- Market and Auction windows (the F8 custom view): the search is a real input field with a magnifier icon, an accent outline while you type and a "Search by name…" hint when empty (it used to be a flat "Search:" button). The balance sits in a pill, a thin divider separates the header, and the two cramped bottom lines became one row: the status on the left and the "Standard view · F8" switch on the right. The page arrows moved down a little to make room.
+- Not verified in game.
+
 ## 0.37.2
 
 - Interface: every "Name: on/off" row in the J menu (the map, chat, HUD and TAB settings, the Helpers tab and so on) is now drawn as a name on the left and a real switch on the right (accent colour when on, grey when off) instead of "on"/"off" inside the text. Narrow buttons (under 120 px) keep the text. New pure `switch_label` in `ui_style.rs` with a test for both languages.

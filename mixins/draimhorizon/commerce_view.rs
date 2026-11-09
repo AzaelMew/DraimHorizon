@@ -513,14 +513,24 @@ pub(super) fn render(
                 })
             });
         let bw = (w * 0.45).min(220.0);
+        let balance = ui::clip(game, &balance, bw);
+        let balance_w = game.native_text_width(&balance);
+        ui::rounded(
+            game,
+            batch,
+            [x + w - balance_w - 49.0, y + 7.0, balance_w + 14.0, 17.0],
+            8.0,
+            0x30f0d68a,
+        );
         ui::text(
             game,
             batch,
-            &ui::clip(game, &balance, bw),
-            [x + w - bw - 36.0, y + 12.0],
+            &balance,
+            [x + w - balance_w - 42.0, y + 12.0],
             0xf0d68a,
             false,
         );
+        ui::fill(game, batch, [x + 8.0, y + 28.0, w - 16.0, 1.0], 0x22ffffff);
         if let Some(b) = page.buttons.iter().find(|b| scan::role(&page, b) == Close) {
             control(
                 game,
@@ -681,28 +691,58 @@ pub(super) fn render(
                     .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
             let query = [x + 8.0, y + 58.0, w - 16.0, 18.0];
             if !confirming {
-                let caption = if let Some((item, edit)) = &s.watch_edit {
-                    let name = item.rsplit(':').next().unwrap_or(item);
-                    if russian() {
-                        format!("{name} · монет/шт. ≤ {}│", edit.value)
-                    } else {
-                        format!("{name} · coins/each ≤ {}│", edit.value)
-                    }
-                } else {
-                    let cursor = if s.focus { "│" } else { "" };
-                    if russian() {
-                        format!("Поиск: {}{cursor}", s.query.value)
-                    } else {
-                        format!("Search: {}{cursor}", s.query.value)
-                    }
-                };
-                ui::button(
+                let editing = s.focus || s.watch_edit.is_some();
+                let accent = ui::preferences(game).accent.color();
+                ui::rounded(
                     game,
                     batch,
                     query,
-                    &caption,
-                    s.focus || s.watch_edit.is_some(),
-                    screen.mouse,
+                    4.0,
+                    if editing { 0xff16303a } else { 0xff0e1620 },
+                );
+                if editing {
+                    for edge in [
+                        [query[0], query[1], query[2], 1.0],
+                        [query[0], query[1] + query[3] - 1.0, query[2], 1.0],
+                        [query[0], query[1], 1.0, query[3]],
+                        [query[0] + query[2] - 1.0, query[1], 1.0, query[3]],
+                    ] {
+                        ui::fill(game, batch, edge, 0xff000000 | accent);
+                    }
+                }
+                ui::icon(
+                    game,
+                    batch,
+                    ui::Icon::Search,
+                    [query[0] + 6.0, query[1] + 4.0, 10.0, 10.0],
+                    if editing { accent } else { 0x8fa9bb },
+                );
+                let (caption, color) = if let Some((item, edit)) = &s.watch_edit {
+                    let name = item.rsplit(':').next().unwrap_or(item);
+                    (
+                        if russian() {
+                            format!("{name} · монет/шт. ≤ {}│", edit.value)
+                        } else {
+                            format!("{name} · coins/each ≤ {}│", edit.value)
+                        },
+                        0xe3ebf3,
+                    )
+                } else if s.query.value.is_empty() && !s.focus {
+                    (
+                        t("Поиск по названию…", "Search by name…").to_string(),
+                        0x7b8fa3,
+                    )
+                } else {
+                    let cursor = if s.focus { "│" } else { "" };
+                    (format!("{}{cursor}", s.query.value), 0xe3ebf3)
+                };
+                ui::text(
+                    game,
+                    batch,
+                    &ui::clip(game, &caption, query[2] - 28.0),
+                    [query[0] + 22.0, query[1] + 5.0],
+                    color,
+                    false,
                 );
                 s.hits.push((query, Hit::Search));
             }
@@ -759,7 +799,7 @@ pub(super) fn render(
                 );
             }
             // These controls change actual server pages and do not disappear under a search filter.
-            let bottom = y + h - 53.0;
+            let bottom = y + h - 46.0;
             if let Some(b) = page
                 .buttons
                 .iter()
@@ -856,6 +896,13 @@ pub(super) fn render(
                 .into()
             }
         });
+        ui::fill(
+            game,
+            batch,
+            [x + 8.0, y + h - 24.0, w - 16.0, 1.0],
+            0x22ffffff,
+        );
+        let raw_w = (w * 0.3).clamp(96.0, 168.0);
         ui::text(
             game,
             batch,
@@ -871,21 +918,18 @@ pub(super) fn render(
                 } else {
                     &status
                 },
-                w - 16.0,
+                w - raw_w - 24.0,
             ),
-            [x + 8.0, y + h - 30.0],
+            [x + 10.0, y + h - 16.0],
             0xb8cdce,
             false,
         );
-        let raw = [x + 8.0, y + h - 18.0, w - 16.0, 14.0];
+        let raw = [x + w - raw_w - 8.0, y + h - 20.0, raw_w, 16.0];
         ui::button(
             game,
             batch,
             raw,
-            t(
-                "Стандартный вид · F8 (сохранить)",
-                "Standard view · F8 (save)",
-            ),
+            t("Стандартный вид · F8", "Standard view · F8"),
             false,
             screen.mouse,
         );
