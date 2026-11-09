@@ -1111,12 +1111,17 @@ pub(super) fn tick(game: &Game<'_>) {
         if !s.active || s.task.is_none() {
             return;
         }
-        if !game.native_playing() {
+        if !driver::in_world(game) {
             // The storage window is open: store_frame drives it, the job just waits.
             if s.store.is_some() && game.screen == Screen::Inventory {
                 return;
             }
             s.active = false;
+            return;
+        }
+        // The inventory, the chat or one of the mod's screens is open: no click can be made, so
+        // the job waits for it to close instead of pausing. (Walking is not affected.)
+        if !game.native_playing() {
             return;
         }
         // A job that does nothing for a long time without saying why (a cell it cannot place, a

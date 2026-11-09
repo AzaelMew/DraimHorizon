@@ -1,6 +1,8 @@
 // Native adapter for the local walking navigator; bounded background path planning.
 use crate::game::claim_borders_mining as mining;
-use crate::game::{Game, Resources, claim_borders as claims, claim_borders_navigation as model};
+use crate::game::{
+    Game, Resources, Screen, claim_borders as claims, claim_borders_navigation as model,
+};
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{chunk::Chunk, gizmos::Gizmos};
 use horizon_world::registry::BlockStateId;
@@ -143,6 +145,18 @@ pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
         );
         FOCUS_PAUSE_OFF.store(false, Relaxed);
     }
+}
+/// In the world, possibly with the inventory, the chat or one of this mod's own screens (the
+/// menu, the map) open: tasks go on. Walking carries on as usual; breaking and placing wait
+/// until the screen is closed (the game takes no use or attack clicks behind a screen).
+pub(super) fn in_world(game: &Game<'_>) -> bool {
+    game.title.is_none()
+        && game.sign_edit.is_none()
+        && game.book.is_none()
+        && matches!(
+            game.screen,
+            Screen::Playing | Screen::Inventory | Screen::Chat | Screen::Mod
+        )
 }
 /// What the action keys should do with the task in progress: (running, resumable).
 fn control() -> (bool, bool) {
@@ -986,7 +1000,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let _ = position;
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
-    let grace = input_grace();
+    // Mouse buttons pressed behind a screen (clicks in the inventory) are not the player taking
+    // the wheel.
+    let grace = input_grace() || !game.native_playing();
     if (physical || game.right) && !grace {
         crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
@@ -1008,7 +1024,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             return physical;
         };
         if !game.native_on(claims::ID)
-            || !game.native_playing()
+            || !in_world(game)
             || scope(game).as_deref() != Some(s.scope.as_str())
             || game.player.as_ref().is_none_or(|p| {
                 p.flying
@@ -1020,6 +1036,10 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             })
         {
             pause_state(s);
+            return physical;
+        }
+        // A screen is open: no hit is made until it is closed, and the job waits for that.
+        if !game.native_playing() {
             return physical;
         }
         let Some(target) = job.target else {
@@ -1617,8 +1637,7 @@ pub(super) fn tick(game: &Game<'_>) {
                 s.nav.status = model::Status::NoPath;
             }
         }
-        if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !game.native_playing()
-        {
+        if (s.nav.running || s.mining.as_ref().is_some_and(|j| j.active)) && !in_world(game) {
             cancel_pending(s);
             pause_state(s);
         }
@@ -1931,7 +1950,7 @@ fn assist_step(game: &Game<'_>, a: &mut Assist) -> Flow {
     if !game.native_on(claims::ID) || scope(game).as_deref() != Some(a.scope.as_str()) {
         return Flow::Drop;
     }
-    if !game.native_playing() || !allowed(game) {
+    if !in_world(game) || !allowed(game) {
         return Flow::Abort;
     }
     let Some(p) = game.native_player() else {
@@ -2152,7 +2171,7 @@ pub(super) fn movement(
     if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
         return;
     }
-    if !game.native_on(claims::ID) || !game.native_playing() {
+    if !game.native_on(claims::ID) || !in_world(game) {
         pause();
         return;
     }

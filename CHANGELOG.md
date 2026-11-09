@@ -1,5 +1,10 @@
 # История версий
 
+## 0.36.0
+
+- A task no longer pauses when you open the inventory, the chat, the mod's own menu or the map. Before, any open screen paused navigation, mining, tunnel, bridge, drain, farm and schematics (and a click inside the inventory counted as taking the wheel). Now walking goes on as usual (the movement hook is not stopped by a screen) and the jobs keep their state; the things the game does not take behind a screen (a hit, a placed block, a use click, eating) simply wait and carry on the moment the screen is closed. Escape's pause menu, the title screen, signs and books still pause, as does your own movement, jump, sneak or attack input.
+- Not verified in game.
+
 ## 0.35.1
 
 - Drain: "No firm block to click on at the edge" ended the job as finished-with-a-pause while water was still left. It no longer ends it: the job waits, keeps saying why ("no firm block to click on at the edge, waiting (stand on a block by the water)") and looks again every couple of seconds. Only when no water cell is left is it done.

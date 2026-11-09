@@ -621,7 +621,7 @@ pub(super) fn tick(game: &Game<'_>) {
         world_reset();
         return;
     }
-    if !game.native_playing() {
+    if !navigation::in_world(game) {
         pause();
         return;
     }
@@ -735,7 +735,7 @@ pub(super) fn movement(
         return false;
     }
     if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
-        || !game.native_playing()
+        || !navigation::in_world(game)
     {
         pause();
         navigation::pause();
@@ -851,7 +851,7 @@ fn pier_walk(
     sneak: &mut bool,
 ) -> bool {
     if !game.native_on(claims::ID)
-        || !game.native_playing()
+        || !navigation::in_world(game)
         || !crate::game::claim_borders_workshop_view::draining()
         || game
             .player
@@ -884,7 +884,7 @@ fn swim_back(
     sneak: &mut bool,
 ) -> bool {
     if !game.native_on(claims::ID)
-        || !game.native_playing()
+        || !navigation::in_world(game)
         || !crate::game::claim_borders_workshop_view::draining()
         || game
             .player
@@ -937,7 +937,7 @@ fn edge_drive(
         return false;
     };
     if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
-        || !game.native_playing()
+        || !navigation::in_world(game)
     {
         pause();
         navigation::pause();
@@ -1074,8 +1074,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     let Some((job, placement, last_aim, external)) = data else {
         return false;
     };
-    if !game.native_playing() {
+    if !navigation::in_world(game) {
         pause();
+        return false;
+    }
+    // A screen is open (the inventory, the chat, a menu): no click is made until it is closed,
+    // the job just waits.
+    if !game.native_playing() {
         return false;
     }
     if let Some([yaw, pitch]) = last_aim
