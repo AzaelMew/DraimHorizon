@@ -1,9 +1,8 @@
-**DraimHorizon 0.37.1 - Interface, first step**
+**DraimHorizon 0.37.2 - Switches in the J menu**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- The Economy window is larger and its Overview is three cards (balance, priced items, auction lots).
-- Tabs and buttons without an icon got Lucide icons; the J menu sidebar is wider and no longer cuts off "Experiments".
-- Builds on 0.37.0: the Helpers tab.
+- On/off rows of the J menu are drawn with a real switch on the right instead of "on"/"off" in the text.
+- Builds on 0.37.1: larger Economy window, more icons, wider sidebar.
 
 Not verified in game. No installation or publication is implied.

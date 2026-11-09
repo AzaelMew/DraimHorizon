@@ -572,6 +572,45 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     continue;
                 }
             }
+            // "Name: on/off" rows: the name on the left and a switch on the right.
+            if widget.control.is_some()
+                && !matches!(widget.control, Some(model::Control::Field(_)))
+                && w >= 120.0
+                && let Some((name, on)) =
+                    crate::game::claim_borders_ui_style::switch_label(&widget.text)
+            {
+                let accent = ui::preferences(game).accent.color();
+                let track = [x + w - 32.0, y + (h - 12.0) * 0.5, 24.0, 12.0];
+                ui::rounded(
+                    game,
+                    batch,
+                    track,
+                    6.0,
+                    if on { 0xff000000 | accent } else { 0xff3a4757 },
+                );
+                ui::rounded(
+                    game,
+                    batch,
+                    [
+                        if on { track[0] + 14.0 } else { track[0] + 2.0 },
+                        track[1] + 2.0,
+                        8.0,
+                        8.0,
+                    ],
+                    4.0,
+                    if on { 0xfff2f7fb } else { 0xff93a1b1 },
+                );
+                let name = clipped(game, name, (w - 48.0).max(0.0));
+                ui::text(
+                    game,
+                    batch,
+                    &name,
+                    [x + 6.0, y + (h - 8.0) * 0.5],
+                    if widget.muted { 0x8995a5 } else { 0xe6edf5 },
+                    false,
+                );
+                continue;
+            }
             let color = if widget.muted {
                 0x8995a5
             } else if widget.selected {

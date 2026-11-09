@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.2
+
+- Interface: every "Name: on/off" row in the J menu (the map, chat, HUD and TAB settings, the Helpers tab and so on) is now drawn as a name on the left and a real switch on the right (accent colour when on, grey when off) instead of "on"/"off" inside the text. Narrow buttons (under 120 px) keep the text. New pure `switch_label` in `ui_style.rs` with a test for both languages.
+- Not verified in game.
+
 ## 0.37.1
 
 - Interface, first step: the Economy window grows with the screen (up to 640 x 360 instead of 520 x 300), and its Overview shows balance, priced items and auction lots as three cards. Every tab and button that had no icon now has one (Auction, Market, Plan, Check hand, and the settings tabs General, Connection, Map, TAB, HUD, and the map sub-tabs), all from the Lucide set. The sidebar of the J menu is wider (112 instead of 96 px) so "Experiments" is no longer cut off.
