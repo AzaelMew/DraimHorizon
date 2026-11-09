@@ -21,6 +21,29 @@ pub fn is_container_menu(menu: &str) -> bool {
             .strip_prefix("minecraft:generic_9x")
             .is_some_and(|rows| matches!(rows, "1" | "2" | "3" | "4" | "5" | "6"))
 }
+pub const HAY_BLOCK: &str = "minecraft:hay_block";
+/// Hay bales made per crafting round at most (nine wheat each).
+pub const HAY_ROUND: u32 = 4;
+/// Whether `name` is something these crops yield: the harvest itself, or hay bales from wheat.
+fn yields(crops: &[Crop], name: &str) -> bool {
+    crops.iter().any(|c| product(*c) == name) || (name == HAY_BLOCK && crops.contains(&Crop::Wheat))
+}
+/// What to craft at a crafting table: the slot of a stack of at least nine wheat and how many
+/// bales to make from it this round. `None` when no stack has enough or wheat is not farmed.
+pub fn hay_plan(inventory: &[Stack], crops: &[Crop]) -> Option<(usize, u32)> {
+    if !crops.contains(&Crop::Wheat) {
+        return None;
+    }
+    inventory
+        .iter()
+        .enumerate()
+        .find_map(|(slot, stack)| match stack {
+            Some((name, n)) if name == "minecraft:wheat" && *n >= 9 => {
+                Some((slot, (n / 9).min(HAY_ROUND)))
+            }
+            _ => None,
+        })
+}
 /// What the crop yields when harvested.
 pub fn product(crop: Crop) -> &'static str {
     match crop {
@@ -101,7 +124,7 @@ pub fn deposit(inventory: &[Stack], crops: &[Crop], keep: u32) -> Vec<usize> {
             } else {
                 slots.push(slot);
             }
-        } else if crops.iter().any(|c| product(*c) == name) {
+        } else if yields(crops, name) {
             slots.push(slot);
         }
     }
@@ -174,7 +197,7 @@ pub fn deposit_split(inventory: &[Stack], crops: &[Crop], keep: u32, split: bool
             } else {
                 out.seeds.push(slot);
             }
-        } else if crops.iter().any(|c| product(*c) == name) {
+        } else if yields(crops, name) {
             out.harvest.push(slot);
         }
     }
@@ -424,6 +447,21 @@ mod tests {
         enough[0] = stack("minecraft:wheat_seeds", 128);
         assert!(withdraw(&chest, &enough, "minecraft:wheat_seeds", 128).is_empty());
         assert!(withdraw(&chest, &vec![None; 36], "minecraft:beetroot_seeds", 64).is_empty());
+    }
+    #[test]
+    fn hay_is_crafted_from_wheat_stacks_and_deposited() {
+        use super::super::claim_borders_farming::Crop;
+        let item = |name: &str, n: u32| Some((name.to_string(), n));
+        let inventory = vec![item("minecraft:wheat", 5), item("minecraft:wheat", 40)];
+        assert_eq!(hay_plan(&inventory, &[Crop::Wheat]), Some((1, 4)));
+        assert_eq!(hay_plan(&inventory, &[Crop::Carrots]), None);
+        assert_eq!(
+            hay_plan(&[item("minecraft:wheat", 8)], &[Crop::Wheat]),
+            None
+        );
+        let bales = vec![item(HAY_BLOCK, 3)];
+        assert_eq!(deposit(&bales, &[Crop::Wheat], KEEP_SEEDS), vec![0]);
+        assert!(deposit(&bales, &[Crop::Carrots], KEEP_SEEDS).is_empty());
     }
     #[test]
     fn free_slots_and_counts_read_the_inventory() {

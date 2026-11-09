@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.1
+
+- Farm: the spare seeds now reach the seeds container. The unload trip to the harvest container reset the "unload" flag, so the follow-up trip to the seeds container only happened once three or fewer inventory slots were free, which a few stacks of seeds never cause. The flag stays set after the harvest trip when seeds are left, so the seeds trip follows it.
+- Farm: hay bales. When wheat is farmed and a crafting table stands within eight blocks of the bot, a stack of nine or more wheat is crafted into hay bales before the unload (the table is opened like a container, wheat goes one per cell into the 3x3 grid, up to four bales a round, shift-click on the result), and the bales go to the harvest container with the rest. There is no switch for it; without a table nothing changes.
+
 ## 0.39.0
 
 - A bot task picks itself up again after the server restarts and the client reconnects. The last task you start (walk to a point or a waypoint, follow a player, mining, tunnel, bridge, farm, drain) is remembered. If it is still running when the connection goes (or was running in the last five seconds, since a lost connection pauses it a moment before the reset), it is marked, and once you are back on the same server, in the world and with the chunks around you loaded for six seconds, it is started again as if you had pressed Start. It tries every five seconds, up to six times, and gives up after fifteen minutes. A task you stop yourself (Stop), one that had finished and one that was only a preview do not come back; a different server leaves it waiting. A switch "Auto Resume: on/off" in Experiments > Helpers turns it off (on by default).
