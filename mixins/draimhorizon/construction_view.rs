@@ -7,7 +7,7 @@ use crate::game::{
 };
 use std::{
     sync::{Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 struct External {
     request: schematic::PlacementRequest,
@@ -97,21 +97,50 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
         falling: crate::game::claim_borders_mining::falling(&facts.name),
     }
 }
+/// Gravity blocks seen where they are, with when each was first seen and last looked at.
+fn seen<T>(f: impl FnOnce(&mut std::collections::HashMap<nav::Pos, (Instant, Instant)>) -> T) -> T {
+    static SEEN: OnceLock<Mutex<std::collections::HashMap<nav::Pos, (Instant, Instant)>>> =
+        OnceLock::new();
+    f(&mut SEEN
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))
+}
+/// Whether a sand or gravel block has stayed where it is for a while (1.5 s): a block that was
+/// just dropped into the water is there for a moment and then sinks, one that has been there
+/// has something under it. Looked at often enough for a gap of a second to start the count anew.
+fn settled(at: nav::Pos) -> bool {
+    let now = Instant::now();
+    seen(|seen| {
+        if seen.len() > 4096 {
+            seen.clear();
+        }
+        let entry = seen.entry(at).or_insert((now, now));
+        if now.duration_since(entry.1) > Duration::from_secs(1) {
+            *entry = (now, now);
+        } else {
+            entry.1 = now;
+        }
+        now.duration_since(entry.0) >= Duration::from_millis(1500)
+    })
+}
 /// Whether the block at `at` is something to stand or hang on: solid, and if it can fall (sand,
-/// gravel) resting on something solid that cannot. A sand block just dropped into the water is
-/// solid for a moment and then sinks; whoever stands on it sinks with it.
+/// gravel) either resting on something solid that cannot, or having stayed put for a while. A
+/// sand block just dropped into the water is solid for a moment and then sinks; whoever stands
+/// on it sinks with it.
 pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
+    let origin = at;
     let mut at = at;
     for _ in 0..24 {
         if block(game, at).cell != nav::Cell::Solid {
-            return false;
+            break;
         }
         if !model::gravity(&game.native_block(at)) {
             return true;
         }
         at[1] -= 1;
     }
-    false
+    block(game, origin).cell == nav::Cell::Solid && settled(origin)
 }
 pub(super) fn reset() {
     state(|s| {

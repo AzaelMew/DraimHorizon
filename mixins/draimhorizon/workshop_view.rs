@@ -1582,6 +1582,23 @@ pub(super) fn tick(game: &Game<'_>) {
                                 s.wait = Duration::from_millis(1000);
                                 return;
                             }
+                            if !cells.is_empty() {
+                                // Water is left but no cell has a firm block beside it to click:
+                                // not done. Wait, look again (the player may move, a block may
+                                // settle) and keep saying why.
+                                s.idle = 0;
+                                s.waiting = true;
+                                s.wait = Duration::from_millis(2500);
+                                s.message = format!(
+                                    "{}: {}",
+                                    text(
+                                        "нет опоры для клика у края, жду (встаньте на блок у воды)",
+                                        "no firm block to click on at the edge, waiting (stand on a block by the water)"
+                                    ),
+                                    cells.len()
+                                );
+                                return;
+                            }
                             s.phase = Phase::Done;
                             s.active = false;
                             s.message = if cells.is_empty() && s.missed > 0 {

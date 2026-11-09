@@ -1,5 +1,11 @@
 # История версий
 
+## 0.35.1
+
+- Drain: "No firm block to click on at the edge" ended the job as finished-with-a-pause while water was still left. It no longer ends it: the job waits, keeps saying why ("no firm block to click on at the edge, waiting (stand on a block by the water)") and looks again every couple of seconds. Only when no water cell is left is it done.
+- Drain: a sand or gravel block now counts as something to stand or hang on when it rests on a solid block that cannot fall (as before) or has stayed where it is for 1.5 s. The 0.35.0 rule (support only) could not tell that a sand line you had built was firm if nothing solid could be found below it, and then no cell had an anchor at all, which is what stopped the job at the very start.
+- Not verified in game.
+
 ## 0.35.0
 
 - Idle mode everywhere: a job no longer stops because something is missing or went wrong; it stands idle, says why in the status line ("Idle: ...") and looks again, until you stop it yourself. Mining waits for a suitable tool or a free inventory slot, gives up a block that does not break after 30 s or that the server refuses three times and goes on to the next, and keeps asking the planner when it is slow. Tunnel and Bridge stopped for any reason except your own pause (no blocks, no floor, a chunk not loaded, protected or hazardous block, no face to place on, a server refusal, a timeout) wait 3 s and try again by themselves. Drain waits for sand or gravel, for a route to a cell, and leaves a cell it cannot place. Farm and schematics leave a refused cell for a while, wait for a route, a free slot or the blocks, and a trip to the storage that fails no longer pauses the job.
