@@ -1,5 +1,12 @@
 # История версий
 
+## 0.38.1
+
+- Mining with nothing open around: standing in sandstone with sand overhead, the planner digs a stair up through the rock to the sand. A new test pins it (sand seven blocks up, rock everywhere else: a route of at least five steps that breaks blocks). 
+- Mining no longer stops for good after a fixed number of dug routes: the budget (24 routes, 3 failures) now counts only those without a mined block in between, and a confirmed break resets it. A long job in a desert, which needs many routes one after the other, goes on; a route that keeps failing still ends it.
+- After a storage trip the miner walks back to where it stopped before it goes on (0.38.0), and the farm walks back to its beds when it is far from them (0.36.1), so a distant storage is not a problem for either.
+- Not verified in game.
+
 ## 0.38.0
 
 - Mining has a storage, like the farm: a chest, barrel or shulker box set from the Mining tab ("Storage: ..." under the targets; aim at the container and press it, press again elsewhere to clear). It is the same storage the farm uses.

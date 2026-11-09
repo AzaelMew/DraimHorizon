@@ -1444,7 +1444,14 @@ pub(super) fn mining_ack(game: &Game<'_>, sequence: i32) {
         if let Some(job) = s.mining.as_mut()
             && let Some(target) = job.target
         {
+            let before = job.confirmed;
             job.acknowledge(sequence, mining_block(game, job.ore, target).ore);
+            // A block that was really mined proves the way works: the budget of dug routes and
+            // failures counts only those without a success in between, so a long mining job is
+            // not stopped by the total number of routes it needed.
+            if job.confirmed > before {
+                assist_reset_budget();
+            }
             *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if !job.active {
                 s.nav.running = false;

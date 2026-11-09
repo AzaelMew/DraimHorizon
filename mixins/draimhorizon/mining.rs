@@ -841,6 +841,46 @@ mod tests {
         assert!(ridge(target).ore && path.complete);
         assert!(path.nodes.iter().any(|n| n[1] <= -3));
     }
+    /// A sandstone canyon floor: rock everywhere but the player's cell and the one above it,
+    /// with a layer of sand (the only ore) seven blocks up.
+    fn canyon(at: nav::Pos) -> Block {
+        let rock = Block {
+            cell: nav::Cell::Solid,
+            ore: false,
+            falling: false,
+            breakable: true,
+        };
+        match at[1] {
+            0 | 1 if at[0] == 0 && at[2] == 0 => Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            },
+            y if y < 7 => rock,
+            7 => Block {
+                ore: true,
+                falling: true,
+                ..rock
+            },
+            _ => Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            },
+        }
+    }
+    #[test]
+    fn a_way_up_is_dug_through_rock_to_sand_overhead() {
+        // Nothing is open: no walk and nothing in reach, so the planner has to dig a stair up.
+        assert!(plan([0, 0, 0], &[], canyon, || false).is_none());
+        let (target, route) = plan_buried([0, 0, 0], &[], &[], true, canyon, || false)
+            .expect("a stair dug up through the sandstone");
+        assert_eq!(target[1], 7);
+        assert!(
+            route.complete && route.steps.len() >= 5,
+            "{}",
+            route.steps.len()
+        );
+        assert!(route.steps.iter().any(|step| !step.dig.is_empty()));
+    }
     #[test]
     fn the_next_block_is_the_one_beside_the_last_break() {
         let eye = [0.5, 1.6, 0.5];
