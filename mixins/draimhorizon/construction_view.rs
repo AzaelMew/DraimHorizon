@@ -1240,8 +1240,8 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     if nav::distance(position, job.edge()) < 0.08 {
         // At the edge with no face to click: a moment's grace first, since a dropped item
         // settling or the server's block update often clears it, before stopping the job.
-        let waited = state(|s| s.started.elapsed().as_millis() as u64)
-            .saturating_sub(placement.started_ms);
+        let waited =
+            state(|s| s.started.elapsed().as_millis() as u64).saturating_sub(placement.started_ms);
         if waited < 1500 {
             return false;
         }
