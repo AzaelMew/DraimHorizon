@@ -34,6 +34,7 @@ enum Hit {
     Page(i32),
     Search,
     Standard,
+    Sort,
 }
 #[derive(Default)]
 struct State {
@@ -42,6 +43,8 @@ struct State {
     query: TextInput,
     watch_edit: Option<(String, TextInput)>,
     focus: bool,
+    /// 0 = the server's order, 1 = unit price, 2 = lot price (cheapest first).
+    sort: u8,
     page: usize,
     hits: Vec<([f32; 4], Hit)>,
     pending: Option<Pending>,
@@ -422,6 +425,76 @@ fn goods(
     if let Some((_, stack)) = s.icons.iter().find(|(slot, _)| *slot == b.slot) {
         game.draw_item(batch, stack, r[0] + 5.0, r[1] + 7.0);
     }
+    // A fixed-price lot: the price per unit stands out on the right, the lot price and the
+    // seller (with the time left) sit below.
+    if let Some(l) = &listing {
+        let unit = l.cost as f64 / 100.0 / f64::from(l.count.max(1));
+        let unit_text = if russian() {
+            format!("{unit:.2} / шт.")
+        } else {
+            format!("{unit:.2} each")
+        };
+        let total = if russian() {
+            format!("{} монет", economy::fmt(l.cost))
+        } else {
+            format!("{} coins", economy::fmt(l.cost))
+        };
+        let time = b
+            .lore
+            .iter()
+            .find(|line| line.contains(" left"))
+            .map(|line| line.replace(" left", "").trim().to_owned())
+            .map(|v| {
+                if russian() {
+                    v.replace('d', "д").replace('h', "ч").replace('m', "м")
+                } else {
+                    v
+                }
+            });
+        let who = match time {
+            Some(time) => format!("{} · {time}", l.seller),
+            None => l.seller.clone(),
+        };
+        let unit_w = game.native_text_width(&unit_text);
+        let total_w = game.native_text_width(&total);
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &title, r[2] - 40.0 - unit_w),
+            [r[0] + 26.0, r[1] + 5.0],
+            if deal { 0x87e4af } else { 0xe3ebf3 },
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &unit_text,
+            [r[0] + r[2] - 8.0 - unit_w, r[1] + 5.0],
+            if deal { 0x87e4af } else { 0xf0d68a },
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &who, r[2] - 40.0 - total_w),
+            [r[0] + 26.0, r[1] + 18.0],
+            0x9aacc0,
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &total,
+            [r[0] + r[2] - 8.0 - total_w, r[1] + 18.0],
+            0x9aacc0,
+            false,
+        );
+        if crate::game::claim_borders_ui_style::contains(r, mouse) {
+            s.hover = Some(b.slot);
+        }
+        s.hits.push((r, Hit::Server(b.clone())));
+        return;
+    }
     ui::text(
         game,
         batch,
@@ -689,8 +762,23 @@ pub(super) fn render(
                     .buttons
                     .iter()
                     .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
-            let query = [x + 8.0, y + 58.0, w - 16.0, 18.0];
+            let sort_w = 96.0_f32.min(w * 0.25);
+            let query = [x + 8.0, y + 58.0, w - 20.0 - sort_w, 18.0];
             if !confirming {
+                let sort_rect = [x + w - 8.0 - sort_w, y + 58.0, sort_w, 18.0];
+                ui::button(
+                    game,
+                    batch,
+                    sort_rect,
+                    match s.sort {
+                        1 => t("Цена/шт. ↑", "Unit price ↑"),
+                        2 => t("Цена лота ↑", "Lot price ↑"),
+                        _ => t("Порядок: сервер", "Order: server"),
+                    },
+                    s.sort != 0,
+                    screen.mouse,
+                );
+                s.hits.push((sort_rect, Hit::Sort));
                 let editing = s.focus || s.watch_edit.is_some();
                 let accent = ui::preferences(game).accent.color();
                 ui::rounded(
@@ -769,6 +857,19 @@ pub(super) fn render(
                     )
                 })
                 .collect();
+            let mut entries = entries;
+            if s.sort != 0 {
+                let price = |b: &scan::Button| {
+                    fixed_listing(&page, b).map_or(f64::MAX, |l| {
+                        if s.sort == 1 {
+                            l.cost as f64 / f64::from(l.count.max(1))
+                        } else {
+                            l.cost as f64
+                        }
+                    })
+                };
+                entries.sort_by(|a, b| price(a).total_cmp(&price(b)));
+            }
             let pages = entries.len().div_ceil(per).max(1);
             s.page = s.page.min(pages - 1);
             let gw = (w - 16.0) / cols as f32;
@@ -1203,6 +1304,10 @@ pub(super) fn mouse(
                 }
             }
             Some(Hit::Search) => s.focus = true,
+            Some(Hit::Sort) => {
+                s.sort = (s.sort + 1) % 3;
+                s.page = 0;
+            }
             Some(Hit::Standard) => return true,
             _ => {}
         }

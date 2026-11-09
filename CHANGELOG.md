@@ -1,5 +1,11 @@
 # История версий
 
+## 0.37.4
+
+- Auction lots (F8 view): a fixed-price lot card now shows the price per unit on the right in gold (green when it is within your favorite threshold), the lot price below it, and the seller with the time left (1d 20h) on the second line, instead of one long line cut off at the seller's name. Bidding lots keep the old card.
+- Auction: a sort button next to the search field cycles the order of the page: the server's order, unit price (cheapest first), lot price (cheapest first). It sorts what the server shows on the current page.
+- Not verified in game.
+
 ## 0.37.3
 
 - Market and Auction windows (the F8 custom view): the search is a real input field with a magnifier icon, an accent outline while you type and a "Search by name…" hint when empty (it used to be a flat "Search:" button). The balance sits in a pill, a thin divider separates the header, and the two cramped bottom lines became one row: the status on the left and the "Standard view · F8" switch on the right. The page arrows moved down a little to make room.
