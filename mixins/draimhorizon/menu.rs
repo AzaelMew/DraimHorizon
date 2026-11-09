@@ -2883,16 +2883,16 @@ impl Menu {
                     [x, 100.0 + 2.0 * step, w, 14.0],
                     match self.drain_pattern {
                         Pattern::Fill => self.language.text(
-                            "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
-                            "Fills water from the bottom up with inventory blocks (sand too)",
+                            "Засыпает воду песком и гравием, столбик за столбиком",
+                            "Fills water with sand and gravel, one column after another",
                         ),
                         Pattern::Lines => self.language.text(
-                            "Настил линиями по поверхности; идёт по уже уложенным блокам",
-                            "Lays lines on the surface and walks out along them",
+                            "Линии из песка и гравия; идёт по уже уложенному",
+                            "Lines of sand and gravel; walks out along what is laid",
                         ),
                         Pattern::Grid => self.language.text(
-                            "Настил сеткой: вода делится на квадраты; идёт по настилу",
-                            "Lays a grid: the water is cut into squares; walks along it",
+                            "Сетка из песка и гравия: вода делится на квадраты",
+                            "A grid of sand and gravel: the water is cut into squares",
                         ),
                     },
                     None,

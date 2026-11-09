@@ -1,5 +1,11 @@
 # История версий
 
+## 0.34.2
+
+- Drain: it now places only sand, red sand and gravel. Any other block (it used to fall back to the cheapest building block when no sand was carried) would have been left standing in the water; with none of the three in the inventory the job says "Sand or gravel is required".
+- Drain: one column at a time. The bot stays on a column, dropping the next block as soon as the last one has sunk (about 0.8 s instead of 1.4 s), until its surface cell is solid, and only then moves to the nearest next column, instead of hopping between columns while each one sinks.
+- Not verified in game.
+
 ## 0.34.1
 
 - Farm: the way to the storage chest is no longer restricted to one level. Walking among the crops stays level (no jumping onto farmland), but a trip to the chest uses the normal route, which climbs steps and goes around obstacles, so a chest on another height or well away from the beds can be reached (long routes are planned in segments as chunks load). The route still never breaks or places blocks.

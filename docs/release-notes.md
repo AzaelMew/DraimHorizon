@@ -1,8 +1,9 @@
-**DraimHorizon 0.34.1 - Farm reaches a far storage chest**
+**DraimHorizon 0.34.2 - Drain: sand and gravel only, one column at a time**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- The farm walks to its storage chest by the normal route (steps, obstacles), wherever it is; among the crops it stays level and never jumps.
-- Builds on 0.34.0: Drain patterns, farm idle mode.
+- Drain places only sand, red sand and gravel.
+- It finishes one column before moving to the next instead of running back and forth.
+- Builds on 0.34.1: Drain patterns, farm reaches a far storage chest.
 
 Not verified in game. No installation or publication is implied.

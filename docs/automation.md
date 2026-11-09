@@ -20,14 +20,14 @@ On the Farm tab, pick the crops from the icons (several at once; one always stay
 
 ## Drain
 
-Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blocks (hotbar, off hand or inventory) and press the start key.
+Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry sand, red sand or gravel (hotbar, off hand or inventory) and press the start key. Drain places only those blocks, never an ordinary block that would be left standing in the water.
 
-- **With sand or gravel** (used first when you have them) any depth works. The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a bridge you stand on. The block sinks and fills the column from the bottom; the bot repeats it until the column reaches the surface, then moves on along the new surface. Each drop waits about 1.5 s for the block to sink.
-- **With other blocks** (stone, dirt, …) only cells resting on something solid are filled, bottom-up, so the floor must be within reach (about 4 blocks below you). For deeper water the task stops and asks for sand or gravel.
+- The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a pier you stand on. The block sinks and fills the column from the bottom; the bot stays on that column, dropping the next block when the last one has sunk, until the column reaches the surface, and only then moves on to the next column. Each drop waits under a second for the block to sink.
+- The wall of the shore facing the water cannot be clicked from inland, so the bot walks to the edge of the shore block and sneaks over it, like when bridging, before dropping the block. If it falls into the water, it swims back to dry ground and goes on.
 
-**Patterns.** The **Pattern** button switches between a fill (the default), lines and a grid, and **Spacing** sets the distance between the lines (3 to 8). Lines lay a row of blocks on the surface every N blocks along the x axis, starting with the row you stand on; the grid adds columns, so the water is cut into squares. A pattern uses one block per cell (a block that stays put is preferred to sand) and grows along its own blocks: the bot walks out along the line it has laid, sneaking, and places the next cell from its end.
+**Patterns.** The **Pattern** button switches between a fill (the default), lines and a grid, and **Spacing** sets the distance between the lines (3 to 8). Lines run along the x axis every N blocks, starting with the row you stand on; the grid adds columns, so the water is cut into squares. A pattern grows along its own blocks: the bot walks out along the line it has laid, sneaking, and places the next column from its end.
 
-Stand on a block next to the water, not in it. The wall of the shore facing the water cannot be clicked from inland, so the bot walks to the edge of the shore block and sneaks over it, like when bridging, before dropping the block. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
+Stand on a block next to the water, not in it. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
 
 ## Farm
 

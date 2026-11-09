@@ -113,6 +113,9 @@ struct State {
     settle: Duration,
     // Consecutive scans that found nothing to fill; the task ends after a few.
     idle: u8,
+    // The column being filled: the bot stays on it until its surface cell is solid, then moves
+    // on to the next one instead of wandering between columns.
+    column: Option<(i32, i32)>,
     // The route along laid blocks being walked (waypoints, how many are done, since when).
     pier: Option<Pier>,
     // Cells that failed or were just filled, ignored until the instant passes.
@@ -153,6 +156,7 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            column: None,
             pier: None,
             crop: None,
             unplanted: false,
@@ -318,10 +322,10 @@ pub(super) fn start_drain(
     if !config.valid() {
         return Err("Invalid draining bounds".into());
     }
-    if !preview && placement::drain_item(game, config.pattern != drain::Pattern::Fill).is_none() {
+    if !preview && placement::drain_item(game).is_none() {
         return Err(text(
-            "Нужны блоки для засыпки (хотбар, 2-я рука или инвентарь)",
-            "Blocks to fill with are required (hotbar, off hand or inventory)",
+            "Нужны песок или гравий (хотбар, 2-я рука или инвентарь)",
+            "Sand or gravel is required (hotbar, off hand or inventory)",
         )
         .into());
     }
@@ -983,7 +987,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 && let Some(at) = s.target
                             {
                                 s.skip
-                                    .push((at, Instant::now() + Duration::from_millis(1400)));
+                                    .push((at, Instant::now() + Duration::from_millis(800)));
                             }
                         }
                         s.target = None;
@@ -1175,8 +1179,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     }
                     // A pattern is laid on the surface, one block per cell.
                     let pattern = config.pattern != drain::Pattern::Fill;
-                    let falling =
-                        placement::drain_item(game, pattern).is_some_and(|(_, falling)| falling);
+                    let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
                     let surface = falling || pattern;
                     s.falling = falling;
                     s.settle = Duration::from_millis(if falling { 120 } else { 80 });
@@ -1247,11 +1250,38 @@ pub(super) fn tick(game: &Game<'_>) {
                             }
                         }
                     }
-                    let picked = if falling {
+                    let mut picked = if falling {
                         drain::pick_nearest(&cells, eye)
                     } else {
                         drain::pick(&cells, eye)
                     };
+                    if surface {
+                        // Finish the column in progress before going anywhere else.
+                        if let Some((sx, sz)) = s.column {
+                            let top = (origin[1] - 4..=origin[1] + 1).rev().find_map(|y| {
+                                let name = game.native_block([sx, y, sz]);
+                                if matches!(name.as_str(), "minecraft:air" | "minecraft:cave_air") {
+                                    None
+                                } else {
+                                    Some((y, drain::replaceable(&name)))
+                                }
+                            });
+                            match top {
+                                // Still water on top: this block is sinking, drop the next
+                                // one when it has, right here.
+                                Some((y, true)) if held([sx, y, sz]) => {
+                                    s.wait = Duration::from_millis(120);
+                                    return;
+                                }
+                                Some((y, true)) => picked = Some(([sx, y, sz], true)),
+                                // Solid on top: the column is done, take the nearest next one.
+                                _ => s.column = None,
+                            }
+                        }
+                        if let Some((at, _)) = picked {
+                            s.column = Some((at[0], at[2]));
+                        }
+                    }
                     match picked {
                         Some((at, _)) => {
                             s.target = Some(at);
@@ -1396,16 +1426,12 @@ pub(super) fn tick(game: &Game<'_>) {
                     s.target = None;
                     return;
                 }
-                let pattern = matches!(
-                    &s.task,
-                    Some(Task::Drain { config, .. }) if config.pattern != drain::Pattern::Fill
-                );
-                let Some((item, _)) = placement::drain_item(game, pattern) else {
+                let Some((item, _)) = placement::drain_item(game) else {
                     fail(
                         s,
                         text(
-                            "Нужны блоки (хотбар, 2-я рука или инвентарь)",
-                            "Blocks required (hotbar, off hand or inventory)",
+                            "Нужны песок или гравий (хотбар, 2-я рука или инвентарь)",
+                            "Sand or gravel required (hotbar, off hand or inventory)",
                         ),
                     );
                     return;

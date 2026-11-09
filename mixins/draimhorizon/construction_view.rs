@@ -288,31 +288,19 @@ pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
     }
     names
 }
-/// What to fill water with, and whether it is a falling block. Sand and gravel come first:
-/// dropped into the surface cell they sink and stack from the bottom, whatever the depth.
-/// Anything else is the cheapest building block, which only stays where it is placed.
-pub(super) fn drain_item(game: &Game<'_>, prefer_solid: bool) -> Option<(String, bool)> {
-    let items = building_items(game, true);
-    // A pier of one block per cell wants a block that stays where it is put; sand and gravel
-    // are only for filling a column.
-    if prefer_solid
-        && let Some(name) = items
-            .iter()
-            .filter(|name| !model::gravity(name))
-            .min_by_key(|name| model::rank(name))
-    {
-        return Some((name.clone(), false));
-    }
-    items
-        .iter()
-        .find(|name| model::gravity(name))
-        .map(|name| (name.clone(), true))
-        .or_else(|| {
-            items
-                .into_iter()
-                .min_by_key(|name| model::rank(name))
-                .map(|name| (name, false))
+/// What to fill water with: sand, red sand or gravel only (never an ordinary block, which would
+/// be left standing in the water). Dropped into the surface cell it sinks and stacks from the
+/// bottom, whatever the depth. The flag says it is a falling block, which it always is.
+pub(super) fn drain_item(game: &Game<'_>) -> Option<(String, bool)> {
+    building_items(game, true)
+        .into_iter()
+        .find(|name| {
+            matches!(
+                name.strip_prefix("minecraft:").unwrap_or(name),
+                "sand" | "red_sand" | "gravel"
+            )
         })
+        .map(|name| (name, true))
 }
 fn placing(s: &State) -> bool {
     s.external
