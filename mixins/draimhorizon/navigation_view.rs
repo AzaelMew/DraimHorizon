@@ -480,23 +480,13 @@ fn slot_stack<'a>(game: &'a Game<'_>, slot: usize) -> Option<&'a horizon_client:
         game.inventory.get(slot).and_then(Option::as_ref)
     }
 }
-/// Whether `stack` is a pickaxe, axe or shovel with durability left that also suits `block`.
-fn tool_usable(
-    game: &Game<'_>,
-    stack: &horizon_client::items::ItemStack,
-    block: Option<&str>,
-    pickaxe_only: bool,
-) -> bool {
-    // Ores need a pickaxe, wood an axe, dirt and sand a shovel; the per-block check below
-    // decides whether the tool is right for the actual target.
-    let kinds: &[&str] = if pickaxe_only {
-        &["_pickaxe"]
-    } else {
-        &["_pickaxe", "_axe", "_shovel"]
-    };
-    if !kinds.iter().any(|kind| stack.item.ends_with(kind)) {
-        return false;
-    }
+/// Durability a tool keeps in reserve so that it never breaks: about half a percent of its
+/// total (10 on a netherite tool, 7 on a diamond one), at least 3 points.
+fn tool_reserve(max: u32) -> u32 {
+    (max / 200).max(3)
+}
+/// (total durability, durability left) of a stack; (0, 0) for something that does not wear.
+fn tool_wear(game: &Game<'_>, stack: &horizon_client::items::ItemStack) -> (u32, u32) {
     let mut max = game
         .res
         .items()
@@ -510,22 +500,61 @@ fn tool_usable(
     {
         max = (*value).max(0) as u32;
     }
-    if max > 0 && max.saturating_sub(stack.damage) <= 10 {
+    (max, max.saturating_sub(stack.damage))
+}
+/// Whether `stack` is a pickaxe, axe or shovel that still has durability to spare and, with a
+/// block given, is the right kind for it.
+fn tool_usable(
+    game: &Game<'_>,
+    stack: &horizon_client::items::ItemStack,
+    block: Option<&str>,
+    pickaxe_only: bool,
+) -> bool {
+    let kinds: &[&str] = if pickaxe_only {
+        &["_pickaxe"]
+    } else {
+        &["_pickaxe", "_axe", "_shovel"]
+    };
+    if !kinds.iter().any(|kind| stack.item.ends_with(kind)) {
+        return false;
+    }
+    let (max, left) = tool_wear(game, stack);
+    if max > 0 && left <= tool_reserve(max) {
         return false;
     }
     block.is_none_or(|name| game.res.items().correct_for_drops(Some(stack), name))
 }
-/// The slot of a usable tool anywhere in the hotbar or inventory: the held one first, then the
-/// hotbar, then the main inventory.
+/// Whether the block at `at` can be broken without a tool (dirt, sand, leaves): any hand will do.
+fn needs_no_tool(game: &Game<'_>, at: model::Pos) -> bool {
+    !game
+        .res
+        .facts()
+        .get(game.world.block(at[0], at[1], at[2]))
+        .requires_tool
+}
+/// The slot of the tool to use: among the right ones for the block (any, with no block given)
+/// anywhere in the hotbar or inventory, a fresh one (over a fifth of its durability left) comes
+/// before a worn one, the held one before the rest.
 fn tool_slot(game: &Game<'_>, target: Option<model::Pos>, pickaxe_only: bool) -> Option<usize> {
     let block = target.map(|at| game.native_block(at));
-    std::iter::once(game.selected).chain(0..36).find(|slot| {
+    let fits = |slot: &usize| {
         slot_stack(game, *slot)
             .is_some_and(|stack| tool_usable(game, stack, block.as_deref(), pickaxe_only))
-    })
+    };
+    let fresh = |slot: &usize| {
+        slot_stack(game, *slot).is_some_and(|stack| {
+            let (max, left) = tool_wear(game, stack);
+            max == 0 || left * 5 >= max
+        })
+    };
+    let order = || std::iter::once(game.selected).chain(0..36);
+    order()
+        .filter(|slot| fits(slot))
+        .find(|slot| fresh(slot))
+        .or_else(|| order().find(|slot| fits(slot)))
 }
 fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
-    tool_slot(game, target, false).is_some()
+    tool_slot(game, target, false).is_some() || target.is_some_and(|at| needs_no_tool(game, at))
 }
 /// Tunnels and bridges dig stone, which only a pickaxe is meant for.
 pub(super) fn construction_tool(game: &Game<'_>) -> bool {
@@ -543,7 +572,12 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
     use horizon_client::menu::Input;
     static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
     let Some(slot) = tool_slot(game, target, false) else {
-        return Tool::Missing;
+        // No tool is the right one, but dirt, sand and the like break by hand: carry on.
+        return if target.is_some_and(|at| needs_no_tool(game, at)) {
+            Tool::Ready
+        } else {
+            Tool::Missing
+        };
     };
     if slot < 9 {
         game.selected = slot;

@@ -1,5 +1,12 @@
 # История версий
 
+## 0.34.4
+
+- Tools: a tool is kept in reserve before it breaks, now in proportion to its durability (about half a percent: 10 points on a netherite tool, 7 on a diamond one, at least 3) instead of a flat 10, and a fresh tool (over a fifth of its durability left) is used before a worn one, so two pickaxes (hotbar and inventory) share the wear and the job only stops when every suitable one is nearly worn out.
+- Mining and Tunnel: blocks that need no tool (dirt, sand, gravel, leaves) are broken by hand when none of the carried tools is the right kind for them, instead of stopping with "A suitable tool is required".
+- Tunnel and Bridge: when no face of a neighbouring block can be clicked to place a floor block, other points of each face are tried (the middle, then four offsets and two corners) before giving up, and at the edge the job waits 1.5 s before stopping with "No face to place a block on", which was stopping it on a dropped item or a late block update.
+- Not verified in game.
+
 ## 0.34.3
 
 - Mining: blocks at the foot and the top of a tree (or any block hidden behind grass, ferns, flowers or leaves) were skipped for good, because the aim ray met the plant first and the miner took that for an unreachable block, so only the clear middle of a trunk was cut. Now it breaks the plant or leaf block in the way first (not counted as a mined block, at most six per block, never torches, crops or anything of value) and then goes back to the block it wanted.

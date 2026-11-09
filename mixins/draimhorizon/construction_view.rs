@@ -1083,20 +1083,41 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         } else {
             f64::from(face[1]) * 0.501
         };
-        aim(
-            game,
-            [
-                f64::from(anchor[0]) + 0.5 + f64::from(face[0]) * 0.501,
-                f64::from(anchor[1]) + 0.5 + top,
-                f64::from(anchor[2]) + 0.5 + f64::from(face[2]) * 0.501,
-            ],
-        );
-        if game.entity_targeted() {
-            why = "entity";
-            continue;
+        let base = [
+            f64::from(anchor[0]) + 0.5 + f64::from(face[0]) * 0.501,
+            f64::from(anchor[1]) + 0.5 + top,
+            f64::from(anchor[2]) + 0.5 + f64::from(face[2]) * 0.501,
+        ];
+        // The middle of the face first; when something blocks that line (a corner of the
+        // passage, a plant), other points of the same face are tried before giving it up.
+        let axis = face.iter().position(|n| *n != 0).unwrap_or(1);
+        let tangent: Vec<usize> = (0..3).filter(|a| *a != axis).collect();
+        let mut by_entity = false;
+        let mut found = None;
+        for [u, v] in [
+            [0.0, 0.0],
+            [0.3, 0.0],
+            [-0.3, 0.0],
+            [0.0, 0.3],
+            [0.0, -0.3],
+            [0.3, 0.3],
+            [-0.3, -0.3],
+        ] {
+            let mut point = base;
+            point[tangent[0]] += u;
+            point[tangent[1]] += v;
+            aim(game, point);
+            if game.entity_targeted() {
+                by_entity = true;
+                continue;
+            }
+            if let Some(h) = game.pick().filter(|h| h.pos == anchor && h.face == face) {
+                found = Some(h);
+                break;
+            }
         }
-        let Some(hit) = game.pick().filter(|h| h.pos == anchor && h.face == face) else {
-            why = "aim";
+        let Some(hit) = found else {
+            why = if by_entity { "entity" } else { "aim" };
             continue;
         };
         // Do not activate a workstation or other interactive support instead of placing.
@@ -1217,6 +1238,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         return false;
     };
     if nav::distance(position, job.edge()) < 0.08 {
+        // At the edge with no face to click: a moment's grace first, since a dropped item
+        // settling or the server's block update often clears it, before stopping the job.
+        let waited = state(|s| s.started.elapsed().as_millis() as u64)
+            .saturating_sub(placement.started_ms);
+        if waited < 1500 {
+            return false;
+        }
         state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
