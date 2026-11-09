@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.0
+
+- Farm: **Auto sell**, a switch on the Farm tab (off by default). When the harvest container is full (the unload trip moves nothing any more), the bot sells the harvest instead of giving up: each stack of what the chosen crops yield (harvest and hay bales, never seeds) is swapped into the selected hotbar slot and `/sell hand` is sent, one stack after another, until none is left. The market pays for crops, so a full chest no longer stops the income. If a stack does not shrink after three commands (no such command, nothing is bought), the selling stops with a message and starts again after the next failed unload. Selling needs chat commands enabled in the chat settings.
+
 ## 0.39.1
 
 - Farm: the spare seeds now reach the seeds container. The unload trip to the harvest container reset the "unload" flag, so the follow-up trip to the seeds container only happened once three or fewer inventory slots were free, which a few stacks of seeds never cause. The flag stays set after the harvest trip when seeds are left, so the seeds trip follows it.

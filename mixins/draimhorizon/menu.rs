@@ -572,6 +572,8 @@ pub enum Control {
     FarmSafe,
     /// Bone meal on the crops that are still growing, on or off.
     FarmBonemeal,
+    /// Sells the harvest with `/sell hand` once the harvest container is full, on or off.
+    FarmAutoSell,
     /// Switches eating on its own.
     AutoEat,
     /// Switches one of the helpers of the Helpers tab.
@@ -729,6 +731,7 @@ pub struct Menu {
     pub farm_limit: u16,
     pub farm_replant: bool,
     pub farm_bonemeal: bool,
+    pub farm_autosell: bool,
     pub drain_radius: u8,
     pub drain_pattern: super::claim_borders_draining::Pattern,
     pub drain_spacing: u8,
@@ -793,6 +796,7 @@ impl Default for Menu {
             farm_limit: 16,
             farm_replant: true,
             farm_bonemeal: true,
+            farm_autosell: false,
             drain_radius: 6,
             drain_pattern: super::claim_borders_draining::Pattern::Fill,
             drain_spacing: 4,
@@ -890,6 +894,7 @@ impl Menu {
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
         self.farm_bonemeal = from.farm_bonemeal;
+        self.farm_autosell = from.farm_autosell;
         self.drain_radius = from.drain_radius;
         self.drain_pattern = from.drain_pattern;
         self.drain_spacing = from.drain_spacing;
@@ -1016,6 +1021,7 @@ impl Menu {
                     limit: self.farm_limit,
                     replant: self.farm_replant,
                     bonemeal: self.farm_bonemeal,
+                    autosell: self.farm_autosell,
                 }),
                 running,
             }),
@@ -2803,6 +2809,19 @@ impl Menu {
                             ),
                             Control::FarmBonemeal,
                         ),
+                        (
+                            localized!(
+                                self.language,
+                                "Авто-продажа: {}",
+                                "Auto sell: {}",
+                                if self.farm_autosell {
+                                    self.language.text("Вкл", "On")
+                                } else {
+                                    self.language.text("Выкл", "Off")
+                                }
+                            ),
+                            Control::FarmAutoSell,
+                        ),
                     ]
                 } else {
                     vec![
@@ -3931,6 +3950,10 @@ impl Menu {
             Control::FarmSafe => Some(Action::FarmSafe),
             Control::FarmBonemeal => {
                 self.farm_bonemeal = !self.farm_bonemeal;
+                None
+            }
+            Control::FarmAutoSell => {
+                self.farm_autosell = !self.farm_autosell;
                 None
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
@@ -6891,6 +6914,7 @@ mod tests {
                                     | Control::FarmStorage(_)
                                     | Control::FarmSafe
                                     | Control::FarmBonemeal
+                                    | Control::FarmAutoSell
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant
