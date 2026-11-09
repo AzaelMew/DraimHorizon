@@ -31,6 +31,8 @@ struct Trip {
     ore: u8,
     /// A walk has been asked for and its result is awaited.
     walking: bool,
+    /// How long the walk under way may take (set when it starts, from its length).
+    limit: Duration,
     since: Instant,
     last: Instant,
     tries: u8,
@@ -70,6 +72,7 @@ pub(super) fn begin(game: &Game<'_>, ore: u8) -> bool {
         origin: nav::block([p.x, p.y, p.z]),
         ore,
         walking: false,
+        limit: Duration::from_secs(90),
         since: Instant::now(),
         last: Instant::now(),
         tries: 0,
@@ -177,6 +180,15 @@ fn needed(game: &Game<'_>, item: &str) -> bool {
         info.max_damage > 0 || info.food.is_some() || item == "minecraft:totem_of_undying"
     })
 }
+/// How long a walk to `goal` may take: ninety seconds, or the way at two blocks a second, so a
+/// storage 800 blocks away still has its time.
+fn walk_time(game: &Game<'_>, goal: nav::Pos) -> Duration {
+    let from = game
+        .native_player()
+        .map_or(nav::center(goal), |p| [p.x, p.y, p.z]);
+    let way = (nav::center(goal)[0] - from[0]).hypot(nav::center(goal)[2] - from[2]);
+    Duration::from_secs(90.max((way / 2.0) as u64 + 30))
+}
 /// Drives the trip each tick.
 pub(super) fn frame(game: &mut Game<'_>) {
     let Some(mut t) = *TRIP.lock().unwrap_or_else(|e| e.into_inner()) else {
@@ -206,8 +218,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
                 t.walking = true;
                 t.since = Instant::now();
+                t.limit = walk_time(game, spot);
                 save(t);
-            } else if t.since.elapsed() > Duration::from_secs(90) {
+            } else if t.since.elapsed() > t.limit {
                 end(game, false, 60);
             } else {
                 match walk::workshop_walk_result() {
@@ -273,10 +286,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 }
                 t.walking = true;
                 t.since = Instant::now();
+                t.limit = walk_time(game, t.origin);
                 save(t);
-            } else if walk::workshop_walk_result().is_some()
-                || t.since.elapsed() > Duration::from_secs(60)
-            {
+            } else if walk::workshop_walk_result().is_some() || t.since.elapsed() > t.limit {
                 // Back (or as near as it gets): the search finds the next block from here.
                 end(game, true, 5);
             }

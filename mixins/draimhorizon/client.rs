@@ -1514,7 +1514,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
-            farm_storage: crate::game::claim_borders_workshop_view::storage(game),
+            farm_storage: crate::game::claim_borders_workshop_view::storages(game),
+            farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")
@@ -1522,9 +1523,13 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 == Some("right"),
             click_rate: crate::game::claim_borders_helpers::click_rate(game),
             helpers: menu::Helper::ALL.map(|helper| {
-                game.native_setting(claims::SETTINGS_ID, helper.key())
-                    .as_deref()
-                    == Some("true")
+                let value = game.native_setting(claims::SETTINGS_ID, helper.key());
+                // Resuming after a reconnect is on unless it was switched off.
+                if helper == menu::Helper::Resume {
+                    value.as_deref() != Some("false")
+                } else {
+                    value.as_deref() == Some("true")
+                }
             }),
             shulker_peek: game
                 .native_setting(claims::SETTINGS_ID, "shulker_peek")
@@ -1723,17 +1728,47 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             );
             Ok(Vec::new())
         }
-        Action::FarmStorage => {
+        Action::FarmSafe => {
+            use crate::game::claim_borders_workshop_view as workshop;
             let l = crate::game::claim_borders_chat_view::current_language();
-            match crate::game::claim_borders_workshop_view::set_storage(game) {
-                Ok([x, y, z]) => Ok(vec![match l {
-                    Language::Russian => format!("Склад: {x} {y} {z}"),
-                    Language::English => format!("Storage: {x} {y} {z}"),
-                }]),
+            let name = l.text("Безопасная точка", "Safe spot");
+            let near = workshop::safe_point(game)
+                .zip(game.native_player())
+                .is_some_and(|(at, p)| {
+                    crate::game::claim_borders_navigation::distance(
+                        crate::game::claim_borders_navigation::center(at),
+                        [p.x, p.y, p.z],
+                    ) < 2.0
+                });
+            // Pressed again where it was set: forget it. Anywhere else: set it here.
+            if near {
+                workshop::clear_safe_point();
+                Ok(vec![format!("{name}: {}", l.text("сброшена", "cleared"))])
+            } else {
+                let [x, y, z] = workshop::set_safe_point(game)?;
+                Ok(vec![format!("{name}: {x} {y} {z}")])
+            }
+        }
+        Action::FarmStorage(role) => {
+            use crate::game::claim_borders_workshop_view as workshop;
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let name = match role {
+                crate::game::claim_borders_farm_storage::Role::Harvest => {
+                    l.text("Склад урожая", "Harvest storage")
+                }
+                crate::game::claim_borders_farm_storage::Role::Seeds => {
+                    l.text("Склад семян", "Seeds storage")
+                }
+                crate::game::claim_borders_farm_storage::Role::Meal => {
+                    l.text("Склад муки", "Bone meal storage")
+                }
+            };
+            match workshop::set_storage(game, role) {
+                Ok([x, y, z]) => Ok(vec![format!("{name}: {x} {y} {z}")]),
                 // Aiming at nothing useful while one is set: forget it.
-                Err(_) if crate::game::claim_borders_workshop_view::storage(game).is_some() => {
-                    crate::game::claim_borders_workshop_view::clear_storage();
-                    Ok(vec![l.text("Склад сброшен", "Storage cleared").into()])
+                Err(_) if workshop::storage_of(game, role).is_some() => {
+                    workshop::clear_storage(role);
+                    Ok(vec![format!("{name}: {}", l.text("сброшен", "cleared"))])
                 }
                 Err(e) => Err(e),
             }

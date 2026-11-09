@@ -71,6 +71,8 @@ pub struct Config {
     pub radius: u8,
     pub limit: u16,
     pub replant: bool,
+    /// Bone meal is used on crops that are still growing (it comes from its own container).
+    pub bonemeal: bool,
 }
 impl Config {
     pub fn valid(self) -> bool {
@@ -85,6 +87,7 @@ impl Config {
 }
 #[cfg(test)]
 mod tests {
+
     use super::*;
     #[test]
     fn harvests_only_mature_supported_crops() {
@@ -107,6 +110,7 @@ mod tests {
             radius: 6,
             limit: 0,
             replant: true,
+            bonemeal: true,
         };
         assert!(both.valid());
         assert_eq!(

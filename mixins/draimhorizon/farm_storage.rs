@@ -107,6 +107,127 @@ pub fn deposit(inventory: &[Stack], crops: &[Crop], keep: u32) -> Vec<usize> {
     }
     slots
 }
+/// Which container a trip goes to: the harvest, the seeds or the bone meal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Harvest,
+    Seeds,
+    Meal,
+}
+impl Role {
+    pub const ALL: [Role; 3] = [Role::Harvest, Role::Seeds, Role::Meal];
+    pub fn index(self) -> usize {
+        match self {
+            Self::Harvest => 0,
+            Self::Seeds => 1,
+            Self::Meal => 2,
+        }
+    }
+}
+pub const BONE_MEAL: &str = "minecraft:bone_meal";
+pub const BONE_BLOCK: &str = "minecraft:bone_block";
+/// Bone meal kept at hand: fetched, or crafted from blocks, up to this many.
+pub const MEAL_STOCK: u32 = 64;
+/// Bone blocks taken out of the container for crafting, at most.
+pub const BLOCK_LIMIT: u32 = 64;
+/// What goes where after a harvest.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Split {
+    /// Into the harvest container.
+    pub harvest: Vec<usize>,
+    /// Into the seeds container.
+    pub seeds: Vec<usize>,
+}
+/// As `deposit`, but the seeds beyond `keep` go to their own container when `split` is on, and
+/// a crop that is its own seed (carrots, potatoes) is shared between the two: each stack goes
+/// to the container that has had less so far, so about half ends up in each. Without `split`
+/// everything goes to the harvest container, as before.
+pub fn deposit_split(inventory: &[Stack], crops: &[Crop], keep: u32, split: bool) -> Split {
+    let mut out = Split::default();
+    let mut kept: Vec<(&str, u32)> = Vec::new();
+    let (mut to_harvest, mut to_seeds) = (0u32, 0u32);
+    for (slot, stack) in inventory.iter().enumerate() {
+        let Some((name, n)) = stack else {
+            continue;
+        };
+        if crops.iter().any(|c| c.seed() == name) {
+            let at = match kept.iter().position(|(item, _)| *item == name) {
+                Some(at) => at,
+                None => {
+                    kept.push((name, 0));
+                    kept.len() - 1
+                }
+            };
+            if kept[at].1 < keep {
+                kept[at].1 += n;
+            } else if !split {
+                out.harvest.push(slot);
+            } else if crops.iter().any(|c| product(*c) == name) {
+                // Both seed and crop: half and half.
+                if to_seeds <= to_harvest {
+                    out.seeds.push(slot);
+                    to_seeds += n;
+                } else {
+                    out.harvest.push(slot);
+                    to_harvest += n;
+                }
+            } else {
+                out.seeds.push(slot);
+            }
+        } else if crops.iter().any(|c| product(*c) == name) {
+            out.harvest.push(slot);
+        }
+    }
+    out
+}
+/// The container slots to take for bone meal: its stacks until the inventory holds `MEAL_STOCK`,
+/// then, if that is not enough, bone blocks (at most `BLOCK_LIMIT`, and no more than make up the
+/// difference) to be crafted into meal.
+pub fn meal_withdraw(container: &[Stack], inventory: &[Stack]) -> Vec<usize> {
+    let mut meal = count(inventory, BONE_MEAL);
+    let mut blocks = count(inventory, BONE_BLOCK);
+    let mut slots = Vec::new();
+    for (slot, stack) in container.iter().enumerate() {
+        if meal >= MEAL_STOCK {
+            break;
+        }
+        if let Some((name, n)) = stack
+            && name == BONE_MEAL
+        {
+            meal += n;
+            slots.push(slot);
+        }
+    }
+    for (slot, stack) in container.iter().enumerate() {
+        if meal + 9 * blocks >= MEAL_STOCK || blocks >= BLOCK_LIMIT {
+            break;
+        }
+        if let Some((name, n)) = stack
+            && name == BONE_BLOCK
+        {
+            blocks += n;
+            slots.push(slot);
+        }
+    }
+    slots
+}
+/// What to craft in the inventory: the slot of the first stack of bone blocks and how many of
+/// them make the meal up to `MEAL_STOCK` (nine meal a block). `None` when there is enough meal
+/// or no blocks.
+pub fn craft_plan(inventory: &[Stack]) -> Option<(usize, u32)> {
+    let meal = count(inventory, BONE_MEAL);
+    if meal >= MEAL_STOCK {
+        return None;
+    }
+    let (slot, n) = inventory
+        .iter()
+        .enumerate()
+        .find_map(|(slot, stack)| match stack {
+            Some((name, n)) if name == BONE_BLOCK => Some((slot, *n)),
+            _ => None,
+        })?;
+    Some((slot, n.min((MEAL_STOCK - meal).div_ceil(9))))
+}
 /// The container slots to take so that the inventory holds `want` of `seed`.
 pub fn withdraw(container: &[Stack], inventory: &[Stack], seed: &str, want: u32) -> Vec<usize> {
     let mut have = count(inventory, seed);
@@ -126,6 +247,81 @@ pub fn withdraw(container: &[Stack], inventory: &[Stack], seed: &str, want: u32)
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn carrots_and_potatoes_are_shared_between_the_two_containers() {
+        use super::super::claim_borders_farming::Crop;
+        let item = |name: &str, n: u32| Some((name.to_string(), n));
+        let inventory = vec![
+            item("minecraft:carrot", 64), // kept at hand for replanting
+            item("minecraft:carrot", 64),
+            item("minecraft:carrot", 64),
+            item("minecraft:carrot", 64),
+            item("minecraft:carrot", 64),
+            item("minecraft:wheat", 40),
+            item("minecraft:wheat_seeds", 64),
+            item("minecraft:wheat_seeds", 20),
+        ];
+        let split = deposit_split(&inventory, &[Crop::Carrots, Crop::Wheat], 64, true);
+        // Four carrot stacks over the kept one: two in each container.
+        assert_eq!(split.seeds.iter().filter(|s| **s <= 4).count(), 2);
+        assert_eq!(
+            split
+                .harvest
+                .iter()
+                .filter(|s| (1..=4).contains(*s))
+                .count(),
+            2
+        );
+        // Wheat is the harvest; its seeds beyond the kept stack go with the seeds.
+        assert!(split.harvest.contains(&5));
+        assert_eq!(split.seeds.last(), Some(&7));
+        // Without a seeds container everything is one pile, as before.
+        let one = deposit_split(&inventory, &[Crop::Carrots, Crop::Wheat], 64, false);
+        assert_eq!(one.seeds, Vec::<usize>::new());
+        assert_eq!(
+            one.harvest,
+            deposit(&inventory, &[Crop::Carrots, Crop::Wheat], 64)
+        );
+    }
+    #[test]
+    fn bone_meal_is_taken_as_meal_or_as_a_limited_number_of_blocks() {
+        let item = |name: &str, n: u32| Some((name.to_string(), n));
+        let container = vec![
+            item("minecraft:bone_block", 64),
+            item("minecraft:bone_meal", 30),
+            item("minecraft:bone_block", 64),
+            None,
+        ];
+        // Meal first (30), then only as many blocks as make up the rest: one stack, not two.
+        assert_eq!(meal_withdraw(&container, &[None, None]), vec![1, 0]);
+        // Meal enough: nothing.
+        assert!(meal_withdraw(&container, &[item("minecraft:bone_meal", 64)]).is_empty());
+        // No meal in the container: blocks, never beyond 64 of them.
+        let blocks_only = vec![
+            item("minecraft:bone_block", 64),
+            item("minecraft:bone_block", 64),
+        ];
+        assert_eq!(meal_withdraw(&blocks_only, &[None]), vec![0]);
+        // Crafting: 64 meal at nine a block is eight blocks from empty; one block tops up 40.
+        let held = vec![
+            item("minecraft:bone_block", 20),
+            item("minecraft:bone_meal", 0),
+        ];
+        assert_eq!(craft_plan(&held), Some((0, 8)));
+        let top_up = vec![
+            item("minecraft:bone_meal", 56),
+            item("minecraft:bone_block", 5),
+        ];
+        assert_eq!(craft_plan(&top_up), Some((1, 1)));
+        assert_eq!(
+            craft_plan(&[
+                item("minecraft:bone_meal", 64),
+                item("minecraft:bone_block", 5)
+            ]),
+            None
+        );
+        assert_eq!(craft_plan(&[item("minecraft:stone", 5)]), None);
+    }
     #[test]
     fn mined_loot_goes_to_the_container_except_what_the_miner_needs() {
         let item = |name: &str, n: u32| Some((name.to_string(), n));

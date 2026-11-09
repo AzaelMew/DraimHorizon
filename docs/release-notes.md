@@ -1,9 +1,13 @@
-**DraimHorizon 0.38.3 - Auto Click; Drain swims back again**
+**DraimHorizon 0.39.0 - Tasks come back after a restart; farm containers, bone meal, a safe idle point**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Experiments > Helpers has Auto Click: a switch, the button (left or right) and the rate (1 to 20 clicks a second, or hold). It works by hand only, a key can switch it, and it does nothing behind a screen or while a task runs.
-- Drain no longer pauses when the bot slips off the edge, so it swims back to shore as before.
-- Builds on 0.38.2.
+- A running bot task (walk, mining, tunnel, bridge, farm, drain) is started again after the server restarts and the client reconnects (switch "Auto Resume" in Experiments > Helpers, on by default).
+- Three farm containers (harvest, seeds, bone meal); carrots and potatoes are shared between the first two.
+- Bone meal on growing crops, from the meal container, or crafted in the inventory from up to 64 bone blocks (never past 64 meal).
+- The idle farm waits at a safe point you set with the "Spot" button.
+- Containers 80 or 800 blocks away are reached and the way back is found (walks go in legs, with other directions tried when one has no way); a farm that is paused and started again no longer idles while crops are ripe.
+- A player touching the bot no longer holds it for a couple of seconds, and a walker stuck on a half block jumps and steps aside.
+- Builds on 0.38.3.
 
 Not verified in game. No installation or publication is implied.

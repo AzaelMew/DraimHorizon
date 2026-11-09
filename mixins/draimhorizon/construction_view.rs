@@ -23,6 +23,11 @@ struct State {
     /// point of it was in the line of sight.
     interact: Option<nav::Pos>,
     interact_miss: u32,
+    /// An item to hold and use on a block (bone meal on a crop), and how that went: `Some(true)`
+    /// once the use click was made, `Some(false)` when the item is missing or the block cannot
+    /// be hit.
+    use_item: Option<(String, nav::Pos)>,
+    use_result: Option<bool>,
     /// Since when a stopped job has been waiting to try again (ms on this state's clock).
     idle_since: Option<u64>,
     external: Option<External>,
@@ -43,6 +48,8 @@ impl Default for State {
         Self {
             interact: None,
             interact_miss: 0,
+            use_item: None,
+            use_result: None,
             idle_since: None,
             external: None,
             job: None,
@@ -1040,7 +1047,85 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     state(|s| s.interact_miss += 1);
     None
 }
+/// Asks for `item` to be held and used once on the block at `pos` (bone meal on a crop): the
+/// next ticks put it in hand, aim at the block and click; `use_result` says how it went.
+pub(super) fn use_item_on(item: &str, pos: nav::Pos) {
+    state(|s| {
+        s.use_item = Some((item.to_owned(), pos));
+        s.use_result = None;
+        s.interact = None;
+        s.interact_miss = 0;
+    });
+}
+/// The outcome of the last `use_item_on`, once, or `None` while it is still under way.
+pub(super) fn use_result() -> Option<bool> {
+    state(|s| s.use_result.take())
+}
+pub(super) fn cancel_use() {
+    state(|s| {
+        s.use_item = None;
+        s.use_result = None;
+        s.interact = None;
+    });
+}
+/// Drives `use_item_on`: the item into the hotbar and the hand (the slot change has to reach
+/// the server before the click), then the click once the ray really meets the block.
+fn use_input(game: &mut Game<'_>) -> Option<bool> {
+    let (item, pos) = state(|s| s.use_item.clone())?;
+    if !game.native_playing() {
+        return Some(false);
+    }
+    let wanted = |name: &str| name == item;
+    match source_for(game, &wanted) {
+        Some(Source::Hotbar(slot)) => {
+            if game.selected != slot {
+                game.selected = slot;
+                return Some(false);
+            }
+        }
+        _ => {
+            // Not in the hotbar: one stack is brought over from the inventory, or it is missing.
+            if matches!(fetch(game, &wanted), Fetch::Missing) {
+                state(|s| {
+                    s.use_item = None;
+                    s.use_result = Some(false);
+                });
+            }
+            return Some(false);
+        }
+    }
+    state(|s| {
+        if s.interact.is_none() {
+            s.interact = Some(pos);
+            s.interact_miss = 0;
+        }
+    });
+    match interact_input(game) {
+        Some(true) => {
+            state(|s| {
+                s.use_item = None;
+                s.use_result = Some(true);
+            });
+            Some(true)
+        }
+        Some(false) => Some(false),
+        None => {
+            if state(|s| s.interact_miss >= 10) {
+                // The block cannot be hit from here: the caller tries another spot or skips it.
+                state(|s| {
+                    s.use_item = None;
+                    s.interact = None;
+                    s.use_result = Some(false);
+                });
+            }
+            Some(false)
+        }
+    }
+}
 pub(super) fn input(game: &mut Game<'_>) -> bool {
+    if let Some(click) = use_input(game) {
+        return click;
+    }
     if let Some(click) = interact_input(game) {
         return click;
     }
