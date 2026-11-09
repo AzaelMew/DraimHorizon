@@ -1,5 +1,11 @@
 # История версий
 
+## 0.38.2
+
+- Mining no longer goes idle when the player stands where the planner sees no floor: on an edge with the middle of the body over a gap, in the air after a jump or a fall, at the lip of a pit. The planner refused to start from such a spot, so every route read "no route" (31 of 31 in the screenshot). It now plans from the nearest place that can be stood on: the cell itself, one up, down to the three-block drop limit, then the four neighbours. The real position is still the one the answer is checked against. This covers the mining search, the dig route and the walk.
+- New test for the start finder (flat ground, a jump, an edge, nothing firm anywhere).
+- Not verified in game.
+
 ## 0.38.1
 
 - Mining with nothing open around: standing in sandstone with sand overhead, the planner digs a stair up through the rock to the sand. A new test pins it (sand seven blocks up, rock everywhere else: a route of at least five steps that breaks blocks). 

@@ -270,16 +270,16 @@ impl Worker {
                             }
                         })
                     };
+                    // The player may stand on an edge or in the air: plan from the nearest place
+                    // that can be stood on (the answer keeps the real start for its own check).
+                    let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
+                        .unwrap_or(query.start);
                     let mut dig_plan = None;
                     let mut stats = None;
                     let (target, path) = if let Some((_, excluded)) = query.mine.as_ref() {
                         let mut seen = mining::PlanStats::default();
                         let found = mining::plan_with_stats(
-                            query.start,
-                            excluded,
-                            &mut read,
-                            canceled,
-                            &mut seen,
+                            start, excluded, &mut read, canceled, &mut seen,
                         );
                         stats = Some(seen);
                         match found {
@@ -288,7 +288,7 @@ impl Worker {
                             // the route that digs to it.
                             None if query.dig && !canceled() => {
                                 match mining::plan_buried(
-                                    query.start,
+                                    start,
                                     excluded,
                                     &query.hints,
                                     query.place,
@@ -308,7 +308,7 @@ impl Worker {
                         (
                             None,
                             model::search_near(
-                                query.start,
+                                start,
                                 query.goal,
                                 query.radius,
                                 |at| read(at).cell,
@@ -326,7 +326,7 @@ impl Worker {
                         let read = std::cell::RefCell::new(read);
                         let digging = query.dig;
                         dig_plan = model::search_dig(
-                            query.start,
+                            start,
                             query.goal,
                             false,
                             query.place,

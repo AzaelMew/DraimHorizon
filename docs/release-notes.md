@@ -1,9 +1,8 @@
-**DraimHorizon 0.38.1 - Mining digs up to sand overhead, no route cap on long jobs**
+**DraimHorizon 0.38.2 - Planning from an edge or the air**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- A miner standing in rock digs a stair up to sand above it (tested on a model canyon).
-- The route budget is reset by every mined block, so a long job is not stopped by the count of routes.
-- Builds on 0.38.0: a storage for mining.
+- Mining no longer idles with "no route" when the player stands on an edge, at the lip of a pit or in the air: planning starts from the nearest place that can be stood on.
+- Builds on 0.38.1: digging up to sand overhead and a route budget that mined blocks reset.
 
 Not verified in game. No installation or publication is implied.
