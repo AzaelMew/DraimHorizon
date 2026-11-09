@@ -1522,9 +1522,13 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 == Some("right"),
             click_rate: crate::game::claim_borders_helpers::click_rate(game),
             helpers: menu::Helper::ALL.map(|helper| {
-                game.native_setting(claims::SETTINGS_ID, helper.key())
-                    .as_deref()
-                    == Some("true")
+                let value = game.native_setting(claims::SETTINGS_ID, helper.key());
+                // Resuming after a reconnect is on unless it was switched off.
+                if helper == menu::Helper::Resume {
+                    value.as_deref() != Some("false")
+                } else {
+                    value.as_deref() == Some("true")
+                }
             }),
             shulker_peek: game
                 .native_setting(claims::SETTINGS_ID, "shulker_peek")

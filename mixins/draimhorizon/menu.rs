@@ -133,7 +133,7 @@ pub struct ViewModel {
     /// Eating on its own (on by default).
     pub auto_eat: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
-    pub helpers: [bool; 4],
+    pub helpers: [bool; 5],
     /// The auto-clicker presses the right button (the left one when false).
     pub click_right: bool,
     /// The auto-clicker's pace: an index into `autoclick::RATES`.
@@ -504,13 +504,17 @@ pub enum Helper {
     Tools,
     /// A mouse button is pressed again and again at a chosen pace.
     AutoClick,
+    /// A bot task picks itself up after the server restarts and the client reconnects (on by
+    /// default, unlike the others).
+    Resume,
 }
 impl Helper {
-    pub const ALL: [Helper; 4] = [
+    pub const ALL: [Helper; 5] = [
         Helper::Totem,
         Helper::Fill,
         Helper::Tools,
         Helper::AutoClick,
+        Helper::Resume,
     ];
     pub fn index(self) -> usize {
         match self {
@@ -518,6 +522,7 @@ impl Helper {
             Self::Fill => 1,
             Self::Tools => 2,
             Self::AutoClick => 3,
+            Self::Resume => 4,
         }
     }
     /// The settings key the choice is kept under.
@@ -527,6 +532,7 @@ impl Helper {
             Self::Fill => "auto_fill",
             Self::Tools => "auto_tools",
             Self::AutoClick => "auto_click",
+            Self::Resume => "auto_resume",
         }
     }
 }
@@ -3336,22 +3342,39 @@ impl Menu {
                 ),
             ),
         ];
-        // The auto-clicker: its switch is the fifth row and its two choices share the sixth.
-        let rows = rows.into_iter().chain([(
-            localized!(
-                self.language,
-                "Авто-клик: {}",
-                "Auto Click: {}",
-                state(model.helpers[Helper::AutoClick.index()])
+        // The auto-resume switch is the fifth row, the auto-clicker's the sixth and its two
+        // choices share the seventh.
+        let rows = rows.into_iter().chain([
+            (
+                localized!(
+                    self.language,
+                    "Авто-возобновление: {}",
+                    "Auto Resume: {}",
+                    state(model.helpers[Helper::Resume.index()])
+                ),
+                Control::Helper(Helper::Resume),
+                model.helpers[Helper::Resume.index()],
+                self.language.text(
+                    "после рестарта сервера задача бота продолжается сама",
+                    "after a server restart the bot's task goes on by itself",
+                ),
             ),
-            Control::Helper(Helper::AutoClick),
-            model.helpers[Helper::AutoClick.index()],
-            self.language.text(
-                "нажимает выбранную кнопку мыши в заданном темпе",
-                "presses the chosen mouse button at the chosen pace",
+            (
+                localized!(
+                    self.language,
+                    "Авто-клик: {}",
+                    "Auto Click: {}",
+                    state(model.helpers[Helper::AutoClick.index()])
+                ),
+                Control::Helper(Helper::AutoClick),
+                model.helpers[Helper::AutoClick.index()],
+                self.language.text(
+                    "нажимает выбранную кнопку мыши в заданном темпе",
+                    "presses the chosen mouse button at the chosen pace",
+                ),
             ),
-        )]);
-        let step = ((height - 92.0) / 6.0).clamp(17.0, 34.0);
+        ]);
+        let step = ((height - 92.0) / 7.0).clamp(15.0, 34.0);
         let note = step >= 30.0;
         for (index, (label, control, on, hint)) in rows.enumerate() {
             let y = 84.0 + index as f32 * step;
@@ -3365,7 +3388,7 @@ impl Menu {
                 out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
             }
         }
-        let y = 84.0 + 5.0 * step;
+        let y = 84.0 + 6.0 * step;
         let half = (w - 4.0) * 0.5;
         let row_h = if note { 20.0 } else { (step - 2.0).min(20.0) };
         let russian = self.language == Language::Russian;

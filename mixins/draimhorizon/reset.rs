@@ -1,5 +1,7 @@
 // Clear before disconnect/reconnect, even when the mod was disabled in settings.
 fn claim_borders_reset() {
+    // First: a running task is marked to come back before its state is cleared.
+    crate::game::claim_borders_resume::disconnected();
     crate::game::claim_borders_construction_view::world_reset();
     crate::game::claim_borders_navigation_view::reset();
     crate::game::claim_borders_waypoint_view::reset();

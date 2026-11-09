@@ -1,5 +1,11 @@
 # История версий
 
+## 0.39.0
+
+- A bot task picks itself up again after the server restarts and the client reconnects. The last task you start (walk to a point or a waypoint, follow a player, mining, tunnel, bridge, farm, drain) is remembered. If it is still running when the connection goes (or was running in the last five seconds, since a lost connection pauses it a moment before the reset), it is marked, and once you are back on the same server, in the world and with the chunks around you loaded for six seconds, it is started again as if you had pressed Start. It tries every five seconds, up to six times, and gives up after fifteen minutes. A task you stop yourself (Stop), one that had finished and one that was only a preview do not come back; a different server leaves it waiting. A switch "Auto Resume: on/off" in Experiments > Helpers turns it off (on by default).
+- Schematic builds are not resumed (they need the file loaded again).
+- Not verified in game.
+
 ## 0.38.3
 
 - Auto Click, in Experiments > Helpers: presses a mouse button again and again at a pace you choose. A switch ("Auto Click: on/off"), the button (left or right, "Button: left"/"right") and the rate (1, 2, 3, 4, 5, 6, 8, 10, 12, 15 or 20 clicks a second; the last one holds the button down). It works while you play by hand: with a screen open (inventory, chat, menu) or a task running (walking, mining, a build, the farm, drain) it does nothing, and it presses on top of whatever you hold yourself. It is applied last, after the tasks have read the buttons, so its presses are not taken for you taking the wheel. A key can switch it too: "DraimHorizons: auto click" in Controls, unbound until you bind one. The press count follows the rate whatever the frame rate (tested at 4, 7 and 16 ms frames); a stall is not paid back with a burst. Pure pace logic in `autoclick.rs` with tests.

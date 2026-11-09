@@ -84,6 +84,8 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
             Ok(false)
         }
         model::Hotkey::Stop => {
+            // The player ended it: it does not come back after a reconnect.
+            crate::game::claim_borders_resume::forget();
             reset();
             Ok(false)
         }
@@ -1421,6 +1423,7 @@ pub(super) fn press_for_click(game: &mut Game<'_>, right: bool) {
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     crate::game::claim_borders_haul_view::frame(game);
+    crate::game::claim_borders_resume::frame(game);
     if auto_eat(game) {
         return;
     }
@@ -1569,6 +1572,13 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     Ok(())
 }
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    let result = start_task(game, goal_request, running);
+    if result.is_ok() {
+        crate::game::claim_borders_resume::note_start(game, goal_request, running);
+    }
+    result
+}
+fn start_task(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
     drop_assist();
     assist_reset_budget();
     if let Goal::Farm(config) = goal_request {

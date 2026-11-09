@@ -1,9 +1,9 @@
-**DraimHorizon 0.38.3 - Auto Click; Drain swims back again**
+**DraimHorizon 0.39.0 - Tasks come back after a server restart**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Experiments > Helpers has Auto Click: a switch, the button (left or right) and the rate (1 to 20 clicks a second, or hold). It works by hand only, a key can switch it, and it does nothing behind a screen or while a task runs.
-- Drain no longer pauses when the bot slips off the edge, so it swims back to shore as before.
-- Builds on 0.38.2.
+- A running bot task (walk, mining, tunnel, bridge, farm, drain) is started again after the server restarts and the client reconnects, once you are back in the world with the chunks loaded. Stop, a finished task and a preview are not resumed.
+- Experiments > Helpers has an "Auto Resume" switch (on by default).
+- Builds on 0.38.3: Auto Click and the Drain swim-back fix.
 
 Not verified in game. No installation or publication is implied.
