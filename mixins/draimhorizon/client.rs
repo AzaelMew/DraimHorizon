@@ -1515,6 +1515,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
+            farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")
@@ -1726,6 +1727,27 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())
+        }
+        Action::FarmSafe => {
+            use crate::game::claim_borders_workshop_view as workshop;
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let name = l.text("Безопасная точка", "Safe spot");
+            let near = workshop::safe_point(game)
+                .zip(game.native_player())
+                .is_some_and(|(at, p)| {
+                    crate::game::claim_borders_navigation::distance(
+                        crate::game::claim_borders_navigation::center(at),
+                        [p.x, p.y, p.z],
+                    ) < 2.0
+                });
+            // Pressed again where it was set: forget it. Anywhere else: set it here.
+            if near {
+                workshop::clear_safe_point();
+                Ok(vec![format!("{name}: {}", l.text("сброшена", "cleared"))])
+            } else {
+                let [x, y, z] = workshop::set_safe_point(game)?;
+                Ok(vec![format!("{name}: {x} {y} {z}")])
+            }
         }
         Action::FarmStorage(role) => {
             use crate::game::claim_borders_workshop_view as workshop;

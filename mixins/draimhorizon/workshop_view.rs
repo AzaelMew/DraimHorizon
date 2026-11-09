@@ -853,64 +853,46 @@ fn grow_give_up(s: &mut State, target: nav::Pos) {
     s.target = None;
     s.phase = Phase::Ready;
 }
-/// A cell near the beds to wait in: standing, lit, not farmland or water, with as few open
-/// sides as possible and a roof if there is one (a nook, a gap in a wall).
-fn safe_spot(game: &Game<'_>, origin: nav::Pos, radius: i32, from: [f64; 3]) -> Option<nav::Pos> {
-    let cell = |p: nav::Pos| placement::block(game, p).cell;
-    let mut best: Option<(i32, nav::Pos)> = None;
-    for dz in -(radius + 3)..=radius + 3 {
-        for dx in -(radius + 3)..=radius + 3 {
-            for dy in -2..=2 {
-                let at = [origin[0] + dx, origin[1] + dy, origin[2] + dz];
-                if !nav::standable(at, &mut |p| cell(p)) {
-                    continue;
-                }
-                let below = game.native_block([at[0], at[1] - 1, at[2]]);
-                if matches!(below.as_str(), "minecraft:farmland" | "minecraft:water") {
-                    continue;
-                }
-                // Open sides: the eight cells around the feet and the four at the head.
-                let mut open = 0u8;
-                for ox in -1..=1_i32 {
-                    for oz in -1..=1_i32 {
-                        if (ox, oz) == (0, 0) {
-                            continue;
-                        }
-                        if cell([at[0] + ox, at[1], at[2] + oz]) != nav::Cell::Solid {
-                            open += 1;
-                        }
-                        if ox == 0 || oz == 0 {
-                            if cell([at[0] + ox, at[1] + 1, at[2] + oz]) != nav::Cell::Solid {
-                                open += 1;
-                            }
-                        }
-                    }
-                }
-                let roofed = cell([at[0], at[1] + 2, at[2]]) == nav::Cell::Solid;
-                let light = i32::from(game.world.light(at[0], at[1], at[2]));
-                let lit = (light >> 4).max(light & 15) >= 8;
-                let distance = nav::distance(nav::center(at), from) as i32;
-                if let Some(score) = farm::park_score(open, roofed, lit, distance)
-                    && best.is_none_or(|(b, _)| score < b)
-                {
-                    best = Some((score, at));
-                }
-            }
-        }
-    }
-    best.map(|(_, at)| at)
+/// The safe point the player set: where an idle farm waits (a nook, behind a wall), in the
+/// current world.
+static SAFE: Mutex<Option<(String, nav::Pos)>> = Mutex::new(None);
+pub(super) fn safe_point(game: &Game<'_>) -> Option<nav::Pos> {
+    let scope = driver::scope(game)?;
+    SAFE.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(s, _)| *s == scope)
+        .map(|(_, at)| *at)
 }
-/// While the farm has nothing to do it waits somewhere safe, not in the open between the beds
-/// (where a mob or a player could get at it): after a few idle seconds it walks to the safest
-/// cell near the beds and stays there; the next ripe crop, sowing or feeding sends it back.
-fn park_step(game: &Game<'_>, s: &mut State, origin: nav::Pos, radius: i32) {
+/// Takes the cell the player stands on as the safe point.
+pub(super) fn set_safe_point(game: &Game<'_>) -> Result<nav::Pos, String> {
+    let scope = driver::scope(game).ok_or("Join a world first")?;
+    let p = game.native_player().ok_or("Join a world first")?;
+    let at = nav::standing_block(
+        [p.x, p.y, p.z],
+        &game.native_block(nav::block([p.x, p.y, p.z])),
+    );
+    *SAFE.lock().unwrap_or_else(|e| e.into_inner()) = Some((scope, at));
+    Ok(at)
+}
+pub(super) fn clear_safe_point() {
+    *SAFE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+/// While the farm has nothing to do it waits at the safe point the player set (not in the open
+/// between the beds, where a mob or a player could get at it): after a few idle seconds it walks
+/// there and stays; the next ripe crop, sowing or feeding sends it back. With no point set it
+/// stays where it is.
+fn park_step(game: &Game<'_>, s: &mut State) {
+    let Some(spot) = safe_point(game) else {
+        return;
+    };
     if let Some((_, since)) = s.park {
         match driver::workshop_walk_result() {
             Some(_) => {
                 s.park = None;
                 s.parked = true;
             }
-            None if since.elapsed() > Duration::from_secs(60) => {
+            None if since.elapsed() > Duration::from_secs(180) => {
                 s.park = None;
                 s.parked = true;
             }
@@ -928,18 +910,13 @@ fn park_step(game: &Game<'_>, s: &mut State, origin: nav::Pos, radius: i32) {
     let Some(p) = game.native_player() else {
         return;
     };
-    let from = [p.x, p.y, p.z];
-    let Some(spot) = safe_spot(game, origin, radius, from) else {
-        s.parked = true;
-        return;
-    };
-    if nav::distance(nav::center(spot), from) < 1.2 {
+    if nav::distance(nav::center(spot), [p.x, p.y, p.z]) < 1.2 {
         s.parked = true;
         return;
     }
     if driver::workshop_walk(game, spot, true, false).is_ok() {
         s.park = Some((spot, Instant::now()));
-        s.message = text("иду в безопасное место", "walking to a safe spot").into();
+        s.message = text("иду в безопасное место", "walking to the safe spot").into();
     } else {
         s.parked = true;
     }
@@ -1753,7 +1730,6 @@ pub(super) fn tick(game: &Game<'_>) {
                     let mut growing_at: Vec<(nav::Pos, farm::Crop)> = Vec::new();
                     let mut dark = 0;
                     let mut unplanted = false;
-                    let (home_origin, home_radius) = (*origin, i32::from(config.radius));
                     let crops: Vec<_> = config.selected().collect();
                     // What can be sown now: the first selected crop whose seeds are at hand.
                     let sow = if config.replant {
@@ -1857,7 +1833,7 @@ pub(super) fn tick(game: &Game<'_>) {
                         .into();
                         s.waiting = true;
                         s.idle_deposit = true;
-                        park_step(game, s, home_origin, home_radius);
+                        park_step(game, s);
                         return;
                     } else if dark > 0 {
                         // Waits for a torch: the scan repeats, so the job goes on by itself.
@@ -1867,14 +1843,14 @@ pub(super) fn tick(game: &Game<'_>) {
                         )
                         .into();
                         s.waiting = true;
-                        park_step(game, s, home_origin, home_radius);
+                        park_step(game, s);
                         return;
                     } else {
                         s.message = text("ожидание созревания", "waiting for ripe crops").into();
                         s.waiting = true;
                         // Nothing to harvest for now: a good time to unload.
                         s.idle_deposit = true;
-                        park_step(game, s, home_origin, home_radius);
+                        park_step(game, s);
                         return;
                     }
                 }

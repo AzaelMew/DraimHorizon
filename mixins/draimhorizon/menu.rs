@@ -140,6 +140,8 @@ pub struct ViewModel {
     pub click_rate: u8,
     /// The farm's storage container, when one is set.
     pub farm_storage: [Option<[i32; 3]>; 3],
+    /// The safe point the farm waits at, when one is set.
+    pub farm_safe: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -246,6 +248,8 @@ pub enum Action {
     SetShulkerPeek(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage(super::claim_borders_farm_storage::Role),
+    /// The safe point of the farm: set to where the player stands, or cleared.
+    FarmSafe,
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -341,6 +345,7 @@ impl std::fmt::Debug for Action {
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
+            Self::FarmSafe => f.write_str("FarmSafe"),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -563,6 +568,8 @@ pub enum ChatOption {
 pub enum Control {
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
     FarmStorage(super::claim_borders_farm_storage::Role),
+    /// Takes the cell the player stands on as the farm's safe point (or clears it).
+    FarmSafe,
     /// Bone meal on the crops that are still growing, on or off.
     FarmBonemeal,
     /// Switches eating on its own.
@@ -2843,7 +2850,7 @@ impl Menu {
                     // crosshair elsewhere to clear. A highlighted button has its container set.
                     use super::claim_borders_farm_storage::Role;
                     let from = x + Crop::ALL.len() as f32 * (tile + 2.0) + 4.0;
-                    let width = ((x + w - from - 4.0) / 3.0).max(20.0);
+                    let width = ((x + w - from - 6.0) / 4.0).max(18.0);
                     for (i, (role, ru, en)) in [
                         (Role::Harvest, "Урожай", "Harvest"),
                         (Role::Seeds, "Семена", "Seeds"),
@@ -2859,6 +2866,13 @@ impl Menu {
                             model.farm_storage[role.index()].is_some(),
                         ));
                     }
+                    // The fourth button: the safe point to wait at. Stand there and press.
+                    out.push(widget(
+                        [from + 3.0 * (width + 2.0), 100.0, width, tile],
+                        self.language.text("Точка", "Spot"),
+                        Some(Control::FarmSafe),
+                        model.farm_safe.is_some(),
+                    ));
                     below = tile + 2.0;
                 }
                 for (i, (label, c)) in rows.into_iter().enumerate() {
@@ -3914,6 +3928,7 @@ impl Menu {
                 None
             }
             Control::FarmStorage(role) => Some(Action::FarmStorage(role)),
+            Control::FarmSafe => Some(Action::FarmSafe),
             Control::FarmBonemeal => {
                 self.farm_bonemeal = !self.farm_bonemeal;
                 None
@@ -6874,6 +6889,7 @@ mod tests {
                             Some(
                                 Control::FarmCropPick(_)
                                     | Control::FarmStorage(_)
+                                    | Control::FarmSafe
                                     | Control::FarmBonemeal
                                     | Control::FarmRadius
                                     | Control::FarmLimit

@@ -649,19 +649,23 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
 /// `level` also keeps the route on one height (no jumps), which a farm wants among its crops
 /// but not on the way to a chest on another level.
 /// A walk to a far goal, taken in legs: the planner only sees 32 blocks around its start, so a
-/// goal farther than that (a storage 40 blocks from the beds) is reached by walking to a point
-/// on the way, then planning again from there.
+/// goal farther than that (a storage 80 or 800 blocks away) is reached by walking to a point on
+/// the way, then planning again from there. A leg that has no way (a cliff, a river) is tried
+/// again toward another point (turned aside, then shorter) before the walk gives up, and the
+/// legs have a budget so that it never goes round in circles.
 struct Legs {
     goal: model::Pos,
     flat: bool,
     level: bool,
     /// The last leg is under way: the walk is over when it arrives.
     last: bool,
+    /// Which end of the current leg is being tried (`navigation::leg_target`).
+    attempt: usize,
+    /// Legs left to walk.
+    budget: u32,
 }
 static LEGS: Mutex<Option<Legs>> = Mutex::new(None);
-/// Farthest a single leg goes.
-const LEG: f64 = 24.0;
-/// A standable cell near `at` (columns within two blocks, heights from six above to eight
+/// A standable cell near `near` (columns within two blocks, heights from six above to eight
 /// below the player), for the end of a leg.
 fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32) -> Option<model::Pos> {
     let column = model::block(near);
@@ -682,26 +686,24 @@ fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32) -> Option<model::Pos> 
     }
     best.map(|(_, at)| at)
 }
-/// The next point toward `goal` from `from`: the goal itself when it is within a leg,
-/// otherwise a standable cell about a leg's length on the line there (shorter if there is
-/// none).
-fn leg_point(game: &Game<'_>, from: [f64; 3], goal: model::Pos) -> (model::Pos, bool) {
+/// The next point toward `goal` from `from`, trying the ends of a leg from `first` on: the goal
+/// itself when it is within a leg, otherwise the first end that has ground under it. Returns
+/// the point, whether it is the last leg and which end was used; `None` when no end is left.
+fn leg_point(
+    game: &Game<'_>,
+    from: [f64; 3],
+    goal: model::Pos,
+    first: usize,
+) -> Option<(model::Pos, bool, usize)> {
     let g = model::center(goal);
-    let (dx, dz) = (g[0] - from[0], g[2] - from[2]);
-    let length = dx.hypot(dz);
-    if length <= LEG + 2.0 {
-        return (goal, true);
+    if (g[0] - from[0]).hypot(g[2] - from[2]) <= model::LEG_REACH[0] + 2.0 {
+        return Some((goal, true, first));
     }
     let from_y = from[1].floor() as i32;
-    for reach in [LEG, 16.0, 10.0] {
-        let t = reach / length;
-        let near = [from[0] + dx * t, from[1], from[2] + dz * t];
-        if let Some(at) = leg_cell(game, near, from_y) {
-            return (at, false);
-        }
-    }
-    // Nothing standable on the way (unloaded ground): try the goal and let it fail.
-    (goal, true)
+    (first..model::LEG_TRIES).find_map(|attempt| {
+        let near = model::leg_target(from, g, attempt)?;
+        leg_cell(game, near, from_y).map(|at| (at, false, attempt))
+    })
 }
 pub(super) fn workshop_walk(
     game: &Game<'_>,
@@ -710,35 +712,55 @@ pub(super) fn workshop_walk(
     level: bool,
 ) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
-    let (point, last) = leg_point(game, from, goal);
+    let g = model::center(goal);
+    let distance = (g[0] - from[0]).hypot(g[2] - from[2]);
+    let (point, last, attempt) = leg_point(game, from, goal, 0).unwrap_or((goal, true, 0));
     *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = (!last).then_some(Legs {
         goal,
         flat,
         level,
         last: false,
+        attempt,
+        budget: (distance / 8.0).ceil() as u32 + 40,
     });
     walk_to(game, point, flat, level)
 }
-/// Starts the next leg of a far walk when the last one has arrived. Every tick.
+/// Every tick: when a leg of a far walk has arrived, or has no way, the next one starts.
 pub(super) fn leg_frame(game: &Game<'_>) {
-    let Some((goal, flat, level)) = LEGS
+    let Some((goal, flat, level, attempt, budget)) = LEGS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .filter(|l| !l.last)
-        .map(|l| (l.goal, l.flat, l.level))
+        .map(|l| (l.goal, l.flat, l.level, l.attempt, l.budget))
     else {
         return;
     };
-    if state(|s| s.nav.status) != model::Status::Arrived {
-        return;
-    }
+    let first = match state(|s| s.nav.status) {
+        // Arrived: on to the next leg, straight at the goal again.
+        model::Status::Arrived => 0,
+        // No way to that end: another end of the same leg.
+        model::Status::NoPath | model::Status::Stuck => attempt + 1,
+        _ => return,
+    };
     let Some(p) = game.native_player() else {
         return;
     };
-    let (point, last) = leg_point(game, [p.x, p.y, p.z], goal);
+    let from = [p.x, p.y, p.z];
+    let next = if budget == 0 {
+        None
+    } else {
+        leg_point(game, from, goal, first)
+    };
+    let Some((point, last, used)) = next else {
+        // Out of ends to try or of legs: the walk is over (the status says there is no way).
+        *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        return;
+    };
     if let Some(l) = LEGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         l.last = last;
+        l.attempt = used;
+        l.budget = budget - u32::from(first == 0);
     }
     if walk_to(game, point, flat, level).is_err() {
         *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -760,19 +782,17 @@ pub(super) fn workshop_walk_result() -> Option<bool> {
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .is_some_and(|l| !l.last);
-    let result = state(|s| match s.nav.status {
+    let status = state(|s| s.nav.status);
+    match status {
+        // A leg arrived or found no way, but the goal is farther: the next one starts on the
+        // next tick (`leg_frame` clears the walk when there is nothing left to try).
+        model::Status::Arrived | model::Status::NoPath | model::Status::Stuck if more => None,
         model::Status::Arrived => Some(true),
-        model::Status::NoPath | model::Status::Stuck | model::Status::Paused => Some(false),
-        _ => None,
-    });
-    match result {
-        // A leg arrived but the goal is farther: the next leg starts on the next tick.
-        Some(true) if more => None,
-        Some(false) => {
+        model::Status::NoPath | model::Status::Stuck | model::Status::Paused => {
             *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Some(false)
         }
-        other => other,
+        _ => None,
     }
 }
 pub(super) fn farm_dig(

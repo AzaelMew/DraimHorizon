@@ -226,6 +226,31 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
             .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
 }
 
+/// How far a leg of a far walk goes, and the shorter reach tried when the long one has no way.
+pub const LEG_REACH: [f64; 2] = [24.0, 14.0];
+/// How many directions a leg is tried in: straight at the goal, then turned to either side.
+const LEG_TURNS: [f64; 7] = [0.0, 35.0, -35.0, 70.0, -70.0, 110.0, -110.0];
+/// How many different ends of a leg there are to try.
+pub const LEG_TRIES: usize = LEG_TURNS.len() * LEG_REACH.len();
+/// The `attempt`-th point to end a leg of a walk from `from` toward `goal`: straight on at the
+/// full reach first, then turned aside (a cliff, a river, a wall in the way), then the same at
+/// the shorter reach. Only the horizontal position matters; the caller finds ground at it.
+pub fn leg_target(from: [f64; 3], goal: [f64; 3], attempt: usize) -> Option<[f64; 3]> {
+    if attempt >= LEG_TRIES {
+        return None;
+    }
+    let reach = LEG_REACH[attempt / LEG_TURNS.len()];
+    let turn = LEG_TURNS[attempt % LEG_TURNS.len()].to_radians();
+    let (dx, dz) = (goal[0] - from[0], goal[2] - from[2]);
+    let length = dx.hypot(dz);
+    if length < 1e-6 {
+        return None;
+    }
+    let (ux, uz) = (dx / length, dz / length);
+    let (sin, cos) = turn.sin_cos();
+    let (vx, vz) = (ux * cos - uz * sin, ux * sin + uz * cos);
+    Some([from[0] + vx * reach, from[1], from[2] + vz * reach])
+}
 /// The longest drop a walk steps off: three blocks cost no health, and dunes and pits are full
 /// of them.
 pub const MAX_DROP: i32 = 3;
@@ -785,10 +810,23 @@ impl Navigator {
             6 => (0., -1.),
             _ => (1., -1.),
         };
+        // No progress for a while (a slab, a stair or an edge the planner took for flat, a body
+        // in the way): jump now and then, then step aside, instead of pushing on in the same
+        // way until the stall counts as stuck.
+        let unstick = grounded && self.stalled >= 8 && self.stalled % 10 == 8;
+        let nudge = if self.stalled >= 20 {
+            if (self.stalled / 10).is_multiple_of(2) {
+                1.0
+            } else {
+                -1.0
+            }
+        } else {
+            0.0
+        };
         Input {
             forward,
-            strafe,
-            jump: grounded && target[1] > position[1] + 0.5 && dx.hypot(dz) < 1.25,
+            strafe: if strafe == 0.0 { nudge } else { strafe },
+            jump: unstick || (grounded && target[1] > position[1] + 0.5 && dx.hypot(dz) < 1.25),
         }
     }
 }
@@ -1019,6 +1057,47 @@ mod tests {
         assert!(n.stalled() >= 4);
         n.yielded();
         assert_eq!(n.stalled(), 0);
+    }
+    #[test]
+    fn a_leg_tries_the_straight_line_then_turns_aside_then_goes_shorter() {
+        let (from, goal) = ([0.0, 64.0, 0.0], [800.0, 64.0, 0.0]);
+        let straight = leg_target(from, goal, 0).unwrap();
+        assert!((straight[0] - 24.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
+        // Turned 35 degrees to either side, at the same reach.
+        let left = leg_target(from, goal, 1).unwrap();
+        let right = leg_target(from, goal, 2).unwrap();
+        assert!(left[2] > 1.0 && right[2] < -1.0);
+        assert!((nav_len(left) - 24.0).abs() < 1e-9 && (nav_len(right) - 24.0).abs() < 1e-9);
+        // The shorter reach comes after all the turns at the long one.
+        let shorter = leg_target(from, goal, 7).unwrap();
+        assert!((shorter[0] - 14.0).abs() < 1e-9);
+        assert!(leg_target(from, goal, LEG_TRIES).is_none());
+        // Standing on the goal there is no direction.
+        assert!(leg_target(goal, goal, 0).is_none());
+    }
+    fn nav_len(p: [f64; 3]) -> f64 {
+        p[0].hypot(p[2])
+    }
+    #[test]
+    fn a_walker_that_makes_no_progress_jumps_then_steps_aside() {
+        let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
+        let mut n = Navigator::default();
+        n.begin([6, 0, 0], true);
+        n.accept(Some(path));
+        let mut jumped = false;
+        let mut stepped_aside = false;
+        for _ in 0..40 {
+            let input = n.input([0.5, 0., 0.5], 0., true);
+            jumped |= input.jump;
+            stepped_aside |= input.strafe != 0.0 && n.stalled() >= 20;
+        }
+        assert!(jumped, "no jump after standing still");
+        assert!(stepped_aside, "no step aside after standing still longer");
+        // Not on the ground: no jump to give.
+        let mut m = Navigator::default();
+        m.begin([6, 0, 0], true);
+        m.accept(Some(search([0, 0, 0], [6, 0, 0], flat, || false).unwrap()));
+        assert!((0..40).all(|_| !m.input([0.5, 0., 0.5], 0., false).jump));
     }
     #[test]
     fn refuses_unknown_terrain_hazards_and_large_drops() {
