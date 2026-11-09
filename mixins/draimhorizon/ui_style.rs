@@ -1538,7 +1538,7 @@ pub fn strokes(icon: Icon) -> &'static [[f32; 4]] {
 /// it is on; `None` for anything that is not an on/off caption.
 pub fn switch_label(text: &str) -> Option<(&str, bool)> {
     let (name, state) = text.rsplit_once(": ")?;
-    let on = match state.trim_end_matches('.') {
+    let on = match state.trim_end_matches('.').to_lowercase().as_str() {
         "вкл" | "on" => true,
         "выкл" | "off" => false,
         _ => return None,
@@ -1603,6 +1603,11 @@ mod tests {
         assert_eq!(switch_label("Тени: выкл."), Some(("Тени", false)));
         assert_eq!(switch_label("Auto Eat: on"), Some(("Auto Eat", true)));
         assert_eq!(switch_label("Shadows: off"), Some(("Shadows", false)));
+        assert_eq!(
+            switch_label("Плавные эффекты: Вкл."),
+            Some(("Плавные эффекты", true))
+        );
+        assert_eq!(switch_label("Contrast: Off"), Some(("Contrast", false)));
         assert_eq!(switch_label("Рельеф: Поверхность"), None);
         assert_eq!(switch_label("вкл"), None);
         assert_eq!(switch_label(": вкл"), None);

@@ -1,5 +1,14 @@
 # История версий
 
+## 0.37.7
+
+- Waypoints tab: the list used the old 96 px rail width, so its "World" bar and rows slid under the rail; it now uses the shared rail width and starts on the same left edge as the title.
+- Waypoint editor and the quick waypoint (X): a new pop-up on the shared pop-up frame (shadow, thin border, icon and title over a rule). Every field has a caption above it (Name, Type, Colour (HEX), Coordinates); the colour swatches are bigger and the chosen one is ringed; X, Y and Z are three equal boxes with the letter over each, and the world's name is on the right. Coordinates are whole blocks ("-1898"), not "-1897.59938...".
+- Appearance pop-up (Settings > General): the same frame, the title and the line under it no longer overlap, and the on/off rows are real switches.
+- Every button whose caption is "Name: on/off" and wide enough (120 px) is drawn with a switch in any window that uses the shared button, not only in the J menu; the match is case-insensitive.
+- Coordinates under the minimap: dim axis letters with bright values, in a chip with the accent stripe. In the Nether a second row gives the overworld position (x and z times 8), with a red "Nether" and a green "Overworld" tag.
+- Not verified in game.
+
 ## 0.37.6
 
 - Shulker box tooltip: only the name and the grid of items now. The game's own list of the contents ("6 x Iron Ingot ... and 20 more...") is gone, since the grid shows the same thing. Lore that is not that list stays. The tooltip is drawn by the mod in the game's own tooltip style (box, text and the dye colour) for a shulker box that holds something; empty boxes and every other item keep the plain game tooltip. Recipe book and trading hovers still show the game's list.

@@ -358,6 +358,64 @@ pub(super) fn button_base(
         );
     }
 }
+/// A switch: a track with a knob, accent coloured when on, grey when off.
+pub(super) fn switch(game: &Game<'_>, batch: &mut HudBatch, at: [f32; 2], on: bool) {
+    let accent = preferences(game).accent.color();
+    rounded(
+        game,
+        batch,
+        [at[0], at[1], 24.0, 12.0],
+        6.0,
+        if on { 0xff000000 | accent } else { 0xff3a4757 },
+    );
+    rounded(
+        game,
+        batch,
+        [
+            if on { at[0] + 14.0 } else { at[0] + 2.0 },
+            at[1] + 2.0,
+            8.0,
+            8.0,
+        ],
+        4.0,
+        if on { 0xfff2f7fb } else { 0xff93a1b1 },
+    );
+}
+/// The frame every pop-up shares: a shadow, a rounded card with a thin border, the icon and
+/// title on top and a rule under them.
+pub(super) fn popup_frame(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    kind: Icon,
+    title: &str,
+) {
+    let [x, y, w, h] = rect;
+    rounded(
+        game,
+        batch,
+        [x - 3.0, y - 1.0, w + 6.0, h + 8.0],
+        10.0,
+        0x40000000,
+    );
+    rounded(game, batch, rect, 8.0, 0xff2f3d52);
+    rounded(
+        game,
+        batch,
+        [x + 1.0, y + 1.0, w - 2.0, h - 2.0],
+        7.0,
+        0xf21b2636,
+    );
+    icon(
+        game,
+        batch,
+        kind,
+        [x + 14.0, y + 12.0, 14.0, 14.0],
+        preferences(game).accent.color(),
+    );
+    text(game, batch, title, [x + 36.0, y + 15.0], style::TEXT, false);
+    fill(game, batch, [x + 12.0, y + 36.0, w - 24.0, 1.0], 0x22ffffff);
+}
 pub(super) fn button(
     game: &Game<'_>,
     batch: &mut HudBatch,
@@ -367,6 +425,27 @@ pub(super) fn button(
     mouse: [f32; 2],
 ) {
     button_base(game, batch, rect, label, selected, mouse);
+    // "Name: on/off" is drawn as the name and a switch.
+    if rect[2] >= 120.0
+        && let Some((name, on)) = style::switch_label(label)
+    {
+        switch(
+            game,
+            batch,
+            [rect[0] + rect[2] - 32.0, rect[1] + (rect[3] - 12.0) * 0.5],
+            on,
+        );
+        let name = clip(game, name, rect[2] - 48.0);
+        text(
+            game,
+            batch,
+            &name,
+            [rect[0] + 6.0, rect[1] + (rect[3] - 8.0) * 0.5],
+            style::TEXT,
+            false,
+        );
+        return;
+    }
     let title = match label {
         "Пати" => "Друзья",
         "Клеймы" => "Приваты",
@@ -567,30 +646,14 @@ pub(super) fn settings_render(
     let h = (batch.height - 24.0).min(246.0);
     let x = (batch.width - w) * 0.5;
     let y = (batch.height - h) * 0.5;
-    let row = ((h - 78.0) / 6.0).min(24.0);
+    let row = ((h - 100.0) / 6.0).min(24.0);
     game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x7a09111c);
-    rounded(
+    popup_frame(
         game,
         batch,
-        [x - 2.0, y + 3.0, w + 4.0, h + 3.0],
-        9.0,
-        0x38030910,
-    );
-    rounded(game, batch, [x, y, w, h], 8.0, 0xf21d2a3a);
-    icon(
-        game,
-        batch,
+        [x, y, w, h],
         Icon::Settings,
-        [x + 12.0, y + 12.0, 14.0, 14.0],
-        p.accent.color(),
-    );
-    text(
-        game,
-        batch,
         language().text("Оформление", "Appearance"),
-        [x + 34.0, y + 12.0],
-        style::TEXT,
-        false,
     );
     let lang = language();
     let error = state(|s| s.error.as_ref().map(|error| error.text(lang)));
@@ -602,7 +665,7 @@ pub(super) fn settings_render(
         game,
         batch,
         &clip(game, hint, w - 24.0),
-        [x + 12.0, y + 28.0],
+        [x + 14.0, y + 42.0],
         if error.is_some() {
             style::WARN
         } else {
@@ -650,7 +713,7 @@ pub(super) fn settings_render(
         s.focus
     });
     for (i, label) in labels.iter().enumerate() {
-        let yy = y + 45.0 + i as f32 * row;
+        let yy = y + 58.0 + i as f32 * row;
         let rect = [x + 12.0, yy, w - 24.0, row - 3.0];
         if i == 0 {
             text(
