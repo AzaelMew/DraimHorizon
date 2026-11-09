@@ -1,5 +1,9 @@
 # История версий
 
+## 0.35.1
+
+- Removed the instruction requiring Russian replies to the owner from AGENTS.md. Public README and artwork remain English.
+
 ## 0.35.0
 
 - Idle mode everywhere: a job no longer stops because something is missing or went wrong; it stands idle, says why in the status line ("Idle: ...") and looks again, until you stop it yourself. Mining waits for a suitable tool or a free inventory slot, gives up a block that does not break after 30 s or that the server refuses three times and goes on to the next, and keeps asking the planner when it is slow. Tunnel and Bridge stopped for any reason except your own pause (no blocks, no floor, a chunk not loaded, protected or hazardous block, no face to place on, a server refusal, a timeout) wait 3 s and try again by themselves. Drain waits for sand or gravel, for a route to a cell, and leaves a cell it cannot place. Farm and schematics leave a refused cell for a while, wait for a route, a free slot or the blocks, and a trip to the storage that fails no longer pauses the job.
