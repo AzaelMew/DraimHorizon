@@ -19,6 +19,8 @@ struct External {
     verify_since: Option<u64>,
 }
 struct State {
+    /// A container to open with one use click (the farm's storage).
+    interact: Option<nav::Pos>,
     external: Option<External>,
     job: Option<model::Job>,
     scope: String,
@@ -35,6 +37,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            interact: None,
             external: None,
             job: None,
             scope: String::new(),
@@ -87,6 +90,7 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
 }
 pub(super) fn reset() {
     state(|s| {
+        s.interact = None;
         s.job = None;
         if !s.placement.as_ref().is_some_and(|p| p.sequence.is_some()) {
             s.placement = None;
@@ -800,7 +804,36 @@ fn aim(game: &mut Game<'_>, point: [f64; 3]) {
         game.pitch = (-y).atan2(x.hypot(z)).to_degrees() as f32;
     }
 }
+/// Asks for one use click on the container at `pos`: the next tick aims at it and clicks.
+pub(super) fn open_container(pos: nav::Pos) {
+    state(|s| s.interact = Some(pos));
+}
+pub(super) fn cancel_container() {
+    state(|s| s.interact = None);
+}
+/// The click that opens a requested container: aim at the middle of the block and click once
+/// the ray really meets it. `None` when nothing was requested.
+fn interact_input(game: &mut Game<'_>) -> Option<bool> {
+    let pos = state(|s| s.interact)?;
+    if !game.native_playing() {
+        return Some(false);
+    }
+    aim(
+        game,
+        [
+            f64::from(pos[0]) + 0.5,
+            f64::from(pos[1]) + 0.5,
+            f64::from(pos[2]) + 0.5,
+        ],
+    );
+    game.pick().filter(|h| h.pos == pos)?;
+    state(|s| s.interact = None);
+    Some(true)
+}
 pub(super) fn input(game: &mut Game<'_>) -> bool {
+    if let Some(click) = interact_input(game) {
+        return click;
+    }
     let current = navigation::scope(game);
     state(|s| {
         if current.as_deref() != Some(s.scope.as_str()) {

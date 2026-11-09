@@ -10,6 +10,10 @@ Bindings are ignored while a screen or text editor is open, the window is unfocu
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
 
+### Farm storage
+
+On the Farm tab, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
+
 ## Drain
 
 Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blocks (hotbar, off hand or inventory) and press the start key.

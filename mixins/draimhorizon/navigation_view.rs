@@ -1872,6 +1872,10 @@ pub(super) fn movement(
     sneak: &mut bool,
 ) {
     crate::game::claim_borders_workshop_view::manual_movement(*forward, *strafe, *jump, *sneak);
+    // The storage window is open on purpose: nothing here may pause the trip.
+    if crate::game::claim_borders_workshop_view::storing() {
+        return;
+    }
     if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
         return;
     }

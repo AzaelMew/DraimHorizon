@@ -1,5 +1,10 @@
 # История версий
 
+## 0.32.0
+
+- Farm storage: a **Storage** button on the Farm tab takes the chest, trapped chest, barrel or shulker box under the crosshair as the farm's storage (aim at it, open the menu, press the button; aiming at anything else while one is set clears it). It is your container, not the nearest one, and is remembered for the current world. When the inventory is nearly full, or no ripe crops are left, the farm walks to the container, opens it, shift-clicks the harvest into it (keeping a stack of seeds for replanting) and closes it. When the seeds run out it takes up to two stacks of seeds from the container instead of stopping. A container that is full, that cannot be opened (three tries) or that holds no seeds ends the job with a message. New pure `farm_storage.rs` with tests; furnaces, hoppers and other non-storage containers are not accepted.
+- Not compiled against the game's own server and not verified in game.
+
 ## 0.31.0
 
 - horizon-baritone bridge removed: every Baritone tab runs on the built-in drivers. The `baritone_bridge` module, its hook wiring and the documentation section are gone.

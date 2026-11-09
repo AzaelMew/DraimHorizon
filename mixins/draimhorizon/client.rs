@@ -664,6 +664,7 @@ pub(super) fn open_map(game: &mut Game<'_>) {
 
 pub(super) fn tick(game: &mut Game<'_>) {
     crate::game::claim_borders_navigation_view::keep_running_unfocused(game);
+    crate::game::claim_borders_workshop_view::store_frame(game);
     if !game.native_on(claims::ID) {
         state(|c| {
             c.relay = Relay::Off;
@@ -1506,6 +1507,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
+            farm_storage: crate::game::claim_borders_workshop_view::storage(game),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1662,6 +1664,23 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 game.native_mod_screen_close(claims::ID);
             }
             Ok(Vec::new())
+        }
+        Action::FarmStorage => {
+            let l = crate::game::claim_borders_chat_view::current_language();
+            match crate::game::claim_borders_workshop_view::set_storage(game) {
+                Ok([x, y, z]) => Ok(vec![match l {
+                    Language::Russian => format!("Склад фермы: {x} {y} {z}"),
+                    Language::English => format!("Farm storage: {x} {y} {z}"),
+                }]),
+                // Aiming at nothing useful while one is set: forget it.
+                Err(_) if crate::game::claim_borders_workshop_view::storage(game).is_some() => {
+                    crate::game::claim_borders_workshop_view::clear_storage();
+                    Ok(vec![
+                        l.text("Склад фермы сброшен", "Farm storage cleared").into(),
+                    ])
+                }
+                Err(e) => Err(e),
+            }
         }
         Action::BaritoneKey(key) => {
             if crate::game::claim_borders_navigation_view::run(game, key)? {

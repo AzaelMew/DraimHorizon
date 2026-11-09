@@ -128,6 +128,8 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    /// The farm's storage container, when one is set.
+    pub farm_storage: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -225,6 +227,8 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    /// Take the container under the crosshair as the farm's storage, or clear it.
+    FarmStorage,
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -319,6 +323,7 @@ impl std::fmt::Debug for Action {
                 .field("running", running)
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
+            Self::FarmStorage => f.write_str("FarmStorage"),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -483,6 +488,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    /// Sets (or, aiming elsewhere, clears) the farm's storage container.
+    FarmStorage,
     /// An icon tile that picks the crop to farm.
     FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
@@ -2646,6 +2653,23 @@ impl Menu {
                             Control::FarmLimit,
                         ),
                         (
+                            match model.farm_storage {
+                                Some([x, y, z]) => localized!(
+                                    self.language,
+                                    "Склад: {} {} {}",
+                                    "Storage: {} {} {}",
+                                    x,
+                                    y,
+                                    z
+                                ),
+                                None => self
+                                    .language
+                                    .text("Склад: не задан", "Storage: not set")
+                                    .into(),
+                            },
+                            Control::FarmStorage,
+                        ),
+                        (
                             localized!(
                                 self.language,
                                 "Пересадка: {}",
@@ -3512,6 +3536,7 @@ impl Menu {
                 self.farm_replant = !self.farm_replant;
                 None
             }
+            Control::FarmStorage => Some(Action::FarmStorage),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -6431,6 +6456,7 @@ mod tests {
                             w.control,
                             Some(
                                 Control::FarmCropPick(_)
+                                    | Control::FarmStorage
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant

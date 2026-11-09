@@ -1,9 +1,10 @@
 // Farm and schematic jobs share the normal movement, attack and placement drivers.
 use crate::game::{
-    Game, claim_borders as claims, claim_borders_construction_view as placement,
-    claim_borders_draining as drain, claim_borders_farming as farm,
-    claim_borders_navigation as nav, claim_borders_navigation_view as driver,
-    claim_borders_schematic as schema, claim_borders_schematic_files as files,
+    Game, Screen, claim_borders as claims, claim_borders_construction_view as placement,
+    claim_borders_draining as drain, claim_borders_farm_storage as store,
+    claim_borders_farming as farm, claim_borders_navigation as nav,
+    claim_borders_navigation_view as driver, claim_borders_schematic as schema,
+    claim_borders_schematic_files as files,
 };
 use horizon_client::gizmos::Gizmos;
 use std::{
@@ -56,6 +57,36 @@ struct Pending {
     rx: Receiver<Result<files::Response, String>>,
     run: bool,
 }
+#[derive(Clone, Copy, PartialEq)]
+enum Purpose {
+    /// Put the harvest (and spare seeds) into the storage.
+    Deposit,
+    /// Take seeds out of it.
+    Seeds,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum Step {
+    /// Walking to the container.
+    Walk,
+    /// A use click is asked for; waiting for its window to open.
+    Open,
+    /// Shift-clicking stacks across.
+    Transfer,
+    /// Closing the window.
+    Close,
+}
+/// A trip to the farm's storage container, driven between two harvest targets.
+#[derive(Clone, Copy)]
+struct Store {
+    purpose: Purpose,
+    step: Step,
+    since: Instant,
+    last: Instant,
+    tries: u8,
+    moved: u16,
+    stuck: u8,
+    sig: usize,
+}
 struct State {
     scope: String,
     task: Option<Task>,
@@ -77,6 +108,11 @@ struct State {
     idle: u8,
     // Cells that failed or were just filled, ignored until the instant passes.
     skip: Vec<(nav::Pos, Instant)>,
+    // The trip to the storage container in progress, the earliest next trip, and whether the
+    // farm ran out of ripe crops (a good moment to unload the harvest).
+    store: Option<Store>,
+    store_after: Instant,
+    idle_deposit: bool,
     // Failed placements in a row, and cells given up on, for the end message.
     errors: u8,
     missed: u16,
@@ -102,6 +138,9 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            store: None,
+            store_after: Instant::now(),
+            idle_deposit: false,
             errors: 0,
             missed: 0,
             falling: false,
@@ -310,6 +349,265 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
         Ok(())
     })
 }
+/// The storage container the player set, in the current world.
+static STORAGE: Mutex<Option<(String, nav::Pos)>> = Mutex::new(None);
+pub(super) fn storage(game: &Game<'_>) -> Option<nav::Pos> {
+    let scope = driver::scope(game)?;
+    STORAGE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(s, _)| *s == scope)
+        .map(|(_, at)| *at)
+}
+/// Takes the container under the crosshair as the farm's storage.
+pub(super) fn set_storage(game: &Game<'_>) -> Result<nav::Pos, String> {
+    let scope = driver::scope(game).ok_or("Join a world first")?;
+    let aimed = || {
+        text(
+            "Наведите прицел на сундук, бочку или шалкер",
+            "Aim at a chest, barrel or shulker box",
+        )
+    };
+    let hit = game.pick().ok_or_else(|| aimed().to_owned())?;
+    if !store::is_container(&game.native_block(hit.pos)) {
+        return Err(aimed().into());
+    }
+    *STORAGE.lock().unwrap_or_else(|e| e.into_inner()) = Some((scope, hit.pos));
+    Ok(hit.pos)
+}
+pub(super) fn clear_storage() {
+    *STORAGE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+/// Whether the storage window is being used (the movement hook must not pause the job then).
+pub(super) fn storing() -> bool {
+    state(|s| s.store.is_some_and(|t| t.step != Step::Walk))
+}
+/// The player's main inventory and hotbar as `farm_storage` plans see them.
+fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
+    (0..36)
+        .map(|g| {
+            let stack = if g < 9 {
+                game.stack_in(g)
+            } else {
+                game.inventory.get(g).and_then(Option::as_ref)
+            };
+            stack
+                .filter(|st| st.count > 0)
+                .map(|st| (st.item.to_string(), st.count))
+        })
+        .collect()
+}
+/// Why a trip to the storage is due now, if it is.
+fn store_due(game: &Game<'_>, s: &State) -> Option<Purpose> {
+    let Some(Task::Farm { config, .. }) = &s.task else {
+        return None;
+    };
+    if Instant::now() < s.store_after {
+        return None;
+    }
+    if config.replant && !seed(game, config.crop) {
+        return Some(Purpose::Seeds);
+    }
+    let inv = inventory(game);
+    let load = store::deposit(&inv, config.crop, store::KEEP_SEEDS);
+    if !load.is_empty() && (store::free_slots(&inv) <= 2 || s.idle_deposit) {
+        return Some(Purpose::Deposit);
+    }
+    None
+}
+/// Walks within reach of the storage, then asks for the click that opens it.
+fn store_walk(game: &Game<'_>, s: &mut State) {
+    let Some(chest) = s.target else {
+        s.store = None;
+        return;
+    };
+    if s.store.is_none_or(|t| t.step != Step::Walk) {
+        return;
+    }
+    let Some(p) = game.native_player() else {
+        return;
+    };
+    let middle = [
+        f64::from(chest[0]) + 0.5,
+        f64::from(chest[1]) + 0.5,
+        f64::from(chest[2]) + 0.5,
+    ];
+    if nav::distance(middle, [p.x, p.y + 1.2, p.z]) > 3.4 {
+        approach(game, s, chest);
+        return;
+    }
+    if let Some(t) = s.store.as_mut() {
+        t.step = Step::Open;
+        t.since = Instant::now();
+    }
+    placement::open_container(chest);
+}
+/// Closes the storage window if it is open and ends the trip, with a reason when it failed.
+fn end_store(game: &mut Game<'_>, failure: Option<&str>) {
+    if game.screen == Screen::Inventory {
+        game.close_container();
+        game.screen = Screen::Playing;
+        game.capture(true);
+    }
+    placement::cancel_container();
+    state(|s| {
+        s.store = None;
+        s.target = None;
+        s.phase = Phase::Ready;
+        s.last = Instant::now();
+        s.wait = Duration::from_millis(250);
+        // Not again at once, whatever the trip did.
+        s.store_after = Instant::now() + Duration::from_secs(15);
+        match failure {
+            Some(message) => fail(s, message),
+            None => s.message.clear(),
+        }
+    });
+}
+/// Drives the storage window each tick: waits for it to open, moves a few stacks, closes it.
+pub(super) fn store_frame(game: &mut Game<'_>) {
+    let Some(t) = state(|s| s.store) else {
+        return;
+    };
+    if !game.native_on(claims::ID) {
+        end_store(game, None);
+        return;
+    }
+    let open = game.screen == Screen::Inventory
+        && game
+            .remote_menu_type()
+            .is_some_and(store::is_container_menu);
+    match t.step {
+        Step::Walk => {}
+        Step::Open => {
+            if open {
+                state(|s| {
+                    if let Some(t) = s.store.as_mut() {
+                        t.step = Step::Transfer;
+                        t.last = Instant::now();
+                    }
+                });
+            } else if t.since.elapsed() > Duration::from_millis(2500) {
+                if t.tries >= 2 {
+                    end_store(
+                        game,
+                        Some(text(
+                            "Не удалось открыть склад",
+                            "Could not open the storage",
+                        )),
+                    );
+                } else if let Some(chest) = state(|s| s.target) {
+                    placement::open_container(chest);
+                    state(|s| {
+                        if let Some(t) = s.store.as_mut() {
+                            t.tries += 1;
+                            t.since = Instant::now();
+                        }
+                    });
+                }
+            }
+        }
+        Step::Transfer => {
+            if !open {
+                end_store(game, Some(text("Склад закрылся", "The storage closed")));
+            } else if t.last.elapsed() >= Duration::from_millis(160) {
+                transfer(game, t);
+            }
+        }
+        Step::Close => end_store(game, None),
+    }
+}
+/// One round of shift-clicks between the inventory and the open container.
+fn transfer(game: &mut Game<'_>, t: Store) {
+    use horizon_client::menu::Input;
+    let Some(crop) = state(|s| match &s.task {
+        Some(Task::Farm { config, .. }) => Some(config.crop),
+        _ => None,
+    }) else {
+        end_store(game, None);
+        return;
+    };
+    let inv = inventory(game);
+    // The container's own slots are the menu's slots but the 36 of the player's inventory.
+    let mut chest: Vec<store::Stack> = Vec::new();
+    game.menu_session(|menu, _env, _to_menu| {
+        let n = menu.slot_count();
+        if n >= 36 {
+            for i in 0..n - 36 {
+                chest.push(
+                    menu.slot(i)
+                        .filter(|st| st.count > 0)
+                        .map(|st| (st.item.to_string(), st.count)),
+                );
+            }
+        }
+        Some(false)
+    });
+    if chest.is_empty() {
+        end_store(
+            game,
+            Some(text("Окно склада недоступно", "Storage window unavailable")),
+        );
+        return;
+    }
+    let (plan, ops): (Vec<usize>, Vec<_>) = match t.purpose {
+        Purpose::Deposit => {
+            let plan = store::deposit(&inv, crop, store::KEEP_SEEDS);
+            let ops = plan
+                .iter()
+                .take(4)
+                .map(|g| (Some(*g), 0, Input::QuickMove))
+                .collect();
+            (plan, ops)
+        }
+        Purpose::Seeds => {
+            let plan = store::withdraw(&chest, &inv, crop.seed(), store::TAKE_SEEDS);
+            let ops = plan
+                .iter()
+                .take(2)
+                .map(|i| (Some(300 + *i), 0, Input::QuickMove))
+                .collect();
+            (plan, ops)
+        }
+    };
+    let sig = plan.iter().sum::<usize>() + plan.len() * 100;
+    let stuck = if sig == t.sig { t.stuck + 1 } else { 0 };
+    if plan.is_empty() {
+        let none = t.purpose == Purpose::Seeds && store::count(&inv, crop.seed()) == 0;
+        end_store(
+            game,
+            none.then(|| text("В складе нет семян", "No seeds in the storage")),
+        );
+        return;
+    }
+    if stuck >= 3 || t.moved >= 200 {
+        // Nothing moves any more: the container is full or refuses the stacks.
+        end_store(
+            game,
+            Some(text(
+                "Склад полон или не принимает предметы",
+                "The storage is full or refuses the items",
+            )),
+        );
+        return;
+    }
+    if !game.menu_ops(&ops) {
+        end_store(
+            game,
+            Some(text("Окно склада недоступно", "Storage window unavailable")),
+        );
+        return;
+    }
+    state(|s| {
+        if let Some(t) = s.store.as_mut() {
+            t.last = Instant::now();
+            t.moved += ops.len() as u16;
+            t.stuck = stuck;
+            t.sig = sig;
+        }
+    });
+}
 fn fail(s: &mut State, message: impl Into<String>) {
     s.active = false;
     s.message = message.into();
@@ -474,6 +772,10 @@ pub(super) fn tick(game: &Game<'_>) {
             return;
         }
         if !game.native_playing() {
+            // The storage window is open: store_frame drives it, the job just waits.
+            if s.store.is_some() && game.screen == Screen::Inventory {
+                return;
+            }
             s.active = false;
             return;
         }
@@ -581,6 +883,30 @@ pub(super) fn tick(game: &Game<'_>) {
         if !placement::external_settled() {
             return;
         }
+        // Between two crops: unload the harvest or fetch seeds when the storage is set.
+        if s.target.is_none()
+            && s.store.is_none()
+            && let (Some(chest), Some(purpose)) = (storage(game), store_due(game, s))
+        {
+            s.store = Some(Store {
+                purpose,
+                step: Step::Walk,
+                since: Instant::now(),
+                last: Instant::now(),
+                tries: 0,
+                moved: 0,
+                stuck: 0,
+                sig: usize::MAX,
+            });
+            s.target = Some(chest);
+            s.plant = false;
+            s.attempt = 0;
+            s.idle_deposit = false;
+        }
+        if s.store.is_some() {
+            store_walk(game, s);
+            return;
+        }
         if s.target.is_none() {
             match s.task.as_mut().unwrap() {
                 Task::Farm {
@@ -645,6 +971,8 @@ pub(super) fn tick(game: &Game<'_>) {
                         return;
                     } else {
                         s.message = text("Ожидание созревания", "Waiting for ripe crops").into();
+                        // Nothing to harvest for now: a good time to unload.
+                        s.idle_deposit = true;
                         return;
                     }
                 }
