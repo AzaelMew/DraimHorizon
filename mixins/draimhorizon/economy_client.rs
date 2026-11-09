@@ -488,7 +488,8 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
     }
     let title = game.remote_menu_title()?.plain();
     let family = match title.to_ascii_lowercase().as_str() {
-        "market" | "рынок" | "маркет" => scan::Kind::Market,
+        // /shop opens the same menu as /market.
+        "market" | "shop" | "рынок" | "маркет" | "магазин" => scan::Kind::Market,
         "auction house" | "аукцион" | "аукционный дом" => scan::Kind::Auction,
         _ => return None,
     };

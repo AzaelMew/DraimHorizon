@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.8
+
+- /shop is the same menu as /market on the server: a menu titled "Shop" or "Магазин" is now read and shown as the Market (the custom Market view, prices and the hover note) the way "Market" is. The mod still asks for the market with /market itself.
+- Not verified in game (the title the server gives /shop was assumed to be "Shop" or "Market").
+
 ## 0.37.7
 
 - Waypoints tab: the list used the old 96 px rail width, so its "World" bar and rows slid under the rail; it now uses the shared rail width and starts on the same left edge as the title.

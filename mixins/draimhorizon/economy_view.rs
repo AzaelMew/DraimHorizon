@@ -1445,7 +1445,7 @@ pub(super) fn container_overlay(
     let Some(title) = screen.title.map(|t| t.plain().to_lowercase()) else {
         return;
     };
-    if !["market", "auction house"].contains(&title.as_str()) {
+    if !["market", "shop", "auction house"].contains(&title.as_str()) {
         return;
     }
     let token = format!(
@@ -1462,7 +1462,7 @@ pub(super) fn container_overlay(
         }
         let now = data::now();
         let mut lines = vec![(
-            if title == "market" {
+            if title == "market" || title == "shop" {
                 "MARKET".into()
             } else {
                 language().text("АУКЦИОН", "AUCTION").into()
