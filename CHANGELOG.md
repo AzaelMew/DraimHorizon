@@ -1,5 +1,108 @@
 # История версий
 
+## 0.35.0
+
+- Idle mode everywhere: a job no longer stops because something is missing or went wrong; it stands idle, says why in the status line ("Idle: ...") and looks again, until you stop it yourself. Mining waits for a suitable tool or a free inventory slot, gives up a block that does not break after 30 s or that the server refuses three times and goes on to the next, and keeps asking the planner when it is slow. Tunnel and Bridge stopped for any reason except your own pause (no blocks, no floor, a chunk not loaded, protected or hazardous block, no face to place on, a server refusal, a timeout) wait 3 s and try again by themselves. Drain waits for sand or gravel, for a route to a cell, and leaves a cell it cannot place. Farm and schematics leave a refused cell for a while, wait for a route, a free slot or the blocks, and a trip to the storage that fails no longer pauses the job.
+- A progress watchdog for Farm, Drain and schematics: a job that does nothing for 20 s without saying why (a cell it cannot place, a route it cannot walk) is shaken loose; the cell is left for 10 s and the status says "got stuck, looking for another target".
+- Drain: the "stays on one column" rule could hold the bot on a column it could not reach for good, which looked like "it just stops" with the status still "Running". It now waits only for a block that has just sunk (under a second) and leaves any cell given up on.
+- Drain: sand and gravel only count as something to stand or hang on when they rest on a solid block that cannot fall. A block dropped into the surface is solid for a moment and then sinks; the bot used to stand on, or hang over, such a block and fall into the water with it. Routes along a laid line, the edge hang and the swim back to dry ground use the same rule.
+- Tunnel and mining: "Server refused the break" - the tool change had to reach the server before the first hit (the server works out the break time with the item it believes is in hand and refused a block the client broke too fast); now the slot change gets a tick first. A refused block is also broken again up to three times; an ore block refused three times in a row is left alone, a tunnel or dig route stops only after three.
+- Not verified in game.
+
+## 0.34.6
+
+- Farm: the items a harvest drops (and anything else lying in or around the farm) are picked up. Between two crops the bot walks to the nearest item that is still on the ground within the farm's radius plus three blocks and waits for the pickup; an item it cannot reach or take is given up on after a few seconds. Before, a bed's drops stayed on the ground unless the bot happened to walk over them.
+- Farm: beds at other heights are found. The scan looked at one layer only (the height the bot started at), so a raised bed or a terrace was invisible; it now looks from two blocks below the start to two above.
+- Farm: when no route to a bed or to the storage chest exists, the bot no longer pauses the job. It first tries a second pass over the same spots that may break and place blocks to get there (only after the plain walking route failed everywhere), and if that fails too it idles ("no route to the bed, looking again" / "no route to the storage, carrying on with the crops") and tries again later.
+- Not verified in game.
+
+## 0.34.5
+
+- Farm: it can jump again. Routes among the crops were kept level (no jumps) to spare the farmland, which also stopped the bot from climbing a raised bed to reach the crops in its middle. Jumping up onto farmland is harmless (only landing on it from a drop tramples it), so the farm walks normally, still without breaking or placing blocks on the way.
+- Farm storage: a chest in sight of the farm bed was not opened because crops stood in the line of the aim ray. The click now tries the middle, the top and the four sides of the chest; the spots the bot walks to for it are limited to those with a clear line to the chest (checked block by block, plants count); and when nothing of the chest is in sight from where it stands, it moves to another spot (up to three tries) instead of clicking at the same place.
+- Half blocks in passages: slabs, carpets, snow layers and pressure plates (anything at most half a block high) are walked through by Navigation and the farm instead of being obstacles, and stairs and top slabs count as blocks to climb. Tunnel and Bridge treat a half block as something solid to stand on or to break. The shape is read from the block's real outline, new pure `navigation::low_shape` and `classify_shape` with tests.
+- Not verified in game.
+
+## 0.34.4
+
+- Tools: a tool is kept in reserve before it breaks, now in proportion to its durability (about half a percent: 10 points on a netherite tool, 7 on a diamond one, at least 3) instead of a flat 10, and a fresh tool (over a fifth of its durability left) is used before a worn one, so two pickaxes (hotbar and inventory) share the wear and the job only stops when every suitable one is nearly worn out.
+- Mining and Tunnel: blocks that need no tool (dirt, sand, gravel, leaves) are broken by hand when none of the carried tools is the right kind for them, instead of stopping with "A suitable tool is required".
+- Tunnel and Bridge: when no face of a neighbouring block can be clicked to place a floor block, other points of each face are tried (the middle, then four offsets and two corners) before giving up, and at the edge the job waits 1.5 s before stopping with "No face to place a block on", which was stopping it on a dropped item or a late block update.
+- Not verified in game.
+
+## 0.34.3
+
+- Mining: blocks at the foot and the top of a tree (or any block hidden behind grass, ferns, flowers or leaves) were skipped for good, because the aim ray met the plant first and the miner took that for an unreachable block, so only the clear middle of a trunk was cut. Now it breaks the plant or leaf block in the way first (not counted as a mined block, at most six per block, never torches, crops or anything of value) and then goes back to the block it wanted.
+- Mining: the standing spots reach one block further up a trunk (up to five blocks below the log).
+- Not verified in game. Logs far above the ground still need climbing, which is not implemented.
+
+## 0.34.2
+
+- Drain: it now places only sand, red sand and gravel. Any other block (it used to fall back to the cheapest building block when no sand was carried) would have been left standing in the water; with none of the three in the inventory the job says "Sand or gravel is required".
+- Drain: one column at a time. The bot stays on a column, dropping the next block as soon as the last one has sunk (about 0.8 s instead of 1.4 s), until its surface cell is solid, and only then moves to the nearest next column, instead of hopping between columns while each one sinks.
+- Not verified in game.
+
+## 0.34.1
+
+- Farm: the way to the storage chest is no longer restricted to one level. Walking among the crops stays level (no jumping onto farmland), but a trip to the chest uses the normal route, which climbs steps and goes around obstacles, so a chest on another height or well away from the beds can be reached (long routes are planned in segments as chunks load). The route still never breaks or places blocks.
+- Farm: harvesting used to reset the walking mode to the unrestricted one while a crop was being broken, which could let the bot jump or dig on the way; harvest routes are now level and never break or place blocks.
+- Not verified in game.
+
+## 0.34.0
+
+- Drain patterns: the Drain tab has a **Pattern** button (fill, lines, grid) and a **Spacing** button (3 to 8). Lines lay a row of blocks on the water surface every N blocks along the x axis, starting with the row the player stands on; the grid adds columns, so the water is cut into squares (spacing 3 leaves 2x2 squares). One block per surface cell, taken from the inventory (a block that stays put is preferred over sand and gravel). The job grows along its own blocks: it plans a route over the solid cells already laid to the spot next to the next cell, walks out along them sneaking (so a one-wide line is never walked off), hangs over the edge and places. A cell with no such route is left for a few seconds and the job goes on. New pure `draining::in_pattern` and `draining::flat_path` with tests.
+- Farm: waiting for ripe crops, for light or for seeds is shown as "Idle" and the job carries on by itself, instead of looking paused. Farm routes are level and never jump (jumping onto farmland tramples it).
+- Not verified in game.
+
+## 0.33.0
+
+- Mining and Tunnel find tools on their own: a pickaxe, axe or shovel anywhere in the hotbar or inventory counts (before, only the tool already in hand did, so both reported "hold a tool"). The right one for the block is put in hand, swapped up from the inventory when needed, and the old slot is not touched afterwards.
+- Mining no longer stops with "No reachable ore found": it keeps searching every couple of seconds while blocks load and the player moves.
+- Auto-eat: while a task runs and the food bar is at 7 shanks or below, the best fitting safe food (no rotten flesh, spider eye, raw chicken, golden apples...) is taken from the hotbar or inventory, eaten, and the old slot restored. A switch beside the status line of every Baritone tab ("Eat: on/off") turns it off; on by default.
+- Bridge: width 1-3 next to the length (the floor is laid column by column).
+- Farm: several crops can be picked at once (the icons toggle; one always stays selected). Each ripe crop is harvested and seeds of any selected crop are planted. With no seeds on hand and none in the storage the job idles ("Idle: no seeds, waiting for crops to ripen") and goes on when crops ripen, instead of pausing. The storage deposit keeps a stack of seeds per selected crop.
+- Farm and Drain: the two glowing corner cubes that looked like stray holograms are replaced by an outline of the working area on the ground and a cube on the block being worked on.
+- Drain: when the player falls into the water together with the block, the job swims back to the nearest dry ground and carries on instead of pausing.
+- Coming back to the window no longer pauses a task: the click that focuses the window, and keys still held, are ignored for 1.5 s.
+- Not verified in game.
+
+## 0.32.0
+
+- Farm storage: a **Storage** button on the Farm tab takes the chest, trapped chest, barrel or shulker box under the crosshair as the farm's storage (aim at it, open the menu, press the button; aiming at anything else while one is set clears it). It is your container, not the nearest one, and is remembered for the current world. When the inventory is nearly full, or no ripe crops are left, the farm walks to the container, opens it, shift-clicks the harvest into it (keeping a stack of seeds for replanting) and closes it. When the seeds run out it takes up to two stacks of seeds from the container instead of stopping. A container that is full, that cannot be opened (three tries) or that holds no seeds ends the job with a message. New pure `farm_storage.rs` with tests; furnaces, hoppers and other non-storage containers are not accepted.
+- Not compiled against the game's own server and not verified in game.
+
+## 0.31.0
+
+- horizon-baritone bridge removed: every Baritone tab runs on the built-in drivers. The `baritone_bridge` module, its hook wiring and the documentation section are gone.
+- Mining: no block limit any more; pick what to farm and start/stop with the action keys. After each broken block the miner now walks to the items it dropped and waits for them to be picked up (items it cannot reach or take are given up on after a few seconds) before looking for the next block. The nearest block is always taken next, so a vein or a whole trunk is worked through; standing spots up to four blocks below a log let it reach high up a trunk. The status line shows the running count and "Collecting drops".
+- Navigation: blocks with no collision (ferns, grass, flowers, saplings, crops, torches, rails, redstone parts) are walked through like air. A bridge no longer stops in a fern.
+- Bridge and Tunnel: whatever stands in the way is broken (bridge included), falling blocks above no longer stop a tunnel, a slab or stair under the path counts as floor, and the pause reasons are specific (cannot break this block, no floor, no face to place on) instead of "check the passage". Only unbreakable blocks (bedrock, chests) still stop the job.
+- Drain: far faster (a placement every ~0.1-0.2 s instead of ~0.4-1.9 s) and a cell that is refused or unreachable is skipped for a few seconds instead of stopping the whole task; the end message counts skipped cells.
+- Farm: crops need light 9 or more (sky or block light), so in a dark cave the server refuses every seed. The farm now skips unlit cells and says "No light on the farmland: crops need a light source (level 9+)" instead of failing with "Server refused". Also: a seed placement was declared refused when the server's acknowledgement arrived before the block update, and the click could be made before the new hotbar slot reached the server. The slot change now gets one tick to arrive and the block is checked again for 0.9 s before "Server refused".
+- Farm: the crop is picked from four item icons (wheat, carrot, potato, beetroot; the name is the tooltip) instead of a button that cycles through them.
+- A running task keeps working when the window is minimised or loses focus: "pause when the window loses focus" is switched off in memory (never saved) while a task runs and restored afterwards.
+- TAB: with 80 or more players the list is split into four columns.
+- Not verified in game.
+
+## 0.30.0
+
+- Player list (TAB): compact and redrawn. Rows are 16 px instead of 22, cells 168 px instead of 230, so more players fit on screen and more columns open on a normal window. The "PLAYER / ms" header rows are gone; the title carries the online count and a coloured TPS badge. Ping is shown as four signal bars that fill with connection quality, with the milliseconds beside them when the cell is wide enough. Rounded rows, a thin accent line, smaller faces; friends keep the green tint, the check mark and the distance.
+- Sidebar: the two plain text cards are now a header with an accent bar and icon rows: FPS (gauge), TPS (activity), Online (people), Playtime (clock), Balance (coins) and the richest players, with muted names, right-aligned coloured values (FPS and TPS turn green, amber or red) and zebra striping. Three new official Lucide icons (`gauge`, `activity`, `coins`) added through `tools/update_lucide.py`; existing icon geometry is unchanged.
+- Existing settings (columns, opacity, TPS, ping, distance, sidebar scale, width, corner and opacity) keep working.
+- Not verified in game; layout checked only by compiling the real client.
+
+## 0.29.7
+
+- Mining: the target grid shows item icons (diamond, ingots, redstone, logs, stone, …) instead of text chips. The name appears as a tooltip on hover, in Russian or English; the selected state is unchanged. Tiles are 22 px squares, so far more fit in a row and the grid pages less. New `mining::icon` with a test that every target has an icon.
+- horizon-baritone bridge: when that mod is installed and on but does not accept the command (for example it is built for another Nightly), the tab now runs the built-in driver and says so in chat. Before, the tab stopped with "Baritone did not accept the command", which left Navigation, Mining, Tunnel, Farm and Schematics dead whenever the mod was outdated.
+- Not compiled against the real client and not verified in game.
+
+## 0.29.6
+
+- Drain fix: with sand or gravel the first cell next to the shore was never filled ("Осушение: 0 · Нет доступной грани … луч прицела упирается в соседний блок"). The only block to click on was the shore's wall facing the water, which cannot be hit from inland: the aim ray meets the block's top first, and the walking spots exclude every cell next to water. The drain now walks over the edge of the shore block, sneaking (the same hang as when bridging), until that wall is in the ray, and places from there. Each cell gets at most 3.5 s for this before the next spot is tried. New pure `draining::edge_stand` with a test.
+- Drain is a built-in driver and does not use the horizon-baritone bridge, so it does not depend on that mod being updated to the current Nightly.
+- Not compiled against the real client and not verified in game: the view layer builds only in the native-client workflow, which was not run here.
+
 ## 0.29.5
 
 - Bridge to horizon-baritone (luhnox/horizon-baritone, a native port of Baritone 1.21.4): when that mod is installed and on, Navigation, Mining, Tunnel (without Floor), Farm and unrotated Schematics hand their task to it as `goto` / `goal` / `follow player` / `mine` / `tunnel` / `farm` / `build` through Horizon's native command hook, and the action keys send `pause` / `resume` / `cancel`. A command no mod ran never reaches the server. Bridge, Drain, Floor and rotated schematics keep the built-in drivers. New pure module `baritone_bridge.rs` with tests.

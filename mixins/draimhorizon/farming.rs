@@ -16,6 +16,21 @@ impl Crop {
             .get(usize::from(code.checked_sub(250)?))
             .copied()
     }
+    pub const ALL: [Self; 4] = [Self::Wheat, Self::Carrots, Self::Potatoes, Self::Beetroot];
+    /// Every crop as a bit of a selection mask.
+    pub const MASK: u8 = 0b1111;
+    pub fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+    /// The item whose icon stands for the crop in the menu.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Wheat => "minecraft:wheat",
+            Self::Carrots => "minecraft:carrot",
+            Self::Potatoes => "minecraft:potato",
+            Self::Beetroot => "minecraft:beetroot",
+        }
+    }
     pub fn next(self) -> Self {
         match self {
             Self::Wheat => Self::Carrots,
@@ -51,14 +66,21 @@ impl Crop {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub crop: Crop,
+    /// The crops to farm, one bit each (`Crop::bit`); at least one.
+    pub crops: u8,
     pub radius: u8,
     pub limit: u16,
     pub replant: bool,
 }
 impl Config {
     pub fn valid(self) -> bool {
-        (1..=12).contains(&self.radius) && self.limit <= 64
+        (1..=12).contains(&self.radius) && self.limit <= 64 && self.crops & Crop::MASK != 0
+    }
+    /// The selected crops, in menu order.
+    pub fn selected(self) -> impl Iterator<Item = Crop> {
+        Crop::ALL
+            .into_iter()
+            .filter(move |c| self.crops & c.bit() != 0)
     }
 }
 #[cfg(test)]
@@ -77,5 +99,27 @@ mod tests {
         for code in [0, 249, 254, 255] {
             assert_eq!(Crop::from_code(code), None);
         }
+    }
+    #[test]
+    fn several_crops_can_be_selected_but_not_none() {
+        let both = Config {
+            crops: Crop::Wheat.bit() | Crop::Beetroot.bit(),
+            radius: 6,
+            limit: 0,
+            replant: true,
+        };
+        assert!(both.valid());
+        assert_eq!(
+            both.selected().collect::<Vec<_>>(),
+            [Crop::Wheat, Crop::Beetroot]
+        );
+        assert!(!Config { crops: 0, ..both }.valid());
+        assert!(
+            Config {
+                crops: Crop::MASK,
+                ..both
+            }
+            .valid()
+        );
     }
 }

@@ -1,5 +1,4 @@
 // Native adapter for the local walking navigator; bounded background path planning.
-use crate::game::claim_borders_baritone_bridge as bridge;
 use crate::game::claim_borders_mining as mining;
 use crate::game::{Game, Resources, claim_borders as claims, claim_borders_navigation as model};
 use claim_borders_relay_client::translation::Language;
@@ -9,7 +8,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     time::{Duration, Instant},
@@ -66,13 +65,6 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
 pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
     match action {
         model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
-        model::Hotkey::Start if BRIDGE_PAUSED.load(Ordering::Relaxed) => {
-            if !baritone_run(game, bridge::RESUME) {
-                return Err(not_accepted());
-            }
-            BRIDGE_PAUSED.store(false, Ordering::Relaxed);
-            Ok(true)
-        }
         model::Hotkey::Start => {
             let (running, resumable) = control();
             if running {
@@ -86,16 +78,10 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
             .map(|()| true)
         }
         model::Hotkey::Pause => {
-            if bridged().is_some() && baritone_run(game, bridge::PAUSE) {
-                BRIDGE_PAUSED.store(true, Ordering::Relaxed);
-            }
             pause();
             Ok(false)
         }
         model::Hotkey::Stop => {
-            if bridged().is_some() {
-                baritone_run(game, bridge::CANCEL);
-            }
             reset();
             Ok(false)
         }
@@ -105,26 +91,57 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
 fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
-        Action::Navigate { goal, running } => {
-            if let Some(result) = start_baritone(game, goal, running) {
-                return result;
-            }
-            start(game, goal, running)
-        }
+        Action::Navigate { goal, running } => start(game, goal, running),
         Action::LoadSchematic {
             filename,
             origin,
             rotation,
             running,
-        } => {
-            if let Some(result) = build_baritone(game, &filename, origin, rotation, running) {
-                return result;
-            }
-            crate::game::claim_borders_workshop_view::load(
-                game, filename, origin, rotation, running,
-            )
-        }
+        } => crate::game::claim_borders_workshop_view::load(
+            game, filename, origin, rotation, running,
+        ),
         _ => Ok(()),
+    }
+}
+static WAS_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static REFOCUSED: Mutex<Option<Instant>> = Mutex::new(None);
+/// True for a moment after the window got focus back: input in that moment (the click that
+/// focused it, keys still held) must not pause a task.
+pub(super) fn input_grace() -> bool {
+    REFOCUSED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(1500))
+}
+/// Set while this mod has switched off "pause when the window loses focus".
+static FOCUS_PAUSE_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A task keeps running with the window minimised or in the background: the game would open
+/// the pause menu after the window loses focus, and every task stops on an open screen. While
+/// a task runs, that option is off in memory only (never saved); it is put back when the task
+/// ends, or when the mod is switched off.
+pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    // The click that brings the window back to the front is not the player taking over.
+    let focused = game.focused;
+    if focused && !WAS_FOCUSED.swap(true, Relaxed) {
+        *REFOCUSED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    } else if !focused {
+        WAS_FOCUSED.store(false, Relaxed);
+    }
+    let busy = game.native_on(claims::ID) && control().0;
+    let off = FOCUS_PAUSE_OFF.load(Relaxed);
+    if busy && !off && game.settings.file.bool("pauseOnLostFocus") {
+        game.settings.file.set(
+            "pauseOnLostFocus",
+            horizon_client::options_file::V::Bool(false),
+        );
+        FOCUS_PAUSE_OFF.store(true, Relaxed);
+    } else if !busy && off {
+        game.settings.file.set(
+            "pauseOnLostFocus",
+            horizon_client::options_file::V::Bool(true),
+        );
+        FOCUS_PAUSE_OFF.store(false, Relaxed);
     }
 }
 /// What the action keys should do with the task in progress: (running, resumable).
@@ -147,7 +164,7 @@ fn control() -> (bool, bool) {
                 );
             return (
                 job.active,
-                !job.active && !preview && job.confirmed < job.limit,
+                !job.active && !preview && (job.limit == 0 || job.confirmed < job.limit),
             );
         }
         (
@@ -159,6 +176,8 @@ fn control() -> (bool, bool) {
 
 struct Query {
     flat: bool,
+    /// Stay on one level: no steps up or down, so no jumps (farmland is not trampled).
+    level: bool,
     /// Digging is allowed: a usable pickaxe is held and the inventory has room.
     dig: bool,
     /// Missing floor may be bridged: building blocks are on hand.
@@ -201,7 +220,8 @@ impl Worker {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
                     let mut read = |at: model::Pos| {
-                        if query.flat && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
+                        if query.level
+                            && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
                         {
                             return mining::Block::default();
                         }
@@ -218,10 +238,12 @@ impl Worker {
                         *table.entry(id).or_insert_with(|| {
                             let f = query.resources.facts().get(BlockStateId(id));
                             mining::Block {
-                                cell: model::classify(
+                                cell: model::classify_shape(
                                     &f.name,
                                     f.full_collision,
                                     f.fluid_level > 0 || f.waterlogged,
+                                    &f.outline,
+                                    model::Cell::Air,
                                 ),
                                 ore: query
                                     .mine
@@ -316,6 +338,7 @@ impl Drop for Worker {
 }
 struct State {
     flat: bool,
+    level: bool,
     use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
@@ -338,6 +361,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             flat: false,
+            level: false,
             use_restore: None,
             attack_restore: None,
             mining: None,
@@ -363,7 +387,6 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|e| e.into_inner()))
 }
 pub(super) fn reset() {
-    bridge_clear();
     crate::game::claim_borders_workshop_view::reset();
     crate::game::claim_borders_construction_view::reset();
     drop_assist();
@@ -420,6 +443,8 @@ fn pause_state(s: &mut State) {
     }
     s.mine_aim = None;
 }
+/// Something in the way of the block being mined that is being cleared (see `Job::clear_blocker`).
+static BLOCKER: Mutex<Option<model::Pos>> = Mutex::new(None);
 fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
     if !game
         .world
@@ -430,10 +455,12 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
     }
     let f = game.res.facts().get(game.world.block(at[0], at[1], at[2]));
     mining::Block {
-        cell: model::classify(
+        cell: model::classify_shape(
             &f.name,
             f.full_collision,
             f.fluid_level > 0 || f.waterlogged,
+            &f.outline,
+            model::Cell::Air,
         ),
         ore: if let Some(crop) = crate::game::claim_borders_farming::Crop::from_code(ore) {
             crop.block() == f.name.as_ref()
@@ -442,23 +469,28 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
             crate::game::claim_borders_construction_view::block(game, at).diggable
         } else {
             mining::matches(ore, &f.name)
+                || (mining::clearable(&f.name)
+                    && *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) == Some(at))
         },
         falling: mining::falling(&f.name),
         breakable: f.hardness >= 0.0 && !f.block_entity,
     }
 }
-fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
-    let Some(stack) = game.held() else {
-        return false;
-    };
-    // Ores need a pickaxe, wood an axe, dirt and sand a shovel; the per-block check below
-    // decides whether the held tool is right for the actual target.
-    if !["_pickaxe", "_axe", "_shovel"]
-        .iter()
-        .any(|kind| stack.item.ends_with(kind))
-    {
-        return false;
+/// The stack in slot `slot`: 0..9 the hotbar, 9..36 the main inventory.
+fn slot_stack<'a>(game: &'a Game<'_>, slot: usize) -> Option<&'a horizon_client::items::ItemStack> {
+    if slot < 9 {
+        game.stack_in(slot)
+    } else {
+        game.inventory.get(slot).and_then(Option::as_ref)
     }
+}
+/// Durability a tool keeps in reserve so that it never breaks: about half a percent of its
+/// total (10 on a netherite tool, 7 on a diamond one), at least 3 points.
+fn tool_reserve(max: u32) -> u32 {
+    (max / 200).max(3)
+}
+/// (total durability, durability left) of a stack; (0, 0) for something that does not wear.
+fn tool_wear(game: &Game<'_>, stack: &horizon_client::items::ItemStack) -> (u32, u32) {
     let mut max = game
         .res
         .items()
@@ -472,24 +504,127 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
     {
         max = (*value).max(0) as u32;
     }
-    if max > 0 && max.saturating_sub(stack.damage) <= 10 {
+    (max, max.saturating_sub(stack.damage))
+}
+/// Whether `stack` is a pickaxe, axe or shovel that still has durability to spare and, with a
+/// block given, is the right kind for it.
+fn tool_usable(
+    game: &Game<'_>,
+    stack: &horizon_client::items::ItemStack,
+    block: Option<&str>,
+    pickaxe_only: bool,
+) -> bool {
+    let kinds: &[&str] = if pickaxe_only {
+        &["_pickaxe"]
+    } else {
+        &["_pickaxe", "_axe", "_shovel"]
+    };
+    if !kinds.iter().any(|kind| stack.item.ends_with(kind)) {
         return false;
     }
-    target.is_none_or(|at| {
-        game.res
-            .items()
-            .correct_for_drops(Some(stack), &game.native_block(at))
-    })
+    let (max, left) = tool_wear(game, stack);
+    if max > 0 && left <= tool_reserve(max) {
+        return false;
+    }
+    block.is_none_or(|name| game.res.items().correct_for_drops(Some(stack), name))
+}
+/// Whether the block at `at` can be broken without a tool (dirt, sand, leaves): any hand will do.
+fn needs_no_tool(game: &Game<'_>, at: model::Pos) -> bool {
+    !game
+        .res
+        .facts()
+        .get(game.world.block(at[0], at[1], at[2]))
+        .requires_tool
+}
+/// The slot of the tool to use: among the right ones for the block (any, with no block given)
+/// anywhere in the hotbar or inventory, a fresh one (over a fifth of its durability left) comes
+/// before a worn one, the held one before the rest.
+fn tool_slot(game: &Game<'_>, target: Option<model::Pos>, pickaxe_only: bool) -> Option<usize> {
+    let block = target.map(|at| game.native_block(at));
+    let fits = |slot: &usize| {
+        slot_stack(game, *slot)
+            .is_some_and(|stack| tool_usable(game, stack, block.as_deref(), pickaxe_only))
+    };
+    let fresh = |slot: &usize| {
+        slot_stack(game, *slot).is_some_and(|stack| {
+            let (max, left) = tool_wear(game, stack);
+            max == 0 || left * 5 >= max
+        })
+    };
+    let order = || std::iter::once(game.selected).chain(0..36);
+    order()
+        .filter(|slot| fits(slot))
+        .find(|slot| fresh(slot))
+        .or_else(|| order().find(|slot| fits(slot)))
+}
+fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
+    tool_slot(game, target, false).is_some() || target.is_some_and(|at| needs_no_tool(game, at))
 }
 /// Tunnels and bridges dig stone, which only a pickaxe is meant for.
 pub(super) fn construction_tool(game: &Game<'_>) -> bool {
-    game.held().is_some_and(|s| s.item.ends_with("_pickaxe")) && mining_tool(game, None)
+    tool_slot(game, None, true).is_some()
 }
-pub(super) fn workshop_walk(game: &Game<'_>, goal: model::Pos, flat: bool) -> Result<(), String> {
+enum Tool {
+    Ready,
+    /// A swap from the inventory is on its way: try again next tick.
+    Wait,
+    Missing,
+}
+/// Puts a suitable tool in hand: the selected one if it fits, else a hotbar slot is selected, else
+/// a stack from the main inventory is swapped into the hotbar first.
+fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
+    use horizon_client::menu::Input;
+    static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+    let Some(slot) = tool_slot(game, target, false) else {
+        // No tool is the right one, but dirt, sand and the like break by hand: carry on.
+        return if target.is_some_and(|at| needs_no_tool(game, at)) {
+            Tool::Ready
+        } else {
+            Tool::Missing
+        };
+    };
+    if slot < 9 {
+        if game.selected != slot {
+            // The slot change has to reach the server before the first hit: the server works
+            // out the break time with the item it believes is in hand, and refuses a block the
+            // client broke too fast with a better tool.
+            game.selected = slot;
+            return Tool::Wait;
+        }
+        return Tool::Ready;
+    }
+    let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(600)) {
+        return Tool::Wait;
+    }
+    let spare = (0..9)
+        .filter(|h| *h != game.selected)
+        .find(|h| game.stack_in(*h).is_none())
+        .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+    let Some(spare) = spare else {
+        return Tool::Missing;
+    };
+    *last = Some(Instant::now());
+    if game.remote_menu_ops(&[(Some(slot), spare as i32, Input::Swap)]) {
+        Tool::Wait
+    } else {
+        Tool::Missing
+    }
+}
+/// Walks to `goal` for a workshop job. `flat` forbids breaking and placing blocks on the way;
+/// `level` also keeps the route on one height (no jumps), which a farm wants among its crops
+/// but not on the way to a chest on another level.
+pub(super) fn workshop_walk(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+) -> Result<(), String> {
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
         s.flat = flat;
+        s.level = level;
         s.nav.begin(goal, true);
         request(game, s)
     })
@@ -514,6 +649,9 @@ pub(super) fn farm_dig(
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
+        // Harvesting never breaks or places blocks on the way; it may climb a raised bed.
+        s.flat = true;
+        s.level = false;
         s.nav.begin(target, true);
         s.nav.status = model::Status::Mining;
         let mut j = mining::Job::excavation(target);
@@ -712,7 +850,8 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     match job.phase {
         mining::Phase::Searching => {
             s.nav.running = true;
-            if !s.pending {
+            // A search that found nothing is repeated every couple of seconds, not every tick.
+            if !s.pending && s.last_query.elapsed() >= Duration::from_millis(1500) {
                 s.nav.replan();
             }
         }
@@ -744,17 +883,96 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                     s.nav.replan();
                 }
             }
-            if now.saturating_sub(job.started_ms) > 30_000 {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
+            if job.wait.is_some() {
+                // Waiting for a tool or a free slot is not a timeout.
+                job.started_ms = now;
+            } else if now.saturating_sub(job.started_ms) > 30_000 {
+                // This block does not break: leave it and look for another.
+                job.skip();
+                s.nav.replan();
             }
         }
         mining::Phase::Confirming => {
             if now.saturating_sub(job.started_ms) > 5_000 {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
+                // No answer from the server: count it as a refusal (tried again, then left).
+                job.refuse();
+                job.started_ms = now;
+            }
+        }
+        mining::Phase::Collecting => {
+            // Pick up what the broken block dropped before the next block: walk to each
+            // item lying near it, give up on one that cannot be reached or taken.
+            let here = position;
+            let at_of = |d: &horizon_client::entities::ItemEntity| {
+                [d.position.x, d.position.y, d.position.z]
+            };
+            let origin = job.last.map_or(here, model::center);
+            let nearest = game
+                .dropped
+                .iter()
+                .filter(|d| {
+                    d.stack.count > 0
+                        && !job.ignored.contains(&d.id)
+                        && model::distance(at_of(d), origin) <= 9.0
+                })
+                .min_by(|a, b| {
+                    model::distance(at_of(a), here).total_cmp(&model::distance(at_of(b), here))
+                })
+                .map(|d| (d.id, at_of(d)));
+            let mut walk = None;
+            let mut search = false;
+            match nearest {
+                None => {
+                    job.phase = mining::Phase::Searching;
+                    job.target = None;
+                    job.collecting = None;
+                    job.arrived_ms = None;
+                    job.ignored.clear();
+                    search = true;
+                }
+                Some((id, at)) if job.collecting != Some(id) => {
+                    job.collecting = Some(id);
+                    job.started_ms = now;
+                    job.arrived_ms = None;
+                    // Within a step of it the item is picked up where the player stands.
+                    if model::distance(at, here) > 1.1 {
+                        walk = Some(model::block(at));
+                    } else {
+                        job.arrived_ms = Some(now);
+                    }
+                }
+                Some((id, _)) => {
+                    if s.nav.status == model::Status::Arrived && job.arrived_ms.is_none() {
+                        job.arrived_ms = Some(now);
+                    }
+                    let gave_up =
+                        matches!(s.nav.status, model::Status::NoPath | model::Status::Stuck)
+                            || now.saturating_sub(job.started_ms) > 8_000
+                            || job.arrived_ms.is_some_and(|t| now.saturating_sub(t) > 800);
+                    if gave_up {
+                        job.ignored.push(id);
+                        job.collecting = None;
+                        job.arrived_ms = None;
+                    }
+                }
+            }
+            if search {
+                s.nav.running = true;
+                if !s.pending {
+                    s.nav.replan();
+                }
+            }
+            if let Some(goal) = walk {
+                s.nav.begin(goal, true);
+                s.nav.precise = true;
+                cancel_pending(s);
+                if request(game, s).is_err()
+                    && let Some(job) = s.mining.as_mut()
+                {
+                    if let Some(id) = job.collecting.take() {
+                        job.ignored.push(id);
+                    }
+                }
             }
         }
         _ => {
@@ -768,7 +986,8 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let _ = position;
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
-    if physical || game.right {
+    let grace = input_grace();
+    if (physical || game.right) && !grace {
         crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
     }
@@ -776,7 +995,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         return physical;
     };
     state(|s| {
-        if physical || game.right {
+        if (physical || game.right) && !grace {
             cancel_pending(s);
             pause_state(s);
             return physical;
@@ -806,20 +1025,23 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let Some(target) = job.target else {
             return false;
         };
-        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none()
-            && !mining_tool(game, Some(target))
-        {
-            job.active = false;
-            job.phase = mining::Phase::Tool;
-            s.nav.running = false;
-            return false;
+        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() && !job.blocker {
+            match ensure_tool(game, Some(target)) {
+                Tool::Ready => {}
+                Tool::Wait => return false,
+                // No tool for this block: wait for one (the player picks one up, repairs one)
+                // rather than stopping; the job goes on by itself.
+                Tool::Missing => {
+                    job.wait = Some(mining::Wait::Tool);
+                    return false;
+                }
+            }
         }
         if !free_slot(game) {
-            job.active = false;
-            job.phase = mining::Phase::Inventory;
-            s.nav.running = false;
+            job.wait = Some(mining::Wait::Inventory);
             return false;
         }
+        job.wait = None;
         if let Some([yaw, pitch]) = s.mine_aim
             && (((game.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0).abs() > 0.5
                 || (game.pitch - pitch).abs() > 0.5)
@@ -846,17 +1068,137 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let [dx, dy, dz] = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
         game.yaw = (-dx).atan2(dz).to_degrees() as f32;
         game.pitch = (-dy).atan2(dx.hypot(dz)).to_degrees() as f32;
-        if game.entity_targeted() || game.pick().is_none_or(|hit| hit.pos != target) {
-            job.skip();
-            s.mine_aim = None;
-            s.nav.replan();
-            return false;
+        let hit = if game.entity_targeted() {
+            None
+        } else {
+            game.pick()
+        };
+        match hit {
+            Some(hit) if hit.pos == target => {}
+            // Grass or leaves are in the way: break them first, then come back to the block.
+            Some(hit)
+                if job.blockers < 6
+                    && mining::clearable(&game.native_block(hit.pos))
+                    && !job.blocker =>
+            {
+                *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = Some(hit.pos);
+                job.clear_blocker(hit.pos);
+                s.mine_aim = None;
+                return false;
+            }
+            _ => {
+                job.skip();
+                s.mine_aim = None;
+                s.nav.replan();
+                return false;
+            }
         }
         s.mine_aim = Some([game.yaw, game.pitch]);
         true
     })
 }
+/// One meal in progress: the slot to go back to, the food bar when it began, and whether the
+/// food is already in hand (the slot change needs a tick to reach the server first).
+struct Meal {
+    original: usize,
+    slot: usize,
+    level: i32,
+    since: Instant,
+    armed: bool,
+}
+static MEAL: Mutex<Option<Meal>> = Mutex::new(None);
+/// "Eat on its own" is on unless the player switched it off.
+pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
+    game.native_setting(claims::SETTINGS_ID, "auto_eat")
+        .as_deref()
+        != Some("false")
+}
+/// Eats while a task runs and the food bar is low: puts food in hand, holds the use button
+/// until the bar rises, then takes the old slot back. True while it holds the button.
+fn auto_eat(game: &mut Game<'_>) -> bool {
+    use crate::game::claim_borders_auto_eat as eat;
+    let level = game.player.as_ref().map(|p| p.health.food.food as i32);
+    let running = level.is_some()
+        && game.native_on(claims::ID)
+        && game.native_playing()
+        && auto_eat_enabled(game)
+        && control().0;
+    let mut meal = MEAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(level) = level else {
+        *meal = None;
+        return false;
+    };
+    if let Some(m) = meal.as_mut() {
+        let done = level > m.level
+            || level >= 20
+            || !running
+            || m.since.elapsed() > Duration::from_millis(eat::EAT_TIMEOUT_MS);
+        if done {
+            game.selected = m.original;
+            *meal = None;
+            return false;
+        }
+        if !m.armed {
+            m.armed = game.selected == m.slot;
+            game.selected = m.slot;
+            return true;
+        }
+        let physical = game.right;
+        state(|s| s.use_restore = Some(physical));
+        game.right = true;
+        return true;
+    }
+    if !running || !eat::hungry(level, true) {
+        return false;
+    }
+    let foods: Vec<eat::Food> = (0..36)
+        .filter_map(|slot| {
+            let stack = slot_stack(game, slot)?;
+            let (nutrition, _) = game.res.items().get(&stack.item)?.food?;
+            Some(eat::Food {
+                slot,
+                item: stack.item.to_string(),
+                nutrition: nutrition as i32,
+            })
+        })
+        .collect();
+    let Some(food) = eat::choose(&foods, level).cloned() else {
+        return false;
+    };
+    if food.slot >= 9 {
+        // Bring it into the hotbar first (one swap, rate limited), eat it next tick.
+        static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(1000)) {
+            let spare = (0..9)
+                .filter(|h| *h != game.selected)
+                .find(|h| game.stack_in(*h).is_none())
+                .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+            if let Some(spare) = spare {
+                *last = Some(Instant::now());
+                game.remote_menu_ops(&[(
+                    Some(food.slot),
+                    spare as i32,
+                    horizon_client::menu::Input::Swap,
+                )]);
+            }
+        }
+        return false;
+    }
+    *meal = Some(Meal {
+        original: game.selected,
+        slot: food.slot,
+        level,
+        since: Instant::now(),
+        armed: false,
+    });
+    game.selected = food.slot;
+    true
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
+    if auto_eat(game) {
+        return;
+    }
     let physical = game.left;
     let attack = mining_attack(game, physical);
     if attack != physical {
@@ -900,6 +1242,7 @@ pub(super) fn mining_ack(game: &Game<'_>, sequence: i32) {
             && let Some(target) = job.target
         {
             job.acknowledge(sequence, mining_block(game, job.ore, target).ore);
+            *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if !job.active {
                 s.nav.running = false;
             } else if job.phase == mining::Phase::Searching {
@@ -956,6 +1299,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .unwrap_or_default();
     let query = Query {
         flat: s.flat,
+        level: s.level,
         dig: !s.flat && construction_tool(game) && free_slot(game),
         place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
         force: s.force_dig,
@@ -1214,8 +1558,11 @@ pub(super) fn tick(game: &Game<'_>) {
                                     }
                                 }
                             } else if let Some(job) = s.mining.as_mut() {
-                                job.active = false;
-                                job.phase = mining::Phase::NoTarget;
+                                // Nothing reachable right now: keep looking (the world loads,
+                                // blocks change, the player moves) instead of stopping.
+                                job.target = None;
+                                s.nav.running = true;
+                                s.last_query = Instant::now();
                             }
                         } else if s.mining.is_none()
                             && s.nav.follow.is_none()
@@ -1258,11 +1605,10 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.pending && s.last_query.elapsed() > Duration::from_secs(5) {
             cancel_pending(s);
-            if let Some(job) = s.mining.as_mut() {
-                job.active = false;
-                job.phase = mining::Phase::Timeout;
-                s.nav.running = false;
-                s.nav.status = model::Status::NoPath;
+            if s.mining.is_some() {
+                // The planner was slow: ask again, do not stop the job.
+                s.last_query = Instant::now();
+                s.nav.replan();
             } else if s.nav.running {
                 // A delayed worker response is not proof that the destination is unreachable.
                 // Retry a bounded number of times without reusing the stale snapshot.
@@ -1392,131 +1738,6 @@ enum Flow {
     Drop,
 }
 /// Failed routes and routes started since the player last gave the order.
-// ---------------------------------------------------------------------------------------
-// horizon-baritone: when that mod is on, the tabs it can do are handed to it.
-
-/// The last command handed to horizon-baritone, while that task is the current one.
-static BRIDGED: Mutex<Option<String>> = Mutex::new(None);
-static BRIDGE_PAUSED: AtomicBool = AtomicBool::new(false);
-fn bridged() -> Option<String> {
-    BRIDGED.lock().unwrap_or_else(|e| e.into_inner()).clone()
-}
-fn bridge_clear() {
-    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    BRIDGE_PAUSED.store(false, Ordering::Relaxed);
-}
-fn not_accepted() -> String {
-    language()
-        .text(
-            "Baritone не принял команду",
-            "Baritone did not accept the command",
-        )
-        .into()
-}
-/// Runs `/baritone <line>` through Horizon's native command hook. True only when the
-/// horizon-baritone mod ran it; otherwise nothing leaves the client.
-fn baritone_run(game: &mut Game<'_>, line: &str) -> bool {
-    if !game.native_on(bridge::MOD_ID) {
-        return false;
-    }
-    let mut ran = false;
-    game.native_command(&format!("baritone {line}"), &mut ran);
-    ran
-}
-/// The Baritone command for a tab's task, or `None` for what the port has no command for
-/// (bridge, drain, schematic rotation, floor filling, crop choice is ignored by `farm`).
-fn baritone_line(game: &mut Game<'_>, goal: Goal, running: bool) -> Option<String> {
-    let place = |at: model::Pos| {
-        if running {
-            bridge::goto(at)
-        } else {
-            bridge::goal(at)
-        }
-    };
-    match goal {
-        Goal::Coordinates(at) => Some(place(at)),
-        Goal::Waypoint(id) => {
-            let player = game.native_player()?;
-            let waypoint = crate::game::claim_borders_client::own_waypoints()
-                .into_iter()
-                .find(|w| w.id == id && w.dimension == player.dimension)?;
-            Some(place(model::block(waypoint.position)))
-        }
-        Goal::Follow(uuid) if running => crate::game::claim_borders_client::online_name(game, uuid)
-            .and_then(|name| bridge::follow(&name)),
-        Goal::Mine { targets, limit, .. } if running => {
-            let blocks: Vec<&str> = (0..mining::COUNT as u8)
-                .filter(|i| targets & (1 << i) != 0)
-                .filter_map(mining::target)
-                .flat_map(|(_, _, blocks)| blocks.iter().copied())
-                .collect();
-            bridge::mine(limit, &blocks)
-        }
-        Goal::Construct(c)
-            if running
-                && c.kind == crate::game::claim_borders_construction::Kind::Tunnel
-                && !c.fill_floor =>
-        {
-            Some(bridge::tunnel(c.height, c.width, c.length))
-        }
-        Goal::Farm(c) if running => Some(bridge::farm(c.radius)),
-        _ => None,
-    }
-}
-/// Starts a tab's task in horizon-baritone. `None` when that mod is off or has no command for
-/// the task, so the built-in driver runs it.
-pub(super) fn start_baritone(
-    game: &mut Game<'_>,
-    goal: Goal,
-    running: bool,
-) -> Option<Result<(), String>> {
-    if !game.native_on(bridge::MOD_ID) || !allowed(game) {
-        return None;
-    }
-    let line = baritone_line(game, goal, running)?;
-    // The built-in drivers stand down so two controllers never steer at once.
-    reset();
-    if !baritone_run(game, &line) {
-        return Some(Err(not_accepted()));
-    }
-    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
-    Some(Ok(()))
-}
-/// Builds a schematic with horizon-baritone: the file is copied into its schematics folder
-/// under a one-word name and `build <name> <x> <y> <z>` is run. `None` when that mod is off,
-/// for a preview, or for a rotation, which Baritone's `build` has no argument for.
-pub(super) fn build_baritone(
-    game: &mut Game<'_>,
-    filename: &str,
-    origin: model::Pos,
-    rotation: u8,
-    running: bool,
-) -> Option<Result<(), String>> {
-    if !running || rotation != 0 || !game.native_on(bridge::MOD_ID) || !allowed(game) {
-        return None;
-    }
-    let source = crate::game::claim_borders_workshop_view::folder(game).join(filename);
-    let name = bridge::schematic_name(filename);
-    let line = bridge::build(&name, origin)?;
-    // Baritone reads `<mod data>/baritone/schematics`, beside this mod's own data folder.
-    let folder = game
-        .native_data_dir(claims::SETTINGS_ID)
-        .parent()?
-        .join(bridge::MOD_ID)
-        .join("schematics");
-    // One small file on a click: the import itself stays on Baritone's side.
-    if let Err(error) =
-        std::fs::create_dir_all(&folder).and_then(|()| std::fs::copy(&source, folder.join(&name)))
-    {
-        return Some(Err(format!("{filename}: {error}")));
-    }
-    reset();
-    if !baritone_run(game, &line) {
-        return Some(Err(not_accepted()));
-    }
-    *BRIDGED.lock().unwrap_or_else(|e| e.into_inner()) = Some(line);
-    Some(Ok(()))
-}
 static ASSIST_FAILS: AtomicU64 = AtomicU64::new(0);
 static ASSIST_ROUTES: AtomicU64 = AtomicU64::new(0);
 const ASSIST_MAX_FAILS: u64 = 3;
@@ -1908,10 +2129,12 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
     }
     let block = game.world.block(at[0], at[1], at[2]);
     let f = game.res.facts().get(block);
-    model::classify(
+    model::classify_shape(
         &f.name,
         f.full_collision,
         f.fluid_level > 0 || f.waterlogged,
+        &f.outline,
+        model::Cell::Air,
     )
 }
 pub(super) fn movement(
@@ -1922,6 +2145,10 @@ pub(super) fn movement(
     sneak: &mut bool,
 ) {
     crate::game::claim_borders_workshop_view::manual_movement(*forward, *strafe, *jump, *sneak);
+    // The storage window is open on purpose: nothing here may pause the trip.
+    if crate::game::claim_borders_workshop_view::storing() {
+        return;
+    }
     if crate::game::claim_borders_construction_view::movement(game, forward, strafe, jump, sneak) {
         return;
     }
@@ -1953,10 +2180,7 @@ pub(super) fn movement(
         if !s.nav.running {
             return;
         }
-        if *forward != 0.0
-            || *strafe != 0.0
-            || *jump
-            || *sneak
+        if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !input_grace())
             || scope(game).as_deref() != Some(s.scope.as_str())
         {
             cancel_pending(s);
@@ -1986,25 +2210,13 @@ pub(super) fn movement(
         }
         *forward = input.forward;
         *strafe = input.strafe;
-        *jump = input.jump;
+        // Farm routes are level: nothing there is ever jumped onto (jumping onto farmland
+        // tramples it).
+        *jump = input.jump && !s.level;
     });
 }
 
 pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
-    if let Some(line) = bridged() {
-        let paused = BRIDGE_PAUSED.load(Ordering::Relaxed);
-        return (
-            format!(
-                "Baritone · {line}{}",
-                if paused {
-                    language().text(" · пауза", " · paused")
-                } else {
-                    ""
-                }
-            ),
-            paused,
-        );
-    }
     if let Some(snapshot) = crate::game::claim_borders_workshop_view::snapshot() {
         return snapshot;
     }
@@ -2017,18 +2229,31 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     let language = language();
     state(|s| {
         if let Some(job) = s.mining.as_ref() {
-            let text = if !job.active
+            let text = if let Some(wait) = job.wait.filter(|_| job.active) {
+                match wait {
+                    mining::Wait::Tool => language.text(
+                        "Простой: нужен подходящий инструмент",
+                        "Idle: a suitable tool is needed",
+                    ),
+                    mining::Wait::Inventory => language.text(
+                        "Простой: освободите слот в инвентаре",
+                        "Idle: free an inventory slot",
+                    ),
+                }
+            } else if !job.active
                 && matches!(
                     job.phase,
                     mining::Phase::Searching
                         | mining::Phase::Approaching
                         | mining::Phase::Breaking
                         | mining::Phase::Confirming
+                        | mining::Phase::Collecting
                 )
                 && !matches!(
                     s.nav.status,
                     model::Status::Preview | model::Status::Planning
-                ) {
+                )
+            {
                 language.text("Добыча на паузе", "Mining paused")
             } else {
                 match job.phase {
@@ -2040,6 +2265,9 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                     mining::Phase::Breaking => language.text("Добыча", "Mining"),
                     mining::Phase::Confirming => {
                         language.text("Ожидание сервера", "Waiting for server")
+                    }
+                    mining::Phase::Collecting => {
+                        language.text("Подбор предметов", "Collecting drops")
                     }
                     mining::Phase::Done => language.text("Добыча завершена", "Mining complete"),
                     mining::Phase::NoTarget => {
@@ -2059,7 +2287,11 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                 }
             };
             return (
-                format!("{text} · {}/{}", job.confirmed, job.limit),
+                if job.limit == 0 {
+                    format!("{text} · {}", job.confirmed)
+                } else {
+                    format!("{text} · {}/{}", job.confirmed, job.limit)
+                },
                 !job.active,
             );
         }

@@ -10,27 +10,26 @@ Bindings are ignored while a screen or text editor is open, the window is unfocu
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
 
-## With horizon-baritone
+### Eating
 
-[horizon-baritone](https://github.com/luhnox/horizon-baritone) is a separate native mod, a Rust port of Baritone 1.21.4 (LGPL-3.0). Install it in the launcher's native mods next to DraimHorizon; both are built into the same Horizon Nightly, so use the Nightly both support. When it is on, the Baritone tabs hand their task to it instead of the built-in drivers:
+While a task runs and the food bar is at 7 shanks or below, the mod eats on its own: it takes the best fitting safe food from the hotbar or inventory (never rotten flesh, spider eyes, raw chicken, golden apples or similar), holds the use button until the bar rises and puts the previous slot back. The **Eat** switch next to the status line turns it off; it is on by default.
 
-| Tab | Baritone command |
-| --- | --- |
-| Navigation (coordinates or waypoint) | `goto x y z`; the preview key sets `goal x y z` |
-| Navigation (player) | `follow player <name>` |
-| Mining | `mine <limit> <blocks of every selected target>` |
-| Tunnel (without Floor) | `tunnel <height> <width> <length>` in the facing direction |
-| Farm | `farm <radius>` (Baritone farms every crop it knows; the crop choice is ignored) |
-| Schematics (rotation 0°) | the file is copied to Baritone's `schematics` folder, then `build <file> x y z` |
+### Farm storage
 
-Pause sends `pause`, Start after a pause sends `resume`, Stop sends `cancel`. The status line shows `Baritone · <command>`. Bridge, Drain, Tunnel with Floor and rotated schematics keep the built-in drivers. Commands go through Horizon's native command hook as `/baritone <line>`: if no mod runs them, nothing is sent to the server and the tab reports that Baritone did not accept the command. Baritone's own settings (`#set ...`, for example `allowPlace`, `allowBreak`, `replantCrops`) apply.
+On the Farm tab, pick the crops from the icons (several at once; one always stays selected). With no seeds on hand and none in the storage the farm idles and waits for the crops to ripen. To set the storage, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
+
+## Idle instead of stopping
+
+A job does not stop because something is missing or went wrong. It stays up, shows "Idle: <reason>" in the status line and looks again after a few seconds: Mining waits for a suitable tool or a free slot, Tunnel and Bridge wait 3 s and try again, Drain waits for sand or gravel and for a route, Farm waits for ripe crops, light, seeds or a route, schematics for blocks or a route. Only your own stop key ends a job. A progress watchdog moves a job that does nothing for 20 s on to another target.
 
 ## Drain
 
-Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry building blocks (hotbar, off hand or inventory) and press the start key.
+Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry sand, red sand or gravel (hotbar, off hand or inventory) and press the start key. Drain places only those blocks, never an ordinary block that would be left standing in the water.
 
-- **With sand or gravel** (used first when you have them) any depth works. The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a bridge you stand on. The block sinks and fills the column from the bottom; the bot repeats it until the column reaches the surface, then moves on along the new surface. Each drop waits about 1.5 s for the block to sink.
-- **With other blocks** (stone, dirt, …) only cells resting on something solid are filled, bottom-up, so the floor must be within reach (about 4 blocks below you). For deeper water the task stops and asks for sand or gravel.
+- The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a pier you stand on. The block sinks and fills the column from the bottom; the bot stays on that column, dropping the next block when the last one has sunk, until the column reaches the surface, and only then moves on to the next column. Each drop waits under a second for the block to sink.
+- The wall of the shore facing the water cannot be clicked from inland, so the bot walks to the edge of the shore block and sneaks over it, like when bridging, before dropping the block. If it falls into the water, it swims back to dry ground and goes on.
+
+**Patterns.** The **Pattern** button switches between a fill (the default), lines and a grid, and **Spacing** sets the distance between the lines (3 to 8). Lines run along the x axis every N blocks, starting with the row you stand on; the grid adds columns, so the water is cut into squares. A pattern grows along its own blocks: the bot walks out along the line it has laid, sneaking, and places the next column from its end.
 
 Stand on a block next to the water, not in it. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
 

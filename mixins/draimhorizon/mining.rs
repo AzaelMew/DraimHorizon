@@ -144,6 +144,36 @@ pub fn target(index: u8) -> Option<(&'static str, &'static str, &'static [&'stat
         .get(index.checked_sub(ORES.len())?)
         .map(|t| (t.label, t.label_en, t.blocks))
 }
+/// The item whose icon stands for a mining target: the ores in `ORES` order, then `EXTRA`.
+const ICONS: [&str; COUNT] = [
+    "minecraft:diamond",
+    "minecraft:ancient_debris",
+    "minecraft:emerald",
+    "minecraft:gold_ingot",
+    "minecraft:iron_ingot",
+    "minecraft:copper_ingot",
+    "minecraft:redstone",
+    "minecraft:lapis_lazuli",
+    "minecraft:coal",
+    "minecraft:quartz",
+    "minecraft:stone",
+    "minecraft:cobblestone",
+    "minecraft:dirt",
+    "minecraft:sand",
+    "minecraft:gravel",
+    "minecraft:clay",
+    "minecraft:oak_log",
+    "minecraft:obsidian",
+    "minecraft:glowstone",
+    "minecraft:netherrack",
+    "minecraft:sandstone",
+    "minecraft:end_stone",
+    "minecraft:pumpkin",
+];
+/// The icon item of a mining target index.
+pub fn icon(index: u8) -> Option<&'static str> {
+    ICONS.get(usize::from(index)).copied()
+}
 /// Every target index as a bit.
 pub const ALL: u32 = (1 << COUNT) - 1;
 /// A job that collects whichever of the selected targets is nearest.
@@ -164,6 +194,38 @@ pub fn matches(ore: u8, name: &str) -> bool {
         });
     }
     target(ore).is_some_and(|(_, _, blocks)| blocks.contains(&name))
+}
+/// Plants and leaves that stand between the player and the block to mine and are cleared out
+/// of the way (they break at once and are of no value).
+pub fn clearable(name: &str) -> bool {
+    let n = name.strip_prefix("minecraft:").unwrap_or(name);
+    n.ends_with("_leaves")
+        || n.ends_with("grass")
+        || n.ends_with("fern")
+        || n.ends_with("sapling")
+        || n.ends_with("tulip")
+        || n.ends_with("_roots")
+        || matches!(
+            n,
+            "dead_bush"
+                | "vine"
+                | "snow"
+                | "leaf_litter"
+                | "poppy"
+                | "dandelion"
+                | "blue_orchid"
+                | "allium"
+                | "azure_bluet"
+                | "oxeye_daisy"
+                | "cornflower"
+                | "lily_of_the_valley"
+                | "sunflower"
+                | "lilac"
+                | "rose_bush"
+                | "peony"
+                | "pink_petals"
+                | "wildflowers"
+        )
 }
 pub fn falling(name: &str) -> bool {
     matches!(
@@ -233,7 +295,8 @@ pub fn plan(
     candidates.truncate(16);
     for (_, target) in candidates {
         for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            for y in [0, -1, 1] {
+            // Standing below the block reaches up a trunk: logs several blocks above the ground.
+            for y in [0, -1, 1, -2, -3, -4, -5] {
                 if canceled() || began.elapsed() > Duration::from_millis(500) {
                     return None;
                 }
@@ -327,6 +390,8 @@ pub enum Phase {
     Approaching,
     Breaking,
     Confirming,
+    /// Walking to the items a broken block dropped, so they are picked up before moving on.
+    Collecting,
     Done,
     NoTarget,
     Refused,
@@ -334,9 +399,18 @@ pub enum Phase {
     Inventory,
     Timeout,
 }
+/// Why a mining job stands idle instead of stopping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wait {
+    /// No suitable tool with durability to spare is carried.
+    Tool,
+    /// The inventory has no free slot for the drops.
+    Inventory,
+}
 #[derive(Clone, Debug)]
 pub struct Job {
     pub ore: u8,
+    /// Blocks to mine; 0 mines until stopped.
     pub limit: u16,
     pub confirmed: u16,
     pub active: bool,
@@ -344,6 +418,21 @@ pub struct Job {
     pub target: Option<nav::Pos>,
     pub excluded: Vec<nav::Pos>,
     pub started_ms: u64,
+    /// The block that was broken last: its drops are collected around it.
+    pub last: Option<nav::Pos>,
+    /// The current target is something in the way of the real one (grass, leaves): breaking it
+    /// is not counted, and the search starts again afterwards.
+    pub blocker: bool,
+    /// How many times in a row the server refused the current block.
+    pub refusals: u8,
+    /// What the job is waiting for (shown as idle, not stopped).
+    pub wait: Option<Wait>,
+    /// How many such things were cleared for the current block.
+    pub blockers: u8,
+    /// The dropped item being walked to, items given up on, and when the player got there.
+    pub collecting: Option<u32>,
+    pub ignored: Vec<u32>,
+    pub arrived_ms: Option<u64>,
     start_sequence: Option<i32>,
     await_sequence: Option<i32>,
 }
@@ -356,7 +445,7 @@ impl Job {
         job
     }
     pub fn new(ore: u8, limit: u16) -> Option<Self> {
-        if (usize::from(ore) >= COUNT && ore != ANY) || !(1..=64).contains(&limit) {
+        if usize::from(ore) >= COUNT && ore != ANY {
             return None;
         }
         Some(Self {
@@ -368,6 +457,14 @@ impl Job {
             target: None,
             excluded: Vec::new(),
             started_ms: 0,
+            last: None,
+            blocker: false,
+            refusals: 0,
+            wait: None,
+            blockers: 0,
+            collecting: None,
+            ignored: Vec::new(),
+            arrived_ms: None,
             start_sequence: None,
             await_sequence: None,
         })
@@ -378,7 +475,18 @@ impl Job {
         self.start_sequence = None;
         self.await_sequence = None;
     }
+    /// Aims at something that blocks the way to the real target; the real one is looked up again
+    /// once it is out of the way.
+    pub fn clear_blocker(&mut self, at: nav::Pos) {
+        self.target = Some(at);
+        self.blocker = true;
+        self.blockers += 1;
+        self.phase = Phase::Breaking;
+        self.start_sequence = None;
+        self.await_sequence = None;
+    }
     pub fn skip(&mut self) {
+        self.blocker = false;
         if let Some(target) = self.target.take()
             && !self.excluded.contains(&target)
         {
@@ -411,6 +519,24 @@ impl Job {
             self.phase = Phase::Confirming;
         }
     }
+    /// The server did not let the block go (or never answered): break it again, up to three
+    /// times in a row, then leave an ore block alone; a dig route cannot go round it and stops.
+    pub fn refuse(&mut self) {
+        self.refusals += 1;
+        self.start_sequence = None;
+        self.await_sequence = None;
+        if self.refusals < 3 {
+            self.phase = Phase::Breaking;
+        } else {
+            self.refusals = 0;
+            if self.ore == u8::MAX {
+                self.active = false;
+                self.phase = Phase::Refused;
+            } else {
+                self.skip();
+            }
+        }
+    }
     pub fn acknowledge(&mut self, sequence: i32, still_ore: bool) {
         let awaited = if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
             self.await_sequence
@@ -424,24 +550,39 @@ impl Job {
         }
         if still_ore {
             if matches!(self.phase, Phase::Confirming | Phase::Timeout) {
-                self.active = false;
-                self.phase = Phase::Refused;
+                self.refuse();
             }
             return;
         }
+        self.refusals = 0;
+        if self.blocker {
+            // Cleared: not a mined block. Look for the real target again.
+            self.blocker = false;
+            self.target = None;
+            self.start_sequence = None;
+            self.await_sequence = None;
+            self.phase = Phase::Searching;
+            return;
+        }
+        self.blockers = 0;
         self.confirmed += 1;
+        self.last = self.target;
         self.target = None;
         self.start_sequence = None;
         self.await_sequence = None;
-        self.phase = if self.confirmed >= self.limit {
+        self.collecting = None;
+        self.arrived_ms = None;
+        self.phase = if self.limit > 0 && self.confirmed >= self.limit {
             self.active = false;
             Phase::Done
-        } else {
+        } else if self.ore == u8::MAX {
             Phase::Searching
+        } else {
+            Phase::Collecting
         };
     }
     pub fn resume(&mut self) {
-        if self.confirmed >= self.limit {
+        if self.limit > 0 && self.confirmed >= self.limit {
             return;
         }
         self.active = true;
@@ -506,9 +647,26 @@ mod tests {
         job.sent([3, 0, 0], 0, 7);
         job.sent([3, 0, 0], 3, 8);
         job.acknowledge(8, true);
-        assert_eq!(job.phase, Phase::Refused);
-        assert!(!job.active);
+        // A first refusal is tried again; three in a row leave an ore block alone.
+        assert_eq!(
+            (job.phase, job.active, job.refusals),
+            (Phase::Breaking, true, 1)
+        );
+        for n in 0..2 {
+            job.sent([3, 0, 0], 3, 20 + n);
+            job.acknowledge(20 + n, true);
+        }
+        assert_eq!(job.phase, Phase::Searching);
+        assert!(job.active && job.excluded.contains(&[3, 0, 0]));
         assert_eq!(job.confirmed, 1);
+        // A dig route (a tunnel) stops after three refusals: it cannot go round the block.
+        let mut dig = Job::excavation([4, 0, 0]);
+        for n in 0..3 {
+            dig.sent([4, 0, 0], 3, 30 + n);
+            dig.acknowledge(30 + n, true);
+        }
+        assert_eq!(dig.phase, Phase::Refused);
+        assert!(!dig.active);
     }
     #[test]
     fn instant_breaks_and_paused_inflight_confirmations_preserve_the_limit() {
@@ -524,8 +682,8 @@ mod tests {
         job.resume();
         assert!(!job.active);
         assert!(Job::new(COUNT as u8, 1).is_none());
-        assert!(Job::new(0, 0).is_none());
-        assert!(Job::new(0, 65).is_none());
+        // No limit is allowed now: 0 mines until stopped.
+        assert!(Job::new(0, 0).is_some());
         let mut late = Job::excavation([1, 0, 0]);
         late.sent([1, 0, 0], 0, 5);
         late.sent([1, 0, 0], 3, 6);
@@ -638,5 +796,65 @@ mod tests {
                 block(p)
             }
         ));
+    }
+    #[test]
+    fn every_target_has_an_icon_item() {
+        for i in 0..COUNT as u8 {
+            let item = icon(i).unwrap();
+            assert!(item.starts_with("minecraft:"), "{i}: {item}");
+            // The icon is an item that the target actually yields or is made of.
+            let (_, _, blocks) = target(i).unwrap();
+            assert!(!blocks.is_empty());
+        }
+        assert_eq!(icon(COUNT as u8), None);
+    }
+    #[test]
+    fn an_unlimited_job_collects_drops_after_each_block_and_never_finishes() {
+        let mut job = Job::new(0, 0).unwrap();
+        for n in 1..=100u16 {
+            job.select([2, 0, 0]);
+            job.phase = Phase::Breaking;
+            job.sent([2, 0, 0], 0, i32::from(n));
+            job.sent([2, 0, 0], 3, i32::from(n));
+            job.acknowledge(i32::from(n), false);
+            assert_eq!(job.confirmed, n);
+            assert!(job.active);
+            // The drops are picked up before the next block is looked for.
+            assert_eq!(job.phase, Phase::Collecting);
+            assert_eq!(job.last, Some([2, 0, 0]));
+            job.phase = Phase::Searching;
+        }
+    }
+    #[test]
+    fn grass_and_leaves_in_the_way_are_cleared_without_counting() {
+        assert!(clearable("minecraft:short_grass") && clearable("minecraft:oak_leaves"));
+        assert!(clearable("minecraft:fern") && clearable("minecraft:poppy"));
+        assert!(!clearable("minecraft:grass_block") && !clearable("minecraft:oak_log"));
+        assert!(!clearable("minecraft:torch") && !clearable("minecraft:wheat"));
+        let mut job = Job::new(ANY, 0).unwrap();
+        job.select([4, 0, 0]);
+        job.phase = Phase::Breaking;
+        job.clear_blocker([3, 0, 0]);
+        assert_eq!(
+            (job.blockers, job.target, job.blocker),
+            (1, Some([3, 0, 0]), true)
+        );
+        job.sent([3, 0, 0], 0, 1);
+        job.sent([3, 0, 0], 3, 2);
+        job.acknowledge(2, false);
+        // Nothing was mined; the search starts over for the real target.
+        assert_eq!(
+            (job.confirmed, job.phase, job.target),
+            (0, Phase::Searching, None)
+        );
+        assert!(!job.blocker && job.active);
+        // A real block resets the count of blockers.
+        job.blockers = 3;
+        job.select([4, 0, 0]);
+        job.phase = Phase::Breaking;
+        job.sent([4, 0, 0], 0, 3);
+        job.sent([4, 0, 0], 3, 4);
+        job.acknowledge(4, false);
+        assert_eq!((job.confirmed, job.blockers), (1, 0));
     }
 }

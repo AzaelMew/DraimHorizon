@@ -128,6 +128,10 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    /// Eating on its own during a task (on by default).
+    pub auto_eat: bool,
+    /// The farm's storage container, when one is set.
+    pub farm_storage: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -225,6 +229,9 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    SetAutoEat(bool),
+    /// Take the container under the crosshair as the farm's storage, or clear it.
+    FarmStorage,
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -319,6 +326,8 @@ impl std::fmt::Debug for Action {
                 .field("running", running)
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
+            Self::FarmStorage => f.write_str("FarmStorage"),
+            Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -483,7 +492,16 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
-    FarmCrop,
+    /// Sets (or, aiming elsewhere, clears) the farm's storage container.
+    FarmStorage,
+    /// Switches eating on its own while a task runs.
+    AutoEat,
+    /// Cycles what Drain builds: a fill, lines or a grid.
+    DrainPattern,
+    /// Cycles the distance between the lines of a pattern.
+    DrainSpacing,
+    /// An icon tile that picks the crop to farm.
+    FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
     FarmLimit,
     FarmReplant,
@@ -501,7 +519,6 @@ pub enum Control {
     BaritoneMode(BaritoneMode),
     MiningTarget(u8),
     MiningPage,
-    MiningLimit,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
@@ -620,11 +637,14 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
-    pub farm_crop: super::claim_borders_farming::Crop,
+    /// Selected crops, one bit each (`Crop::bit`).
+    pub farm_crops: u8,
     pub farm_radius: u8,
     pub farm_limit: u16,
     pub farm_replant: bool,
     pub drain_radius: u8,
+    pub drain_pattern: super::claim_borders_draining::Pattern,
+    pub drain_spacing: u8,
     pub schematic_file: Option<String>,
     pub schematic_origin: String,
     pub schematic_rotation: u8,
@@ -637,7 +657,6 @@ pub struct Menu {
     /// Selected mining targets, one bit per `mining::target` index.
     pub mining_targets: u32,
     pub mining_page: usize,
-    pub mining_limit: u16,
     pub navigation_player: Option<u128>,
     pub navigation_x: String,
     pub navigation_y: String,
@@ -682,11 +701,13 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
-            farm_crop: super::claim_borders_farming::Crop::Wheat,
+            farm_crops: super::claim_borders_farming::Crop::Wheat.bit(),
             farm_radius: 6,
             farm_limit: 16,
             farm_replant: true,
             drain_radius: 6,
+            drain_pattern: super::claim_borders_draining::Pattern::Fill,
+            drain_spacing: 4,
             schematic_file: None,
             schematic_origin: String::new(),
             schematic_rotation: 0,
@@ -703,7 +724,6 @@ impl Default for Menu {
             baritone_mode: BaritoneMode::Navigation,
             mining_targets: 1,
             mining_page: 0,
-            mining_limit: 16,
             construct_direction: super::claim_borders_construction::Direction::North,
             construct_length: 16,
             construct_width: 1,
@@ -777,11 +797,13 @@ impl Menu {
     /// Carry the Baritone settings over to a fresh menu: the action keys run the
     /// last settings shown here, so reopening or resetting the menu must not lose them.
     pub fn keep_baritone(&mut self, from: &Menu) {
-        self.farm_crop = from.farm_crop;
+        self.farm_crops = from.farm_crops;
         self.farm_radius = from.farm_radius;
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
         self.drain_radius = from.drain_radius;
+        self.drain_pattern = from.drain_pattern;
+        self.drain_spacing = from.drain_spacing;
         self.schematic_file = from.schematic_file.clone();
         self.schematic_origin = from.schematic_origin.clone();
         self.schematic_rotation = from.schematic_rotation;
@@ -793,7 +815,6 @@ impl Menu {
         self.baritone_mode = from.baritone_mode;
         self.mining_targets = from.mining_targets;
         self.mining_page = from.mining_page;
-        self.mining_limit = from.mining_limit;
         self.navigation_player = from.navigation_player;
         self.navigation_waypoint = from.navigation_waypoint;
         self.navigation_x = from.navigation_x.clone();
@@ -875,7 +896,8 @@ impl Menu {
                     goal: Goal::Mine {
                         ore,
                         targets,
-                        limit: self.mining_limit,
+                        // Mining has no block limit: start and stop with the action keys.
+                        limit: 0,
                     },
                     running,
                 })
@@ -890,7 +912,7 @@ impl Menu {
                             construction::Kind::Tunnel
                         },
                         direction: self.construct_direction,
-                        width: if bridge { 1 } else { self.construct_width },
+                        width: self.construct_width,
                         height: if bridge { 2 } else { self.construct_height },
                         length: self.construct_length,
                         fill_floor: bridge || self.construct_floor,
@@ -900,7 +922,7 @@ impl Menu {
             }
             BaritoneMode::Farm => Ok(Action::Navigate {
                 goal: Goal::Farm(super::claim_borders_farming::Config {
-                    crop: self.farm_crop,
+                    crops: self.farm_crops,
                     radius: self.farm_radius,
                     limit: self.farm_limit,
                     replant: self.farm_replant,
@@ -910,6 +932,8 @@ impl Menu {
             BaritoneMode::Drain => Ok(Action::Navigate {
                 goal: Goal::Drain(super::claim_borders_draining::Config {
                     radius: self.drain_radius,
+                    pattern: self.drain_pattern,
+                    spacing: self.drain_spacing,
                 }),
                 running,
             }),
@@ -2635,24 +2659,6 @@ impl Menu {
                 let rows: Vec<(String, Control)> = if farm {
                     vec![
                         (
-                            match self.farm_crop {
-                                super::claim_borders_farming::Crop::Wheat => {
-                                    self.language.text("Пшеница", "Wheat")
-                                }
-                                super::claim_borders_farming::Crop::Carrots => {
-                                    self.language.text("Морковь", "Carrots")
-                                }
-                                super::claim_borders_farming::Crop::Potatoes => {
-                                    self.language.text("Картофель", "Potatoes")
-                                }
-                                super::claim_borders_farming::Crop::Beetroot => {
-                                    self.language.text("Свёкла", "Beetroot")
-                                }
-                            }
-                            .into(),
-                            Control::FarmCrop,
-                        ),
-                        (
                             localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
                             Control::FarmRadius,
                         ),
@@ -2664,6 +2670,23 @@ impl Menu {
                                 self.farm_limit
                             ),
                             Control::FarmLimit,
+                        ),
+                        (
+                            match model.farm_storage {
+                                Some([x, y, z]) => localized!(
+                                    self.language,
+                                    "Склад: {} {} {}",
+                                    "Storage: {} {} {}",
+                                    x,
+                                    y,
+                                    z
+                                ),
+                                None => self
+                                    .language
+                                    .text("Склад: не задан", "Storage: not set")
+                                    .into(),
+                            },
+                            Control::FarmStorage,
                         ),
                         (
                             localized!(
@@ -2701,11 +2724,32 @@ impl Menu {
                         ),
                     ]
                 };
+                // The crop is picked from item icons (name as the tooltip), not by cycling.
+                let mut below = 0.0;
+                if farm {
+                    use super::claim_borders_farming::Crop;
+                    let tile = 22.0;
+                    for (i, crop) in Crop::ALL.into_iter().enumerate() {
+                        let name = match crop {
+                            Crop::Wheat => self.language.text("Пшеница", "Wheat"),
+                            Crop::Carrots => self.language.text("Морковь", "Carrots"),
+                            Crop::Potatoes => self.language.text("Картофель", "Potatoes"),
+                            Crop::Beetroot => self.language.text("Свёкла", "Beetroot"),
+                        };
+                        out.push(widget(
+                            [x + i as f32 * (tile + 2.0), 100.0, tile, tile],
+                            name,
+                            Some(Control::FarmCropPick(crop)),
+                            self.farm_crops & crop.bit() != 0,
+                        ));
+                    }
+                    below = tile + 2.0;
+                }
                 for (i, (label, c)) in rows.into_iter().enumerate() {
                     out.push(widget(
                         [
                             x + (i % 2) as f32 * (tab_width + 4.0),
-                            100.0 + (i / 2) as f32 * step,
+                            100.0 + below + (i / 2) as f32 * step,
                             tab_width,
                             h,
                         ],
@@ -2787,8 +2831,20 @@ impl Menu {
                         ));
                     }
                 } else {
+                    // A bridge has a length and a width, like a tunnel; its height is fixed.
                     out.push(widget(
                         [x, 100.0 + step, w, h],
+                        localized!(
+                            self.language,
+                            "Ширина: {}",
+                            "Width: {}",
+                            self.construct_width
+                        ),
+                        Some(Control::ConstructWidth),
+                        false,
+                    ));
+                    out.push(widget(
+                        [x, 100.0 + 2.0 * step, w, h],
                         self.language.text(
                             "Блоки: хотбар, вторая рука или инвентарь",
                             "Blocks: hotbar, off hand or inventory",
@@ -2798,18 +2854,47 @@ impl Menu {
                     ));
                 }
             } else if self.baritone_mode == BaritoneMode::Drain {
+                use super::claim_borders_draining::Pattern;
                 out.push(widget(
-                    [x, 100.0, w, h],
+                    [x, 100.0, tab_width, h],
                     localized!(self.language, "Радиус: {}", "Radius: {}", self.drain_radius),
                     Some(Control::DrainRadius),
                     false,
                 ));
                 out.push(widget(
-                    [x, 100.0 + step, w, 14.0],
-                    self.language.text(
-                        "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
-                        "Fills water from the bottom up with inventory blocks (sand too)",
-                    ),
+                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    match self.drain_pattern {
+                        Pattern::Fill => self.language.text("Узор: заливка", "Pattern: fill"),
+                        Pattern::Lines => self.language.text("Узор: линии", "Pattern: lines"),
+                        Pattern::Grid => self.language.text("Узор: сетка", "Pattern: grid"),
+                    },
+                    Some(Control::DrainPattern),
+                    self.drain_pattern != Pattern::Fill,
+                ));
+                if self.drain_pattern != Pattern::Fill {
+                    out.push(widget(
+                        [x, 100.0 + step, tab_width, h],
+                        localized!(self.language, "Шаг: {}", "Spacing: {}", self.drain_spacing),
+                        Some(Control::DrainSpacing),
+                        false,
+                    ));
+                }
+                out.push(widget(
+                    [x, 100.0 + 2.0 * step, w, 14.0],
+                    match self.drain_pattern {
+                        Pattern::Fill => self.language.text(
+                            "Засыпает воду песком и гравием, столбик за столбиком",
+                            "Fills water with sand and gravel, one column after another",
+                        ),
+                        Pattern::Lines => self.language.text(
+                            "Линии из песка и гравия; идёт по уже уложенному",
+                            "Lines of sand and gravel; walks out along what is laid",
+                        ),
+                        Pattern::Grid => self.language.text(
+                            "Сетка из песка и гравия: вода делится на квадраты",
+                            "A grid of sand and gravel: the water is cut into squares",
+                        ),
+                    },
                     None,
                     false,
                 ));
@@ -2817,20 +2902,15 @@ impl Menu {
                 // A chip per target, toggled like the structure filters on the map.
                 use super::claim_borders_mining as mining;
                 let top = 100.0 + step;
-                let cols = 3;
-                let chip_w = (w - 8.0) / cols as f32;
-                let rows = (((height - 50.0 - top) / 16.0).floor() as usize).max(1);
+                // Icon tiles: the name is the tooltip. Square, so many fit in a row.
+                let tile = 22.0;
+                let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
+                let rows = (((height - 50.0 - top) / (tile + 2.0)).floor() as usize).max(1);
                 let per_page = rows * cols;
                 let pages = mining::COUNT.div_ceil(per_page);
                 let page = self.mining_page % pages;
                 out.push(widget(
-                    [x, 100.0, tab_width, h],
-                    localized!(self.language, "Блоков: {}", "Blocks: {}", self.mining_limit),
-                    Some(Control::MiningLimit),
-                    false,
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    [x, 100.0, w, h],
                     if pages > 1 {
                         localized!(
                             self.language,
@@ -2858,10 +2938,10 @@ impl Menu {
                     };
                     out.push(widget(
                         [
-                            x + (slot % cols) as f32 * (chip_w + 4.0),
-                            top + (slot / cols) as f32 * 16.0,
-                            chip_w,
-                            14.0,
+                            x + (slot % cols) as f32 * (tile + 2.0),
+                            top + (slot / cols) as f32 * (tile + 2.0),
+                            tile,
+                            tile,
                         ],
                         self.language.text(ru, en),
                         Some(Control::MiningTarget(index as u8)),
@@ -2922,11 +3002,28 @@ impl Menu {
                     player.is_some(),
                 ));
             }
+            // The status line, and the switch for eating on its own beside it.
+            let eat_w = 92.0_f32.min(w * 0.4);
             out.push(widget(
-                [x, height - 48.0, w, 14.0],
+                [x, height - 48.0, w - eat_w - 4.0, 14.0],
                 &model.navigation_status,
                 None,
                 false,
+            ));
+            out.push(widget(
+                [x + w - eat_w, height - 48.0, eat_w, 14.0],
+                localized!(
+                    self.language,
+                    "Еда: {}",
+                    "Eat: {}",
+                    if model.auto_eat {
+                        self.language.text("вкл", "on")
+                    } else {
+                        self.language.text("выкл", "off")
+                    }
+                ),
+                Some(Control::AutoEat),
+                model.auto_eat,
             ));
             if self.baritone_mode == BaritoneMode::Schematic {
                 out.push(widget(
@@ -3490,8 +3587,12 @@ impl Menu {
                 self.construct_floor = !self.construct_floor;
                 None
             }
-            Control::FarmCrop => {
-                self.farm_crop = self.farm_crop.next();
+            Control::FarmCropPick(crop) => {
+                // Crops toggle like the mining targets; one always stays selected.
+                let next = self.farm_crops ^ crop.bit();
+                if next & super::claim_borders_farming::Crop::MASK != 0 {
+                    self.farm_crops = next;
+                }
                 None
             }
             Control::FarmRadius => {
@@ -3516,11 +3617,27 @@ impl Menu {
                 self.farm_replant = !self.farm_replant;
                 None
             }
+            Control::FarmStorage => Some(Action::FarmStorage),
+            Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
                     6 => 9,
                     9 => 12,
+                    _ => 3,
+                };
+                None
+            }
+            Control::DrainPattern => {
+                self.drain_pattern = self.drain_pattern.next();
+                None
+            }
+            Control::DrainSpacing => {
+                self.drain_spacing = match self.drain_spacing {
+                    3 => 4,
+                    4 => 5,
+                    5 => 6,
+                    6 => 8,
                     _ => 3,
                 };
                 None
@@ -3577,15 +3694,6 @@ impl Menu {
             }
             Control::MiningPage => {
                 self.mining_page = self.mining_page.wrapping_add(1);
-                None
-            }
-            Control::MiningLimit => {
-                let limits = [1, 8, 16, 32, 64];
-                let at = limits
-                    .iter()
-                    .position(|n| *n == self.mining_limit)
-                    .unwrap_or(0);
-                self.mining_limit = limits[(at + 1) % limits.len()];
                 None
             }
             Control::NavigationPlayer => {
@@ -5299,7 +5407,7 @@ mod tests {
                     goal: super::super::claim_borders_navigation::Goal::Mine {
                         ore: 0,
                         targets: 1,
-                        limit: 16
+                        limit: 0
                     },
                     running: false
                 })
@@ -5314,7 +5422,6 @@ mod tests {
                             Some(
                                 Control::MiningTarget(_)
                                     | Control::MiningPage
-                                    | Control::MiningLimit
                                     | Control::BaritoneMode(_)
                             )
                         )
@@ -6406,6 +6513,15 @@ mod tests {
         ));
         menu.activate(&model, 200.0, Control::DrainRadius);
         assert_eq!(menu.drain_radius, 9);
+        menu.activate(&model, 200.0, Control::DrainPattern);
+        assert_eq!(
+            menu.drain_pattern,
+            super::super::claim_borders_draining::Pattern::Lines
+        );
+        menu.activate(&model, 200.0, Control::DrainSpacing);
+        assert_eq!(menu.drain_spacing, 5);
+        menu.drain_pattern = super::super::claim_borders_draining::Pattern::Fill;
+        menu.drain_spacing = 4;
         for _ in 0..3 {
             menu.activate(&model, 200.0, Control::DrainRadius);
         }
@@ -6444,11 +6560,14 @@ mod tests {
                         matches!(
                             w.control,
                             Some(
-                                Control::FarmCrop
+                                Control::FarmCropPick(_)
+                                    | Control::FarmStorage
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant
                                     | Control::DrainRadius
+                                    | Control::DrainPattern
+                                    | Control::DrainSpacing
                                     | Control::SchematicFile
                                     | Control::SchematicRefresh
                                     | Control::SchematicRotation

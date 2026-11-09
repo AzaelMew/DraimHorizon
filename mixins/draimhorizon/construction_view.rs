@@ -14,8 +14,17 @@ struct External {
     active: bool,
     result: Option<Result<usize, schematic::PlaceError>>,
     confirm: Vec<(nav::Pos, schematic::BlockState)>,
+    /// When the server's acknowledgement arrived before the block change did: the block is
+    /// checked again for a moment before the placement counts as refused.
+    verify_since: Option<u64>,
 }
 struct State {
+    /// A container to open with one use click (the farm's storage), and how many ticks no
+    /// point of it was in the line of sight.
+    interact: Option<nav::Pos>,
+    interact_miss: u32,
+    /// Since when a stopped job has been waiting to try again (ms on this state's clock).
+    idle_since: Option<u64>,
     external: Option<External>,
     job: Option<model::Job>,
     scope: String,
@@ -32,6 +41,9 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            interact: None,
+            interact_miss: 0,
+            idle_since: None,
             external: None,
             job: None,
             scope: String::new(),
@@ -69,19 +81,41 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
         return model::Block::default();
     }
     let facts = game.res.facts().get(game.world.block(at[0], at[1], at[2]));
-    let cell = nav::classify(
+    // For passages that dig and build a half block is something solid to stand on or break.
+    let cell = nav::classify_shape(
         &facts.name,
         facts.full_collision,
         facts.fluid_level > 0 || facts.waterlogged,
+        &facts.outline,
+        nav::Cell::Solid,
     );
     model::Block {
         cell,
-        diggable: cell == nav::Cell::Solid && facts.hardness >= 0.0 && !facts.block_entity,
+        diggable: matches!(cell, nav::Cell::Solid | nav::Cell::Blocked)
+            && facts.hardness >= 0.0
+            && !facts.block_entity,
         falling: crate::game::claim_borders_mining::falling(&facts.name),
     }
 }
+/// Whether the block at `at` is something to stand or hang on: solid, and if it can fall (sand,
+/// gravel) resting on something solid that cannot. A sand block just dropped into the water is
+/// solid for a moment and then sinks; whoever stands on it sinks with it.
+pub(super) fn stable(game: &Game<'_>, at: nav::Pos) -> bool {
+    let mut at = at;
+    for _ in 0..24 {
+        if block(game, at).cell != nav::Cell::Solid {
+            return false;
+        }
+        if !model::gravity(&game.native_block(at)) {
+            return true;
+        }
+        at[1] -= 1;
+    }
+    false
+}
 pub(super) fn reset() {
     state(|s| {
+        s.interact = None;
         s.job = None;
         if !s.placement.as_ref().is_some_and(|p| p.sequence.is_some()) {
             s.placement = None;
@@ -279,21 +313,19 @@ pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
     }
     names
 }
-/// What to fill water with, and whether it is a falling block. Sand and gravel come first:
-/// dropped into the surface cell they sink and stack from the bottom, whatever the depth.
-/// Anything else is the cheapest building block, which only stays where it is placed.
+/// What to fill water with: sand, red sand or gravel only (never an ordinary block, which would
+/// be left standing in the water). Dropped into the surface cell it sinks and stacks from the
+/// bottom, whatever the depth. The flag says it is a falling block, which it always is.
 pub(super) fn drain_item(game: &Game<'_>) -> Option<(String, bool)> {
-    let items = building_items(game, true);
-    items
-        .iter()
-        .find(|name| model::gravity(name))
-        .map(|name| (name.clone(), true))
-        .or_else(|| {
-            items
-                .into_iter()
-                .min_by_key(|name| model::rank(name))
-                .map(|name| (name, false))
+    building_items(game, true)
+        .into_iter()
+        .find(|name| {
+            matches!(
+                name.strip_prefix("minecraft:").unwrap_or(name),
+                "sand" | "red_sand" | "gravel"
+            )
         })
+        .map(|name| (name, true))
 }
 fn placing(s: &State) -> bool {
     s.external
@@ -385,6 +417,7 @@ pub(super) fn place_external(
             active: true,
             result: None,
             confirm: Vec::new(),
+            verify_since: None,
         });
         s.aim = None;
     });
@@ -523,6 +556,35 @@ pub(super) fn tick(game: &Game<'_>) {
         reset();
         return;
     }
+    state(|s| {
+        let now = s.started.elapsed().as_millis() as u64;
+        let Some(e) = s.external.as_mut() else {
+            return;
+        };
+        let Some(since) = e.verify_since else {
+            return;
+        };
+        if e.result.is_some() {
+            return;
+        }
+        let ok = !e.confirm.is_empty()
+            && e.confirm.iter().all(|(at, w)| {
+                w.matches(&game.native_block(*at), |key| {
+                    game.native_block_property(*at, key)
+                })
+            });
+        if ok || now.saturating_sub(since) > 900 {
+            e.result = Some(if ok {
+                Ok(e.confirm.len())
+            } else {
+                Err(schematic::PlaceError::Refused)
+            });
+            e.active = false;
+            e.verify_since = None;
+            s.placement = None;
+            s.aim = None;
+        }
+    });
     let current = navigation::scope(game);
     if state(|s| {
         (s.job.is_some() || s.external.is_some()) && current.as_deref() != Some(s.scope.as_str())
@@ -533,6 +595,25 @@ pub(super) fn tick(game: &Game<'_>) {
     if !game.native_playing() {
         pause();
         return;
+    }
+    // A job that stopped for any reason but the player's own pause stands idle for a few
+    // seconds and tries again: a tool turns up, a chunk loads, the world changes.
+    let retry = state(|s| {
+        let now = s.started.elapsed().as_millis() as u64;
+        let waiting = s.job.as_ref().is_some_and(|j| {
+            !j.active
+                && !j.preview
+                && matches!(j.phase, model::Phase::Stopped(r) if r != model::Stop::Manual)
+        });
+        if !waiting {
+            s.idle_since = None;
+            return false;
+        }
+        now.saturating_sub(*s.idle_since.get_or_insert(now)) > 3000
+    });
+    if retry {
+        state(|s| s.idle_since = None);
+        let _ = resume(game);
     }
     let dig = navigation::construction_dig_result();
     let action = state(|s| {
@@ -612,10 +693,21 @@ pub(super) fn movement(
         reset();
         return false;
     }
+    if swim_back(game, forward, strafe, jump, sneak) {
+        return true;
+    }
+    if pier_walk(game, forward, strafe, jump, sneak) {
+        return true;
+    }
+    if edge_drive(game, forward, strafe, jump, sneak) {
+        return true;
+    }
     if !state(|s| s.job.as_ref().is_some_and(|j| j.active)) {
         return false;
     }
-    if *forward != 0.0 || *strafe != 0.0 || *jump || *sneak || !game.native_playing() {
+    if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
+        || !game.native_playing()
+    {
         pause();
         navigation::pause();
         return false;
@@ -699,6 +791,154 @@ pub(super) fn movement(
         true
     })
 }
+/// The nearest dry spot to stand on around `position`: open air at the feet and head over a
+/// solid block, within a few blocks.
+fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
+    let here = nav::block(position);
+    let mut best: Option<(i32, nav::Pos)> = None;
+    for dy in -3..=3 {
+        for dz in -8..=8 {
+            for dx in -8..=8 {
+                let at = [here[0] + dx, here[1] + dy, here[2] + dz];
+                let open = |y: i32| block(game, [at[0], y, at[2]]).cell == nav::Cell::Air;
+                if open(at[1]) && open(at[1] + 1) && stable(game, [at[0], at[1] - 1, at[2]]) {
+                    let d = dx * dx + dz * dz + dy * dy * 4;
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, at));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, at)| at)
+}
+/// Walks the route along the blocks a drain pattern has laid, sneaking so that a one-wide line
+/// is never walked off.
+fn pier_walk(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    if !game.native_on(claims::ID)
+        || !game.native_playing()
+        || !crate::game::claim_borders_workshop_view::draining()
+        || game
+            .player
+            .as_ref()
+            .is_none_or(|b| b.fluids.was_touching_water || b.flying || !b.ground.on_ground)
+    {
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let position = [p.x, p.y, p.z];
+    let Some(goal) = crate::game::claim_borders_workshop_view::pier_goal(position) else {
+        return false;
+    };
+    let input = model::steer(position, goal, p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    *jump = false;
+    *sneak = true;
+    true
+}
+/// A drain job that fell into the water swims back to the nearest dry ground and goes on from
+/// there, instead of pausing.
+fn swim_back(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    if !game.native_on(claims::ID)
+        || !game.native_playing()
+        || !crate::game::claim_borders_workshop_view::draining()
+        || game
+            .player
+            .as_ref()
+            .is_none_or(|b| !b.fluids.was_touching_water || b.flying)
+    {
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let position = [p.x, p.y, p.z];
+    // The laid blocks are behind now: any route along them is stale.
+    crate::game::claim_borders_workshop_view::clear_pier();
+    let Some(spot) = dry_spot(game, position) else {
+        return false;
+    };
+    let input = model::steer(position, nav::center(spot), p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    // Swimming up and out: jump held keeps the player at the surface and over the edge.
+    *jump = true;
+    *sneak = false;
+    true
+}
+/// How long a drain placement may spend reaching the edge before the next spot is tried.
+const EDGE_MS: u64 = 3500;
+/// The point to hang over and the shore block, for a water cell that no inland face reaches.
+fn edge_goal(game: &Game<'_>, target: nav::Pos, player: [f64; 3]) -> Option<([f64; 3], nav::Pos)> {
+    drain::edge_stand(
+        target,
+        player,
+        |at| stable(game, at),
+        |at| block(game, at).cell == nav::Cell::Air,
+    )
+}
+/// Walks to the shore edge and sneaks over it while a drain placement waits for a face.
+fn edge_drive(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    let Some(target) = state(|s| {
+        let p = s.placement.as_ref()?;
+        let e = s.external.as_ref()?;
+        (e.active && e.result.is_none() && p.edge && p.sequence.is_none()).then_some(p.target)
+    }) else {
+        return false;
+    };
+    if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
+        || !game.native_playing()
+    {
+        pause();
+        navigation::pause();
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        pause();
+        return false;
+    };
+    if game
+        .player
+        .as_ref()
+        .is_none_or(|b| !b.ground.on_ground || b.fluids.was_touching_water || b.flying)
+    {
+        pause();
+        navigation::pause();
+        return false;
+    }
+    let position = [p.x, p.y, p.z];
+    let Some((edge, shore)) = edge_goal(game, target, position) else {
+        return false;
+    };
+    let input = model::steer(position, edge, p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    *jump = false;
+    // Sneaking keeps the player from walking off; only needed near the water.
+    *sneak = nav::distance(position, nav::center(shore)) < 1.6;
+    true
+}
 fn aim(game: &mut Game<'_>, point: [f64; 3]) {
     if let Some(eye) = game.eye_position() {
         let [x, y, z] = [point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]];
@@ -706,7 +946,59 @@ fn aim(game: &mut Game<'_>, point: [f64; 3]) {
         game.pitch = (-y).atan2(x.hypot(z)).to_degrees() as f32;
     }
 }
+/// Asks for one use click on the container at `pos`: the next tick aims at it and clicks.
+pub(super) fn open_container(pos: nav::Pos) {
+    state(|s| {
+        s.interact = Some(pos);
+        s.interact_miss = 0;
+    });
+}
+/// Whether the container to open has been out of sight from here for a while (crops, a wall or
+/// a corner in the way): the job should try another spot.
+pub(super) fn container_blocked() -> bool {
+    state(|s| s.interact.is_some() && s.interact_miss >= 10)
+}
+pub(super) fn cancel_container() {
+    state(|s| s.interact = None);
+}
+/// The click that opens a requested container: aim at the middle of the block and click once
+/// the ray really meets it. `None` when nothing was requested.
+fn interact_input(game: &mut Game<'_>) -> Option<bool> {
+    let pos = state(|s| s.interact)?;
+    if !game.native_playing() {
+        return Some(false);
+    }
+    // The middle first, then the top and the four sides: a chest behind a bed of crops has a
+    // clear line only to some of them.
+    for [x, y, z] in [
+        [0.5, 0.5, 0.5],
+        [0.5, 0.9, 0.5],
+        [0.15, 0.5, 0.5],
+        [0.85, 0.5, 0.5],
+        [0.5, 0.5, 0.15],
+        [0.5, 0.5, 0.85],
+        [0.5, 0.2, 0.5],
+    ] {
+        aim(
+            game,
+            [
+                f64::from(pos[0]) + x,
+                f64::from(pos[1]) + y,
+                f64::from(pos[2]) + z,
+            ],
+        );
+        if game.pick().is_some_and(|h| h.pos == pos) {
+            state(|s| s.interact = None);
+            return Some(true);
+        }
+    }
+    state(|s| s.interact_miss += 1);
+    None
+}
 pub(super) fn input(game: &mut Game<'_>) -> bool {
+    if let Some(click) = interact_input(game) {
+        return click;
+    }
     let current = navigation::scope(game);
     state(|s| {
         if current.as_deref() != Some(s.scope.as_str()) {
@@ -795,7 +1087,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 }
                 s.auto_slot = Some(slot);
             });
+            let changed = game.selected != slot;
             game.selected = slot;
+            if changed {
+                // The slot change has to reach the server before the click, or the click is
+                // made with the old item in hand and the server refuses it.
+                return false;
+            }
             game.stack_in(slot).cloned()
         }
         // The main hand keeps its tool; the off hand's block is used when it passes.
@@ -849,20 +1147,41 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         } else {
             f64::from(face[1]) * 0.501
         };
-        aim(
-            game,
-            [
-                f64::from(anchor[0]) + 0.5 + f64::from(face[0]) * 0.501,
-                f64::from(anchor[1]) + 0.5 + top,
-                f64::from(anchor[2]) + 0.5 + f64::from(face[2]) * 0.501,
-            ],
-        );
-        if game.entity_targeted() {
-            why = "entity";
-            continue;
+        let base = [
+            f64::from(anchor[0]) + 0.5 + f64::from(face[0]) * 0.501,
+            f64::from(anchor[1]) + 0.5 + top,
+            f64::from(anchor[2]) + 0.5 + f64::from(face[2]) * 0.501,
+        ];
+        // The middle of the face first; when something blocks that line (a corner of the
+        // passage, a plant), other points of the same face are tried before giving it up.
+        let axis = face.iter().position(|n| *n != 0).unwrap_or(1);
+        let tangent: Vec<usize> = (0..3).filter(|a| *a != axis).collect();
+        let mut by_entity = false;
+        let mut found = None;
+        for [u, v] in [
+            [0.0, 0.0],
+            [0.3, 0.0],
+            [-0.3, 0.0],
+            [0.0, 0.3],
+            [0.0, -0.3],
+            [0.3, 0.3],
+            [-0.3, -0.3],
+        ] {
+            let mut point = base;
+            point[tangent[0]] += u;
+            point[tangent[1]] += v;
+            aim(game, point);
+            if game.entity_targeted() {
+                by_entity = true;
+                continue;
+            }
+            if let Some(h) = game.pick().filter(|h| h.pos == anchor && h.face == face) {
+                found = Some(h);
+                break;
+            }
         }
-        let Some(hit) = game.pick().filter(|h| h.pos == anchor && h.face == face) else {
-            why = "aim";
+        let Some(hit) = found else {
+            why = if by_entity { "entity" } else { "aim" };
             continue;
         };
         // Do not activate a workstation or other interactive support instead of placing.
@@ -960,11 +1279,36 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     };
     let position = [p.x, p.y, p.z];
     let Some(job) = job else {
+        // Filling water: the walls facing the water cannot be hit from inland, so hang over
+        // the edge of the shore block, sneaking, until the face is in the ray. Bounded.
+        let waited = state(|s| {
+            (s.started.elapsed().as_millis() as u64).saturating_sub(placement.started_ms)
+        });
+        if external.is_some()
+            && drain::replaceable(&game.native_block(placement.target))
+            && waited < EDGE_MS
+            && edge_goal(game, placement.target, position).is_some()
+        {
+            state(|s| {
+                if let Some(p) = s.placement.as_mut() {
+                    p.edge = true;
+                }
+                s.aim = Some([game.yaw, game.pitch]);
+            });
+            return false;
+        }
         state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
     };
     if nav::distance(position, job.edge()) < 0.08 {
+        // At the edge with no face to click: a moment's grace first, since a dropped item
+        // settling or the server's block update often clears it, before stopping the job.
+        let waited =
+            state(|s| s.started.elapsed().as_millis() as u64).saturating_sub(placement.started_ms);
+        if waited < 1500 {
+            return false;
+        }
         state(|s| s.diag = why);
         stop(model::Stop::Blocked);
         return false;
@@ -1007,14 +1351,15 @@ pub(super) fn ack(game: &Game<'_>, sequence: i32) {
                             game.native_block_property(*at, key)
                         })
                     });
-                e.result = Some(if ok {
-                    Ok(e.confirm.len())
-                } else {
-                    Err(schematic::PlaceError::Refused)
-                });
-                e.active = false;
-                s.placement = None;
-                s.aim = None;
+                if ok {
+                    e.result = Some(Ok(e.confirm.len()));
+                    e.active = false;
+                    s.placement = None;
+                    s.aim = None;
+                } else if e.verify_since.is_none() {
+                    // The block update may still be on its way: look again for a moment.
+                    e.verify_since = Some(s.started.elapsed().as_millis() as u64);
+                }
             }
             return;
         }
@@ -1097,16 +1442,35 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                         l.text("Нужна исправная кирка", "A usable pickaxe is required")
                     }
                     model::Phase::Stopped(model::Stop::Timeout) => l.text("Тайм-аут", "Timed out"),
-                    model::Phase::Stopped(_) => {
-                        l.text("Пауза · проверьте проход", "Paused · check the passage")
+                    model::Phase::Stopped(model::Stop::Protected) => l.text(
+                        "Блок нельзя сломать (бедрок, сундук…)",
+                        "Cannot break this block (bedrock, chest…)",
+                    ),
+                    model::Phase::Stopped(model::Stop::Floor) => {
+                        l.text("Нет пола под проходом", "No floor under the passage")
                     }
+                    model::Phase::Stopped(model::Stop::Blocked) => l.text(
+                        "Нет грани для установки блока",
+                        "No face to place a block on",
+                    ),
+                    model::Phase::Stopped(_) => l.text("Пауза", "Paused"),
                     model::Phase::Digging => l.text("Разрушение", "Digging"),
                     model::Phase::Placing => l.text("Установка пола", "Placing floor"),
                     _ => l.text("Движение", "Moving"),
                 }
             };
+            let idle = matches!(j.phase, model::Phase::Stopped(r) if r != model::Stop::Manual);
             (
-                format!("{kind} · {phase} · {}/{}", j.completed, j.config.length),
+                if idle {
+                    format!(
+                        "{kind} · {} · {phase} · {}/{}",
+                        l.text("Простой", "Idle"),
+                        j.completed,
+                        j.config.length
+                    )
+                } else {
+                    format!("{kind} · {phase} · {}/{}", j.completed, j.config.length)
+                },
                 !j.active,
             )
         })

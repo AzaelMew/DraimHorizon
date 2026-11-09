@@ -401,13 +401,6 @@ pub(super) fn frame(game: &mut Game<'_>) {
         game.native_mod_screen_close(claims::ID);
     }
 }
-/// The tab-list name of an online player.
-pub(super) fn online_name(game: &mut Game<'_>, uuid: u128) -> Option<String> {
-    cached_online(game)
-        .into_iter()
-        .find(|(id, _)| *id == uuid)
-        .map(|(_, name)| name)
-}
 pub(super) fn entity_position(game: &Game<'_>, uuid: u128) -> Option<[f64; 3]> {
     let entity = game.remote.as_ref()?.player_entity(uuid)?;
     let mob = game.mobs.iter().find(|m| m.id == entity && !m.removed)?;
@@ -670,6 +663,8 @@ pub(super) fn open_map(game: &mut Game<'_>) {
 }
 
 pub(super) fn tick(game: &mut Game<'_>) {
+    crate::game::claim_borders_navigation_view::keep_running_unfocused(game);
+    crate::game::claim_borders_workshop_view::store_frame(game);
     if !game.native_on(claims::ID) {
         state(|c| {
             c.relay = Relay::Off;
@@ -1512,6 +1507,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
+            farm_storage: crate::game::claim_borders_workshop_view::storage(game),
+            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1661,13 +1658,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             rotation,
             running,
         } => {
-            if let Some(result) = crate::game::claim_borders_navigation_view::build_baritone(
-                game, &filename, origin, rotation, running,
-            ) {
-                result?;
-                game.native_mod_screen_close(claims::ID);
-                return Ok(Vec::new());
-            }
             crate::game::claim_borders_workshop_view::load(
                 game, filename, origin, rotation, running,
             )?;
@@ -1676,6 +1666,31 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             }
             Ok(Vec::new())
         }
+        Action::SetAutoEat(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "auto_eat",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::FarmStorage => {
+            let l = crate::game::claim_borders_chat_view::current_language();
+            match crate::game::claim_borders_workshop_view::set_storage(game) {
+                Ok([x, y, z]) => Ok(vec![match l {
+                    Language::Russian => format!("Склад фермы: {x} {y} {z}"),
+                    Language::English => format!("Farm storage: {x} {y} {z}"),
+                }]),
+                // Aiming at nothing useful while one is set: forget it.
+                Err(_) if crate::game::claim_borders_workshop_view::storage(game).is_some() => {
+                    crate::game::claim_borders_workshop_view::clear_storage();
+                    Ok(vec![
+                        l.text("Склад фермы сброшен", "Farm storage cleared").into(),
+                    ])
+                }
+                Err(e) => Err(e),
+            }
+        }
         Action::BaritoneKey(key) => {
             if crate::game::claim_borders_navigation_view::run(game, key)? {
                 game.native_mod_screen_close(claims::ID);
@@ -1683,15 +1698,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             Ok(Vec::new())
         }
         Action::Navigate { goal, running } => {
-            if let Some(result) =
-                crate::game::claim_borders_navigation_view::start_baritone(game, goal, running)
-            {
-                result?;
-                if running {
-                    game.native_mod_screen_close(claims::ID);
-                }
-                return Ok(Vec::new());
-            }
             crate::game::claim_borders_navigation_view::start(game, goal, running)?;
             if running {
                 game.native_mod_screen_close(claims::ID);
