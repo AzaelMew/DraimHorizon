@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.36.3"
+version = "0.37.0"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -285,6 +285,12 @@ id = "visualization"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_visualization"
 source = "visualization.rs"
+
+[[module]]
+id = "helpers"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_helpers"
+source = "helpers.rs"
 
 [[module]]
 id = "menu"

@@ -1,5 +1,15 @@
 # История версий
 
+## 0.37.0
+
+- New Experiments > Helpers tab (RU "Вспомогательные") with four switches, working while you play by hand, not only in tasks:
+  - Auto Eat: eats on its own when the food bar is low (on by default, as before). It no longer needs a task to be running; by hand it waits while the attack or use button is held and gives way if one is pressed during a meal.
+  - Auto Totem: when the off hand is empty (the totem was used), a totem from the inventory goes there.
+  - Auto Fill: when the last item of a hotbar stack is used up, the same item from the inventory goes into the same slot (a block you build with, a tool that broke). Nothing is refilled behind an open screen, so a stack you move out by hand stays out.
+  - Auto Tools: while you hold the attack button, the hotbar tool that fits the block under the crosshair is selected (axe for wood, pickaxe for stone, and so on); the held one stays if it fits. Tools only from the hotbar, bedrock and tasks are left alone.
+  - Totem, Fill and Tools are off until turned on. All swaps are spaced 350 ms apart so the server answers each one.
+- Not verified in game.
+
 ## 0.36.3
 
 - Drain: faster filling. A column took about 0.8 s per block (a dropped block was waited for until it sank, then the next one went in). A cell that just received a falling block is now left alone for 450 ms and the next scan follows after 70 ms (was 800 and 120), and the wait-and-look poll is 50 ms. A pond should fill roughly twice as fast; the server still has to acknowledge every placement. If the server turns a placement down because the block has not sunk yet, the cell is retried later; tell me the timings if it does.

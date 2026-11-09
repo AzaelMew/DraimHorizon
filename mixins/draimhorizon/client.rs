@@ -1509,6 +1509,11 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storage(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            helpers: menu::Helper::ALL.map(|helper| {
+                game.native_setting(claims::SETTINGS_ID, helper.key())
+                    .as_deref()
+                    == Some("true")
+            }),
             shulker_peek: game
                 .native_setting(claims::SETTINGS_ID, "shulker_peek")
                 .as_deref()
@@ -1674,6 +1679,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 "shulker_peek",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetHelper(helper, on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                helper.key(),
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())

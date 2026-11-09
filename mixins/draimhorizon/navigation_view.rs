@@ -1138,11 +1138,13 @@ pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
 fn auto_eat(game: &mut Game<'_>) -> bool {
     use crate::game::claim_borders_auto_eat as eat;
     let level = game.player.as_ref().map(|p| p.health.food.food as i32);
+    // Eating is not only for tasks: by hand it waits while the attack or the use button is held
+    // (a fight, a block being broken, a bow drawn) and gives way if one is pressed during a meal.
     let running = level.is_some()
         && game.native_on(claims::ID)
         && game.native_playing()
         && auto_eat_enabled(game)
-        && control().0;
+        && (control().0 || !(game.left || game.right));
     let mut meal = MEAL.lock().unwrap_or_else(|e| e.into_inner());
     let Some(level) = level else {
         *meal = None;
@@ -1215,7 +1217,32 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     game.selected = food.slot;
     true
 }
+/// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
+/// fits the block under the crosshair is selected (the held one stays if it fits).
+pub(super) fn auto_tool(game: &mut Game<'_>) {
+    if !game.left || game.right || control().0 || !game.native_playing() {
+        return;
+    }
+    let Some(at) = game.pick().map(|hit| hit.pos) else {
+        return;
+    };
+    if game
+        .res
+        .facts()
+        .get(game.world.block(at[0], at[1], at[2]))
+        .hardness
+        < 0.0
+    {
+        return;
+    }
+    if let Some(slot) = tool_slot(game, Some(at), false).filter(|slot| *slot < 9)
+        && game.selected != slot
+    {
+        game.selected = slot;
+    }
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
+    crate::game::claim_borders_helpers::tick(game);
     if auto_eat(game) {
         return;
     }
