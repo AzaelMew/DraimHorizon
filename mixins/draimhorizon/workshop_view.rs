@@ -818,7 +818,10 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     candidates.truncate(16);
     if let Some(at) = candidates.get(s.attempt).copied() {
         s.attempt += 1;
-        match driver::workshop_walk(game, at, matches!(s.task, Some(Task::Farm { .. }))) {
+        // Among the crops the route stays level (no jumping onto farmland); on the way to the
+        // storage chest it may climb, whatever height the chest is at.
+        let farm = matches!(s.task, Some(Task::Farm { .. }));
+        match driver::workshop_walk(game, at, farm, farm && s.store.is_none()) {
             Ok(()) => {
                 s.phase = Phase::Walking;
                 true

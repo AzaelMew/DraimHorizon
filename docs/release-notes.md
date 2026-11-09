@@ -1,9 +1,8 @@
-**DraimHorizon 0.34.0 - Drain patterns, farm idle**
+**DraimHorizon 0.34.1 - Farm reaches a far storage chest**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Drain can lay lines or a grid on the water surface (pattern and spacing buttons) and walks out along what it has laid.
-- Farm shows "Idle" while waiting and never jumps.
-- Builds on 0.33.0: tools from the inventory, auto-eat, multi-crop farm, bridge width.
+- The farm walks to its storage chest by the normal route (steps, obstacles), wherever it is; among the crops it stays level and never jumps.
+- Builds on 0.34.0: Drain patterns, farm idle mode.
 
 Not verified in game. No installation or publication is implied.

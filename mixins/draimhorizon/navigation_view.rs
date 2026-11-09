@@ -176,6 +176,8 @@ fn control() -> (bool, bool) {
 
 struct Query {
     flat: bool,
+    /// Stay on one level: no steps up or down, so no jumps (farmland is not trampled).
+    level: bool,
     /// Digging is allowed: a usable pickaxe is held and the inventory has room.
     dig: bool,
     /// Missing floor may be bridged: building blocks are on hand.
@@ -218,7 +220,8 @@ impl Worker {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
                     let mut table = HashMap::new();
                     let mut read = |at: model::Pos| {
-                        if query.flat && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
+                        if query.level
+                            && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
                         {
                             return mining::Block::default();
                         }
@@ -333,6 +336,7 @@ impl Drop for Worker {
 }
 struct State {
     flat: bool,
+    level: bool,
     use_restore: Option<bool>,
     attack_restore: Option<bool>,
     mining: Option<mining::Job>,
@@ -355,6 +359,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             flat: false,
+            level: false,
             use_restore: None,
             attack_restore: None,
             mining: None,
@@ -558,11 +563,20 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
         Tool::Missing
     }
 }
-pub(super) fn workshop_walk(game: &Game<'_>, goal: model::Pos, flat: bool) -> Result<(), String> {
+/// Walks to `goal` for a workshop job. `flat` forbids breaking and placing blocks on the way;
+/// `level` also keeps the route on one height (no jumps), which a farm wants among its crops
+/// but not on the way to a chest on another level.
+pub(super) fn workshop_walk(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+) -> Result<(), String> {
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
         s.flat = flat;
+        s.level = level;
         s.nav.begin(goal, true);
         request(game, s)
     })
@@ -587,6 +601,9 @@ pub(super) fn farm_dig(
     clear_construction_driver();
     state(|s| {
         s.scope = scope(game).ok_or("Join a world first")?;
+        // Harvesting never breaks or places blocks on the way and never jumps.
+        s.flat = true;
+        s.level = true;
         s.nav.begin(target, true);
         s.nav.status = model::Status::Mining;
         let mut j = mining::Job::excavation(target);
@@ -1212,6 +1229,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .unwrap_or_default();
     let query = Query {
         flat: s.flat,
+        level: s.level,
         dig: !s.flat && construction_tool(game) && free_slot(game),
         place: !s.flat && crate::game::claim_borders_construction_view::has_building_blocks(game),
         force: s.force_dig,
@@ -2123,7 +2141,7 @@ pub(super) fn movement(
         *strafe = input.strafe;
         // Farm routes are level: nothing there is ever jumped onto (jumping onto farmland
         // tramples it).
-        *jump = input.jump && !s.flat;
+        *jump = input.jump && !s.level;
     });
 }
 
