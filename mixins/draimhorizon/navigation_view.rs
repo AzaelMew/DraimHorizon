@@ -942,6 +942,19 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
         return;
     };
     let now = s.started.elapsed().as_millis() as u64;
+    // The inventory is full of the mined kind: unload into the storage (when one is set), then go
+    // on from where the trip began. Nothing else is done while a trip runs.
+    if crate::game::claim_borders_haul_view::active()
+        || (!room_for_mining(game, job.ore)
+            && crate::game::claim_borders_haul_view::begin(game, job.ore))
+    {
+        job.wait = Some(mining::Wait::Storage);
+        job.started_ms = now;
+        return;
+    }
+    if job.wait == Some(mining::Wait::Storage) {
+        job.wait = None;
+    }
     match job.phase {
         mining::Phase::Searching => {
             // Anything of the kind within reach and in sight is dug at once, from where the
@@ -1152,6 +1165,10 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let Some(target) = job.target else {
             return false;
         };
+        if crate::game::claim_borders_haul_view::active() {
+            job.wait = Some(mining::Wait::Storage);
+            return false;
+        }
         if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() && !job.blocker {
             match ensure_tool(game, Some(target)) {
                 Tool::Ready => {}
@@ -1348,8 +1365,40 @@ pub(super) fn auto_tool(game: &mut Game<'_>) {
         game.selected = slot;
     }
 }
+/// The mining job while a trip to the storage walks: a walk starts the navigator over, which
+/// would drop the job, so it waits here and is put back when the trip is over.
+static HAUL_JOB: Mutex<Option<mining::Job>> = Mutex::new(None);
+pub(super) fn haul_stash() {
+    state(|s| {
+        if let Some(job) = s.mining.take() {
+            *HAUL_JOB.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
+        }
+    });
+}
+/// The trip to the storage is over: mining goes on from where it is (`ok`), or idles with the
+/// inventory full.
+pub(super) fn haul_ended(ok: bool) {
+    let stashed = HAUL_JOB.lock().unwrap_or_else(|e| e.into_inner()).take();
+    state(|s| {
+        if let Some(job) = stashed {
+            s.mining = Some(job);
+        }
+        if let Some(job) = s.mining.as_mut() {
+            if ok {
+                job.wait = None;
+                job.phase = mining::Phase::Searching;
+                job.target = None;
+                job.collecting = None;
+                job.arrived_ms = None;
+            } else {
+                job.wait = Some(mining::Wait::Inventory);
+            }
+        }
+    });
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
+    crate::game::claim_borders_haul_view::frame(game);
     if auto_eat(game) {
         return;
     }
@@ -2410,6 +2459,7 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
                         "Простой: нужен подходящий инструмент",
                         "Idle: a suitable tool is needed",
                     ),
+                    mining::Wait::Storage => crate::game::claim_borders_haul_view::status(),
                     mining::Wait::Inventory => language.text(
                         "Простой: освободите слот в инвентаре",
                         "Idle: free an inventory slot",

@@ -2967,7 +2967,7 @@ impl Menu {
                 // Icon tiles: the name is the tooltip. Square, so many fit in a row.
                 let tile = 22.0;
                 let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
-                let rows = (((height - 50.0 - top) / (tile + 2.0)).floor() as usize).max(1);
+                let rows = (((height - 66.0 - top) / (tile + 2.0)).floor() as usize).max(1);
                 let per_page = rows * cols;
                 let pages = mining::COUNT.div_ceil(per_page);
                 let page = self.mining_page % pages;
@@ -3010,6 +3010,29 @@ impl Menu {
                         self.mining_targets & (1 << index) != 0,
                     ));
                 }
+                // The storage the miner unloads into when the inventory is full (the farm's).
+                out.push(widget(
+                    [x, height - 30.0, w, 14.0],
+                    match model.farm_storage {
+                        Some([sx, sy, sz]) => localized!(
+                            self.language,
+                            "Склад: {} {} {}",
+                            "Storage: {} {} {}",
+                            sx,
+                            sy,
+                            sz
+                        ),
+                        None => self
+                            .language
+                            .text(
+                                "Склад: не задан (прицел на сундук)",
+                                "Storage: not set (aim at a chest)",
+                            )
+                            .into(),
+                    },
+                    Some(Control::FarmStorage),
+                    model.farm_storage.is_some(),
+                ));
             } else {
                 let waypoint = self
                     .navigation_waypoint

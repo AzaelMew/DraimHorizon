@@ -505,6 +505,8 @@ pub enum Wait {
     Tool,
     /// The inventory has no free slot for the drops.
     Inventory,
+    /// On a trip to the storage container to empty the inventory.
+    Storage,
 }
 #[derive(Clone, Debug)]
 pub struct Job {

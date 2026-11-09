@@ -1,5 +1,14 @@
 # История версий
 
+## 0.38.0
+
+- Mining has a storage, like the farm: a chest, barrel or shulker box set from the Mining tab ("Storage: ..." under the targets; aim at the container and press it, press again elsewhere to clear). It is the same storage the farm uses.
+- When the inventory is full (every slot taken and every stack of the mined kind at its limit), the miner no longer just waits: it walks to the storage (a spot within reach with a clear line to it, another spot if the chest is hidden from the first), opens it, shift-clicks everything it does not need across and walks back to where it stopped, then goes on mining by itself. It keeps tools and armour (anything that wears), food, a totem and one stack of the mined block to build with; the rest, sand and gravel included, goes into the container.
+- If the container is full or cannot be reached, the miner stands idle ("Idle: free an inventory slot") and tries again after one to two minutes. Without a storage set, nothing changes.
+- The walk to the storage starts the navigator over, which would drop the mining job; the job is put aside for the trip and put back after it.
+- New pure `deposit_mined` plan in `farm_storage.rs` with a test.
+- Not verified in game.
+
 ## 0.37.13
 
 - Walking: the route planner now steps off drops of up to three blocks (three blocks cost no health); before it only managed one. Dunes and pits are full of drops of two and three blocks, so on a ridge between pits every walk ended at once: "seen/open 131/65, no route 32" while sand lay all around. This also helps every other walking task. The longer drops are refused as before.
