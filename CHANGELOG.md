@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.6
+
+- Shulker box tooltip: only the name and the grid of items now. The game's own list of the contents ("6 x Iron Ingot ... and 20 more...") is gone, since the grid shows the same thing. Lore that is not that list stays. The tooltip is drawn by the mod in the game's own tooltip style (box, text and the dye colour) for a shulker box that holds something; empty boxes and every other item keep the plain game tooltip. Recipe book and trading hovers still show the game's list.
+- Not verified in game.
+
 ## 0.37.5
 
 - J menu shell, rebuilt on one grid: the rail is drawn as often as it is laid out (the selected tab no longer sticks out past the rail, a regression of 0.37.2: the rail background stayed 96 px while the buttons were 112), the window has rounded corners, a soft shadow and a thin border, the rail is an inset plate, and the line about the tab sits under the title on the same left edge.
