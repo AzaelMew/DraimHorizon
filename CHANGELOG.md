@@ -1,5 +1,10 @@
 # История версий
 
+## 0.37.1
+
+- Interface, first step: the Economy window grows with the screen (up to 640 x 360 instead of 520 x 300), and its Overview shows balance, priced items and auction lots as three cards. Every tab and button that had no icon now has one (Auction, Market, Plan, Check hand, and the settings tabs General, Connection, Map, TAB, HUD, and the map sub-tabs), all from the Lucide set. The sidebar of the J menu is wider (112 instead of 96 px) so "Experiments" is no longer cut off.
+- Not verified in game.
+
 ## 0.37.0
 
 - New Experiments > Helpers tab (RU "Вспомогательные") with four switches, working while you play by hand, not only in tasks:

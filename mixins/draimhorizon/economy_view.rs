@@ -344,37 +344,47 @@ pub(super) fn render(
             if s.tab == 0 {
                 let width = w - 24.0;
                 let x = 12.0;
-                let mut y = 66.0;
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &tr!(
-                        "Баланс: {} монет",
-                        "Balance: {} coins",
-                        value(book.balance.map(|(v, _)| v))
+                // Three figures as cards: balance, priced items, lots seen at the auction.
+                let priced = book
+                    .quotes
+                    .values()
+                    .filter(|q| q.sell.is_some() || q.buy.is_some())
+                    .count();
+                let card_w = (width - 8.0) / 3.0;
+                for (i, (title, figure, color)) in [
+                    (
+                        language().text("Баланс", "Balance"),
+                        value(book.balance.map(|(v, _)| v)),
+                        0xe7ce95,
                     ),
-                    0xe7ce95,
-                );
-                line(
-                    game,
-                    batch,
-                    x,
-                    &mut y,
-                    width,
-                    &tr!(
-                        "Цены: {} товаров · Аукцион: {} лотов",
-                        "Prices: {} items · Auction: {} lots",
-                        book.quotes
-                            .values()
-                            .filter(|q| q.sell.is_some() || q.buy.is_some())
-                            .count(),
-                        book.listings.len()
+                    (
+                        language().text("Товаров с ценой", "Priced items"),
+                        priced.to_string(),
+                        0x9edccb,
                     ),
-                    0x94b5ca,
-                );
+                    (
+                        language().text("Лотов на аукционе", "Auction lots"),
+                        book.listings.len().to_string(),
+                        0xb9a7e8,
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let cx = x + i as f32 * (card_w + 4.0);
+                    ui::fill(game, batch, [cx, 60.0, card_w, 40.0], 0xff1c2a39);
+                    ui::fill(game, batch, [cx, 60.0, 2.0, 40.0], 0xff000000 | color);
+                    label(
+                        game,
+                        batch,
+                        title,
+                        [cx + 8.0, 66.0],
+                        card_w - 12.0,
+                        0x8fa9bb,
+                    );
+                    label(game, batch, &figure, [cx + 8.0, 82.0], card_w - 12.0, color);
+                }
+                let mut y = 112.0;
                 if !book.movers.is_empty() {
                     line(
                         game,
