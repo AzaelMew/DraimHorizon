@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.36.0"
+version = "0.36.1"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -42,6 +42,18 @@ id = "draining"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_draining"
 source = "draining.rs"
+
+[[module]]
+id = "shulker-peek"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_shulker_peek"
+source = "shulker_peek.rs"
+
+[[module]]
+id = "shulker-peek-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_shulker_peek_view"
+source = "shulker_peek_view.rs"
 
 [[module]]
 id = "auto-eat"
@@ -1001,4 +1013,43 @@ bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
  { name = "reason", ty = "&str", value = "reason" },
  { name = "key", ty = "Option<&str>", value = "key" },
+]
+
+[[injection]]
+id = "shulker-peek-measure"
+kind = "RETURN"
+target = "horizon_client::game::native_hooks::Game<'_>::native_tooltip_component"
+helper = "shulker_peek_measure_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "size", ty = "&mut Option<[f32; 2]>", value = "&mut *size" },
+]
+
+[[injection]]
+id = "shulker-peek-draw"
+kind = "RETURN"
+target = "horizon_client::game::native_hooks::Game<'_>::native_tooltip_component_draw"
+helper = "shulker_peek_draw_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stack", ty = "&horizon_client::items::ItemStack", value = "stack" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "origin", ty = "[f32; 2]", value = "origin" },
+]
+
+[[injection]]
+id = "shulker-peek-colors"
+kind = "RETURN"
+target = "horizon_client::game::native_hooks::Game<'_>::native_tooltip_color"
+helper = "shulker_peek_colors_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stack", ty = "Option<&horizon_client::items::ItemStack>", value = "stack" },
+  { name = "background", ty = "&mut u32", value = "&mut *background" },
+  { name = "border_top", ty = "&mut u32", value = "&mut *border_top" },
+  { name = "border_bottom", ty = "&mut u32", value = "&mut *border_bottom" },
 ]

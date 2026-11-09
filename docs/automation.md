@@ -24,6 +24,10 @@ On the Farm tab, pick the crops from the icons (several at once; one always stay
 
 A job does not stop because something is missing or went wrong. It stays up, shows "Idle: <reason>" in the status line and looks again after a few seconds: Mining waits for a suitable tool or a free slot, Tunnel and Bridge wait 3 s and try again, Drain waits for sand or gravel and for a route, Farm waits for ripe crops, light, seeds or a route, schematics for blocks or a route. Only your own stop key ends a job. A progress watchdog moves a job that does nothing for 20 s on to another target.
 
+## Shulker box preview
+
+Not a Baritone feature. Hover a shulker box that holds something (inventory, chest, creative tabs, recipe book, chat) and its tooltip shows the contents as a 9x3 grid, tinted with the dye colour of the box. Switch it off in J > Settings > General ("Shulker preview").
+
 ## Drain
 
 Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry sand, red sand or gravel (hotbar, off hand or inventory) and press the start key. Drain places only those blocks, never an ordinary block that would be left standing in the water.

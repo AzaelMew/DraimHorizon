@@ -140,6 +140,8 @@ struct State {
     unplanted: bool,
     // The job is up and waiting (ripening crops, light or seeds): shown as idle, not paused.
     waiting: bool,
+    // Walking back to the beds, and since when.
+    home: Option<Instant>,
     // The dropped item being walked to, and the ones given up on.
     loot: Option<Loot>,
     ignored_items: Vec<u32>,
@@ -173,6 +175,7 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            home: None,
             progress: (0, Instant::now()),
             done: 0,
             loot: None,
@@ -829,6 +832,65 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
     }
     true
 }
+/// Takes the farm back to its beds when the player is far from them or the chunks they are in
+/// are not loaded (from a distance the field reads as empty, and the job would wait for crops
+/// that are not there). True while it is walking there.
+fn home_step(game: &Game<'_>, s: &mut State) -> bool {
+    let (origin, radius) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => (*origin, f64::from(config.radius)),
+        _ => return false,
+    };
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let near = (p.x - (f64::from(origin[0]) + 0.5)).hypot(p.z - (f64::from(origin[2]) + 0.5))
+        <= radius + 6.0;
+    let loaded = game
+        .world
+        .chunks
+        .contains_key(&(origin[0].div_euclid(16), origin[2].div_euclid(16)));
+    if near && loaded {
+        s.home = None;
+        return false;
+    }
+    let message = text("возвращаюсь к грядкам", "walking back to the beds");
+    match s.home {
+        None => {
+            match driver::workshop_walk(game, origin, true, false) {
+                Ok(()) => {
+                    s.home = Some(Instant::now());
+                    s.message = message.into();
+                    s.waiting = false;
+                }
+                Err(e) => idle(s, e),
+            }
+            true
+        }
+        Some(since) => match driver::workshop_walk_result() {
+            Some(true) => {
+                s.home = None;
+                false
+            }
+            Some(false) => {
+                // No way back for now: wait and ask again instead of pausing.
+                s.home = None;
+                idle(
+                    s,
+                    text(
+                        "далеко от грядок, пути нет, жду и пробую снова",
+                        "far from the beds, no route, waiting to try again",
+                    ),
+                );
+                true
+            }
+            None if since.elapsed() > Duration::from_secs(90) => {
+                s.home = None;
+                true
+            }
+            None => true,
+        },
+    }
+}
 /// Whether a ray from the eye of someone standing at `feet` reaches the middle of `target`
 /// through nothing but air (plants and crops count: they stop the aim ray).
 fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
@@ -1325,6 +1387,10 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.store.is_some() {
             store_walk(game, s);
+            return;
+        }
+        // Far from the beds, or their chunks are not loaded: go back before looking for crops.
+        if s.target.is_none() && home_step(game, s) {
             return;
         }
         if s.target.is_none() {

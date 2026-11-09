@@ -31,6 +31,9 @@ pub use farming as claim_borders_farming;
 #[path = "../mixins/draimhorizon/draining.rs"]
 pub mod draining;
 pub use draining as claim_borders_draining;
+#[path = "../mixins/draimhorizon/shulker_peek.rs"]
+pub mod shulker_peek;
+pub use shulker_peek as claim_borders_shulker_peek;
 #[path = "../mixins/draimhorizon/auto_eat.rs"]
 pub mod auto_eat;
 pub use auto_eat as claim_borders_auto_eat;

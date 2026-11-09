@@ -1,8 +1,9 @@
-**DraimHorizon 0.36.0 - Tasks go on behind the inventory, chat, menu and map**
+**DraimHorizon 0.36.1 - Shulker box preview, farm walks back to its beds**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Opening the inventory, the chat, the mod's menu or the map no longer pauses a task: walking goes on, breaking and placing wait until the screen is closed.
-- Builds on 0.35.1: Drain waits instead of ending, sturdier anchors.
+- Hovering a shulker box shows its contents as a 9x3 grid in the tooltip, in every screen that shows tooltips; the tooltip takes the colour of the dye. Switch: Settings > General.
+- The farm walks back to its beds when the player is far from them.
+- Builds on 0.36.0: tasks go on behind the inventory, chat, menu and map.
 
 Not verified in game. No installation or publication is implied.

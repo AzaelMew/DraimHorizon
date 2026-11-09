@@ -1509,6 +1509,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storage(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            shulker_peek: game
+                .native_setting(claims::SETTINGS_ID, "shulker_peek")
+                .as_deref()
+                != Some("false"),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1664,6 +1668,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             if running {
                 game.native_mod_screen_close(claims::ID);
             }
+            Ok(Vec::new())
+        }
+        Action::SetShulkerPeek(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "shulker_peek",
+                if on { "true" } else { "false" },
+            );
             Ok(Vec::new())
         }
         Action::SetAutoEat(on) => {

@@ -1,5 +1,11 @@
 # История версий
 
+## 0.36.1
+
+- Shulker box preview (like the ShulkerPeek mod; not a Baritone feature): hover a shulker box that holds something, in the inventory, a chest, the creative tabs, the recipe book or chat, and its tooltip shows the contents as the familiar 9x3 grid with the items and their counts under the name and lore. The tooltip takes the colour of the box's dye (cyan box, teal tooltip; a black box gets a neutral grey). Empty boxes keep the plain tooltip. It is drawn through the game's tooltip component and colour hooks, so it works in every screen that shows an item tooltip. A switch in J > Settings > General ("Shulker preview") turns it off; on by default. New pure `shulker_peek.rs` with tests.
+- Farm: when the player is far from the beds, or the chunks they are in are not loaded, the field read as empty from a distance and the job went to "waiting for ripe crops". It now walks back to the beds first (status "walking back to the beds"); if there is no way back it idles and asks again instead of waiting for crops that are not there.
+- Not verified in game.
+
 ## 0.36.0
 
 - A task no longer pauses when you open the inventory, the chat, the mod's own menu or the map. Before, any open screen paused navigation, mining, tunnel, bridge, drain, farm and schematics (and a click inside the inventory counted as taking the wheel). Now walking goes on as usual (the movement hook is not stopped by a screen) and the jobs keep their state; the things the game does not take behind a screen (a hit, a placed block, a use click, eating) simply wait and carry on the moment the screen is closed. Escape's pause menu, the title screen, signs and books still pause, as does your own movement, jump, sneak or attack input.

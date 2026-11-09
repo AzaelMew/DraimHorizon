@@ -128,6 +128,8 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    /// The contents of a shulker box in its tooltip (on by default).
+    pub shulker_peek: bool,
     /// Eating on its own during a task (on by default).
     pub auto_eat: bool,
     /// The farm's storage container, when one is set.
@@ -230,6 +232,7 @@ impl PlayerRequest {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetShulkerPeek(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage,
     RefreshSchematics,
@@ -328,6 +331,7 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage => f.write_str("FarmStorage"),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetShulkerPeek(on) => f.debug_tuple("SetShulkerPeek").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -496,6 +500,8 @@ pub enum Control {
     FarmStorage,
     /// Switches eating on its own while a task runs.
     AutoEat,
+    /// Switches the contents preview in shulker box tooltips.
+    ToggleShulkerPeek,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -1667,6 +1673,17 @@ impl Menu {
                     ),
                     Some(Control::ToggleReconnect),
                     model.auto_reconnect,
+                ));
+                out.push(widget(
+                    [x, body_top + 56.0, w, 22.0],
+                    localized!(
+                        self.language,
+                        "Содержимое шалкеров: {}",
+                        "Shulker preview: {}",
+                        self.on(model.shulker_peek)
+                    ),
+                    Some(Control::ToggleShulkerPeek),
+                    model.shulker_peek,
                 ));
                 return out;
             }
@@ -3619,6 +3636,7 @@ impl Menu {
             }
             Control::FarmStorage => Some(Action::FarmStorage),
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
+            Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
