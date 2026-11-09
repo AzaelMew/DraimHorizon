@@ -496,6 +496,10 @@ pub enum Control {
     FarmStorage,
     /// Switches eating on its own while a task runs.
     AutoEat,
+    /// Cycles what Drain builds: a fill, lines or a grid.
+    DrainPattern,
+    /// Cycles the distance between the lines of a pattern.
+    DrainSpacing,
     /// An icon tile that picks the crop to farm.
     FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
@@ -639,6 +643,8 @@ pub struct Menu {
     pub farm_limit: u16,
     pub farm_replant: bool,
     pub drain_radius: u8,
+    pub drain_pattern: super::claim_borders_draining::Pattern,
+    pub drain_spacing: u8,
     pub schematic_file: Option<String>,
     pub schematic_origin: String,
     pub schematic_rotation: u8,
@@ -700,6 +706,8 @@ impl Default for Menu {
             farm_limit: 16,
             farm_replant: true,
             drain_radius: 6,
+            drain_pattern: super::claim_borders_draining::Pattern::Fill,
+            drain_spacing: 4,
             schematic_file: None,
             schematic_origin: String::new(),
             schematic_rotation: 0,
@@ -794,6 +802,8 @@ impl Menu {
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
         self.drain_radius = from.drain_radius;
+        self.drain_pattern = from.drain_pattern;
+        self.drain_spacing = from.drain_spacing;
         self.schematic_file = from.schematic_file.clone();
         self.schematic_origin = from.schematic_origin.clone();
         self.schematic_rotation = from.schematic_rotation;
@@ -922,6 +932,8 @@ impl Menu {
             BaritoneMode::Drain => Ok(Action::Navigate {
                 goal: Goal::Drain(super::claim_borders_draining::Config {
                     radius: self.drain_radius,
+                    pattern: self.drain_pattern,
+                    spacing: self.drain_spacing,
                 }),
                 running,
             }),
@@ -2842,18 +2854,47 @@ impl Menu {
                     ));
                 }
             } else if self.baritone_mode == BaritoneMode::Drain {
+                use super::claim_borders_draining::Pattern;
                 out.push(widget(
-                    [x, 100.0, w, h],
+                    [x, 100.0, tab_width, h],
                     localized!(self.language, "Радиус: {}", "Radius: {}", self.drain_radius),
                     Some(Control::DrainRadius),
                     false,
                 ));
                 out.push(widget(
-                    [x, 100.0 + step, w, 14.0],
-                    self.language.text(
-                        "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
-                        "Fills water from the bottom up with inventory blocks (sand too)",
-                    ),
+                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    match self.drain_pattern {
+                        Pattern::Fill => self.language.text("Узор: заливка", "Pattern: fill"),
+                        Pattern::Lines => self.language.text("Узор: линии", "Pattern: lines"),
+                        Pattern::Grid => self.language.text("Узор: сетка", "Pattern: grid"),
+                    },
+                    Some(Control::DrainPattern),
+                    self.drain_pattern != Pattern::Fill,
+                ));
+                if self.drain_pattern != Pattern::Fill {
+                    out.push(widget(
+                        [x, 100.0 + step, tab_width, h],
+                        localized!(self.language, "Шаг: {}", "Spacing: {}", self.drain_spacing),
+                        Some(Control::DrainSpacing),
+                        false,
+                    ));
+                }
+                out.push(widget(
+                    [x, 100.0 + 2.0 * step, w, 14.0],
+                    match self.drain_pattern {
+                        Pattern::Fill => self.language.text(
+                            "Засыпает воду снизу вверх блоками из инвентаря (в т. ч. песком)",
+                            "Fills water from the bottom up with inventory blocks (sand too)",
+                        ),
+                        Pattern::Lines => self.language.text(
+                            "Настил линиями по поверхности; идёт по уже уложенным блокам",
+                            "Lays lines on the surface and walks out along them",
+                        ),
+                        Pattern::Grid => self.language.text(
+                            "Настил сеткой: вода делится на квадраты; идёт по настилу",
+                            "Lays a grid: the water is cut into squares; walks along it",
+                        ),
+                    },
                     None,
                     false,
                 ));
@@ -3583,6 +3624,20 @@ impl Menu {
                     3 => 6,
                     6 => 9,
                     9 => 12,
+                    _ => 3,
+                };
+                None
+            }
+            Control::DrainPattern => {
+                self.drain_pattern = self.drain_pattern.next();
+                None
+            }
+            Control::DrainSpacing => {
+                self.drain_spacing = match self.drain_spacing {
+                    3 => 4,
+                    4 => 5,
+                    5 => 6,
+                    6 => 8,
                     _ => 3,
                 };
                 None
@@ -6458,6 +6513,15 @@ mod tests {
         ));
         menu.activate(&model, 200.0, Control::DrainRadius);
         assert_eq!(menu.drain_radius, 9);
+        menu.activate(&model, 200.0, Control::DrainPattern);
+        assert_eq!(
+            menu.drain_pattern,
+            super::super::claim_borders_draining::Pattern::Lines
+        );
+        menu.activate(&model, 200.0, Control::DrainSpacing);
+        assert_eq!(menu.drain_spacing, 5);
+        menu.drain_pattern = super::super::claim_borders_draining::Pattern::Fill;
+        menu.drain_spacing = 4;
         for _ in 0..3 {
             menu.activate(&model, 200.0, Control::DrainRadius);
         }
@@ -6502,6 +6566,8 @@ mod tests {
                                     | Control::FarmLimit
                                     | Control::FarmReplant
                                     | Control::DrainRadius
+                                    | Control::DrainPattern
+                                    | Control::DrainSpacing
                                     | Control::SchematicFile
                                     | Control::SchematicRefresh
                                     | Control::SchematicRotation

@@ -49,9 +49,16 @@ enum Task {
 enum Phase {
     Ready,
     Walking,
+    /// Walking along the blocks already laid, to the spot a pattern cell is placed from.
+    Pier,
     Digging,
     Placing,
     Done,
+}
+struct Pier {
+    path: Vec<nav::Pos>,
+    next: usize,
+    since: Instant,
 }
 struct Pending {
     rx: Receiver<Result<files::Response, String>>,
@@ -106,12 +113,16 @@ struct State {
     settle: Duration,
     // Consecutive scans that found nothing to fill; the task ends after a few.
     idle: u8,
+    // The route along laid blocks being walked (waypoints, how many are done, since when).
+    pier: Option<Pier>,
     // Cells that failed or were just filled, ignored until the instant passes.
     skip: Vec<(nav::Pos, Instant)>,
     // The crop of the current target (the one harvested there, or the one being sown), and
     // whether empty farmland is waiting for seeds that are not at hand.
     crop: Option<farm::Crop>,
     unplanted: bool,
+    // The job is up and waiting (ripening crops, light or seeds): shown as idle, not paused.
+    waiting: bool,
     // The trip to the storage container in progress, the earliest next trip, and whether the
     // farm ran out of ripe crops (a good moment to unload the harvest).
     store: Option<Store>,
@@ -142,8 +153,10 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            pier: None,
             crop: None,
             unplanted: false,
+            waiting: false,
             store: None,
             store_after: Instant::now(),
             idle_deposit: false,
@@ -305,7 +318,7 @@ pub(super) fn start_drain(
     if !config.valid() {
         return Err("Invalid draining bounds".into());
     }
-    if !preview && placement::drain_item(game).is_none() {
+    if !preview && placement::drain_item(game, config.pattern != drain::Pattern::Fill).is_none() {
         return Err(text(
             "Нужны блоки для засыпки (хотбар, 2-я рука или инвентарь)",
             "Blocks to fill with are required (hotbar, off hand or inventory)",
@@ -601,10 +614,11 @@ fn transfer(game: &mut Game<'_>, t: Store) {
         if none {
             state(|s| {
                 s.message = text(
-                    "Простой: в складе нет семян, жду созревания",
-                    "Idle: no seeds in the storage, waiting for crops to ripen",
+                    "в складе нет семян, жду созревания",
+                    "no seeds in the storage, waiting for crops to ripen",
                 )
                 .into();
+                s.waiting = true;
             });
         }
         return;
@@ -679,6 +693,82 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
     } else {
         Ok(facts.item.to_string())
     }
+}
+/// Leaves a drain cell for a while (no route to it, or it keeps failing) and goes on.
+fn give_up_cell(s: &mut State, target: nav::Pos) {
+    s.errors += 1;
+    s.missed += 1;
+    if s.errors >= 10 {
+        fail(
+            s,
+            text(
+                "Нет пути к клеткам узора",
+                "No route to the cells of the pattern",
+            ),
+        );
+    }
+    s.skip
+        .push((target, Instant::now() + Duration::from_secs(6)));
+    s.target = None;
+    s.attempt = 0;
+    s.phase = Phase::Ready;
+}
+/// How to reach a spot to place `target` from: `Some(None)` when already standing on it,
+/// `Some(Some(route))` along solid cells at one height, `None` when there is no such route.
+fn pier_plan(
+    game: &Game<'_>,
+    target: nav::Pos,
+    position: [f64; 3],
+) -> Option<Option<Vec<nav::Pos>>> {
+    let feet = [
+        position[0].floor() as i32,
+        (position[1] + 0.05).floor() as i32,
+        position[2].floor() as i32,
+    ];
+    let cell = |at: nav::Pos| placement::block(game, at).cell;
+    let walkable = |at: nav::Pos| {
+        cell(at) == nav::Cell::Air
+            && cell([at[0], at[1] + 1, at[2]]) == nav::Cell::Air
+            && cell([at[0], at[1] - 1, at[2]]) == nav::Cell::Solid
+    };
+    let mut best: Option<Vec<nav::Pos>> = None;
+    for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+        let neighbour = [target[0] + dx, target[1], target[2] + dz];
+        let spot = [neighbour[0], neighbour[1] + 1, neighbour[2]];
+        if cell(neighbour) != nav::Cell::Solid || !walkable(spot) {
+            continue;
+        }
+        if feet == spot {
+            return Some(None);
+        }
+        if let Some(path) = drain::flat_path(feet, spot, 2000, walkable)
+            && best.as_ref().is_none_or(|b| path.len() < b.len())
+        {
+            best = Some(path);
+        }
+    }
+    best.map(Some)
+}
+/// The next waypoint of the route along the laid blocks, for the movement hook; the route ends
+/// (and the job goes on) once the last one is reached.
+pub(super) fn pier_goal(position: [f64; 3]) -> Option<[f64; 3]> {
+    state(|s| {
+        let pier = s.pier.as_mut()?;
+        while let Some(at) = pier.path.get(pier.next) {
+            let c = nav::center(*at);
+            if (position[0] - c[0]).hypot(position[2] - c[2]) < 0.3 {
+                pier.next += 1;
+            } else {
+                return Some(c);
+            }
+        }
+        s.pier = None;
+        None
+    })
+}
+/// Forgets the route (the player left the blocks: a fall into the water).
+pub(super) fn clear_pier() {
+    state(|s| s.pier = None);
 }
 fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     let Some(p) = game.native_player() else {
@@ -820,6 +910,22 @@ pub(super) fn tick(game: &Game<'_>) {
             Phase::Done => {
                 s.active = false;
                 return;
+            }
+            Phase::Pier => {
+                // Walking along the laid blocks (the movement hook steers); wait for it.
+                let stale = s
+                    .pier
+                    .as_ref()
+                    .is_none_or(|p| p.since.elapsed() > Duration::from_secs(30));
+                if !stale {
+                    return;
+                }
+                if s.pier.take().is_some()
+                    && let Some(target) = s.target
+                {
+                    give_up_cell(s, target);
+                }
+                s.phase = Phase::Ready;
             }
             Phase::Walking => match driver::workshop_walk_result() {
                 None => return,
@@ -1012,26 +1118,31 @@ pub(super) fn tick(game: &Game<'_>) {
                         s.target = Some(*at);
                         s.plant = *plant;
                         s.crop = *crop;
+                        s.waiting = false;
                         s.attempt = 0;
                     } else if unplanted {
                         // Nothing ripe and no seeds anywhere: idle, not paused. The job goes
                         // on by itself when something ripens or seeds turn up.
                         s.message = text(
-                            "Простой: нет семян, жду созревания",
-                            "Idle: no seeds, waiting for crops to ripen",
+                            "нет семян, жду созревания",
+                            "no seeds, waiting for crops to ripen",
                         )
                         .into();
+                        s.waiting = true;
                         s.idle_deposit = true;
                         return;
                     } else if dark > 0 {
+                        // Waits for a torch: the scan repeats, so the job goes on by itself.
                         s.message = text(
-                            "Нет света на грядках: для посева нужен источник света (уровень 9+)",
-                            "No light on the farmland: crops need a light source (level 9+)",
+                            "нет света на грядках: для посева нужен источник света (уровень 9+)",
+                            "no light on the farmland: crops need a light source (level 9+)",
                         )
                         .into();
+                        s.waiting = true;
                         return;
                     } else {
-                        s.message = text("Ожидание созревания", "Waiting for ripe crops").into();
+                        s.message = text("ожидание созревания", "waiting for ripe crops").into();
+                        s.waiting = true;
                         // Nothing to harvest for now: a good time to unload.
                         s.idle_deposit = true;
                         return;
@@ -1059,7 +1170,11 @@ pub(super) fn tick(game: &Game<'_>) {
                             text("Достигнут предел операций", "Operation limit reached").into();
                         return;
                     }
-                    let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
+                    // A pattern is laid on the surface, one block per cell.
+                    let pattern = config.pattern != drain::Pattern::Fill;
+                    let falling =
+                        placement::drain_item(game, pattern).is_some_and(|(_, falling)| falling);
+                    let surface = falling || pattern;
                     s.falling = falling;
                     s.settle = Duration::from_millis(if falling { 120 } else { 80 });
                     let held = |at: nav::Pos| s.skip.iter().any(|(p, _)| *p == at);
@@ -1071,13 +1186,16 @@ pub(super) fn tick(game: &Game<'_>) {
                     for z in -r..=r {
                         for x in -r..=r {
                             let (cx, cz) = (origin[0] + x, origin[2] + z);
+                            if !drain::in_pattern(*config, *origin, [cx, cz]) {
+                                continue;
+                            }
                             // The player's own body occupies these cells.
                             let own = |y: i32| {
                                 (p.x - (f64::from(cx) + 0.5)).abs() < 0.8
                                     && (p.z - (f64::from(cz) + 0.5)).abs() < 0.8
                                     && (body..=body + 1).contains(&y)
                             };
-                            if falling {
+                            if surface {
                                 // Only the surface cell of a column matters: a dropped block
                                 // sinks to the bottom and the column fills from below. The cell
                                 // needs a solid neighbour to click on.
@@ -1206,7 +1324,30 @@ pub(super) fn tick(game: &Game<'_>) {
         let Some(p) = game.native_player() else {
             return;
         };
-        if nav::distance(nav::center(target), [p.x, p.y + 1.2, p.z]) > 3.7 {
+        let pattern_drain = matches!(
+            &s.task,
+            Some(Task::Drain { config, .. }) if config.pattern != drain::Pattern::Fill
+        );
+        if pattern_drain {
+            // A pattern grows along its own blocks: stand on the one next to the cell, which
+            // may mean walking out along the line laid so far.
+            match pier_plan(game, target, [p.x, p.y, p.z]) {
+                Some(None) => {}
+                Some(Some(path)) => {
+                    s.pier = Some(Pier {
+                        path,
+                        next: 0,
+                        since: Instant::now(),
+                    });
+                    s.phase = Phase::Pier;
+                    return;
+                }
+                None => {
+                    give_up_cell(s, target);
+                    return;
+                }
+            }
+        } else if nav::distance(nav::center(target), [p.x, p.y + 1.2, p.z]) > 3.7 {
             approach(game, s, target);
             return;
         }
@@ -1252,7 +1393,11 @@ pub(super) fn tick(game: &Game<'_>) {
                     s.target = None;
                     return;
                 }
-                let Some((item, _)) = placement::drain_item(game) else {
+                let pattern = matches!(
+                    &s.task,
+                    Some(Task::Drain { config, .. }) if config.pattern != drain::Pattern::Fill
+                );
+                let Some((item, _)) = placement::drain_item(game, pattern) else {
                     fail(
                         s,
                         text(
@@ -1360,6 +1505,8 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                 "{label} · {} · {}",
                 if s.preview {
                     text("Просмотр", "Preview")
+                } else if s.active && s.waiting {
+                    text("Простой", "Idle")
                 } else if s.active {
                     text("Работа", "Running")
                 } else {

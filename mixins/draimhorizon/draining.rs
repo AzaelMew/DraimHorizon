@@ -5,14 +5,92 @@ use super::claim_borders_navigation::{self as nav, Pos};
 pub const REACH: f64 = 3.7;
 /// How far below the player's feet the pond is scanned.
 pub const DEPTH: i32 = 12;
+/// What to build in the water.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pattern {
+    /// Fill every cell of the area.
+    #[default]
+    Fill,
+    /// A line of blocks on the surface every `spacing` blocks, along the x axis.
+    Lines,
+    /// Lines both ways every `spacing` blocks: the water is cut into squares.
+    Grid,
+}
+impl Pattern {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Fill => Self::Lines,
+            Self::Lines => Self::Grid,
+            Self::Grid => Self::Fill,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
     pub radius: u8,
+    pub pattern: Pattern,
+    /// Distance between the lines of a pattern, in blocks (2 to 8).
+    pub spacing: u8,
 }
 impl Config {
     pub fn valid(self) -> bool {
-        (1..=12).contains(&self.radius)
+        (1..=12).contains(&self.radius) && (2..=8).contains(&self.spacing)
     }
+}
+/// Whether the column `at` ([x, z]) belongs to the pattern around `origin`. The lines run
+/// through the start column, so the first one is the row the player stands on.
+pub fn in_pattern(config: Config, origin: Pos, at: [i32; 2]) -> bool {
+    let k = i32::from(config.spacing.max(1));
+    let row = (at[1] - origin[2]).rem_euclid(k) == 0;
+    let column = (at[0] - origin[0]).rem_euclid(k) == 0;
+    match config.pattern {
+        Pattern::Fill => true,
+        Pattern::Lines => row,
+        Pattern::Grid => row || column,
+    }
+}
+/// The shortest route from `start` to `goal` over cells at one height that `walkable` accepts,
+/// four ways at a time: how the player walks along a pier it has built. The start itself is
+/// not tested (the player may hang over the edge). `None` when there is no route within `limit`
+/// cells.
+pub fn flat_path(
+    start: Pos,
+    goal: Pos,
+    limit: usize,
+    mut walkable: impl FnMut(Pos) -> bool,
+) -> Option<Vec<Pos>> {
+    use std::collections::{HashMap, VecDeque};
+    if start[1] != goal[1] {
+        return None;
+    }
+    let mut parents: HashMap<Pos, Pos> = HashMap::new();
+    let mut queue = VecDeque::from([start]);
+    let mut seen = std::collections::HashSet::from([start]);
+    while let Some(at) = queue.pop_front() {
+        if at == goal {
+            let mut path = vec![at];
+            let mut cursor = at;
+            while let Some(&parent) = parents.get(&cursor) {
+                path.push(parent);
+                cursor = parent;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        if seen.len() > limit {
+            return None;
+        }
+        for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+            let next = [at[0] + dx, at[1], at[2] + dz];
+            if seen.contains(&next) || !walkable(next) {
+                continue;
+            }
+            seen.insert(next);
+            parents.insert(next, at);
+            queue.push_back(next);
+        }
+    }
+    None
 }
 /// Blocks a building block replaces when it is placed into them.
 pub fn replaceable(name: &str) -> bool {
@@ -137,10 +215,17 @@ mod tests {
     }
     #[test]
     fn config_and_area_are_bounded() {
-        assert!(Config { radius: 12 }.valid());
-        assert!(!Config { radius: 0 }.valid());
-        assert!(!Config { radius: 13 }.valid());
-        let c = Config { radius: 3 };
+        let base = Config {
+            radius: 12,
+            pattern: Pattern::Fill,
+            spacing: 4,
+        };
+        assert!(base.valid());
+        assert!(!Config { radius: 0, ..base }.valid());
+        assert!(!Config { radius: 13, ..base }.valid());
+        assert!(!Config { spacing: 1, ..base }.valid());
+        assert!(!Config { spacing: 9, ..base }.valid());
+        let c = Config { radius: 3, ..base };
         assert!(inside(c, [0, 64, 0], [3, 10, -3]));
         assert!(!inside(c, [0, 64, 0], [4, 64, 0]));
         assert!(replaceable("minecraft:water") && !replaceable("minecraft:lava"));
@@ -167,5 +252,49 @@ mod tests {
             edge_stand([1, 64, 0], [0.5, 65.0, 0.5], solid, |_| false),
             None
         );
+    }
+    #[test]
+    fn lines_and_grids_pick_the_columns_of_the_pattern() {
+        let origin = [10, 64, 20];
+        let mut c = Config {
+            radius: 6,
+            pattern: Pattern::Lines,
+            spacing: 3,
+        };
+        // Rows along x through the start row: z = 20, 23, 17, ...
+        assert!(in_pattern(c, origin, [4, 20]) && in_pattern(c, origin, [99, 23]));
+        assert!(in_pattern(c, origin, [0, 17]));
+        assert!(!in_pattern(c, origin, [10, 21]) && !in_pattern(c, origin, [10, 22]));
+        c.pattern = Pattern::Grid;
+        // Columns too: x = 10, 13, 7, ...
+        assert!(in_pattern(c, origin, [13, 21]) && in_pattern(c, origin, [7, 22]));
+        assert!(!in_pattern(c, origin, [11, 21]));
+        c.pattern = Pattern::Fill;
+        assert!(in_pattern(c, origin, [11, 21]));
+        // A grid of spacing 3 leaves 2x2 squares of water between the lines.
+        c.pattern = Pattern::Grid;
+        let open = (0..3)
+            .flat_map(|dz| (0..3).map(move |dx| [10 + dx, 20 + dz]))
+            .filter(|at| !in_pattern(c, origin, *at))
+            .count();
+        assert_eq!(open, 4);
+    }
+    #[test]
+    fn the_route_follows_solid_cells_around_a_gap() {
+        // Solid cells: a row from x=0 to 5 at z=0, then a spur up z=1..3 at x=5.
+        let ground: Vec<Pos> = (0..=5)
+            .map(|x| [x, 64, 0])
+            .chain((1..=3).map(|z| [5, 64, z]))
+            .collect();
+        let walkable = |at: Pos| ground.contains(&at);
+        let path = flat_path([0, 64, 0], [5, 64, 3], 200, walkable).unwrap();
+        assert_eq!(path.first(), Some(&[0, 64, 0]));
+        assert_eq!(path.last(), Some(&[5, 64, 3]));
+        assert_eq!(path.len(), 9);
+        // Another height, or a goal off the structure, has no route.
+        assert_eq!(flat_path([0, 64, 0], [5, 65, 3], 200, walkable), None);
+        assert_eq!(flat_path([0, 64, 0], [9, 64, 9], 200, walkable), None);
+        // The start is not tested: the player may hang over an edge.
+        assert!(flat_path([-1, 64, 0], [3, 64, 0], 200, walkable).is_some());
     }
 }

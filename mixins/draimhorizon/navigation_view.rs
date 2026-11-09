@@ -2121,7 +2121,9 @@ pub(super) fn movement(
         }
         *forward = input.forward;
         *strafe = input.strafe;
-        *jump = input.jump;
+        // Farm routes are level: nothing there is ever jumped onto (jumping onto farmland
+        // tramples it).
+        *jump = input.jump && !s.flat;
     });
 }
 

@@ -291,8 +291,18 @@ pub(super) fn building_items(game: &Game<'_>, fill: bool) -> Vec<String> {
 /// What to fill water with, and whether it is a falling block. Sand and gravel come first:
 /// dropped into the surface cell they sink and stack from the bottom, whatever the depth.
 /// Anything else is the cheapest building block, which only stays where it is placed.
-pub(super) fn drain_item(game: &Game<'_>) -> Option<(String, bool)> {
+pub(super) fn drain_item(game: &Game<'_>, prefer_solid: bool) -> Option<(String, bool)> {
     let items = building_items(game, true);
+    // A pier of one block per cell wants a block that stays where it is put; sand and gravel
+    // are only for filling a column.
+    if prefer_solid
+        && let Some(name) = items
+            .iter()
+            .filter(|name| !model::gravity(name))
+            .min_by_key(|name| model::rank(name))
+    {
+        return Some((name.clone(), false));
+    }
     items
         .iter()
         .find(|name| model::gravity(name))
@@ -654,6 +664,9 @@ pub(super) fn movement(
     if swim_back(game, forward, strafe, jump, sneak) {
         return true;
     }
+    if pier_walk(game, forward, strafe, jump, sneak) {
+        return true;
+    }
     if edge_drive(game, forward, strafe, jump, sneak) {
         return true;
     }
@@ -770,6 +783,39 @@ fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
     }
     best.map(|(_, at)| at)
 }
+/// Walks the route along the blocks a drain pattern has laid, sneaking so that a one-wide line
+/// is never walked off.
+fn pier_walk(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    if !game.native_on(claims::ID)
+        || !game.native_playing()
+        || !crate::game::claim_borders_workshop_view::draining()
+        || game
+            .player
+            .as_ref()
+            .is_none_or(|b| b.fluids.was_touching_water || b.flying || !b.ground.on_ground)
+    {
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let position = [p.x, p.y, p.z];
+    let Some(goal) = crate::game::claim_borders_workshop_view::pier_goal(position) else {
+        return false;
+    };
+    let input = model::steer(position, goal, p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    *jump = false;
+    *sneak = true;
+    true
+}
 /// A drain job that fell into the water swims back to the nearest dry ground and goes on from
 /// there, instead of pausing.
 fn swim_back(
@@ -793,6 +839,8 @@ fn swim_back(
         return false;
     };
     let position = [p.x, p.y, p.z];
+    // The laid blocks are behind now: any route along them is stale.
+    crate::game::claim_borders_workshop_view::clear_pier();
     let Some(spot) = dry_spot(game, position) else {
         return false;
     };

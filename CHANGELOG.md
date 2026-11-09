@@ -1,5 +1,11 @@
 # История версий
 
+## 0.34.0
+
+- Drain patterns: the Drain tab has a **Pattern** button (fill, lines, grid) and a **Spacing** button (3 to 8). Lines lay a row of blocks on the water surface every N blocks along the x axis, starting with the row the player stands on; the grid adds columns, so the water is cut into squares (spacing 3 leaves 2x2 squares). One block per surface cell, taken from the inventory (a block that stays put is preferred over sand and gravel). The job grows along its own blocks: it plans a route over the solid cells already laid to the spot next to the next cell, walks out along them sneaking (so a one-wide line is never walked off), hangs over the edge and places. A cell with no such route is left for a few seconds and the job goes on. New pure `draining::in_pattern` and `draining::flat_path` with tests.
+- Farm: waiting for ripe crops, for light or for seeds is shown as "Idle" and the job carries on by itself, instead of looking paused. Farm routes are level and never jump (jumping onto farmland tramples it).
+- Not verified in game.
+
 ## 0.33.0
 
 - Mining and Tunnel find tools on their own: a pickaxe, axe or shovel anywhere in the hotbar or inventory counts (before, only the tool already in hand did, so both reported "hold a tool"). The right one for the block is put in hand, swapped up from the inventory when needed, and the old slot is not touched afterwards.
