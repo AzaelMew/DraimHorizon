@@ -1,5 +1,11 @@
 # История версий
 
+## 0.34.3
+
+- Mining: blocks at the foot and the top of a tree (or any block hidden behind grass, ferns, flowers or leaves) were skipped for good, because the aim ray met the plant first and the miner took that for an unreachable block, so only the clear middle of a trunk was cut. Now it breaks the plant or leaf block in the way first (not counted as a mined block, at most six per block, never torches, crops or anything of value) and then goes back to the block it wanted.
+- Mining: the standing spots reach one block further up a trunk (up to five blocks below the log).
+- Not verified in game. Logs far above the ground still need climbing, which is not implemented.
+
 ## 0.34.2
 
 - Drain: it now places only sand, red sand and gravel. Any other block (it used to fall back to the cheapest building block when no sand was carried) would have been left standing in the water; with none of the three in the inventory the job says "Sand or gravel is required".

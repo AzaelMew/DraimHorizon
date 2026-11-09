@@ -195,6 +195,38 @@ pub fn matches(ore: u8, name: &str) -> bool {
     }
     target(ore).is_some_and(|(_, _, blocks)| blocks.contains(&name))
 }
+/// Plants and leaves that stand between the player and the block to mine and are cleared out
+/// of the way (they break at once and are of no value).
+pub fn clearable(name: &str) -> bool {
+    let n = name.strip_prefix("minecraft:").unwrap_or(name);
+    n.ends_with("_leaves")
+        || n.ends_with("grass")
+        || n.ends_with("fern")
+        || n.ends_with("sapling")
+        || n.ends_with("tulip")
+        || n.ends_with("_roots")
+        || matches!(
+            n,
+            "dead_bush"
+                | "vine"
+                | "snow"
+                | "leaf_litter"
+                | "poppy"
+                | "dandelion"
+                | "blue_orchid"
+                | "allium"
+                | "azure_bluet"
+                | "oxeye_daisy"
+                | "cornflower"
+                | "lily_of_the_valley"
+                | "sunflower"
+                | "lilac"
+                | "rose_bush"
+                | "peony"
+                | "pink_petals"
+                | "wildflowers"
+        )
+}
 pub fn falling(name: &str) -> bool {
     matches!(
         name,
@@ -264,7 +296,7 @@ pub fn plan(
     for (_, target) in candidates {
         for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
             // Standing below the block reaches up a trunk: logs several blocks above the ground.
-            for y in [0, -1, 1, -2, -3, -4] {
+            for y in [0, -1, 1, -2, -3, -4, -5] {
                 if canceled() || began.elapsed() > Duration::from_millis(500) {
                     return None;
                 }
@@ -380,6 +412,11 @@ pub struct Job {
     pub started_ms: u64,
     /// The block that was broken last: its drops are collected around it.
     pub last: Option<nav::Pos>,
+    /// The current target is something in the way of the real one (grass, leaves): breaking it
+    /// is not counted, and the search starts again afterwards.
+    pub blocker: bool,
+    /// How many such things were cleared for the current block.
+    pub blockers: u8,
     /// The dropped item being walked to, items given up on, and when the player got there.
     pub collecting: Option<u32>,
     pub ignored: Vec<u32>,
@@ -409,6 +446,8 @@ impl Job {
             excluded: Vec::new(),
             started_ms: 0,
             last: None,
+            blocker: false,
+            blockers: 0,
             collecting: None,
             ignored: Vec::new(),
             arrived_ms: None,
@@ -422,7 +461,18 @@ impl Job {
         self.start_sequence = None;
         self.await_sequence = None;
     }
+    /// Aims at something that blocks the way to the real target; the real one is looked up again
+    /// once it is out of the way.
+    pub fn clear_blocker(&mut self, at: nav::Pos) {
+        self.target = Some(at);
+        self.blocker = true;
+        self.blockers += 1;
+        self.phase = Phase::Breaking;
+        self.start_sequence = None;
+        self.await_sequence = None;
+    }
     pub fn skip(&mut self) {
+        self.blocker = false;
         if let Some(target) = self.target.take()
             && !self.excluded.contains(&target)
         {
@@ -473,6 +523,16 @@ impl Job {
             }
             return;
         }
+        if self.blocker {
+            // Cleared: not a mined block. Look for the real target again.
+            self.blocker = false;
+            self.target = None;
+            self.start_sequence = None;
+            self.await_sequence = None;
+            self.phase = Phase::Searching;
+            return;
+        }
+        self.blockers = 0;
         self.confirmed += 1;
         self.last = self.target;
         self.target = None;
@@ -715,5 +775,37 @@ mod tests {
             assert_eq!(job.last, Some([2, 0, 0]));
             job.phase = Phase::Searching;
         }
+    }
+    #[test]
+    fn grass_and_leaves_in_the_way_are_cleared_without_counting() {
+        assert!(clearable("minecraft:short_grass") && clearable("minecraft:oak_leaves"));
+        assert!(clearable("minecraft:fern") && clearable("minecraft:poppy"));
+        assert!(!clearable("minecraft:grass_block") && !clearable("minecraft:oak_log"));
+        assert!(!clearable("minecraft:torch") && !clearable("minecraft:wheat"));
+        let mut job = Job::new(ANY, 0).unwrap();
+        job.select([4, 0, 0]);
+        job.phase = Phase::Breaking;
+        job.clear_blocker([3, 0, 0]);
+        assert_eq!(
+            (job.blockers, job.target, job.blocker),
+            (1, Some([3, 0, 0]), true)
+        );
+        job.sent([3, 0, 0], 0, 1);
+        job.sent([3, 0, 0], 3, 2);
+        job.acknowledge(2, false);
+        // Nothing was mined; the search starts over for the real target.
+        assert_eq!(
+            (job.confirmed, job.phase, job.target),
+            (0, Phase::Searching, None)
+        );
+        assert!(!job.blocker && job.active);
+        // A real block resets the count of blockers.
+        job.blockers = 3;
+        job.select([4, 0, 0]);
+        job.phase = Phase::Breaking;
+        job.sent([4, 0, 0], 0, 3);
+        job.sent([4, 0, 0], 3, 4);
+        job.acknowledge(4, false);
+        assert_eq!((job.confirmed, job.blockers), (1, 0));
     }
 }

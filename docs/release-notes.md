@@ -1,9 +1,8 @@
-**DraimHorizon 0.34.2 - Drain: sand and gravel only, one column at a time**
+**DraimHorizon 0.34.3 - Mining clears grass and leaves in the way**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Drain places only sand, red sand and gravel.
-- It finishes one column before moving to the next instead of running back and forth.
-- Builds on 0.34.1: Drain patterns, farm reaches a far storage chest.
+- Mining no longer skips the bottom and top blocks of a tree: grass, ferns, flowers and leaves in the way are cleared first.
+- Builds on 0.34.2: Drain with sand and gravel only.
 
 Not verified in game. No installation or publication is implied.

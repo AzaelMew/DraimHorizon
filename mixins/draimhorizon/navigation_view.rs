@@ -441,6 +441,8 @@ fn pause_state(s: &mut State) {
     }
     s.mine_aim = None;
 }
+/// Something in the way of the block being mined that is being cleared (see `Job::clear_blocker`).
+static BLOCKER: Mutex<Option<model::Pos>> = Mutex::new(None);
 fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
     if !game
         .world
@@ -463,6 +465,8 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
             crate::game::claim_borders_construction_view::block(game, at).diggable
         } else {
             mining::matches(ore, &f.name)
+                || (mining::clearable(&f.name)
+                    && *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) == Some(at))
         },
         falling: mining::falling(&f.name),
         breakable: f.hardness >= 0.0 && !f.block_entity,
@@ -974,7 +978,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let Some(target) = job.target else {
             return false;
         };
-        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() {
+        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() && !job.blocker {
             match ensure_tool(game, Some(target)) {
                 Tool::Ready => {}
                 Tool::Wait => return false,
@@ -1018,11 +1022,30 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let [dx, dy, dz] = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
         game.yaw = (-dx).atan2(dz).to_degrees() as f32;
         game.pitch = (-dy).atan2(dx.hypot(dz)).to_degrees() as f32;
-        if game.entity_targeted() || game.pick().is_none_or(|hit| hit.pos != target) {
-            job.skip();
-            s.mine_aim = None;
-            s.nav.replan();
-            return false;
+        let hit = if game.entity_targeted() {
+            None
+        } else {
+            game.pick()
+        };
+        match hit {
+            Some(hit) if hit.pos == target => {}
+            // Grass or leaves are in the way: break them first, then come back to the block.
+            Some(hit)
+                if job.blockers < 6
+                    && mining::clearable(&game.native_block(hit.pos))
+                    && !job.blocker =>
+            {
+                *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = Some(hit.pos);
+                job.clear_blocker(hit.pos);
+                s.mine_aim = None;
+                return false;
+            }
+            _ => {
+                job.skip();
+                s.mine_aim = None;
+                s.nav.replan();
+                return false;
+            }
         }
         s.mine_aim = Some([game.yaw, game.pitch]);
         true
@@ -1173,6 +1196,7 @@ pub(super) fn mining_ack(game: &Game<'_>, sequence: i32) {
             && let Some(target) = job.target
         {
             job.acknowledge(sequence, mining_block(game, job.ore, target).ore);
+            *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
             if !job.active {
                 s.nav.running = false;
             } else if job.phase == mining::Phase::Searching {
