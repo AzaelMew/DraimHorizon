@@ -1,10 +1,10 @@
-**DraimHorizon 0.34.5 - Farm jumps, storage in sight, half blocks**
+**DraimHorizon 0.34.6 - Farm picks up drops, finds beds at any height**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- The farm can climb a raised bed again (jumping up onto farmland is harmless).
-- The storage chest is opened from a spot with a clear line to it, and from another spot when it is hidden.
-- Slabs, carpets and snow layers are walked over; stairs are climbed.
-- Builds on 0.34.4: tool wear, hand-breakable blocks, tunnel placement.
+- The farm walks to the items its harvest dropped and picks them up.
+- Beds at other heights (a raised bed, a terrace) are found.
+- With no route to a bed or the chest the farm tries a digging route, then idles instead of pausing.
+- Builds on 0.34.5: farm jumps, storage in sight, half blocks.
 
 Not verified in game. No installation or publication is implied.

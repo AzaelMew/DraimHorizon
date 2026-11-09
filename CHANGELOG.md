@@ -1,5 +1,12 @@
 # История версий
 
+## 0.34.6
+
+- Farm: the items a harvest drops (and anything else lying in or around the farm) are picked up. Between two crops the bot walks to the nearest item that is still on the ground within the farm's radius plus three blocks and waits for the pickup; an item it cannot reach or take is given up on after a few seconds. Before, a bed's drops stayed on the ground unless the bot happened to walk over them.
+- Farm: beds at other heights are found. The scan looked at one layer only (the height the bot started at), so a raised bed or a terrace was invisible; it now looks from two blocks below the start to two above.
+- Farm: when no route to a bed or to the storage chest exists, the bot no longer pauses the job. It first tries a second pass over the same spots that may break and place blocks to get there (only after the plain walking route failed everywhere), and if that fails too it idles ("no route to the bed, looking again" / "no route to the storage, carrying on with the crops") and tries again later.
+- Not verified in game.
+
 ## 0.34.5
 
 - Farm: it can jump again. Routes among the crops were kept level (no jumps) to spare the farmland, which also stopped the bot from climbing a raised bed to reach the crops in its middle. Jumping up onto farmland is harmless (only landing on it from a drop tramples it), so the farm walks normally, still without breaking or placing blocks on the way.

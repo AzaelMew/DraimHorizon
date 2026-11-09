@@ -55,6 +55,13 @@ enum Phase {
     Placing,
     Done,
 }
+/// A dropped item the farm is collecting.
+struct Loot {
+    id: u32,
+    since: Instant,
+    arrived: Option<Instant>,
+    walking: bool,
+}
 struct Pier {
     path: Vec<nav::Pos>,
     next: usize,
@@ -128,6 +135,9 @@ struct State {
     unplanted: bool,
     // The job is up and waiting (ripening crops, light or seeds): shown as idle, not paused.
     waiting: bool,
+    // The dropped item being walked to, and the ones given up on.
+    loot: Option<Loot>,
+    ignored_items: Vec<u32>,
     // The trip to the storage container in progress, the earliest next trip, and whether the
     // farm ran out of ripe crops (a good moment to unload the harvest).
     store: Option<Store>,
@@ -158,6 +168,8 @@ impl Default for State {
             settle: Duration::from_millis(100),
             idle: 0,
             skip: Vec::new(),
+            loot: None,
+            ignored_items: Vec::new(),
             column: None,
             pier: None,
             crop: None,
@@ -710,6 +722,89 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
         Ok(facts.item.to_string())
     }
 }
+/// Collects what the harvest dropped: walks to the nearest item lying in or around the farm
+/// that has not been picked up and waits for the pickup, giving up on an item that cannot be
+/// reached or taken. True while it is busy with one (the job waits).
+fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
+    let (origin, radius) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => (*origin, i32::from(config.radius)),
+        _ => return false,
+    };
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let here = [p.x, p.y, p.z];
+    let at = |d: &horizon_client::entities::ItemEntity| [d.position.x, d.position.y, d.position.z];
+    let near = |d: &horizon_client::entities::ItemEntity| {
+        let a = at(d);
+        (a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
+            && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
+            && (a[1] - f64::from(origin[1])).abs() <= 4.0
+    };
+    let nearest = game
+        .dropped
+        .iter()
+        .filter(|d| d.stack.count > 0 && !s.ignored_items.contains(&d.id) && near(d))
+        .min_by(|a, b| nav::distance(at(a), here).total_cmp(&nav::distance(at(b), here)))
+        .map(|d| (d.id, at(d)));
+    let Some((id, item)) = nearest else {
+        s.loot = None;
+        s.ignored_items.clear();
+        return false;
+    };
+    let now = Instant::now();
+    let close = nav::distance(item, here) <= 1.1;
+    if s.loot.as_ref().is_none_or(|l| l.id != id) {
+        s.loot = Some(Loot {
+            id,
+            since: now,
+            arrived: close.then_some(now),
+            walking: false,
+        });
+        if !close {
+            match driver::workshop_walk(game, nav::block(item), true, false) {
+                Ok(()) => {
+                    if let Some(l) = s.loot.as_mut() {
+                        l.walking = true;
+                    }
+                }
+                Err(_) => {
+                    s.ignored_items.push(id);
+                    s.loot = None;
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    let mut give_up = false;
+    if let Some(loot) = s.loot.as_mut() {
+        if loot.walking {
+            match driver::workshop_walk_result() {
+                Some(true) => {
+                    loot.walking = false;
+                    loot.arrived = Some(now);
+                }
+                Some(false) => give_up = true,
+                None => {}
+            }
+        }
+        if close && loot.arrived.is_none() {
+            loot.arrived = Some(now);
+        }
+        // Standing on it, the pickup follows within a moment; a long walk is a lost cause.
+        give_up |= loot
+            .arrived
+            .is_some_and(|t| t.elapsed() > Duration::from_millis(900))
+            || loot.since.elapsed() > Duration::from_secs(10);
+    }
+    if give_up {
+        s.ignored_items.push(id);
+        s.loot = None;
+        return false;
+    }
+    true
+}
 /// Whether a ray from the eye of someone standing at `feet` reaches the middle of `target`
 /// through nothing but air (plants and crops count: they stop the aim ray).
 fn clear_line(game: &Game<'_>, feet: nav::Pos, target: nav::Pos) -> bool {
@@ -874,12 +969,21 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
         });
     }
     candidates.truncate(16);
-    if let Some(at) = candidates.get(s.attempt).copied() {
+    let farm = matches!(s.task, Some(Task::Farm { .. }));
+    let count = candidates.len();
+    // A farm first walks without breaking or placing blocks (it may jump: a raised bed has to
+    // be climbed, and jumping up onto farmland is harmless). When no spot can be reached that
+    // way, a second pass over the same spots may break and place blocks to get there.
+    let pick = if s.attempt < count {
+        candidates.get(s.attempt).map(|at| (*at, farm))
+    } else if farm && s.attempt < 2 * count {
+        candidates.get(s.attempt - count).map(|at| (*at, false))
+    } else {
+        None
+    };
+    if let Some((at, flat)) = pick {
         s.attempt += 1;
-        // A farm never breaks or places blocks on the way, but it may jump: a raised bed has to
-        // be climbed to reach the crops in its middle (jumping up onto farmland is harmless).
-        let farm = matches!(s.task, Some(Task::Farm { .. }));
-        match driver::workshop_walk(game, at, farm, false) {
+        match driver::workshop_walk(game, at, flat, false) {
             Ok(()) => {
                 s.phase = Phase::Walking;
                 true
@@ -889,6 +993,34 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
                 false
             }
         }
+    } else if farm && s.store.is_some() {
+        // No way to the storage: carry on with the crops and ask again in a minute.
+        s.store = None;
+        s.target = None;
+        s.attempt = 0;
+        s.phase = Phase::Ready;
+        s.store_after = Instant::now() + Duration::from_secs(60);
+        s.message = text(
+            "нет пути к складу, продолжаю с грядками",
+            "no route to the storage, carrying on with the crops",
+        )
+        .into();
+        s.waiting = true;
+        false
+    } else if farm {
+        // No way to this bed for now (a long way round, a gap): wait and look again instead
+        // of pausing the whole job.
+        s.target = None;
+        s.attempt = 0;
+        s.phase = Phase::Ready;
+        s.last = Instant::now() + Duration::from_secs(4);
+        s.message = text(
+            "нет пути к грядке, ищу снова",
+            "no route to the bed, looking again",
+        )
+        .into();
+        s.waiting = true;
+        false
     } else if matches!(s.task, Some(Task::Drain { .. })) && s.errors < 10 {
         // No spot reaches this cell: leave it for a while and fill the others.
         s.errors += 1;
@@ -1087,7 +1219,11 @@ pub(super) fn tick(game: &Game<'_>) {
         if !placement::external_settled() {
             return;
         }
-        // Between two crops: unload the harvest or fetch seeds when the storage is set.
+        // Between two crops: first pick up what the last one dropped.
+        if s.target.is_none() && s.store.is_none() && loot_step(game, s) {
+            return;
+        }
+        // Then unload the harvest or fetch seeds when the storage is set.
         if s.target.is_none()
             && s.store.is_none()
             && let (Some(chest), Some(purpose)) = (storage(game), store_due(game, s))
@@ -1142,31 +1278,38 @@ pub(super) fn tick(game: &Game<'_>) {
                     };
                     for z in -r..=r {
                         for x in -r..=r {
-                            let at = [origin[0] + x, origin[1], origin[2] + z];
-                            if game.native_block([at[0], at[1] - 1, at[2]]) != "minecraft:farmland"
-                            {
-                                continue;
-                            }
-                            let name = game.native_block(at);
-                            let ripe = crops.iter().copied().find(|c| {
-                                name == c.block()
-                                    && c.mature(game.native_block_property(at, "age").as_deref())
-                            });
-                            let mature = ripe.is_some();
-                            // A crop only survives where the light is 9 or more (sky or
-                            // block light): in a cave the server refuses the seed.
-                            let light = i32::from(game.world.light(at[0], at[1], at[2]));
-                            let lit = (light >> 4).max(light & 15) >= 9;
-                            let empty = config.replant && name == "minecraft:air";
-                            if empty && !lit {
-                                dark += 1;
-                            }
-                            if empty && lit && sow.is_none() {
-                                unplanted = true;
-                            }
-                            let empty = empty && lit && sow.is_some();
-                            if mature || empty {
-                                targets.push((at, empty, ripe.or(sow)));
+                            // Beds at other heights count too (a raised bed, a terrace): every
+                            // layer from two below the start to two above is looked at.
+                            for dy in -2..=2 {
+                                let at = [origin[0] + x, origin[1] + dy, origin[2] + z];
+                                if game.native_block([at[0], at[1] - 1, at[2]])
+                                    != "minecraft:farmland"
+                                {
+                                    continue;
+                                }
+                                let name = game.native_block(at);
+                                let ripe = crops.iter().copied().find(|c| {
+                                    name == c.block()
+                                        && c.mature(
+                                            game.native_block_property(at, "age").as_deref(),
+                                        )
+                                });
+                                let mature = ripe.is_some();
+                                // A crop only survives where the light is 9 or more (sky or
+                                // block light): in a cave the server refuses the seed.
+                                let light = i32::from(game.world.light(at[0], at[1], at[2]));
+                                let lit = (light >> 4).max(light & 15) >= 9;
+                                let empty = config.replant && name == "minecraft:air";
+                                if empty && !lit {
+                                    dark += 1;
+                                }
+                                if empty && lit && sow.is_none() {
+                                    unplanted = true;
+                                }
+                                let empty = empty && lit && sow.is_some();
+                                if mature || empty {
+                                    targets.push((at, empty, ripe.or(sow)));
+                                }
                             }
                         }
                     }
