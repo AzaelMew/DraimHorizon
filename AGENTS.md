@@ -1,6 +1,6 @@
 # DraimHorizons agent instructions
 
-Reply to the owner in Russian. Keep the public README and artwork in English.
+Keep the public README and artwork in English.
 Finish authorized tasks through verified artifacts and preserve unrelated work.
 Use skills and subagents only when explicitly requested by the user.
 
