@@ -1,10 +1,8 @@
-**DraimHorizon 0.37.10 - Mining sand and gravel**
+**DraimHorizon 0.37.11 - Continuous mining**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Sand and gravel can be mined with more sand above them, as in a desert or under a dune wall.
-- The search starts with the nearest blocks and keeps what it found when it runs out of time.
-- If nothing can be mined, the status line shows how many blocks were seen and where each stopped (unsafe / no footing / no route).
-- Builds on 0.37.9: /shop redirects to /market.
+- After each broken block the miner takes the next block of the chosen kind within reach and in sight (beside the one just broken) and keeps digging, instead of stopping to pick up and search. It collects the drops and searches only when nothing is in reach.
+- Builds on 0.37.10: sand and gravel in deserts and the status that explains an empty search.
 
 Not verified in game. No installation or publication is implied.

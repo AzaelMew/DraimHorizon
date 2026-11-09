@@ -874,6 +874,50 @@ fn resume_mining(game: &Game<'_>) -> Result<(), String> {
         request(game, s)
     })
 }
+/// Whether nothing but air lies between the eye and the middle of `target`.
+fn in_plain_sight(game: &Game<'_>, ore: u8, eye: [f64; 3], target: model::Pos) -> bool {
+    let end = model::center(target);
+    let steps = (model::distance(eye, end) / 0.2).ceil() as i32;
+    (1..steps).all(|i| {
+        let t = f64::from(i) / f64::from(steps);
+        let at = [
+            (eye[0] + (end[0] - eye[0]) * t).floor() as i32,
+            (eye[1] + (end[1] - eye[1]) * t).floor() as i32,
+            (eye[2] + (end[2] - eye[2]) * t).floor() as i32,
+        ];
+        at == target || mining_block(game, ore, at).cell == model::Cell::Air
+    })
+}
+/// The block of the job's kind to dig next from where the player stands: within reach, in plain
+/// sight, safe to break, beside the one just broken. `None` when the player has to move.
+fn chain_target(game: &Game<'_>, job: &mining::Job, position: [f64; 3]) -> Option<model::Pos> {
+    // A job that digs a route (a tunnel, a bridge) or clears the way has its own order.
+    if job.ore == u8::MAX || job.blocker {
+        return None;
+    }
+    let eye = game.eye_position()?;
+    let base = model::block(eye);
+    let mut found = Vec::new();
+    for dy in -4..=4 {
+        for dz in -4..=4 {
+            for dx in -4..=4 {
+                let at = [base[0] + dx, base[1] + dy, base[2] + dz];
+                if job.excluded.contains(&at)
+                    || model::distance(model::center(at), eye) > 4.2
+                    || !mining_block(game, job.ore, at).ore
+                {
+                    continue;
+                }
+                if mining::safe_target(at, position, &mut |p| mining_block(game, job.ore, p))
+                    && in_plain_sight(game, job.ore, eye, at)
+                {
+                    found.push(at);
+                }
+            }
+        }
+    }
+    mining::next_in_reach(job.last, eye, &found)
+}
 fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let Some(job) = s.mining.as_mut().filter(|j| j.active) else {
         return;
@@ -932,6 +976,19 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
             }
         }
         mining::Phase::Collecting => {
+            // First the next block in reach, with no step and no search: a person digging sand
+            // does not stop after each block. The drops are picked up when none is in reach.
+            if let Some(next) = chain_target(game, job, position) {
+                job.select(next);
+                job.phase = mining::Phase::Breaking;
+                job.started_ms = now;
+                job.collecting = None;
+                job.arrived_ms = None;
+                s.mine_aim = None;
+                s.nav.running = true;
+                s.nav.status = model::Status::Mining;
+                return;
+            }
             // Pick up what the broken block dropped before the next block: walk to each
             // item lying near it, give up on one that cannot be reached or taken.
             let here = position;

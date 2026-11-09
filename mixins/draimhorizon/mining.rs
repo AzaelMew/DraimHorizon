@@ -439,6 +439,28 @@ pub fn plan_buried(
     }
     None
 }
+/// The next block to mine without a step: of the blocks within reach, the one nearest to the
+/// block that was just broken (a vein, a column of sand, the next log), the nearest to the eye
+/// among equals. `None` when there is none.
+pub fn next_in_reach(
+    last: Option<nav::Pos>,
+    eye: [f64; 3],
+    candidates: &[nav::Pos],
+) -> Option<nav::Pos> {
+    let anchor = last.map_or(eye, nav::center);
+    candidates.iter().copied().min_by(|a, b| {
+        let key = |at: &nav::Pos| {
+            (
+                nav::distance(nav::center(*at), anchor),
+                nav::distance(nav::center(*at), eye),
+            )
+        };
+        let (ka, kb) = (key(a), key(b));
+        ka.0.total_cmp(&kb.0)
+            .then(ka.1.total_cmp(&kb.1))
+            .then(a.cmp(b))
+    })
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Searching,
@@ -769,6 +791,22 @@ mod tests {
         let mut stats = PlanStats::default();
         assert!(plan_with_stats([0, 0, 0], &[], risky, || false, &mut stats).is_none());
         assert_eq!((stats.candidates, stats.unsafe_), (1, 1));
+    }
+    #[test]
+    fn the_next_block_is_the_one_beside_the_last_break() {
+        let eye = [0.5, 1.6, 0.5];
+        let near_eye = [1, 0, 0];
+        let beside_last = [3, 0, 1];
+        assert_eq!(
+            next_in_reach(Some([3, 0, 2]), eye, &[near_eye, beside_last]),
+            Some(beside_last)
+        );
+        // With no block broken yet the nearest to the eye is taken.
+        assert_eq!(
+            next_in_reach(None, eye, &[beside_last, near_eye]),
+            Some(near_eye)
+        );
+        assert_eq!(next_in_reach(None, eye, &[]), None);
     }
     #[test]
     fn instant_breaks_and_paused_inflight_confirmations_preserve_the_limit() {

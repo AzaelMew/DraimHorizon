@@ -1,5 +1,12 @@
 # История версий
 
+## 0.37.11
+
+- Mining goes on block after block: right after a break is confirmed, the job looks for the next block of the chosen kind that is within reach (4.2 blocks of the eye), in plain sight and safe to break, takes the one nearest to the block just broken (the next of a vein, the next of a column of sand, the next log) and hits it at once, with no stop to pick up drops, no search and no step. Only when nothing is left in reach does it pick up the drops around and search for the next place, as before. In a desert this means sand is dug without a pause for as long as there is sand within reach, then the player walks on to the next spot.
+- Targets that sight does not confirm are not chained: the existing check (aim, the block really under the crosshair, grass and leaves cleared) still decides, and a block that cannot be hit is left and another is taken.
+- New pure `next_in_reach` in `mining.rs` with a test.
+- Not verified in game.
+
 ## 0.37.10
 
 - Mining sand and gravel (a desert): the search threw out any block with sand or gravel above it, and in a desert or under a dune wall that is nearly every block, so it found nothing and sat on "Finding ore… 0". Sand and gravel are now mined with more of the same above them (the block above only drops into the gap); other ore with a falling block above it is still left alone. Digging to buried sand or gravel goes through more of it.
