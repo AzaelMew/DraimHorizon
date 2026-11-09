@@ -578,8 +578,10 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
     }
     // Wheat to bales first, so that the bales go in with the same unload.
     if store::hay_plan(&inv, &crops).is_some()
+        && craft_allowed()
         && let Some(table) = purpose_chest(game, Purpose::Craft)
     {
+        craft_started();
         return Some((Purpose::Craft, table));
     }
     if !split.harvest.is_empty()
@@ -593,6 +595,55 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
         return Some((Purpose::DepositSeeds, chest));
     }
     None
+}
+/// Crafting is not tried again for a while after a trip to a table: one that cannot be opened
+/// must not hold the unload back.
+static CRAFT_RETRY: Mutex<Option<Instant>> = Mutex::new(None);
+fn craft_allowed() -> bool {
+    CRAFT_RETRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none_or(|t| Instant::now() >= t)
+}
+fn craft_started() {
+    *CRAFT_RETRY.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(Instant::now() + Duration::from_secs(90));
+}
+/// On the way to unload: with wheat in the inventory, a crafting table close by turns the trip
+/// into a crafting one first (the bales then go in with the unload). Without a table the wheat
+/// is put into the container as it is. Looked at twice a second at most.
+fn craft_on_the_way(game: &Game<'_>, t: Store) {
+    static LOOKED: Mutex<Option<Instant>> = Mutex::new(None);
+    if t.purpose != Purpose::Deposit || !craft_allowed() {
+        return;
+    }
+    {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        if looked.is_some_and(|l| l.elapsed() < Duration::from_millis(500)) {
+            return;
+        }
+        *looked = Some(Instant::now());
+    }
+    let crops: Vec<_> = state(|s| match &s.task {
+        Some(Task::Farm { config, .. }) => config.selected().collect(),
+        _ => Vec::new(),
+    });
+    if store::hay_plan(&inventory(game), &crops).is_none() {
+        return;
+    }
+    let Some(table) = table_near(game) else {
+        return;
+    };
+    craft_started();
+    state(|s| {
+        if let Some(t) = s.store.as_mut() {
+            t.purpose = Purpose::Craft;
+            t.tries = 0;
+            t.force_move = false;
+            t.since = Instant::now();
+        }
+        s.target = Some(table);
+    });
 }
 /// Walks within reach of the storage, then asks for the click that opens it.
 fn store_walk(game: &Game<'_>, s: &mut State) {
@@ -672,7 +723,7 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                 || (t.purpose == Purpose::Craft && menu == "minecraft:crafting")
         });
     match t.step {
-        Step::Walk => {}
+        Step::Walk => craft_on_the_way(game, t),
         Step::Open => {
             if open {
                 state(|s| {
