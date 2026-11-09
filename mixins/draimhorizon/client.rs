@@ -1508,6 +1508,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             schematic_files: crate::game::claim_borders_workshop_view::filenames(),
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storage(game),
+            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1663,6 +1664,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             if running {
                 game.native_mod_screen_close(claims::ID);
             }
+            Ok(Vec::new())
+        }
+        Action::SetAutoEat(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "auto_eat",
+                if on { "true" } else { "false" },
+            );
             Ok(Vec::new())
         }
         Action::FarmStorage => {

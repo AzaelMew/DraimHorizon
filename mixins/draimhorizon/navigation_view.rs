@@ -103,6 +103,16 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
         _ => Ok(()),
     }
 }
+static WAS_FOCUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static REFOCUSED: Mutex<Option<Instant>> = Mutex::new(None);
+/// True for a moment after the window got focus back: input in that moment (the click that
+/// focused it, keys still held) must not pause a task.
+pub(super) fn input_grace() -> bool {
+    REFOCUSED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(1500))
+}
 /// Set while this mod has switched off "pause when the window loses focus".
 static FOCUS_PAUSE_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// A task keeps running with the window minimised or in the background: the game would open
@@ -111,6 +121,13 @@ static FOCUS_PAUSE_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// ends, or when the mod is switched off.
 pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
     use std::sync::atomic::Ordering::Relaxed;
+    // The click that brings the window back to the front is not the player taking over.
+    let focused = game.focused;
+    if focused && !WAS_FOCUSED.swap(true, Relaxed) {
+        *REFOCUSED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    } else if !focused {
+        WAS_FOCUSED.store(false, Relaxed);
+    }
     let busy = game.native_on(claims::ID) && control().0;
     let off = FOCUS_PAUSE_OFF.load(Relaxed);
     if busy && !off && game.settings.file.bool("pauseOnLostFocus") {
@@ -446,16 +463,29 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
         breakable: f.hardness >= 0.0 && !f.block_entity,
     }
 }
-fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
-    let Some(stack) = game.held() else {
-        return false;
-    };
+/// The stack in slot `slot`: 0..9 the hotbar, 9..36 the main inventory.
+fn slot_stack<'a>(game: &'a Game<'_>, slot: usize) -> Option<&'a horizon_client::items::ItemStack> {
+    if slot < 9 {
+        game.stack_in(slot)
+    } else {
+        game.inventory.get(slot).and_then(Option::as_ref)
+    }
+}
+/// Whether `stack` is a pickaxe, axe or shovel with durability left that also suits `block`.
+fn tool_usable(
+    game: &Game<'_>,
+    stack: &horizon_client::items::ItemStack,
+    block: Option<&str>,
+    pickaxe_only: bool,
+) -> bool {
     // Ores need a pickaxe, wood an axe, dirt and sand a shovel; the per-block check below
-    // decides whether the held tool is right for the actual target.
-    if !["_pickaxe", "_axe", "_shovel"]
-        .iter()
-        .any(|kind| stack.item.ends_with(kind))
-    {
+    // decides whether the tool is right for the actual target.
+    let kinds: &[&str] = if pickaxe_only {
+        &["_pickaxe"]
+    } else {
+        &["_pickaxe", "_axe", "_shovel"]
+    };
+    if !kinds.iter().any(|kind| stack.item.ends_with(kind)) {
         return false;
     }
     let mut max = game
@@ -474,15 +504,59 @@ fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
     if max > 0 && max.saturating_sub(stack.damage) <= 10 {
         return false;
     }
-    target.is_none_or(|at| {
-        game.res
-            .items()
-            .correct_for_drops(Some(stack), &game.native_block(at))
+    block.is_none_or(|name| game.res.items().correct_for_drops(Some(stack), name))
+}
+/// The slot of a usable tool anywhere in the hotbar or inventory: the held one first, then the
+/// hotbar, then the main inventory.
+fn tool_slot(game: &Game<'_>, target: Option<model::Pos>, pickaxe_only: bool) -> Option<usize> {
+    let block = target.map(|at| game.native_block(at));
+    std::iter::once(game.selected).chain(0..36).find(|slot| {
+        slot_stack(game, *slot)
+            .is_some_and(|stack| tool_usable(game, stack, block.as_deref(), pickaxe_only))
     })
+}
+fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
+    tool_slot(game, target, false).is_some()
 }
 /// Tunnels and bridges dig stone, which only a pickaxe is meant for.
 pub(super) fn construction_tool(game: &Game<'_>) -> bool {
-    game.held().is_some_and(|s| s.item.ends_with("_pickaxe")) && mining_tool(game, None)
+    tool_slot(game, None, true).is_some()
+}
+enum Tool {
+    Ready,
+    /// A swap from the inventory is on its way: try again next tick.
+    Wait,
+    Missing,
+}
+/// Puts a suitable tool in hand: the selected one if it fits, else a hotbar slot is selected, else
+/// a stack from the main inventory is swapped into the hotbar first.
+fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
+    use horizon_client::menu::Input;
+    static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+    let Some(slot) = tool_slot(game, target, false) else {
+        return Tool::Missing;
+    };
+    if slot < 9 {
+        game.selected = slot;
+        return Tool::Ready;
+    }
+    let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(600)) {
+        return Tool::Wait;
+    }
+    let spare = (0..9)
+        .filter(|h| *h != game.selected)
+        .find(|h| game.stack_in(*h).is_none())
+        .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+    let Some(spare) = spare else {
+        return Tool::Missing;
+    };
+    *last = Some(Instant::now());
+    if game.remote_menu_ops(&[(Some(slot), spare as i32, Input::Swap)]) {
+        Tool::Wait
+    } else {
+        Tool::Missing
+    }
 }
 pub(super) fn workshop_walk(game: &Game<'_>, goal: model::Pos, flat: bool) -> Result<(), String> {
     clear_construction_driver();
@@ -711,7 +785,8 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     match job.phase {
         mining::Phase::Searching => {
             s.nav.running = true;
-            if !s.pending {
+            // A search that found nothing is repeated every couple of seconds, not every tick.
+            if !s.pending && s.last_query.elapsed() >= Duration::from_millis(1500) {
                 s.nav.replan();
             }
         }
@@ -843,7 +918,8 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     let _ = position;
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
-    if physical || game.right {
+    let grace = input_grace();
+    if (physical || game.right) && !grace {
         crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
     }
@@ -851,7 +927,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         return physical;
     };
     state(|s| {
-        if physical || game.right {
+        if (physical || game.right) && !grace {
             cancel_pending(s);
             pause_state(s);
             return physical;
@@ -881,13 +957,17 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         let Some(target) = job.target else {
             return false;
         };
-        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none()
-            && !mining_tool(game, Some(target))
-        {
-            job.active = false;
-            job.phase = mining::Phase::Tool;
-            s.nav.running = false;
-            return false;
+        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() {
+            match ensure_tool(game, Some(target)) {
+                Tool::Ready => {}
+                Tool::Wait => return false,
+                Tool::Missing => {
+                    job.active = false;
+                    job.phase = mining::Phase::Tool;
+                    s.nav.running = false;
+                    return false;
+                }
+            }
         }
         if !free_slot(game) {
             job.active = false;
@@ -931,7 +1011,108 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         true
     })
 }
+/// One meal in progress: the slot to go back to, the food bar when it began, and whether the
+/// food is already in hand (the slot change needs a tick to reach the server first).
+struct Meal {
+    original: usize,
+    slot: usize,
+    level: i32,
+    since: Instant,
+    armed: bool,
+}
+static MEAL: Mutex<Option<Meal>> = Mutex::new(None);
+/// "Eat on its own" is on unless the player switched it off.
+pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
+    game.native_setting(claims::SETTINGS_ID, "auto_eat")
+        .as_deref()
+        != Some("false")
+}
+/// Eats while a task runs and the food bar is low: puts food in hand, holds the use button
+/// until the bar rises, then takes the old slot back. True while it holds the button.
+fn auto_eat(game: &mut Game<'_>) -> bool {
+    use crate::game::claim_borders_auto_eat as eat;
+    let level = game.player.as_ref().map(|p| p.health.food.food as i32);
+    let running = level.is_some()
+        && game.native_on(claims::ID)
+        && game.native_playing()
+        && auto_eat_enabled(game)
+        && control().0;
+    let mut meal = MEAL.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(level) = level else {
+        *meal = None;
+        return false;
+    };
+    if let Some(m) = meal.as_mut() {
+        let done = level > m.level
+            || level >= 20
+            || !running
+            || m.since.elapsed() > Duration::from_millis(eat::EAT_TIMEOUT_MS);
+        if done {
+            game.selected = m.original;
+            *meal = None;
+            return false;
+        }
+        if !m.armed {
+            m.armed = game.selected == m.slot;
+            game.selected = m.slot;
+            return true;
+        }
+        let physical = game.right;
+        state(|s| s.use_restore = Some(physical));
+        game.right = true;
+        return true;
+    }
+    if !running || !eat::hungry(level, true) {
+        return false;
+    }
+    let foods: Vec<eat::Food> = (0..36)
+        .filter_map(|slot| {
+            let stack = slot_stack(game, slot)?;
+            let (nutrition, _) = game.res.items().get(&stack.item)?.food?;
+            Some(eat::Food {
+                slot,
+                item: stack.item.to_string(),
+                nutrition: nutrition as i32,
+            })
+        })
+        .collect();
+    let Some(food) = eat::choose(&foods, level).cloned() else {
+        return false;
+    };
+    if food.slot >= 9 {
+        // Bring it into the hotbar first (one swap, rate limited), eat it next tick.
+        static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(1000)) {
+            let spare = (0..9)
+                .filter(|h| *h != game.selected)
+                .find(|h| game.stack_in(*h).is_none())
+                .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+            if let Some(spare) = spare {
+                *last = Some(Instant::now());
+                game.remote_menu_ops(&[(
+                    Some(food.slot),
+                    spare as i32,
+                    horizon_client::menu::Input::Swap,
+                )]);
+            }
+        }
+        return false;
+    }
+    *meal = Some(Meal {
+        original: game.selected,
+        slot: food.slot,
+        level,
+        since: Instant::now(),
+        armed: false,
+    });
+    game.selected = food.slot;
+    true
+}
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
+    if auto_eat(game) {
+        return;
+    }
     let physical = game.left;
     let attack = mining_attack(game, physical);
     if attack != physical {
@@ -1289,8 +1470,11 @@ pub(super) fn tick(game: &Game<'_>) {
                                     }
                                 }
                             } else if let Some(job) = s.mining.as_mut() {
-                                job.active = false;
-                                job.phase = mining::Phase::NoTarget;
+                                // Nothing reachable right now: keep looking (the world loads,
+                                // blocks change, the player moves) instead of stopping.
+                                job.target = None;
+                                s.nav.running = true;
+                                s.last_query = Instant::now();
                             }
                         } else if s.mining.is_none()
                             && s.nav.follow.is_none()
@@ -1907,10 +2091,7 @@ pub(super) fn movement(
         if !s.nav.running {
             return;
         }
-        if *forward != 0.0
-            || *strafe != 0.0
-            || *jump
-            || *sneak
+        if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !input_grace())
             || scope(game).as_deref() != Some(s.scope.as_str())
         {
             cancel_pending(s);

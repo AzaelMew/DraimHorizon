@@ -10,9 +10,13 @@ Bindings are ignored while a screen or text editor is open, the window is unfocu
 
 Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
 
+### Eating
+
+While a task runs and the food bar is at 7 shanks or below, the mod eats on its own: it takes the best fitting safe food from the hotbar or inventory (never rotten flesh, spider eyes, raw chicken, golden apples or similar), holds the use button until the bar rises and puts the previous slot back. The **Eat** switch next to the status line turns it off; it is on by default.
+
 ### Farm storage
 
-On the Farm tab, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
+On the Farm tab, pick the crops from the icons (several at once; one always stays selected). With no seeds on hand and none in the storage the farm idles and waits for the crops to ripen. To set the storage, aim the crosshair at a chest, trapped chest, barrel or shulker box, open the menu and press **Storage**: that container is the farm's storage for the current world (aim at anything else and press it again to clear). The container is the one you set, never simply the nearest. With a storage set, the farm walks to it, opens it, moves the harvest in with shift-clicks (a stack of seeds stays in the inventory for replanting) and closes it when the inventory is nearly full or no ripe crops are left; when the seeds run out it takes up to two stacks of seeds from the container. It stops with a message when the container is full, cannot be opened or holds no seeds.
 
 ## Drain
 

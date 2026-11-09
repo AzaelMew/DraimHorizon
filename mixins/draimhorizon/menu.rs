@@ -128,6 +128,8 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    /// Eating on its own during a task (on by default).
+    pub auto_eat: bool,
     /// The farm's storage container, when one is set.
     pub farm_storage: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
@@ -227,6 +229,7 @@ impl PlayerRequest {
 }
 #[derive(Clone, PartialEq)]
 pub enum Action {
+    SetAutoEat(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage,
     RefreshSchematics,
@@ -324,6 +327,7 @@ impl std::fmt::Debug for Action {
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage => f.write_str("FarmStorage"),
+            Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -490,6 +494,8 @@ pub enum ChatOption {
 pub enum Control {
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
     FarmStorage,
+    /// Switches eating on its own while a task runs.
+    AutoEat,
     /// An icon tile that picks the crop to farm.
     FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
@@ -627,7 +633,8 @@ pub struct Widget {
 }
 #[derive(Clone)]
 pub struct Menu {
-    pub farm_crop: super::claim_borders_farming::Crop,
+    /// Selected crops, one bit each (`Crop::bit`).
+    pub farm_crops: u8,
     pub farm_radius: u8,
     pub farm_limit: u16,
     pub farm_replant: bool,
@@ -688,7 +695,7 @@ pub struct Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self {
-            farm_crop: super::claim_borders_farming::Crop::Wheat,
+            farm_crops: super::claim_borders_farming::Crop::Wheat.bit(),
             farm_radius: 6,
             farm_limit: 16,
             farm_replant: true,
@@ -782,7 +789,7 @@ impl Menu {
     /// Carry the Baritone settings over to a fresh menu: the action keys run the
     /// last settings shown here, so reopening or resetting the menu must not lose them.
     pub fn keep_baritone(&mut self, from: &Menu) {
-        self.farm_crop = from.farm_crop;
+        self.farm_crops = from.farm_crops;
         self.farm_radius = from.farm_radius;
         self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
@@ -895,7 +902,7 @@ impl Menu {
                             construction::Kind::Tunnel
                         },
                         direction: self.construct_direction,
-                        width: if bridge { 1 } else { self.construct_width },
+                        width: self.construct_width,
                         height: if bridge { 2 } else { self.construct_height },
                         length: self.construct_length,
                         fill_floor: bridge || self.construct_floor,
@@ -905,7 +912,7 @@ impl Menu {
             }
             BaritoneMode::Farm => Ok(Action::Navigate {
                 goal: Goal::Farm(super::claim_borders_farming::Config {
-                    crop: self.farm_crop,
+                    crops: self.farm_crops,
                     radius: self.farm_radius,
                     limit: self.farm_limit,
                     replant: self.farm_replant,
@@ -2721,7 +2728,7 @@ impl Menu {
                             [x + i as f32 * (tile + 2.0), 100.0, tile, tile],
                             name,
                             Some(Control::FarmCropPick(crop)),
-                            self.farm_crop == crop,
+                            self.farm_crops & crop.bit() != 0,
                         ));
                     }
                     below = tile + 2.0;
@@ -2812,8 +2819,20 @@ impl Menu {
                         ));
                     }
                 } else {
+                    // A bridge has a length and a width, like a tunnel; its height is fixed.
                     out.push(widget(
                         [x, 100.0 + step, w, h],
+                        localized!(
+                            self.language,
+                            "Ширина: {}",
+                            "Width: {}",
+                            self.construct_width
+                        ),
+                        Some(Control::ConstructWidth),
+                        false,
+                    ));
+                    out.push(widget(
+                        [x, 100.0 + 2.0 * step, w, h],
                         self.language.text(
                             "Блоки: хотбар, вторая рука или инвентарь",
                             "Blocks: hotbar, off hand or inventory",
@@ -2942,11 +2961,28 @@ impl Menu {
                     player.is_some(),
                 ));
             }
+            // The status line, and the switch for eating on its own beside it.
+            let eat_w = 92.0_f32.min(w * 0.4);
             out.push(widget(
-                [x, height - 48.0, w, 14.0],
+                [x, height - 48.0, w - eat_w - 4.0, 14.0],
                 &model.navigation_status,
                 None,
                 false,
+            ));
+            out.push(widget(
+                [x + w - eat_w, height - 48.0, eat_w, 14.0],
+                localized!(
+                    self.language,
+                    "Еда: {}",
+                    "Eat: {}",
+                    if model.auto_eat {
+                        self.language.text("вкл", "on")
+                    } else {
+                        self.language.text("выкл", "off")
+                    }
+                ),
+                Some(Control::AutoEat),
+                model.auto_eat,
             ));
             if self.baritone_mode == BaritoneMode::Schematic {
                 out.push(widget(
@@ -3511,7 +3547,11 @@ impl Menu {
                 None
             }
             Control::FarmCropPick(crop) => {
-                self.farm_crop = crop;
+                // Crops toggle like the mining targets; one always stays selected.
+                let next = self.farm_crops ^ crop.bit();
+                if next & super::claim_borders_farming::Crop::MASK != 0 {
+                    self.farm_crops = next;
+                }
                 None
             }
             Control::FarmRadius => {
@@ -3537,6 +3577,7 @@ impl Menu {
                 None
             }
             Control::FarmStorage => Some(Action::FarmStorage),
+            Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,

@@ -65,7 +65,6 @@ impl Config {
         (1..=64).contains(&self.length)
             && (1..=3).contains(&self.width)
             && (2..=3).contains(&self.height)
-            && (self.kind != Kind::Bridge || self.width == 1)
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -711,10 +710,24 @@ mod tests {
             )
             .is_none()
         );
+        // A bridge can be one to three blocks wide, like a tunnel.
+        for width in 1..=3 {
+            assert!(
+                Job::new(
+                    Config {
+                        width,
+                        ..config(Kind::Bridge)
+                    },
+                    [0, 0, 0],
+                    false
+                )
+                .is_some()
+            );
+        }
         assert!(
             Job::new(
                 Config {
-                    width: 3,
+                    width: 4,
                     ..config(Kind::Bridge)
                 },
                 [0, 0, 0],

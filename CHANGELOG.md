@@ -1,5 +1,17 @@
 # История версий
 
+## 0.33.0
+
+- Mining and Tunnel find tools on their own: a pickaxe, axe or shovel anywhere in the hotbar or inventory counts (before, only the tool already in hand did, so both reported "hold a tool"). The right one for the block is put in hand, swapped up from the inventory when needed, and the old slot is not touched afterwards.
+- Mining no longer stops with "No reachable ore found": it keeps searching every couple of seconds while blocks load and the player moves.
+- Auto-eat: while a task runs and the food bar is at 7 shanks or below, the best fitting safe food (no rotten flesh, spider eye, raw chicken, golden apples...) is taken from the hotbar or inventory, eaten, and the old slot restored. A switch beside the status line of every Baritone tab ("Eat: on/off") turns it off; on by default.
+- Bridge: width 1-3 next to the length (the floor is laid column by column).
+- Farm: several crops can be picked at once (the icons toggle; one always stays selected). Each ripe crop is harvested and seeds of any selected crop are planted. With no seeds on hand and none in the storage the job idles ("Idle: no seeds, waiting for crops to ripen") and goes on when crops ripen, instead of pausing. The storage deposit keeps a stack of seeds per selected crop.
+- Farm and Drain: the two glowing corner cubes that looked like stray holograms are replaced by an outline of the working area on the ground and a cube on the block being worked on.
+- Drain: when the player falls into the water together with the block, the job swims back to the nearest dry ground and carries on instead of pausing.
+- Coming back to the window no longer pauses a task: the click that focuses the window, and keys still held, are ignored for 1.5 s.
+- Not verified in game.
+
 ## 0.32.0
 
 - Farm storage: a **Storage** button on the Farm tab takes the chest, trapped chest, barrel or shulker box under the crosshair as the farm's storage (aim at it, open the menu, press the button; aiming at anything else while one is set clears it). It is your container, not the nearest one, and is remembered for the current world. When the inventory is nearly full, or no ripe crops are left, the farm walks to the container, opens it, shift-clicks the harvest into it (keeping a stack of seeds for replanting) and closes it. When the seeds run out it takes up to two stacks of seeds from the container instead of stopping. A container that is full, that cannot be opened (three tries) or that holds no seeds ends the job with a message. New pure `farm_storage.rs` with tests; furnaces, hoppers and other non-storage containers are not accepted.

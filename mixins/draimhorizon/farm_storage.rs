@@ -41,24 +41,30 @@ pub fn count(inventory: &[Stack], item: &str) -> u32 {
         .map(|(_, n)| *n)
         .sum()
 }
-/// The inventory slots to move into the container: every stack of the harvest, and the seeds
-/// beyond `keep` (counted from the hotbar on, so the kept seeds stay at hand). For a crop that
-/// is its own seed (carrots, potatoes) the same rule applies to the whole item.
-pub fn deposit(inventory: &[Stack], crop: Crop, keep: u32) -> Vec<usize> {
-    let (harvest, seed) = (product(crop), crop.seed());
-    let mut kept = 0;
+/// The inventory slots to move into the container: every stack of a selected crop's harvest, and
+/// the seeds beyond `keep` of each kind (counted from the hotbar on, so the kept seeds stay at
+/// hand). For a crop that is its own seed (carrots, potatoes) the same rule applies to the item.
+pub fn deposit(inventory: &[Stack], crops: &[Crop], keep: u32) -> Vec<usize> {
+    let mut kept: Vec<(&str, u32)> = Vec::new();
     let mut slots = Vec::new();
     for (slot, stack) in inventory.iter().enumerate() {
         let Some((name, n)) = stack else {
             continue;
         };
-        if name == seed {
-            if kept < keep {
-                kept += n;
+        if crops.iter().any(|c| c.seed() == name) {
+            let at = match kept.iter().position(|(item, _)| *item == name) {
+                Some(at) => at,
+                None => {
+                    kept.push((name, 0));
+                    kept.len() - 1
+                }
+            };
+            if kept[at].1 < keep {
+                kept[at].1 += n;
             } else {
                 slots.push(slot);
             }
-        } else if name == harvest {
+        } else if crops.iter().any(|c| product(*c) == name) {
             slots.push(slot);
         }
     }
@@ -112,7 +118,7 @@ mod tests {
         inventory[12] = stack("minecraft:cobblestone", 64);
         // The hotbar seeds are kept; the extra seeds and all wheat go; other items stay.
         assert_eq!(
-            deposit(&inventory, Crop::Wheat, KEEP_SEEDS),
+            deposit(&inventory, &[Crop::Wheat], KEEP_SEEDS),
             vec![9, 10, 11]
         );
         // Carrots are their own seed: 64 stay, the rest goes.
@@ -120,8 +126,21 @@ mod tests {
         carrots[3] = stack("minecraft:carrot", 64);
         carrots[9] = stack("minecraft:carrot", 64);
         carrots[10] = stack("minecraft:carrot", 30);
-        assert_eq!(deposit(&carrots, Crop::Carrots, KEEP_SEEDS), vec![9, 10]);
-        assert!(deposit(&vec![None; 36], Crop::Beetroot, KEEP_SEEDS).is_empty());
+        assert_eq!(deposit(&carrots, &[Crop::Carrots], KEEP_SEEDS), vec![9, 10]);
+        assert!(deposit(&vec![None; 36], &[Crop::Beetroot], KEEP_SEEDS).is_empty());
+        // Two crops: each keeps its own stack of seeds, the other harvest goes as well.
+        let mut two: Vec<Stack> = vec![None; 36];
+        two[0] = stack("minecraft:wheat_seeds", 64);
+        two[1] = stack("minecraft:beetroot_seeds", 64);
+        two[9] = stack("minecraft:wheat_seeds", 10);
+        two[10] = stack("minecraft:beetroot_seeds", 10);
+        two[11] = stack("minecraft:beetroot", 5);
+        assert_eq!(
+            deposit(&two, &[Crop::Wheat, Crop::Beetroot], KEEP_SEEDS),
+            vec![9, 10, 11]
+        );
+        // A crop that is not selected is left alone.
+        assert_eq!(deposit(&two, &[Crop::Wheat], KEEP_SEEDS), vec![9]);
     }
     #[test]
     fn seeds_are_taken_until_the_inventory_has_enough() {

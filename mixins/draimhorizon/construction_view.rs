@@ -651,13 +651,18 @@ pub(super) fn movement(
         reset();
         return false;
     }
+    if swim_back(game, forward, strafe, jump, sneak) {
+        return true;
+    }
     if edge_drive(game, forward, strafe, jump, sneak) {
         return true;
     }
     if !state(|s| s.job.as_ref().is_some_and(|j| j.active)) {
         return false;
     }
-    if *forward != 0.0 || *strafe != 0.0 || *jump || *sneak || !game.native_playing() {
+    if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
+        || !game.native_playing()
+    {
         pause();
         navigation::pause();
         return false;
@@ -741,6 +746,64 @@ pub(super) fn movement(
         true
     })
 }
+/// The nearest dry spot to stand on around `position`: open air at the feet and head over a
+/// solid block, within a few blocks.
+fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
+    let here = nav::block(position);
+    let mut best: Option<(i32, nav::Pos)> = None;
+    for dy in -3..=3 {
+        for dz in -8..=8 {
+            for dx in -8..=8 {
+                let at = [here[0] + dx, here[1] + dy, here[2] + dz];
+                let open = |y: i32| block(game, [at[0], y, at[2]]).cell == nav::Cell::Air;
+                if open(at[1])
+                    && open(at[1] + 1)
+                    && block(game, [at[0], at[1] - 1, at[2]]).cell == nav::Cell::Solid
+                {
+                    let d = dx * dx + dz * dz + dy * dy * 4;
+                    if best.is_none_or(|(b, _)| d < b) {
+                        best = Some((d, at));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, at)| at)
+}
+/// A drain job that fell into the water swims back to the nearest dry ground and goes on from
+/// there, instead of pausing.
+fn swim_back(
+    game: &Game<'_>,
+    forward: &mut f32,
+    strafe: &mut f32,
+    jump: &mut bool,
+    sneak: &mut bool,
+) -> bool {
+    if !game.native_on(claims::ID)
+        || !game.native_playing()
+        || !crate::game::claim_borders_workshop_view::draining()
+        || game
+            .player
+            .as_ref()
+            .is_none_or(|b| !b.fluids.was_touching_water || b.flying)
+    {
+        return false;
+    }
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    let position = [p.x, p.y, p.z];
+    let Some(spot) = dry_spot(game, position) else {
+        return false;
+    };
+    let input = model::steer(position, nav::center(spot), p.yaw);
+    *forward = input.forward;
+    *strafe = input.strafe;
+    // Swimming up and out: jump held keeps the player at the surface and over the edge.
+    *jump = true;
+    *sneak = false;
+    true
+}
 /// How long a drain placement may spend reaching the edge before the next spot is tried.
 const EDGE_MS: u64 = 3500;
 /// The point to hang over and the shore block, for a water cell that no inland face reaches.
@@ -767,7 +830,9 @@ fn edge_drive(
     }) else {
         return false;
     };
-    if *forward != 0.0 || *strafe != 0.0 || *jump || *sneak || !game.native_playing() {
+    if ((*forward != 0.0 || *strafe != 0.0 || *jump || *sneak) && !navigation::input_grace())
+        || !game.native_playing()
+    {
         pause();
         navigation::pause();
         return false;
