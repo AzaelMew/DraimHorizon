@@ -1,5 +1,18 @@
 # История версий
 
+## 0.31.0
+
+- horizon-baritone bridge removed: every Baritone tab runs on the built-in drivers. The `baritone_bridge` module, its hook wiring and the documentation section are gone.
+- Mining: no block limit any more; pick what to farm and start/stop with the action keys. After each broken block the miner now walks to the items it dropped and waits for them to be picked up (items it cannot reach or take are given up on after a few seconds) before looking for the next block. The nearest block is always taken next, so a vein or a whole trunk is worked through; standing spots up to four blocks below a log let it reach high up a trunk. The status line shows the running count and "Collecting drops".
+- Navigation: blocks with no collision (ferns, grass, flowers, saplings, crops, torches, rails, redstone parts) are walked through like air. A bridge no longer stops in a fern.
+- Bridge and Tunnel: whatever stands in the way is broken (bridge included), falling blocks above no longer stop a tunnel, a slab or stair under the path counts as floor, and the pause reasons are specific (cannot break this block, no floor, no face to place on) instead of "check the passage". Only unbreakable blocks (bedrock, chests) still stop the job.
+- Drain: far faster (a placement every ~0.1-0.2 s instead of ~0.4-1.9 s) and a cell that is refused or unreachable is skipped for a few seconds instead of stopping the whole task; the end message counts skipped cells.
+- Farm: crops need light 9 or more (sky or block light), so in a dark cave the server refuses every seed. The farm now skips unlit cells and says "No light on the farmland: crops need a light source (level 9+)" instead of failing with "Server refused". Also: a seed placement was declared refused when the server's acknowledgement arrived before the block update, and the click could be made before the new hotbar slot reached the server. The slot change now gets one tick to arrive and the block is checked again for 0.9 s before "Server refused".
+- Farm: the crop is picked from four item icons (wheat, carrot, potato, beetroot; the name is the tooltip) instead of a button that cycles through them.
+- A running task keeps working when the window is minimised or loses focus: "pause when the window loses focus" is switched off in memory (never saved) while a task runs and restored afterwards.
+- TAB: with 80 or more players the list is split into four columns.
+- Not verified in game.
+
 ## 0.30.0
 
 - Player list (TAB): compact and redrawn. Rows are 16 px instead of 22, cells 168 px instead of 230, so more players fit on screen and more columns open on a normal window. The "PLAYER / ms" header rows are gone; the title carries the online count and a coloured TPS badge. Ping is shown as four signal bars that fill with connection quality, with the milliseconds beside them when the cell is wide enough. Rounded rows, a thin accent line, smaller faces; friends keep the green tint, the check mark and the distance.

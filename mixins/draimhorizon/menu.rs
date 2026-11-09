@@ -483,7 +483,8 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
-    FarmCrop,
+    /// An icon tile that picks the crop to farm.
+    FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
     FarmLimit,
     FarmReplant,
@@ -501,7 +502,6 @@ pub enum Control {
     BaritoneMode(BaritoneMode),
     MiningTarget(u8),
     MiningPage,
-    MiningLimit,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
@@ -637,7 +637,6 @@ pub struct Menu {
     /// Selected mining targets, one bit per `mining::target` index.
     pub mining_targets: u32,
     pub mining_page: usize,
-    pub mining_limit: u16,
     pub navigation_player: Option<u128>,
     pub navigation_x: String,
     pub navigation_y: String,
@@ -703,7 +702,6 @@ impl Default for Menu {
             baritone_mode: BaritoneMode::Navigation,
             mining_targets: 1,
             mining_page: 0,
-            mining_limit: 16,
             construct_direction: super::claim_borders_construction::Direction::North,
             construct_length: 16,
             construct_width: 1,
@@ -793,7 +791,6 @@ impl Menu {
         self.baritone_mode = from.baritone_mode;
         self.mining_targets = from.mining_targets;
         self.mining_page = from.mining_page;
-        self.mining_limit = from.mining_limit;
         self.navigation_player = from.navigation_player;
         self.navigation_waypoint = from.navigation_waypoint;
         self.navigation_x = from.navigation_x.clone();
@@ -875,7 +872,8 @@ impl Menu {
                     goal: Goal::Mine {
                         ore,
                         targets,
-                        limit: self.mining_limit,
+                        // Mining has no block limit: start and stop with the action keys.
+                        limit: 0,
                     },
                     running,
                 })
@@ -2635,24 +2633,6 @@ impl Menu {
                 let rows: Vec<(String, Control)> = if farm {
                     vec![
                         (
-                            match self.farm_crop {
-                                super::claim_borders_farming::Crop::Wheat => {
-                                    self.language.text("Пшеница", "Wheat")
-                                }
-                                super::claim_borders_farming::Crop::Carrots => {
-                                    self.language.text("Морковь", "Carrots")
-                                }
-                                super::claim_borders_farming::Crop::Potatoes => {
-                                    self.language.text("Картофель", "Potatoes")
-                                }
-                                super::claim_borders_farming::Crop::Beetroot => {
-                                    self.language.text("Свёкла", "Beetroot")
-                                }
-                            }
-                            .into(),
-                            Control::FarmCrop,
-                        ),
-                        (
                             localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
                             Control::FarmRadius,
                         ),
@@ -2701,11 +2681,32 @@ impl Menu {
                         ),
                     ]
                 };
+                // The crop is picked from item icons (name as the tooltip), not by cycling.
+                let mut below = 0.0;
+                if farm {
+                    use super::claim_borders_farming::Crop;
+                    let tile = 22.0;
+                    for (i, crop) in Crop::ALL.into_iter().enumerate() {
+                        let name = match crop {
+                            Crop::Wheat => self.language.text("Пшеница", "Wheat"),
+                            Crop::Carrots => self.language.text("Морковь", "Carrots"),
+                            Crop::Potatoes => self.language.text("Картофель", "Potatoes"),
+                            Crop::Beetroot => self.language.text("Свёкла", "Beetroot"),
+                        };
+                        out.push(widget(
+                            [x + i as f32 * (tile + 2.0), 100.0, tile, tile],
+                            name,
+                            Some(Control::FarmCropPick(crop)),
+                            self.farm_crop == crop,
+                        ));
+                    }
+                    below = tile + 2.0;
+                }
                 for (i, (label, c)) in rows.into_iter().enumerate() {
                     out.push(widget(
                         [
                             x + (i % 2) as f32 * (tab_width + 4.0),
-                            100.0 + (i / 2) as f32 * step,
+                            100.0 + below + (i / 2) as f32 * step,
                             tab_width,
                             h,
                         ],
@@ -2825,13 +2826,7 @@ impl Menu {
                 let pages = mining::COUNT.div_ceil(per_page);
                 let page = self.mining_page % pages;
                 out.push(widget(
-                    [x, 100.0, tab_width, h],
-                    localized!(self.language, "Блоков: {}", "Blocks: {}", self.mining_limit),
-                    Some(Control::MiningLimit),
-                    false,
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, 100.0, tab_width, h],
+                    [x, 100.0, w, h],
                     if pages > 1 {
                         localized!(
                             self.language,
@@ -3491,8 +3486,8 @@ impl Menu {
                 self.construct_floor = !self.construct_floor;
                 None
             }
-            Control::FarmCrop => {
-                self.farm_crop = self.farm_crop.next();
+            Control::FarmCropPick(crop) => {
+                self.farm_crop = crop;
                 None
             }
             Control::FarmRadius => {
@@ -3578,15 +3573,6 @@ impl Menu {
             }
             Control::MiningPage => {
                 self.mining_page = self.mining_page.wrapping_add(1);
-                None
-            }
-            Control::MiningLimit => {
-                let limits = [1, 8, 16, 32, 64];
-                let at = limits
-                    .iter()
-                    .position(|n| *n == self.mining_limit)
-                    .unwrap_or(0);
-                self.mining_limit = limits[(at + 1) % limits.len()];
                 None
             }
             Control::NavigationPlayer => {
@@ -5300,7 +5286,7 @@ mod tests {
                     goal: super::super::claim_borders_navigation::Goal::Mine {
                         ore: 0,
                         targets: 1,
-                        limit: 16
+                        limit: 0
                     },
                     running: false
                 })
@@ -5315,7 +5301,6 @@ mod tests {
                             Some(
                                 Control::MiningTarget(_)
                                     | Control::MiningPage
-                                    | Control::MiningLimit
                                     | Control::BaritoneMode(_)
                             )
                         )
@@ -6445,7 +6430,7 @@ mod tests {
                         matches!(
                             w.control,
                             Some(
-                                Control::FarmCrop
+                                Control::FarmCropPick(_)
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant

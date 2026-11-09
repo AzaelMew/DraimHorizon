@@ -14,6 +14,9 @@ struct External {
     active: bool,
     result: Option<Result<usize, schematic::PlaceError>>,
     confirm: Vec<(nav::Pos, schematic::BlockState)>,
+    /// When the server's acknowledgement arrived before the block change did: the block is
+    /// checked again for a moment before the placement counts as refused.
+    verify_since: Option<u64>,
 }
 struct State {
     external: Option<External>,
@@ -76,7 +79,9 @@ pub(super) fn block(game: &Game<'_>, at: nav::Pos) -> model::Block {
     );
     model::Block {
         cell,
-        diggable: cell == nav::Cell::Solid && facts.hardness >= 0.0 && !facts.block_entity,
+        diggable: matches!(cell, nav::Cell::Solid | nav::Cell::Blocked)
+            && facts.hardness >= 0.0
+            && !facts.block_entity,
         falling: crate::game::claim_borders_mining::falling(&facts.name),
     }
 }
@@ -385,6 +390,7 @@ pub(super) fn place_external(
             active: true,
             result: None,
             confirm: Vec::new(),
+            verify_since: None,
         });
         s.aim = None;
     });
@@ -523,6 +529,35 @@ pub(super) fn tick(game: &Game<'_>) {
         reset();
         return;
     }
+    state(|s| {
+        let now = s.started.elapsed().as_millis() as u64;
+        let Some(e) = s.external.as_mut() else {
+            return;
+        };
+        let Some(since) = e.verify_since else {
+            return;
+        };
+        if e.result.is_some() {
+            return;
+        }
+        let ok = !e.confirm.is_empty()
+            && e.confirm.iter().all(|(at, w)| {
+                w.matches(&game.native_block(*at), |key| {
+                    game.native_block_property(*at, key)
+                })
+            });
+        if ok || now.saturating_sub(since) > 900 {
+            e.result = Some(if ok {
+                Ok(e.confirm.len())
+            } else {
+                Err(schematic::PlaceError::Refused)
+            });
+            e.active = false;
+            e.verify_since = None;
+            s.placement = None;
+            s.aim = None;
+        }
+    });
     let current = navigation::scope(game);
     if state(|s| {
         (s.job.is_some() || s.external.is_some()) && current.as_deref() != Some(s.scope.as_str())
@@ -854,7 +889,13 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
                 }
                 s.auto_slot = Some(slot);
             });
+            let changed = game.selected != slot;
             game.selected = slot;
+            if changed {
+                // The slot change has to reach the server before the click, or the click is
+                // made with the old item in hand and the server refuses it.
+                return false;
+            }
             game.stack_in(slot).cloned()
         }
         // The main hand keeps its tool; the off hand's block is used when it passes.
@@ -1084,14 +1125,15 @@ pub(super) fn ack(game: &Game<'_>, sequence: i32) {
                             game.native_block_property(*at, key)
                         })
                     });
-                e.result = Some(if ok {
-                    Ok(e.confirm.len())
-                } else {
-                    Err(schematic::PlaceError::Refused)
-                });
-                e.active = false;
-                s.placement = None;
-                s.aim = None;
+                if ok {
+                    e.result = Some(Ok(e.confirm.len()));
+                    e.active = false;
+                    s.placement = None;
+                    s.aim = None;
+                } else if e.verify_since.is_none() {
+                    // The block update may still be on its way: look again for a moment.
+                    e.verify_since = Some(s.started.elapsed().as_millis() as u64);
+                }
             }
             return;
         }
@@ -1174,9 +1216,18 @@ pub(super) fn snapshot() -> Option<(String, bool)> {
                         l.text("Нужна исправная кирка", "A usable pickaxe is required")
                     }
                     model::Phase::Stopped(model::Stop::Timeout) => l.text("Тайм-аут", "Timed out"),
-                    model::Phase::Stopped(_) => {
-                        l.text("Пауза · проверьте проход", "Paused · check the passage")
+                    model::Phase::Stopped(model::Stop::Protected) => l.text(
+                        "Блок нельзя сломать (бедрок, сундук…)",
+                        "Cannot break this block (bedrock, chest…)",
+                    ),
+                    model::Phase::Stopped(model::Stop::Floor) => {
+                        l.text("Нет пола под проходом", "No floor under the passage")
                     }
+                    model::Phase::Stopped(model::Stop::Blocked) => l.text(
+                        "Нет грани для установки блока",
+                        "No face to place a block on",
+                    ),
+                    model::Phase::Stopped(_) => l.text("Пауза", "Paused"),
                     model::Phase::Digging => l.text("Разрушение", "Digging"),
                     model::Phase::Placing => l.text("Установка пола", "Placing floor"),
                     _ => l.text("Движение", "Moving"),

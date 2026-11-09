@@ -321,7 +321,9 @@ impl Job {
                 }
                 nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
                 nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
-                _ => return Scan::Stop(Stop::Floor),
+                // A slab, stair or other partial block is walked over like a floor.
+                nav::Cell::Blocked => {}
+                nav::Cell::Air => return Scan::Stop(Stop::Floor),
             }
             for y in (0..i32::from(self.config.height)).rev() {
                 let pos = [x, at[1] + y, z];
@@ -332,12 +334,9 @@ impl Job {
                     nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
                     _ => {}
                 }
-                if self.config.kind == Kind::Bridge {
-                    return Scan::Stop(Stop::Blocked);
-                }
-                if b.falling || block([x, pos[1] + 1, z]).falling {
-                    return Scan::Stop(Stop::Falling);
-                }
+                // Whatever stands in the way is broken, a bridge included. Falling blocks
+                // above are not a reason to stop: the top block goes first and anything
+                // that drops into the passage is broken in turn.
                 if !b.diggable {
                     return Scan::Stop(Stop::Protected);
                 }
@@ -522,7 +521,7 @@ mod tests {
             } else {
                 wall(p)
             }),
-            Action::Stop(Stop::Falling)
+            Action::Break([1, 1, 0])
         );
         assert_eq!(
             job.next(|p| if p == [1, 0, 0] {
@@ -722,6 +721,46 @@ mod tests {
                 false
             )
             .is_none()
+        );
+    }
+    #[test]
+    fn a_bridge_breaks_what_blocks_the_way_instead_of_pausing() {
+        let job = Job::new(config(Kind::Bridge), [0, 0, 0], false).unwrap();
+        let rock = |p: nav::Pos| {
+            if p == [1, 1, 0] {
+                Block {
+                    cell: nav::Cell::Solid,
+                    diggable: true,
+                    falling: false,
+                }
+            } else {
+                air(p)
+            }
+        };
+        assert_eq!(job.next(rock), Action::Break([1, 1, 0]));
+        // Bedrock and the like cannot be broken: that is the one honest reason to stop.
+        assert_eq!(
+            job.next(|p| if p == [1, 1, 0] {
+                Block {
+                    diggable: false,
+                    ..rock(p)
+                }
+            } else {
+                rock(p)
+            }),
+            Action::Stop(Stop::Protected)
+        );
+        // A slab under the path is walked over, not a stop.
+        assert_eq!(
+            job.next(|p| if p == [1, -1, 0] {
+                Block {
+                    cell: nav::Cell::Blocked,
+                    ..air(p)
+                }
+            } else {
+                air(p)
+            }),
+            Action::Walk([1, 0, 0])
         );
     }
 }

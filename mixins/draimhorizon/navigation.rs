@@ -124,9 +124,64 @@ pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
         Cell::Air
     } else if full_collision || matches!(name, "farmland" | "dirt_path") {
         Cell::Solid
+    } else if passable(name) {
+        Cell::Air
     } else {
         Cell::Blocked
     }
+}
+
+/// Blocks with no collision shape that a player walks straight through: grass, ferns, flowers,
+/// crops, saplings and similar plants, torches, rails and redstone parts. Treated as open air
+/// (they are replaced when something is placed there, or broken in an instant).
+pub fn passable(name: &str) -> bool {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    name.ends_with("grass")
+        || name.ends_with("fern")
+        || name.ends_with("sapling")
+        || name.ends_with("_roots")
+        || name.ends_with("torch")
+        || name.ends_with("_button")
+        || name.ends_with("rail")
+        || name.ends_with("tulip")
+        || name.ends_with("_stem")
+        || matches!(
+            name,
+            "dead_bush"
+                | "poppy"
+                | "dandelion"
+                | "blue_orchid"
+                | "allium"
+                | "azure_bluet"
+                | "oxeye_daisy"
+                | "cornflower"
+                | "lily_of_the_valley"
+                | "torchflower"
+                | "sunflower"
+                | "lilac"
+                | "rose_bush"
+                | "peony"
+                | "pitcher_plant"
+                | "pink_petals"
+                | "wildflowers"
+                | "leaf_litter"
+                | "red_mushroom"
+                | "brown_mushroom"
+                | "sugar_cane"
+                | "wheat"
+                | "carrots"
+                | "potatoes"
+                | "beetroots"
+                | "nether_wart"
+                | "nether_sprouts"
+                | "vine"
+                | "glow_lichen"
+                | "lever"
+                | "string"
+                | "tripwire"
+                | "redstone_wire"
+                | "snow_layer_zero"
+        )
 }
 
 pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
@@ -860,6 +915,26 @@ mod tests {
         assert!(!traversable([0, 0, 0], [1, 0, 1], &mut flat));
         assert_eq!(classify("minecraft:magma_block", true, false), Cell::Hazard);
         assert_eq!(classify("minecraft:oak_slab", false, false), Cell::Blocked);
+        // A fern is walked through, not an obstacle (the bridge used to stop in it).
+        for plant in [
+            "fern",
+            "large_fern",
+            "short_grass",
+            "tall_grass",
+            "poppy",
+            "wall_torch",
+        ] {
+            assert_eq!(
+                classify(&format!("minecraft:{plant}"), false, false),
+                Cell::Air,
+                "{plant}"
+            );
+        }
+        assert_eq!(classify("minecraft:grass_block", true, false), Cell::Solid);
+        assert_eq!(
+            classify("minecraft:oak_stairs", false, false),
+            Cell::Blocked
+        );
     }
     #[test]
     fn distant_goal_is_segmented_and_cancel_is_honored() {

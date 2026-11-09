@@ -546,11 +546,21 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 });
             }
             // Mining targets are item icons; the name is shown as a tooltip.
-            if let Some(model::Control::MiningTarget(index)) = widget.control {
+            if let Some(
+                control @ (model::Control::MiningTarget(_) | model::Control::FarmCropPick(_)),
+            ) = widget.control
+            {
                 if hover {
                     request_tip = Some(widget.text.clone());
                 }
-                if let Some(item) = crate::game::claim_borders_mining::icon(index)
+                let icon = match control {
+                    model::Control::MiningTarget(index) => {
+                        crate::game::claim_borders_mining::icon(index)
+                    }
+                    model::Control::FarmCropPick(crop) => Some(crop.icon()),
+                    _ => None,
+                };
+                if let Some(item) = icon
                     && game.res.items().get(item).is_some()
                 {
                     game.draw_item(

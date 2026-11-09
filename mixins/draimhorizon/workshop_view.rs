@@ -75,6 +75,13 @@ struct State {
     settle: Duration,
     // Consecutive scans that found nothing to fill; the task ends after a few.
     idle: u8,
+    // Cells that failed or were just filled, ignored until the instant passes.
+    skip: Vec<(nav::Pos, Instant)>,
+    // Failed placements in a row, and cells given up on, for the end message.
+    errors: u8,
+    missed: u16,
+    // Whether the block being dropped falls (sand, gravel) and needs time to sink.
+    falling: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -91,9 +98,13 @@ impl Default for State {
             attempt: 0,
             message: String::new(),
             last: Instant::now(),
-            wait: Duration::from_millis(400),
-            settle: Duration::from_millis(400),
+            wait: Duration::from_millis(100),
+            settle: Duration::from_millis(100),
             idle: 0,
+            skip: Vec::new(),
+            errors: 0,
+            missed: 0,
+            falling: false,
         }
     }
 }
@@ -401,6 +412,16 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
                 false
             }
         }
+    } else if matches!(s.task, Some(Task::Drain { .. })) && s.errors < 10 {
+        // No spot reaches this cell: leave it for a while and fill the others.
+        s.errors += 1;
+        s.missed += 1;
+        s.skip
+            .push((target, Instant::now() + Duration::from_secs(6)));
+        s.target = None;
+        s.attempt = 0;
+        s.phase = Phase::Ready;
+        false
     } else {
         let why = placement::diagnostic();
         let message = text(
@@ -508,6 +529,14 @@ pub(super) fn tick(game: &Game<'_>) {
                         if let Some(Task::Drain { filled, .. }) = s.task.as_mut() {
                             *filled += 1;
                             s.wait = s.settle;
+                            s.errors = 0;
+                            // A dropped block is still sinking in this column: aim elsewhere.
+                            if s.falling
+                                && let Some(at) = s.target
+                            {
+                                s.skip
+                                    .push((at, Instant::now() + Duration::from_millis(1400)));
+                            }
                         }
                         s.target = None;
                         s.plant = false;
@@ -517,6 +546,25 @@ pub(super) fn tick(game: &Game<'_>) {
                     Err(schema::PlaceError::Unreachable) => {
                         let target = s.target.unwrap();
                         approach(game, s, target);
+                        return;
+                    }
+                    Err(e)
+                        if matches!(s.task, Some(Task::Drain { .. }))
+                            && !matches!(
+                                e,
+                                schema::PlaceError::Material | schema::PlaceError::Manual
+                            )
+                            && s.errors < 10 =>
+                    {
+                        // One stubborn cell must not stop the whole job: leave it for later.
+                        s.errors += 1;
+                        s.missed += 1;
+                        if let Some(at) = s.target {
+                            s.skip.push((at, Instant::now() + Duration::from_secs(5)));
+                        }
+                        s.target = None;
+                        s.attempt = 0;
+                        s.phase = Phase::Ready;
                         return;
                     }
                     Err(e) => {
@@ -552,6 +600,7 @@ pub(super) fn tick(game: &Game<'_>) {
                     s.last = Instant::now();
                     let r = i32::from(config.radius);
                     let mut targets = Vec::new();
+                    let mut dark = 0;
                     for z in -r..=r {
                         for x in -r..=r {
                             let at = [origin[0] + x, origin[1], origin[2] + z];
@@ -564,7 +613,15 @@ pub(super) fn tick(game: &Game<'_>) {
                                 && config
                                     .crop
                                     .mature(game.native_block_property(at, "age").as_deref());
+                            // A crop only survives where the light is 9 or more (sky or
+                            // block light): in a cave the server refuses the seed.
+                            let light = i32::from(game.world.light(at[0], at[1], at[2]));
+                            let lit = (light >> 4).max(light & 15) >= 9;
                             let empty = config.replant && name == "minecraft:air";
+                            if empty && !lit {
+                                dark += 1;
+                            }
+                            let empty = empty && lit;
                             if mature || empty {
                                 targets.push((at, empty));
                             }
@@ -579,6 +636,13 @@ pub(super) fn tick(game: &Game<'_>) {
                         s.target = Some(*at);
                         s.plant = *plant;
                         s.attempt = 0;
+                    } else if dark > 0 {
+                        s.message = text(
+                            "Нет света на грядках: для посева нужен источник света (уровень 9+)",
+                            "No light on the farmland: crops need a light source (level 9+)",
+                        )
+                        .into();
+                        return;
                     } else {
                         s.message = text("Ожидание созревания", "Waiting for ripe crops").into();
                         return;
@@ -593,7 +657,9 @@ pub(super) fn tick(game: &Game<'_>) {
                         return;
                     }
                     s.last = Instant::now();
-                    s.wait = Duration::from_millis(400);
+                    s.wait = Duration::from_millis(60);
+                    let now = Instant::now();
+                    s.skip.retain(|(_, until)| *until > now);
                     let Some(p) = game.native_player() else {
                         return;
                     };
@@ -605,7 +671,9 @@ pub(super) fn tick(game: &Game<'_>) {
                         return;
                     }
                     let falling = placement::drain_item(game).is_some_and(|(_, falling)| falling);
-                    s.settle = Duration::from_millis(if falling { 1500 } else { 400 });
+                    s.falling = falling;
+                    s.settle = Duration::from_millis(if falling { 120 } else { 80 });
+                    let held = |at: nav::Pos| s.skip.iter().any(|(p, _)| *p == at);
                     let eye = [p.x, p.y + 1.2, p.z];
                     let r = i32::from(config.radius);
                     let body = p.y.floor() as i32;
@@ -632,7 +700,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                     ) {
                                         continue;
                                     }
-                                    if drain::replaceable(&name) && !own(y) {
+                                    if drain::replaceable(&name) && !own(y) && !held([cx, y, cz]) {
                                         let anchored = [[1, 0], [-1, 0], [0, 1], [0, -1]]
                                             .iter()
                                             .any(|[dx, dz]| solid([cx + dx, y, cz + dz]))
@@ -651,7 +719,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 let name = game.native_block([cx, y, cz]);
                                 if drain::replaceable(&name) {
                                     in_water = true;
-                                    if own(y) {
+                                    if own(y) || held([cx, y, cz]) {
                                         continue;
                                     }
                                     cells.push(drain::Candidate {
@@ -690,7 +758,14 @@ pub(super) fn tick(game: &Game<'_>) {
                             }
                             s.phase = Phase::Done;
                             s.active = false;
-                            s.message = if cells.is_empty() {
+                            s.message = if cells.is_empty() && s.missed > 0 {
+                                format!(
+                                    "{}: {filled} · {}: {}",
+                                    text("Готово, засыпано", "Done, filled"),
+                                    text("пропущено", "skipped"),
+                                    s.missed
+                                )
+                            } else if cells.is_empty() {
                                 format!("{}: {filled}", text("Готово, засыпано", "Done, filled"))
                             } else if falling {
                                 format!(

@@ -16,6 +16,16 @@ impl Crop {
             .get(usize::from(code.checked_sub(250)?))
             .copied()
     }
+    pub const ALL: [Self; 4] = [Self::Wheat, Self::Carrots, Self::Potatoes, Self::Beetroot];
+    /// The item whose icon stands for the crop in the menu.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Wheat => "minecraft:wheat",
+            Self::Carrots => "minecraft:carrot",
+            Self::Potatoes => "minecraft:potato",
+            Self::Beetroot => "minecraft:beetroot",
+        }
+    }
     pub fn next(self) -> Self {
         match self {
             Self::Wheat => Self::Carrots,

@@ -263,7 +263,8 @@ pub fn plan(
     candidates.truncate(16);
     for (_, target) in candidates {
         for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            for y in [0, -1, 1] {
+            // Standing below the block reaches up a trunk: logs several blocks above the ground.
+            for y in [0, -1, 1, -2, -3, -4] {
                 if canceled() || began.elapsed() > Duration::from_millis(500) {
                     return None;
                 }
@@ -357,6 +358,8 @@ pub enum Phase {
     Approaching,
     Breaking,
     Confirming,
+    /// Walking to the items a broken block dropped, so they are picked up before moving on.
+    Collecting,
     Done,
     NoTarget,
     Refused,
@@ -367,6 +370,7 @@ pub enum Phase {
 #[derive(Clone, Debug)]
 pub struct Job {
     pub ore: u8,
+    /// Blocks to mine; 0 mines until stopped.
     pub limit: u16,
     pub confirmed: u16,
     pub active: bool,
@@ -374,6 +378,12 @@ pub struct Job {
     pub target: Option<nav::Pos>,
     pub excluded: Vec<nav::Pos>,
     pub started_ms: u64,
+    /// The block that was broken last: its drops are collected around it.
+    pub last: Option<nav::Pos>,
+    /// The dropped item being walked to, items given up on, and when the player got there.
+    pub collecting: Option<u32>,
+    pub ignored: Vec<u32>,
+    pub arrived_ms: Option<u64>,
     start_sequence: Option<i32>,
     await_sequence: Option<i32>,
 }
@@ -386,7 +396,7 @@ impl Job {
         job
     }
     pub fn new(ore: u8, limit: u16) -> Option<Self> {
-        if (usize::from(ore) >= COUNT && ore != ANY) || !(1..=64).contains(&limit) {
+        if usize::from(ore) >= COUNT && ore != ANY {
             return None;
         }
         Some(Self {
@@ -398,6 +408,10 @@ impl Job {
             target: None,
             excluded: Vec::new(),
             started_ms: 0,
+            last: None,
+            collecting: None,
+            ignored: Vec::new(),
+            arrived_ms: None,
             start_sequence: None,
             await_sequence: None,
         })
@@ -460,18 +474,23 @@ impl Job {
             return;
         }
         self.confirmed += 1;
+        self.last = self.target;
         self.target = None;
         self.start_sequence = None;
         self.await_sequence = None;
-        self.phase = if self.confirmed >= self.limit {
+        self.collecting = None;
+        self.arrived_ms = None;
+        self.phase = if self.limit > 0 && self.confirmed >= self.limit {
             self.active = false;
             Phase::Done
-        } else {
+        } else if self.ore == u8::MAX {
             Phase::Searching
+        } else {
+            Phase::Collecting
         };
     }
     pub fn resume(&mut self) {
-        if self.confirmed >= self.limit {
+        if self.limit > 0 && self.confirmed >= self.limit {
             return;
         }
         self.active = true;
@@ -554,8 +573,8 @@ mod tests {
         job.resume();
         assert!(!job.active);
         assert!(Job::new(COUNT as u8, 1).is_none());
-        assert!(Job::new(0, 0).is_none());
-        assert!(Job::new(0, 65).is_none());
+        // No limit is allowed now: 0 mines until stopped.
+        assert!(Job::new(0, 0).is_some());
         let mut late = Job::excavation([1, 0, 0]);
         late.sent([1, 0, 0], 0, 5);
         late.sent([1, 0, 0], 3, 6);
@@ -679,5 +698,22 @@ mod tests {
             assert!(!blocks.is_empty());
         }
         assert_eq!(icon(COUNT as u8), None);
+    }
+    #[test]
+    fn an_unlimited_job_collects_drops_after_each_block_and_never_finishes() {
+        let mut job = Job::new(0, 0).unwrap();
+        for n in 1..=100u16 {
+            job.select([2, 0, 0]);
+            job.phase = Phase::Breaking;
+            job.sent([2, 0, 0], 0, i32::from(n));
+            job.sent([2, 0, 0], 3, i32::from(n));
+            job.acknowledge(i32::from(n), false);
+            assert_eq!(job.confirmed, n);
+            assert!(job.active);
+            // The drops are picked up before the next block is looked for.
+            assert_eq!(job.phase, Phase::Collecting);
+            assert_eq!(job.last, Some([2, 0, 0]));
+            job.phase = Phase::Searching;
+        }
     }
 }

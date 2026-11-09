@@ -313,7 +313,13 @@ pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                     .cmp(&b.name.to_ascii_lowercase())
             })
         });
-        let columns = (p.get("tab_columns") as usize)
+        // A crowded server (80+ players) is split into four columns, whatever the setting.
+        let wanted = if players.len() >= 80 {
+            (p.get("tab_columns") as usize).max(4)
+        } else {
+            p.get("tab_columns") as usize
+        };
+        let columns = wanted
             .min(((batch.width - 16.0) / TAB_CELL).max(1.0) as usize)
             .max(1);
         let max_rows = (((batch.height - 52.0) / TAB_ROW).floor() as usize).max(1);
