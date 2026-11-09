@@ -1,7 +1,9 @@
 # История версий
 
-## 0.40.0
+## 0.39.0
 
+- A bot task picks itself up again after the server restarts and the client reconnects. The last task you start (walk to a point or a waypoint, follow a player, mining, tunnel, bridge, farm, drain) is remembered. If it is still running when the connection goes (or was running in the last five seconds, since a lost connection pauses it a moment before the reset), it is marked, and once you are back on the same server, in the world and with the chunks around you loaded for six seconds, it is started again as if you had pressed Start. It tries every five seconds, up to six times, and gives up after fifteen minutes. A task you stop yourself (Stop), one that had finished and one that was only a preview do not come back; a different server leaves it waiting. A switch "Auto Resume: on/off" in Experiments > Helpers turns it off (on by default).
+- Schematic builds are not resumed (they need the file loaded again).
 - Farm: three containers instead of one: **Harvest**, **Seeds** and **Meal** (bone meal), set from three buttons to the right of the crop icons (aim at a chest, barrel or shulker box and press; press elsewhere to clear). Without a seeds container everything goes to the harvest one, as before.
 - Farm: carrots and potatoes are both a seed and a crop, so after a harvest each stack beyond the one kept for replanting goes to whichever of the harvest and the seeds container has had less so far: about half and half. Wheat goes to the harvest container, its seeds to the seeds container.
 - Farm: bone meal. With "Bone meal: on" (a new switch on the Farm tab), when nothing is ripe or empty the farm feeds the crops that are still growing: it holds the bone meal and clicks the crop, up to eight doses until it ripens, then goes on. It fetches meal from its container when the stock is under eight.
@@ -11,12 +13,6 @@
 - Farm: Pause and Start again no longer ends in "Idle" with a blank reason while crops are ripe. The old target, the idle flag, a pending trip and the walk home are cleared, and the first look at the beds comes at once.
 - Walking: a player who touches or walks past the bot no longer holds it for a couple of seconds. After a few ticks without progress with a body (a player, a mob) within a block, it steps away from it instead of pushing into it, and the stall does not count as stuck; being shoved more than 2.6 blocks off the route plans the route again from where it stands (before it paused the walk); only a jump of eight blocks or more (a teleport) is still a pause.
 - New tests: the carrot/potato split, the bone meal and bone block plan and the crafting amount, the safe cell score, a shove off the route.
-- Not verified in game.
-
-## 0.39.0
-
-- A bot task picks itself up again after the server restarts and the client reconnects. The last task you start (walk to a point or a waypoint, follow a player, mining, tunnel, bridge, farm, drain) is remembered. If it is still running when the connection goes (or was running in the last five seconds, since a lost connection pauses it a moment before the reset), it is marked, and once you are back on the same server, in the world and with the chunks around you loaded for six seconds, it is started again as if you had pressed Start. It tries every five seconds, up to six times, and gives up after fifteen minutes. A task you stop yourself (Stop), one that had finished and one that was only a preview do not come back; a different server leaves it waiting. A switch "Auto Resume: on/off" in Experiments > Helpers turns it off (on by default).
-- Schematic builds are not resumed (they need the file loaded again).
 - Not verified in game.
 
 ## 0.38.3
