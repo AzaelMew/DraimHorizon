@@ -1580,12 +1580,23 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
     };
     let here = [p.x, p.y, p.z];
     let at = |d: &horizon_client::entities::ItemEntity| [d.position.x, d.position.y, d.position.z];
+    // Besides the field: around the composter and the containers (the bone meal a composter
+    // pops out lands beside it, often outside the field).
+    let spots: Vec<nav::Pos> = storages(game)
+        .into_iter()
+        .flatten()
+        .chain(composter_near(game, origin, radius))
+        .collect();
     let near = |d: &horizon_client::entities::ItemEntity| {
         let a = at(d);
-        (a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
-            && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
-            // Only what lies at the field's level: a drop on a roof would lead the walker up.
-            && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1)
+        let by_spot = spots
+            .iter()
+            .any(|p| nav::distance(nav::center(*p), a) <= 4.0);
+        by_spot
+            || ((a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
+                && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
+                // Only what lies at the field's level: a drop on a roof would lead the walker up.
+                && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1))
     };
     let nearest = game
         .dropped
@@ -1829,6 +1840,13 @@ pub(super) fn pier_goal(position: [f64; 3]) -> Option<[f64; 3]> {
 pub(super) fn clear_pier() {
     state(|s| s.pier = None);
 }
+/// Whether the place to stand at `at` is on top of a container (a block with a block entity).
+pub(super) fn on_container(game: &Game<'_>, at: nav::Pos) -> bool {
+    game.res
+        .facts()
+        .get(game.world.block(at[0], at[1] - 1, at[2]))
+        .block_entity
+}
 fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     let Some(p) = game.native_player() else {
         return false;
@@ -1849,6 +1867,10 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
                     continue;
                 }
                 if !nav::standable(at, &mut |p| placement::block(game, p).cell) {
+                    continue;
+                }
+                // Not on top of a chest, a barrel or the like: that is no place to work from.
+                if on_container(game, at) {
                     continue;
                 }
                 candidates.push(at);
@@ -2357,9 +2379,24 @@ pub(super) fn tick(game: &Game<'_>) {
                                 if soil != "minecraft:farmland" {
                                     // Farmland of this field trampled to dirt (a jump, a
                                     // fall, a mob): tilled again when a hoe is at hand.
+                                    // Also one trampled before the job began: plain dirt in
+                                    // a bed, next to farmland on two sides or more.
+                                    let in_bed = || {
+                                        [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                                            .iter()
+                                            .filter(|[dx, dz]| {
+                                                game.native_block([
+                                                    below[0] + dx,
+                                                    below[1],
+                                                    below[2] + dz,
+                                                ]) == "minecraft:farmland"
+                                            })
+                                            .count()
+                                            >= 2
+                                    };
                                     if soil == "minecraft:dirt"
-                                        && s.field.contains(&below)
                                         && game.native_block(at) == "minecraft:air"
+                                        && (s.field.contains(&below) || in_bed())
                                     {
                                         trampled.push(below);
                                     }
@@ -2421,7 +2458,29 @@ pub(super) fn tick(game: &Game<'_>) {
                         nav::distance(nav::center(a.0), [p.x, p.y, p.z])
                             .total_cmp(&nav::distance(nav::center(b.0), [p.x, p.y, p.z]))
                     });
-                    if let Some((at, plant, crop)) = targets.first() {
+                    // Trampled soil first (a quick click, and the bed is sown on the next look);
+                    // it waited behind every ripe crop before and was never reached.
+                    let till = trampled
+                        .iter()
+                        .filter(|at| !s.skip.iter().any(|(p, _)| p == *at))
+                        .min_by(|a, b| {
+                            nav::distance(nav::center(**a), [p.x, p.y, p.z])
+                                .total_cmp(&nav::distance(nav::center(**b), [p.x, p.y, p.z]))
+                        })
+                        .copied()
+                        .filter(|_| hoe(game).is_some());
+                    if let Some(at) = till {
+                        s.target = Some(at);
+                        s.plant = false;
+                        s.crop = crops.first().copied();
+                        s.grow = false;
+                        s.till = true;
+                        s.waiting = false;
+                        s.attempt = 0;
+                        s.idle_since = None;
+                        s.parked = false;
+                        s.park = None;
+                    } else if let Some((at, plant, crop)) = targets.first() {
                         s.target = Some(*at);
                         s.plant = *plant;
                         s.crop = *crop;

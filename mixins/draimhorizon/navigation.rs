@@ -99,9 +99,9 @@ pub const NEAR: Reach = Reach {
     millis: 80,
 };
 pub const WIDE: Reach = Reach {
-    radius: 96,
-    nodes: 150_000,
-    millis: 700,
+    radius: 160,
+    nodes: 400_000,
+    millis: 1500,
 };
 /// Whether a walk from `start` to `goal` needs the wide search: far off, or at another height.
 pub fn wide_needed(start: Pos, goal: Pos) -> bool {
@@ -173,6 +173,9 @@ pub enum Cell {
     Door,
     /// A ladder or vines: the body fits in it and climbs up or down without a floor.
     Climb,
+    /// Water (or a waterlogged block): swum in, not walked; harmless beside a place to stand
+    /// (unlike lava, a `Hazard`).
+    Water,
 }
 /// Whether the body fits in the cell: open air, a plant, a door to open, a ladder.
 pub fn open(cell: Cell) -> bool {
@@ -216,6 +219,9 @@ fn tall_collision(name: &str) -> bool {
 /// Unknown/partial collision shapes are obstacles in this first walking implementation.
 pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    if (fluid && name != "lava") || matches!(name, "water" | "bubble_column") {
+        return Cell::Water;
+    }
     if fluid
         || matches!(
             name,
@@ -294,6 +300,16 @@ pub fn classify_shape(
         return cell;
     }
     let short = name.strip_prefix("minecraft:").unwrap_or(name);
+    if short == "snow" {
+        // Snow layers: the body stands on one layer less than they look (eight layers are a full
+        // block). Up to five layers are walked over, six and seven stood on like a block.
+        let top = outline.iter().map(|b| b[4]).fold(0.0f64, f64::max);
+        return if top - 0.125 <= STEP_HEIGHT + 1e-6 {
+            low
+        } else {
+            Cell::Solid
+        };
+    }
     if hand_trapdoor(short) {
         // A wooden trapdoor: shut on the floor it is walked over; shut at the top of its cell
         // (a hatch at head height, over a ladder) it is opened on the way; open, it stands up
@@ -386,7 +402,7 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
 }
 
 /// How far a leg of a far walk goes, and the shorter reach tried when the long one has no way.
-pub const LEG_REACH: [f64; 2] = [72.0, 36.0];
+pub const LEG_REACH: [f64; 2] = [140.0, 60.0];
 /// How many directions a leg is tried in: straight at the goal, then turned to either side.
 const LEG_TURNS: [f64; 7] = [0.0, 35.0, -35.0, 70.0, -70.0, 110.0, -110.0];
 /// How many different ends of a leg there are to try.
@@ -448,13 +464,24 @@ thread_local! {
 /// Sets the drop limit the planners on this thread use (the planner thread sets it from each
 /// request), so walking, following, mining, farm, drain and schematics all go by the same rule.
 pub fn set_drop_limit(limit: i32) {
-    DROP_LIMIT.with(|d| d.set(limit.clamp(MAX_DROP, FAR_DROP)));
+    DROP_LIMIT.with(|d| d.set(limit.clamp(MAX_DROP, ELYTRA_DROP)));
 }
+/// The drop limit with elytra worn: any height of the world (they are glided down).
+pub const ELYTRA_DROP: i32 = 384;
 fn current_drop_limit() -> i32 {
     DROP_LIMIT.with(|d| d.get())
 }
 /// What each block of a drop beyond `MAX_DROP` costs a route: a long detour is taken first.
 const FAR_DROP_COST: i32 = 40;
+/// The place to walk to for a goal given as a block: the goal itself when it can be stood in,
+/// otherwise the nearest place to stand in its column, up to three blocks up or down (a goal
+/// typed as the block under the feet, a waypoint saved on the ground). `None` when there is none.
+pub fn standing_goal(goal: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> Option<Pos> {
+    [0, 1, -1, 2, -2, 3, -3]
+        .into_iter()
+        .map(|d| [goal[0], goal[1] + d, goal[2]])
+        .find(|at| standable(*at, cell))
+}
 /// Where to plan from when the player does not stand on firm ground by the planner's rule: on
 /// an edge with the middle over a gap, on a low block, in the air after a jump or a fall. The
 /// cell itself, one up, then down to the drop limit, then the neighbours; `None` when there is
@@ -481,6 +508,14 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
         return false;
     }
     let door = |c: Cell| c == Cell::Door;
+    // Hanging vines (a climbable cell with nothing firm under it) are climbed up or down, not
+    // walked along from one to the next over a drop.
+    let hanging = |at: Pos, cell: &mut dyn FnMut(Pos) -> Cell| {
+        cell(at) == Cell::Climb && cell([at[0], at[1] - 1, at[2]]) != Cell::Solid
+    };
+    if (dx != 0 || dz != 0) && hanging(from, cell) && hanging(to, cell) {
+        return false;
+    }
     let column_open = |cell: &mut dyn FnMut(Pos) -> Cell| {
         // Stepping off an edge: the whole column down to the landing is open.
         dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| open(cell([to[0], y, to[2]])))
@@ -496,11 +531,27 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
                 }
         }
         (1, 0) | (0, 1) => {
-            (-FAR_DROP..=1).contains(&dy)
+            (-FAR_DROP.max(current_drop_limit())..=1).contains(&dy)
                 // A door is passed on the level, never with a step.
                 && (dy == 0 || !(door(cell(from)) || door(cell(to))))
                 && (dy <= 0 || open(cell([from[0], from[1] + 2, from[2]])))
                 && column_open(cell)
+        }
+        // A running jump across a gap: two to four blocks straight on, level or one down, the
+        // air above the gap clear for the arc, at least one cell of it without a floor.
+        (2..=4, 0) | (0, 2..=4) if long_jumps() => {
+            let length = dx.abs().max(dz.abs());
+            let (sx, sz) = (dx.signum(), dz.signum());
+            (-1..=0).contains(&dy)
+                && cell(from) == Cell::Air
+                && cell([from[0], from[1] + 2, from[2]]) == Cell::Air
+                && cell([to[0], to[1] + 2, to[2]]) == Cell::Air
+                && (1..length).all(|k| {
+                    let (x, z) = (from[0] + sx * k, from[2] + sz * k);
+                    (0..=2).all(|y| cell([x, from[1] + y, z]) == Cell::Air)
+                })
+                && (1..length)
+                    .any(|k| cell([from[0] + sx * k, from[1] - 1, from[2] + sz * k]) != Cell::Solid)
         }
         (1, 1) => {
             (-MAX_DROP..=0).contains(&dy)
@@ -549,7 +600,7 @@ pub fn dig_step(
         for y in -1..=2 {
             if matches!(
                 cell([to[0] + dx, to[1] + y, to[2] + dz]),
-                Cell::Hazard | Cell::Unknown
+                Cell::Hazard | Cell::Unknown | Cell::Water
             ) {
                 return None;
             }
@@ -577,7 +628,7 @@ pub fn dig_step(
                 ] {
                     if matches!(
                         cell([at[0] + delta[0], at[1] + delta[1], at[2] + delta[2]]),
-                        Cell::Hazard | Cell::Unknown
+                        Cell::Hazard | Cell::Unknown | Cell::Water
                     ) {
                         return None;
                     }
@@ -707,8 +758,8 @@ fn heuristic(a: Pos, b: Pos) -> i32 {
 }
 /// Every move tried from a cell, with its base cost: the four sides (up one, level, down to the
 /// drop limit), the four corners (level or down) and a ladder up or down.
-const MOVES: [([i32; 3], i32); 74] = {
-    let mut moves = [([0, 0, 0], 0); 74];
+const MOVES: [([i32; 3], i32); 98] = {
+    let mut moves = [([0, 0, 0], 0); 98];
     let sides = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     let corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
     let mut i = 0;
@@ -734,8 +785,38 @@ const MOVES: [([i32; 3], i32); 74] = {
     }
     moves[i] = ([0, 1, 0], 12);
     moves[i + 1] = ([0, -1, 0], 12);
+    i += 2;
+    // Running jumps across gaps: two to four blocks, level or one down; dearer than walking.
+    let mut s = 0;
+    while s < 4 {
+        let mut length = 2;
+        while length <= 4 {
+            let mut dy = 0;
+            while dy >= -1 {
+                moves[i] = (
+                    [sides[s][0] * length, dy, sides[s][1] * length],
+                    10 * length + 15,
+                );
+                i += 1;
+                dy -= 1;
+            }
+            length += 1;
+        }
+        s += 1;
+    }
     moves
 };
+thread_local! {
+    static LONG_JUMPS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+/// Whether routes on this thread may jump across gaps (not on a farm's level routes, which
+/// never jump).
+pub fn set_long_jumps(on: bool) {
+    LONG_JUMPS.with(|l| l.set(on));
+}
+fn long_jumps() -> bool {
+    LONG_JUMPS.with(|l| l.get())
+}
 #[derive(Clone, Debug)]
 pub struct Path {
     pub nodes: Vec<Pos>,
@@ -777,10 +858,21 @@ pub fn search_near_drop(
         dx * dx + dz * dz <= i64::from(radius).pow(2)
             && (at[1] - goal[1]).abs() <= i32::from(radius > 0)
     };
-    if !standable(start, &mut cell) {
+    // In the water the walk starts from where the body swims (it climbs out on the first step).
+    if !standable(start, &mut cell) && cell(start) != Cell::Water {
         return None;
     }
     let reach = current_reach();
+    // How far up or down the search goes: sixteen blocks around a goal on the same level; for a
+    // goal farther up or down (a cave far below, a tower) the whole height between the two and
+    // more, with no fixed limit (the world's height bounds it).
+    let vertical = ((goal[1] - start[1]).abs() + 16).max(16);
+    // Long drops cost as much as a long way round; glided ones (elytra) much less.
+    let drop_cost = if max_drop > FAR_DROP {
+        6
+    } else {
+        FAR_DROP_COST
+    };
     let began = Instant::now();
     let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
     let mut costs = HashMap::from([(start, 0)]);
@@ -810,7 +902,8 @@ pub fn search_near_drop(
             if dy < -max_drop
                 || (next[0] - start[0]).abs() > reach.radius
                 || (next[2] - start[2]).abs() > reach.radius
-                || (next[1] - start[1]).abs() > 16
+                || next[1] - start[1] > vertical
+                || start[1] - next[1] > vertical.max(max_drop)
                 || !traversable(at, next, &mut cell)
             {
                 continue;
@@ -821,7 +914,7 @@ pub fn search_near_drop(
                 + base
                 + if dy > 0 { 4 } else { dy.abs() * 2 }
                 + if door { 10 } else { 0 }
-                + (-dy - MAX_DROP).max(0) * FAR_DROP_COST;
+                + (-dy - MAX_DROP).max(0) * drop_cost;
             if costs.get(&next).is_none_or(|old| next_cost < *old) {
                 costs.insert(next, next_cost);
                 parents.insert(next, at);
@@ -830,6 +923,46 @@ pub fn search_near_drop(
                     next_cost,
                     next,
                 )));
+            }
+        }
+        // With elytra: off an edge to wherever the ground is, however far down (glided).
+        if max_drop > FAR_DROP {
+            for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+                let column = [at[0] + dx, at[2] + dz];
+                if (column[0] - start[0]).abs() > reach.radius
+                    || (column[1] - start[2]).abs() > reach.radius
+                {
+                    continue;
+                }
+                let lowest = (at[1] - max_drop).max(start[1] - max_drop);
+                let mut y = at[1] - FAR_DROP - 1;
+                let landing = loop {
+                    if y < lowest {
+                        break None;
+                    }
+                    let here = [column[0], y, column[1]];
+                    if standable(here, &mut cell) {
+                        break Some(here);
+                    }
+                    if !self::open(cell(here)) {
+                        break None;
+                    }
+                    y -= 1;
+                };
+                let Some(next) = landing.filter(|n| traversable(at, *n, &mut cell)) else {
+                    continue;
+                };
+                let fall = at[1] - next[1];
+                let next_cost = cost + 10 + fall * 2 + (fall - MAX_DROP) * drop_cost;
+                if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                    costs.insert(next, next_cost);
+                    parents.insert(next, at);
+                    open.push(Reverse((
+                        next_cost + heuristic(next, goal),
+                        next_cost,
+                        next,
+                    )));
+                }
             }
         }
     }
@@ -942,6 +1075,8 @@ pub struct Input {
     pub forward: f32,
     pub strafe: f32,
     pub jump: bool,
+    /// Run (the sprint key): a jump across a gap needs the speed.
+    pub sprint: bool,
 }
 /// Keys toward `target` for any task that moves on its own (tunnel, bridge, drain, swimming),
 /// the way the walker moves: forward, with a side step while turning, and a target behind is
@@ -976,6 +1111,7 @@ pub fn human_steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> Input {
         forward,
         strafe,
         jump: false,
+        sprint: false,
     }
 }
 /// The yaw (degrees, the game's convention) that faces from `from` toward `to`.
@@ -1113,10 +1249,7 @@ impl Navigator {
         if !self.running || self.status != Status::Walking {
             return Input::default();
         }
-        while self.next < self.path.len()
-            && distance(position, center(self.path[self.next]))
-                < if self.precise { 0.12 } else { 0.26 }
-        {
+        while self.next < self.path.len() && self.reached(position, self.path[self.next]) {
             self.next += 1;
             self.stalled = 0;
         }
@@ -1134,7 +1267,14 @@ impl Navigator {
             return Input::default();
         }
         let target = center(self.path[self.next]);
-        let off = distance(position, target);
+        // Off the route is measured from the step under way (a jump across a gap starts four
+        // blocks from its landing).
+        let from = self
+            .next
+            .checked_sub(1)
+            .and_then(|i| self.path.get(i))
+            .map_or(target, |p| center(*p));
+        let off = segment_distance(position, from, target);
         if off > 2.6 {
             // Shoved off the route (a player walking into the walker): plan again from where
             // it stands. Only a long way off (a teleport) is a pause.
@@ -1162,19 +1302,31 @@ impl Navigator {
         }
         let dx = target[0] - position[0];
         let dz = target[2] - position[2];
+        if !self.climbing && dx.hypot(dz) < 0.25 && target[1] < position[1] - 0.5 {
+            // Straight down (into a ladder shaft, through an opened trapdoor): let go and fall;
+            // walking on would step off the hole.
+            return Input::default();
+        }
         if self.climbing && dx.hypot(dz) < 0.2 {
             // Straight up or down a ladder: climb with the jump key, or let go and slide.
             return Input {
                 forward: 0.0,
                 strafe: 0.0,
                 jump: target[1] > position[1] + 0.1,
+                sprint: false,
             };
         }
         let yaw = f64::from(yaw).to_radians();
         let forward = -dx * yaw.sin() + dz * yaw.cos();
         let left = dx * yaw.cos() + dz * yaw.sin();
         let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
-        if self.human && grounded && matches!(sector.rem_euclid(8), 3..=5) {
+        // Close to the point (the last steps, fine positioning) every direction is taken: turning
+        // round there made the walker overshoot and circle round its goal.
+        let to_end = self.path.last().map_or(0.0, |end| {
+            let e = center(*end);
+            (e[0] - position[0]).hypot(e[2] - position[2])
+        });
+        if self.human && grounded && to_end > 1.5 && matches!(sector.rem_euclid(8), 3..=5) {
             // The way on is behind: turn round first (the caller turns the head), do not walk
             // backwards.
             return Input::default();
@@ -1192,6 +1344,17 @@ impl Navigator {
         // No progress for a while (a slab, a stair or an edge the planner took for flat, a body
         // in the way): jump now and then, then step aside, instead of pushing on in the same
         // way until the stall counts as stuck.
+        // A jump across a gap: run at it and jump once the edge is near.
+        let leap = (target[0] - from[0]).hypot(target[2] - from[2]) > 1.5;
+        if leap {
+            let run = (position[0] - from[0]).hypot(position[2] - from[2]);
+            return Input {
+                forward: 1.0,
+                strafe: 0.0,
+                jump: grounded && run >= 0.25,
+                sprint: true,
+            };
+        }
         let unstick = grounded && self.stalled >= 8 && self.stalled % 10 == 8;
         let nudge = if self.stalled >= 20 {
             if (self.stalled / 10).is_multiple_of(2) {
@@ -1210,8 +1373,33 @@ impl Navigator {
                 || ((grounded || self.climbing)
                     && target[1] > position[1] + 0.5
                     && dx.hypot(dz) < 1.25),
+            sprint: false,
         }
     }
+    /// Whether the walker is at `node`: close across, and standing on its level. A partial
+    /// block (a slab, a bed, a trapdoor) lifts the feet up to a block above the cell, which
+    /// is still there; a ladder is followed exactly.
+    fn reached(&self, position: [f64; 3], node: Pos) -> bool {
+        let c = center(node);
+        let near = if self.precise { 0.12 } else { 0.26 };
+        if self.climbing {
+            return distance(position, c) < near;
+        }
+        (position[0] - c[0]).hypot(position[2] - c[2]) < near
+            && (-0.5..=0.95).contains(&(position[1] - c[1]))
+    }
+}
+/// How far `p` is from the segment `a`–`b`.
+pub fn segment_distance(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+    let len = ab.iter().map(|v| v * v).sum::<f64>();
+    let t = if len < 1e-9 {
+        0.0
+    } else {
+        (ap.iter().zip(ab).map(|(x, y)| x * y).sum::<f64>() / len).clamp(0.0, 1.0)
+    };
+    distance(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t])
 }
 
 #[cfg(test)]
@@ -1445,15 +1633,15 @@ mod tests {
     fn a_leg_tries_the_straight_line_then_turns_aside_then_goes_shorter() {
         let (from, goal) = ([0.0, 64.0, 0.0], [800.0, 64.0, 0.0]);
         let straight = leg_target(from, goal, 0).unwrap();
-        assert!((straight[0] - 72.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
+        assert!((straight[0] - 140.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
         // Turned 35 degrees to either side, at the same reach.
         let left = leg_target(from, goal, 1).unwrap();
         let right = leg_target(from, goal, 2).unwrap();
         assert!(left[2] > 1.0 && right[2] < -1.0);
-        assert!((nav_len(left) - 72.0).abs() < 1e-9 && (nav_len(right) - 72.0).abs() < 1e-9);
+        assert!((nav_len(left) - 140.0).abs() < 1e-9 && (nav_len(right) - 140.0).abs() < 1e-9);
         // The shorter reach comes after all the turns at the long one.
         let shorter = leg_target(from, goal, 7).unwrap();
-        assert!((shorter[0] - 36.0).abs() < 1e-9);
+        assert!((shorter[0] - 60.0).abs() < 1e-9);
         assert!(leg_target(from, goal, LEG_TRIES).is_none());
         // Standing on the goal there is no direction.
         assert!(leg_target(goal, goal, 0).is_none());
@@ -1538,6 +1726,51 @@ mod tests {
             classify("minecraft:oak_stairs", false, false),
             Cell::Blocked
         );
+    }
+    #[test]
+    fn gaps_are_jumped_with_a_run_and_partial_blocks_count_as_reached() {
+        // A three-block gap (x = 1..=3) in the ground; the landing at x = 4.
+        let gap = |p: Pos| {
+            if (p[1] < 0 && !(1..=3).contains(&p[0])) || p[1] < -20 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(traversable([0, 0, 0], [4, 0, 0], &mut { gap }));
+        let path = search([0, 0, 0], [6, 0, 0], gap, || false).unwrap();
+        assert!(path.complete);
+        assert!(
+            path.nodes
+                .windows(2)
+                .any(|w| (w[1][0] - w[0][0]).abs() == 4)
+        );
+        // Not over a gap of five, not without room for the arc, and not when jumps are off.
+        assert!(!traversable([0, 0, 0], [5, 0, 0], &mut { gap }));
+        let low = |p: Pos| if p == [2, 2, 0] { Cell::Solid } else { gap(p) };
+        assert!(!traversable([0, 0, 0], [4, 0, 0], &mut { low }));
+        set_long_jumps(false);
+        assert!(!traversable([0, 0, 0], [4, 0, 0], &mut { gap }));
+        set_long_jumps(true);
+        // The walker runs and jumps on such a step.
+        let mut n = Navigator::default();
+        n.begin([4, 0, 0], true);
+        n.accept(Some(Path {
+            nodes: vec![[0, 0, 0], [4, 0, 0]],
+            complete: true,
+        }));
+        let input = n.input([0.8, 0.0, 0.5], -90.0, true);
+        assert!(input.sprint && input.jump && input.forward > 0.0);
+        assert_eq!(n.status, Status::Walking);
+        // Standing on a slab (half a block up) is standing on its cell.
+        let mut m = Navigator::default();
+        m.begin([1, 0, 0], true);
+        m.accept(Some(Path {
+            nodes: vec![[0, 0, 0], [1, 0, 0]],
+            complete: true,
+        }));
+        let _ = m.input([1.5, 0.5, 0.5], 0.0, true);
+        assert_eq!(m.status, Status::Arrived);
     }
     #[test]
     fn corners_are_cut_only_when_both_sides_are_open() {
@@ -1665,6 +1898,15 @@ mod tests {
         assert_eq!(n.input([0.5, 0.0, 0.5], 90.0, true), Input::default());
         // Facing along it: forward.
         assert_eq!(n.input([0.5, 0.0, 0.5], -90.0, true).forward, 1.0);
+        // Within a step and a half of the end: no turning round, it steps back to its goal.
+        let mut m = Navigator::default();
+        m.begin([1, 0, 0], true);
+        m.human = true;
+        m.accept(Some(Path {
+            nodes: vec![[0, 0, 0], [1, 0, 0]],
+            complete: true,
+        }));
+        assert_eq!(m.input([2.2, 0.0, 0.5], -90.0, true).forward, -1.0);
     }
     #[test]
     fn a_second_floor_reaches_the_ground_by_a_far_slope_with_the_wide_search() {
@@ -1736,6 +1978,130 @@ mod tests {
                 .complete
         );
         set_drop_limit(MAX_DROP);
+    }
+    #[test]
+    fn a_goal_typed_as_the_ground_block_is_stood_on_and_far_levels_are_searched() {
+        // The block under the feet (y = -1) given as the goal: stand on it.
+        assert_eq!(standing_goal([3, -1, 0], &mut flat), Some([3, 0, 0]));
+        assert_eq!(standing_goal([3, 0, 0], &mut flat), Some([3, 0, 0]));
+        // A head-high goal comes down to the feet.
+        assert_eq!(standing_goal([3, 1, 0], &mut flat), Some([3, 0, 0]));
+        assert_eq!(standing_goal([3, 40, 0], &mut flat), None);
+        // A goal thirty blocks down a staircase is found (the search reaches that far down).
+        let stairs = |p: Pos| {
+            if p[1] < -p[0].clamp(0, 30) || p[1] < -40 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        set_reach(WIDE);
+        let path = search([0, 0, 0], [30, -30, 0], stairs, || false).unwrap();
+        set_reach(NEAR);
+        assert!(path.complete);
+    }
+    #[test]
+    fn water_beside_is_harmless_and_a_walk_starts_from_the_water() {
+        // A lake at x <= 0; the shore from x = 1 on.
+        let lake = |p: Pos| {
+            if p[1] < 0 && p[0] >= 1 {
+                Cell::Solid
+            } else if p[0] <= 0 && p[1] <= 0 {
+                Cell::Water
+            } else if p[1] < -10 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert_eq!(classify("minecraft:water", false, true), Cell::Water);
+        assert_eq!(classify("minecraft:seagrass", false, true), Cell::Water);
+        assert_eq!(classify("minecraft:lava", false, true), Cell::Hazard);
+        // The shore right by the water can be stood on (it could not before).
+        assert!(standable([1, 0, 0], &mut { lake }));
+        // Swimming in the lake, the walk climbs out and goes on.
+        let path = search([0, 0, 0], [5, 0, 0], lake, || false).unwrap();
+        assert!(path.complete);
+        // Lava beside still keeps the walker away.
+        let lava = |p: Pos| {
+            if p == [0, 0, 0] {
+                Cell::Hazard
+            } else {
+                lake(p)
+            }
+        };
+        assert!(!standable([1, 0, 0], &mut { lava }));
+    }
+    #[test]
+    fn a_fence_gate_in_a_fenced_tunnel_is_the_way_through() {
+        // A tunnel two blocks high (x from -6 to 6, z from -1 to 1), fenced across at x = 2 with a
+        // gate in the middle.
+        let tunnel = |p: Pos| {
+            if p[1] < 0 || p[1] >= 2 || p[2].abs() > 1 {
+                Cell::Solid
+            } else if p[0] == 2 && p[1] == 0 {
+                if p[2] == 0 { Cell::Door } else { Cell::Blocked }
+            } else {
+                Cell::Air
+            }
+        };
+        let path = search([0, 0, 0], [5, 0, 1], tunnel, || false).unwrap();
+        assert!(path.complete, "{:?}", path.nodes);
+        assert!(path.nodes.contains(&[2, 0, 0]));
+    }
+    #[test]
+    fn hanging_vines_are_climbed_not_walked_along() {
+        // Vines hanging at x = 1..=3 over a gap, nothing under them.
+        let jungle = |p: Pos| {
+            if (1..=3).contains(&p[0]) && p[1] >= 0 && p[1] <= 4 && p[2] == 0 {
+                Cell::Climb
+            } else if p[1] < 0 && !(1..=3).contains(&p[0]) {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(!traversable([1, 2, 0], [2, 2, 0], &mut { jungle }));
+        // Stepping into one from firm ground, or climbing it, is fine.
+        assert!(traversable([0, 0, 0], [1, 0, 0], &mut { jungle }));
+        assert!(traversable([1, 0, 0], [1, 1, 0], &mut { jungle }));
+    }
+    #[test]
+    fn snow_layers_are_walked_over_or_stood_on_by_their_height() {
+        let layers = |n: f64| [[0.0, 0.0, 0.0, 1.0, n / 8.0, 1.0]];
+        let snow = |n: f64| classify_shape("minecraft:snow", false, false, &layers(n), Cell::Air);
+        for n in 1..=5 {
+            assert_eq!(snow(f64::from(n)), Cell::Air, "{n} layers");
+        }
+        assert_eq!(snow(6.0), Cell::Solid);
+        assert_eq!(snow(7.0), Cell::Solid);
+        assert_eq!(classify("minecraft:snow_block", true, false), Cell::Solid);
+        assert_eq!(
+            classify("minecraft:powder_snow", false, false),
+            Cell::Hazard
+        );
+    }
+    #[test]
+    fn with_elytra_any_height_is_dropped() {
+        // A cliff forty blocks high with no other way down.
+        let cliff = |p: Pos| {
+            if (p[0] <= 2 && p[1] == 39) || p[1] < 0 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let down = |max| {
+            search_near_drop([0, 40, 0], [6, 0, 0], 0, max, cliff, || false)
+                .is_some_and(|p| p.complete)
+        };
+        assert!(!down(FAR_DROP));
+        set_drop_limit(ELYTRA_DROP);
+        assert!(down(ELYTRA_DROP));
+        // The walker's own check of the step agrees on this thread.
+        assert!(traversable([2, 40, 0], [3, 0, 0], &mut { cliff }));
+        set_drop_limit(MAX_DROP);
+        assert!(!traversable([2, 40, 0], [3, 0, 0], &mut { cliff }));
     }
     #[test]
     fn trapdoors_are_walked_over_opened_or_passed_by_their_state() {

@@ -236,6 +236,7 @@ fn spots(game: &Game<'_>, chest: nav::Pos, from: [f64; 3]) -> Vec<nav::Pos> {
                 if (dx == 0 && dz == 0)
                     || nav::distance(nav::center(at), nav::center(chest)) > 3.4
                     || !nav::standable(at, &mut |p| placement::block(game, p).cell)
+                    || workshop::on_container(game, at)
                 {
                     continue;
                 }

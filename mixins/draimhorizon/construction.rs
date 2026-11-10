@@ -319,9 +319,13 @@ impl Job {
                     floor.get_or_insert(under);
                 }
                 nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                 // A slab, stair or other partial block is walked over like a floor.
                 nav::Cell::Blocked => {}
+                // Vines under the passage are replaced by the floor like air.
+                nav::Cell::Climb if self.config.fill_floor || self.config.kind == Kind::Bridge => {
+                    floor.get_or_insert(under);
+                }
                 // A ladder or a door is no floor to walk the passage on.
                 nav::Cell::Air | nav::Cell::Door | nav::Cell::Climb => {
                     return Scan::Stop(Stop::Floor);
@@ -331,9 +335,10 @@ impl Job {
                 let pos = [x, at[1] + y, z];
                 let b = block(pos);
                 match b.cell {
-                    nav::Cell::Air => continue,
+                    // Air, and vines hanging in the passage (walked through).
+                    nav::Cell::Air | nav::Cell::Climb => continue,
                     nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                    nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                    nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                     _ => {}
                 }
                 // Whatever stands in the way is broken, a bridge included. Falling blocks
@@ -352,7 +357,7 @@ impl Job {
                 ] {
                     match block([pos[0] + delta[0], pos[1] + delta[1], pos[2] + delta[2]]).cell {
                         nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                        nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                        nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                         _ => {}
                     }
                 }
@@ -438,9 +443,34 @@ impl Placement {
             .map(|_| solid && name == self.material)
     }
 }
-/// The keys toward `target`: the shared walker's way of moving (`navigation::human_steer`).
+/// The keys toward `target` for a passage job: every direction (the head turns toward the
+/// target meanwhile, see the human look), never standing still to turn first, since the head
+/// may be held on a block being dug or placed.
 pub fn steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> nav::Input {
-    nav::human_steer(position, target, yaw)
+    let dx = target[0] - position[0];
+    let dz = target[2] - position[2];
+    if dx.hypot(dz) < 0.06 {
+        return nav::Input::default();
+    }
+    let yaw = f64::from(yaw).to_radians();
+    let forward = -dx * yaw.sin() + dz * yaw.cos();
+    let left = dx * yaw.cos() + dz * yaw.sin();
+    let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
+    let (forward, strafe) = match sector.rem_euclid(8) {
+        0 => (1., 0.),
+        1 => (1., 1.),
+        2 => (0., 1.),
+        3 => (-1., 1.),
+        4 => (-1., 0.),
+        5 => (-1., -1.),
+        6 => (0., -1.),
+        _ => (1., -1.),
+    };
+    nav::Input {
+        forward,
+        strafe,
+        ..nav::Input::default()
+    }
 }
 #[cfg(test)]
 mod tests {

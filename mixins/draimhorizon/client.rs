@@ -1743,6 +1743,40 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             );
             Ok(Vec::new())
         }
+        Action::SchematicEdit(edit) => {
+            use crate::game::claim_borders_menu::SchematicEdit;
+            if edit == SchematicEdit::Build {
+                if crate::game::claim_borders_navigation_view::run(
+                    game,
+                    crate::game::claim_borders_navigation::Hotkey::Start,
+                )? {
+                    game.native_mod_screen_close(claims::ID);
+                }
+                return Ok(Vec::new());
+            }
+            crate::game::claim_borders_schematic_view::edit_active(game, edit)?;
+            Ok(Vec::new())
+        }
+        Action::SchematicPreview {
+            file,
+            origin,
+            rotation,
+        } => {
+            let origin = match origin {
+                Some(at) => at,
+                None => {
+                    let p = game.native_player().ok_or("Join a world first")?;
+                    crate::game::claim_borders_navigation::standing_block(
+                        [p.x, p.y, p.z],
+                        &game.native_block(crate::game::claim_borders_navigation::block([
+                            p.x, p.y, p.z,
+                        ])),
+                    )
+                }
+            };
+            crate::game::claim_borders_schematic_view::preview(game, file, origin, rotation);
+            Ok(Vec::new())
+        }
         Action::SchematicPlace(i) => {
             crate::game::claim_borders_schematic_view::select(game, i);
             Ok(Vec::new())

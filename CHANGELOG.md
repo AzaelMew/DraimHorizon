@@ -1,6 +1,35 @@
 # История версий
 
-## 0.39.4 (unreleased)
+## 0.39.5
+
+- Mining under water: the route is planned from the water too (the planner waited for the feet to touch the ground, which never happens while swimming, so nothing was ever planned), a route answer from a moment ago is not a reason to pause there, and a mining job does not swim off to the shore while it looks for the next block; it swims to the block and mines it.
+- Partial blocks: a step is reached when the walker is across it and on its level, a slab, a bed or a trapdoor lifting the feet up to a block. It used to wait for the exact height, stood still on a slab or a trapdoor and planned again after a couple of seconds.
+- Following and walking: a route answered while the walker had moved on (after a jump, following a moving player) is planned again from where it stands instead of pausing the task.
+- Elytra: worn with durability to spare, any drop the route needs is taken, however high (the planner looks down the whole column for the ground, and such drops cost little more than walking): the walker spreads them while falling (a jump press in the air) and glides toward where the route goes, looking a little down, until it lands.
+- Doors, gates and trapdoors when held up: if the walker makes no progress for a moment, a closed door, fence gate or wooden trapdoor under its feet, at them or one step toward the next point is opened (a player followed through a door that shut behind them, a trapdoor under the feet over a ladder).
+- Snow layers: the body stands on one layer less than snow looks; up to five layers are walked over, six and seven are stood on like a block, eight are a block.
+- Drops of three blocks and more: a step down the edge counted as being off the route (its landing is more than 2.6 blocks from where the walker stands), so the walker stood and planned again and again; the distance is now taken from the step under way (this also covers jumps across gaps).
+- Straight down (into a ladder shaft, through an opened trapdoor): the walker lets go and falls instead of walking on and stepping off the hole; a trapdoor under the feet over a ladder is opened when it holds the walker up.
+- Doors, gates and trapdoors opened on the way are closed behind also when the walk ends right after them (a gate used to stay open).
+- Mining no longer pauses itself: its smooth turn to the next block was taken for the player moving the camera (logs left uncut, the job paused at a tree).
+- Mining storage: an inventory without a single free slot also sends the miner to the shulker box or the storage (drops of other kinds, sticks and saplings, could not be picked up and the miner went back and forth).
+- Tunnel and bridge are not paused by water or a moment in the air at the edge; the walker swims the player out.
+- Human look: a steady glance down at the way ahead (more on the way down, less on the way up) that changes slowly, instead of the exact angle to each next cell, which made the head nod at every step.
+- Remembered routes work for walks to coordinates and waypoints too, not only for farm and storage walks.
+- Doors and gates: one right in front of the walker, the way it goes, is opened at once even if the route did not plan through it; when no way is found and a shut door, gate or trapdoor stands beside, it is opened and the route planned again; the click aims at where the block really is (a door's panel at the side of its cell, a gate's bar).
+- Navigation goals given as a block (the ground under the feet, a waypoint saved on it) are walked to where one stands there, up to three blocks up or down; the search reaches up and down as far as the goal is, with no fixed limit, and wide searches look 160 blocks around (legs of up to 140 blocks).
+- Mining no longer pauses when the walk's look turns the head as it reaches a block, nor for the task's own presses (breaking a shulker box, a click on a door).
+- Tunnel and bridge: vines under the passage are covered by the floor and vines in it walked through (the tunnel stopped with "no floor"); passage jobs step in every direction again instead of standing still to turn, which held the tunnel up; the walk's look does not turn the head while a block is placed, and the gradual turn to a block is only for big turns (the bridge used to spin before each block).
+- Hanging vines are climbed up or down, not walked along over a drop; turning round before walking back is used only while the head really turns (human look on, the mouse not holding the camera).
+- Schematics tab: buttons for everything the keys do. Place preview (at XYZ, or where the player stands when XYZ is empty), Build, Show/Hide and Delete preview; the editor row moves the selected preview a block along X, Y and Z, turns it, brings it here and turns the camera to it; the schematics folder is listed on the tab (click a file to choose it, paged) and read again whenever the tab opens; the previews of this world are listed beside it.
+- Water is no longer a hazard like lava in the shared planner: a place right by the water can be stood on (a shore, the rim of a pool, the edge of a pit in the sea used to be off limits, and the walker stood "stuck"), a walk starts from the water and climbs out along its route, and swimming follows the route instead of only heading for the nearest dry ground. Lava and the other hazards are still kept away from; digging still leaves blocks beside water alone.
+- Elytra: over the landing while still high, the glide circles round it to lose height, and low over it levels out, so it does not dive into the ground; a narrow shaft still gives no room to glide.
+- Farm: trampled beds are tilled first (they waited behind every ripe crop and were never reached), and dirt in a bed next to farmland on two sides or more counts as trampled too, also when it was trampled before the farm started.
+- Farm: the bone meal a composter pops out is picked up (dropped items are collected around the composter and the containers too, not only on the field).
+- Near the goal (the last step and a half) the walker steps in any direction instead of turning round first: with the human look on it overshot, turned and circled round its goal, or stopped by a chest as stuck. Places to work from are never on top of a chest, barrel or other container.
+- Running jumps across gaps: the planner takes a jump of two to four blocks straight on (gaps of one to three blocks, level or one block down, with the air above the gap clear), dearer than walking round. The walker runs at it with the sprint key and jumps at the edge. Farm level routes never jump.
+
+## 0.39.4
 
 - One unreleased UI update on top of upstream 0.39.3. Local test iterations share this version; earlier unpublished 0.40.x/0.41.0 labels have been consolidated, not released.
 - Trading is a dedicated navigation destination with grouped preferences and a workspace entry; compact navigation uses a labelled Section chooser. Settings retain readable switches, numeric readouts and named corner choices in Russian and English.
