@@ -50,6 +50,18 @@ name = "claim_borders_autoclick"
 source = "autoclick.rs"
 
 [[module]]
+id = "schematic-places"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_places"
+source = "schematic_places.rs"
+
+[[module]]
+id = "schematic-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_view"
+source = "schematic_view.rs"
+
+[[module]]
 id = "shulker-peek"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_shulker_peek"

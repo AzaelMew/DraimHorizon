@@ -95,6 +95,15 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
+    use crate::game::claim_borders_schematic_view as preview;
+    // Schematics: Start builds the selected preview of this world as it stands (moved and
+    // turned with the editor keys); with none, the file and place chosen in the menu.
+    if running
+        && crate::game::claim_borders_menu_view::schematic_mode()
+        && let Some((file, origin, rotation)) = preview::build_target(game)
+    {
+        return crate::game::claim_borders_workshop_view::load(game, file, origin, rotation, true);
+    }
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
         Action::Navigate { goal, running } => start(game, goal, running),
         Action::LoadSchematic {
@@ -102,9 +111,18 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
             origin,
             rotation,
             running,
-        } => crate::game::claim_borders_workshop_view::load(
-            game, filename, origin, rotation, running,
-        ),
+        } => {
+            // The preview is a hologram in the world, kept until it is removed; building
+            // starts from it.
+            preview::preview(game, filename.clone(), origin, rotation);
+            if running {
+                crate::game::claim_borders_workshop_view::load(
+                    game, filename, origin, rotation, true,
+                )
+            } else {
+                Ok(())
+            }
+        }
         _ => Ok(()),
     }
 }
@@ -1852,6 +1870,7 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     leg_frame(game);
     face(game);
+    crate::game::claim_borders_schematic_view::keys(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
     if auto_eat(game) || auto_drink(game) {

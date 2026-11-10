@@ -7,6 +7,7 @@ Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2c
 - Bots walk like people: they look where they go, turn smoothly, turn round instead of walking backwards, keep walking between two plans, and turn to what they aim at instead of snapping.
 - Mining cuts tall trees to the top: logs in the crown count, wide trunks are cut from inside, and a column of blocks under the miner reaches the rest (and is taken down after).
 - Human look switch; the mouse takes the camera without pausing the task. Tunnel, bridge and drain move and aim like the walker; every task swims out of water.
+- Schematics: holograms of placed previews (to place / wrong), kept per world across sessions and listed with show/hide/delete; an on-screen editor moves and turns the selected one with keys; Start builds it, Stop leaves it.
 - Mining: any block of the world ("Own block": aim and press), a prismarine tile, and mining under water with surfacing for air (not needed with Water Breathing; potions of it are drunk by themselves before the effect runs out).
 - Mining: columns from any building block; shulker boxes as a storage on the spot. Schematic builds continue after a restart.
 - Farm: several levels; the composter is looked for by the chests.

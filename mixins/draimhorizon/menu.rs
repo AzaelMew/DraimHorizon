@@ -146,6 +146,8 @@ pub struct ViewModel {
     pub farm_composter: Option<[i32; 3]>,
     /// The blocks of the "own block" mining target.
     pub mining_custom: Vec<String>,
+    /// The schematic previews placed in this world: (index, label, shown, selected).
+    pub schematic_places: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -256,6 +258,12 @@ pub enum Action {
     FarmSafe,
     /// The block under the crosshair goes into the "own block" mining target, or out of it.
     MiningCustom,
+    /// Selects a placed schematic preview (the one Start builds and the keys move).
+    SchematicPlace(usize),
+    /// Shows or hides a placed schematic preview.
+    SchematicPlaceShow(usize),
+    /// Forgets a placed schematic preview.
+    SchematicPlaceRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -353,6 +361,11 @@ impl std::fmt::Debug for Action {
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
             Self::MiningCustom => f.write_str("MiningCustom"),
+            Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
+            Self::SchematicPlaceShow(i) => f.debug_tuple("SchematicPlaceShow").field(i).finish(),
+            Self::SchematicPlaceRemove(i) => {
+                f.debug_tuple("SchematicPlaceRemove").field(i).finish()
+            }
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -624,6 +637,10 @@ pub enum Control {
     /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
     /// aimed at nothing, clears the list).
     MiningCustom,
+    /// A placed schematic preview: select it, show or hide it, forget it.
+    SchematicPlace(usize),
+    SchematicPlaceShow(usize),
+    SchematicPlaceRemove(usize),
     MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
@@ -2945,6 +2962,62 @@ impl Menu {
                         false,
                     ));
                 }
+                if !farm {
+                    // The previews placed in this world: select one (Start builds it, the
+                    // editor keys move it), show or hide it, or forget it.
+                    let mut y = 100.0 + below + count.div_ceil(2) as f32 * step + 4.0;
+                    let limit = if height >= 300.0 {
+                        height - 70.0
+                    } else {
+                        height - 52.0
+                    };
+                    if y + 12.0 <= limit {
+                        out.push(widget(
+                            [x, y, w, 11.0],
+                            if model.schematic_places.is_empty() {
+                                self.language.text(
+                                    "Предпоказов нет: клавиша предпросмотра ставит выбранный файл",
+                                    "No previews: the preview key places the chosen file",
+                                )
+                            } else {
+                                self.language
+                                    .text("Предпоказы в этом мире:", "Previews in this world:")
+                            },
+                            None,
+                            false,
+                        ));
+                        y += 13.0;
+                    }
+                    let button = 58.0_f32.min(w * 0.22);
+                    for (index, label, shown, selected) in &model.schematic_places {
+                        if y + 14.0 > limit {
+                            break;
+                        }
+                        out.push(widget(
+                            [x, y, w - 2.0 * (button + 4.0), 14.0],
+                            label.clone(),
+                            Some(Control::SchematicPlace(*index)),
+                            *selected,
+                        ));
+                        out.push(widget(
+                            [x + w - 2.0 * button - 4.0, y, button, 14.0],
+                            if *shown {
+                                self.language.text("Скрыть", "Hide")
+                            } else {
+                                self.language.text("Показать", "Show")
+                            },
+                            Some(Control::SchematicPlaceShow(*index)),
+                            *shown,
+                        ));
+                        out.push(widget(
+                            [x + w - button, y, button, 14.0],
+                            self.language.text("Удалить", "Delete"),
+                            Some(Control::SchematicPlaceRemove(*index)),
+                            false,
+                        ));
+                        y += 16.0;
+                    }
+                }
                 if farm {
                     // What the buttons are bound to, with the coordinates and the colour of the
                     // frame drawn around it in the world, as many lines as there is room for.
@@ -4180,6 +4253,9 @@ impl Menu {
                 }
                 None
             }
+            Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),
+            Control::SchematicPlaceShow(i) => Some(Action::SchematicPlaceShow(i)),
+            Control::SchematicPlaceRemove(i) => Some(Action::SchematicPlaceRemove(i)),
             Control::MiningCustom => {
                 // Picking a block selects the target too.
                 self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;

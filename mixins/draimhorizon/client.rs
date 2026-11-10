@@ -80,6 +80,15 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                 ]
             }),
         )
+        .chain(
+            crate::game::claim_borders_schematic_view::KEYS.map(|(id, default, ru, en)| {
+                [
+                    id.into(),
+                    format!("DraimHorizons: {}", language.text(ru, en)),
+                    default.into(),
+                ]
+            }),
+        )
         .collect(),
     }
 }
@@ -1517,6 +1526,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
             farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
+            schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             mining_custom: {
                 crate::game::claim_borders_navigation_view::load_custom_blocks(game);
                 crate::game::claim_borders_mining::custom()
@@ -1731,6 +1741,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "auto_eat",
                 if on { "true" } else { "false" },
             );
+            Ok(Vec::new())
+        }
+        Action::SchematicPlace(i) => {
+            crate::game::claim_borders_schematic_view::select(game, i);
+            Ok(Vec::new())
+        }
+        Action::SchematicPlaceShow(i) => {
+            crate::game::claim_borders_schematic_view::toggle(game, i);
+            Ok(Vec::new())
+        }
+        Action::SchematicPlaceRemove(i) => {
+            crate::game::claim_borders_schematic_view::remove(game, i);
             Ok(Vec::new())
         }
         Action::MiningCustom => {

@@ -49,6 +49,10 @@ pub(super) fn reset() {
 pub(super) fn baritone_request(running: bool) -> Result<model::Action, String> {
     state(|s| s.menu.baritone_request(running))
 }
+/// Whether the Baritone tab last on screen is Schematics.
+pub(super) fn schematic_mode() -> bool {
+    state(|s| s.menu.baritone_mode == model::BaritoneMode::Schematic)
+}
 pub(super) fn open() {
     state(|s| {
         let previous = std::mem::take(&mut s.menu);

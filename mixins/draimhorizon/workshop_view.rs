@@ -2946,6 +2946,8 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    // The schematic previews of this world, whether or not a build runs.
+    crate::game::claim_borders_schematic_view::render(game, g);
     state(|s| {
         if driver::scope(game).as_deref() != Some(s.scope.as_str()) {
             return;
