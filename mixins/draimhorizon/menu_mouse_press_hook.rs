@@ -8,7 +8,11 @@ fn claim_borders_menu_mouse(
         crate::game::claim_borders_menu_view::mouse(game, screen, button, true, canceled);
         return;
     }
-    crate::game::claim_borders_economy_client::cancel_scan();
+    // The auction catalogue loads through the scanner: its own controls (search, sort, pager)
+    // must not stop it. It cancels the walk itself for purchases, server pages and closing.
+    if !crate::game::claim_borders_commerce_view::catalog_active(game) {
+        crate::game::claim_borders_economy_client::cancel_scan();
+    }
     if crate::game::claim_borders_ui_view::mouse(game, screen, button, true, canceled) {
         return;
     }

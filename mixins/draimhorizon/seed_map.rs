@@ -472,10 +472,15 @@ pub fn dimension_rect(size: [f32; 2], i: usize) -> [f32; 4] {
 pub fn tool_rect(size: [f32; 2], index: usize) -> [f32; 4] {
     let r = map_rect(size);
     let rows = ((r[3] - 24.0) / 28.0).max(1.0) as usize;
+    let width = if size[0] >= 640.0 && size[1] >= 320.0 {
+        124.0
+    } else {
+        24.0
+    };
     [
-        8.0 + (index / rows) as f32 * 28.0,
+        8.0 + (index / rows) as f32 * (width + 4.0),
         r[1] + 12.0 + (index % rows) as f32 * 28.0,
-        24.0,
+        width,
         24.0,
     ]
 }

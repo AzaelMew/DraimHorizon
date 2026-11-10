@@ -23,6 +23,6 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 ![Inventory search, sorting and click-through](docs/showcase/inventory.svg)
 ![Zoom, interface customization and opt-in features](docs/showcase/customize.svg)
 
-**Shared DeepL** — Add `RELAY_DEEPL_API_KEY` to the private relay's server environment. Friends configure its address and access token under **J → Settings → Connections and friends**. [Operator instructions](relay/README.md#общий-резервный-перевод-deepl)
+**Shared DeepL** — Add `RELAY_DEEPL_API_KEY` to the private relay's server environment. Friends configure its address and access token under **J → Settings → Network**. [Operator instructions](relay/README.md#общий-резервный-перевод-deepl)
 
 **Compatibility** — Friends' telemetry requires the relay and both clients to use the mod. Seed Map predicts generation and can differ from modified or previously generated terrain. Player-supplied text remains unchanged by interface localization.

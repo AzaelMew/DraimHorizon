@@ -319,75 +319,190 @@ pub(super) fn render_menu(
         return false;
     }
     let language = crate::game::claim_borders_chat_view::language(game);
-    ui::fill(game, batch, screen.rect, 0xff111520);
-    ui::text(
-        game,
-        batch,
-        language.text("Языки перевода", "Translation languages"),
-        [10.0, 12.0],
-        0xe3ebf3,
-        true,
-    );
+    use crate::game::claim_borders_ui_style as style;
+    // The chat stays visible, dimmed, behind a centred card.
+    game.native_fill(batch, screen.rect, 0xb0080d14);
+    let mut tip = None;
     editor(|s| {
         s.size = [screen.rect[2], screen.rect[3]];
         let Some(menu) = &s.editor else {
             return;
         };
-        for widget in menu.layout(s.size, language) {
-            if let Some((heading, value)) = widget.text.split_once('\n') {
-                ui::button(game, batch, widget.rect, "", widget.selected, screen.mouse);
-                for (line, y) in [
-                    (heading, widget.rect[1] + 4.0),
-                    (value, widget.rect[1] + 17.0),
-                ] {
-                    ui::text(
-                        game,
-                        batch,
-                        &ui::clip(game, line, widget.rect[2] - 8.0),
-                        [widget.rect[0] + 4.0, y],
-                        0xe3ebf3,
-                        false,
-                    );
-                }
-            } else {
-                let label = if widget.control == model::TranslationControl::CommonOnly {
-                    format!(
-                        "{}: {}",
-                        widget.text,
-                        if menu.draft.common_only {
-                            language.text("вкл.", "on")
-                        } else {
-                            language.text("выкл.", "off")
-                        }
-                    )
-                } else {
-                    widget.text
-                };
-                ui::button(
-                    game,
-                    batch,
-                    widget.rect,
-                    &label,
-                    widget.selected,
-                    screen.mouse,
-                );
-            }
-        }
-        if s.error {
-            let message = language.text(
-                "Не сохранено. Проверьте translation_preferences; выбор сохранён в меню.",
-                "Not saved. Check translation_preferences; your selections are retained.",
+        let chrome = menu.chrome(s.size, language);
+        let title = language.text("Языки перевода", "Translation languages");
+        if chrome.compact {
+            let [x, y, w, h] = chrome.panel;
+            ui::rounded(game, batch, chrome.panel, 6.0, 0xff000000 | style::BORDER);
+            ui::rounded(
+                game,
+                batch,
+                [x + 1.0, y + 1.0, w - 2.0, h - 2.0],
+                5.0,
+                0xf2000000 | style::BACKGROUND,
             );
+            ui::text(game, batch, title, [x + 12.0, y + 8.0], style::TEXT, false);
+        } else {
+            ui::popup_frame(game, batch, chrome.panel, ui::Icon::Chat, title);
+        }
+        for (at, text) in &chrome.headings {
             ui::text(
                 game,
                 batch,
-                &ui::clip(game, message, screen.rect[2] - 20.0),
-                [10.0, 24.0],
+                &ui::clip(game, text, chrome.panel[2] - 24.0),
+                *at,
+                style::MUTED,
+                false,
+            );
+        }
+        for arrow in &chrome.arrows {
+            ui::icon(game, batch, ui::Icon::Next, *arrow, style::MUTED);
+        }
+        let accent = ui::preferences(game).accent.color();
+        for widget in menu.layout(s.size, language) {
+            let [x, y, w, h] = widget.rect;
+            let hover = style::contains(widget.rect, screen.mouse);
+            match widget.control {
+                model::TranslationControl::Field(field) => {
+                    if hover {
+                        tip = Some(field.hint(language));
+                    }
+                    ui::button_base(game, batch, widget.rect, "", widget.selected, screen.mouse);
+                    let (heading, value) = widget.text.split_once('\n').unwrap_or(("", ""));
+                    let compact = h < 30.0;
+                    ui::text(
+                        game,
+                        batch,
+                        &ui::clip(game, heading, w - 14.0),
+                        [x + 7.0, y + if compact { 4.0 } else { 6.0 }],
+                        style::MUTED,
+                        false,
+                    );
+                    ui::text(
+                        game,
+                        batch,
+                        &ui::clip(game, value, w - 14.0),
+                        [x + 7.0, y + if compact { 15.0 } else { 18.0 }],
+                        if widget.selected { accent } else { style::TEXT },
+                        false,
+                    );
+                }
+                model::TranslationControl::Choose(_) => {
+                    ui::button_base(game, batch, widget.rect, "", widget.selected, screen.mouse);
+                    let check = if widget.selected { 14.0 } else { 0.0 };
+                    if widget.selected {
+                        ui::icon(
+                            game,
+                            batch,
+                            ui::Icon::Check,
+                            [x + 6.0, y + (h - 9.0) * 0.5, 9.0, 9.0],
+                            accent,
+                        );
+                    }
+                    ui::text(
+                        game,
+                        batch,
+                        &ui::clip(game, &widget.text, w - 12.0 - check),
+                        [x + 6.0 + check, y + (h - 8.0) * 0.5],
+                        if widget.selected {
+                            style::TEXT
+                        } else {
+                            0xd2dce4
+                        },
+                        false,
+                    );
+                }
+                model::TranslationControl::Previous | model::TranslationControl::Next => {
+                    ui::button_base(game, batch, widget.rect, "", false, screen.mouse);
+                    ui::icon(
+                        game,
+                        batch,
+                        if widget.control == model::TranslationControl::Previous {
+                            ui::Icon::Back
+                        } else {
+                            ui::Icon::Next
+                        },
+                        [x + (w - 10.0) * 0.5, y + (h - 10.0) * 0.5, 10.0, 10.0],
+                        style::TEXT,
+                    );
+                }
+                model::TranslationControl::CommonOnly => {
+                    if hover {
+                        tip = Some(language.text(
+                            "Выкл.: переводить строки на любых языках, а не только на основных.",
+                            "Off: translate lines in any language, not only the common ones.",
+                        ));
+                    }
+                    ui::button(game, batch, widget.rect, &widget.text, false, screen.mouse);
+                }
+                model::TranslationControl::Save => {
+                    ui::button(game, batch, widget.rect, "", false, screen.mouse);
+                    let tw = game.native_text_width(&widget.text);
+                    let left = x + (w - tw - 15.0) * 0.5;
+                    ui::icon(
+                        game,
+                        batch,
+                        ui::Icon::Save,
+                        [left, y + (h - 10.0) * 0.5, 10.0, 10.0],
+                        accent,
+                    );
+                    ui::text(
+                        game,
+                        batch,
+                        &widget.text,
+                        [left + 15.0, y + (h - 8.0) * 0.5],
+                        style::TEXT,
+                        false,
+                    );
+                }
+                model::TranslationControl::Cancel => {
+                    ui::button(game, batch, widget.rect, "", false, screen.mouse);
+                    let label = format!("{} [Esc]", widget.text);
+                    ui::text(
+                        game,
+                        batch,
+                        &label,
+                        [
+                            x + (w - game.native_text_width(&label)) * 0.5,
+                            y + (h - 8.0) * 0.5,
+                        ],
+                        style::TEXT,
+                        false,
+                    );
+                }
+            }
+        }
+        if let Some((rect, label)) = menu.page_label(s.size) {
+            ui::text(
+                game,
+                batch,
+                &label,
+                [
+                    rect[0] + (rect[2] - game.native_text_width(&label)) * 0.5,
+                    rect[1] + (rect[3] - 8.0) * 0.5,
+                ],
+                style::MUTED,
+                false,
+            );
+        }
+        if s.error {
+            let message = language.text(
+                "Не удалось сохранить. Проверьте доступ к файлам; выбор остался в меню.",
+                "Could not save. Check file permissions; your selections are retained.",
+            );
+            let [x, y, w, h] = chrome.panel;
+            ui::text(
+                game,
+                batch,
+                &ui::clip(game, message, w - 24.0),
+                [x + 12.0, y + h + 6.0],
                 0xff7777,
                 false,
             );
         }
     });
+    if let Some(tip) = tip {
+        ui::tooltip(game, batch, tip, screen.mouse);
+    }
     true
 }
 pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {

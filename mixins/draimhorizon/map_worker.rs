@@ -234,7 +234,8 @@ fn run(shared: Arc<(Mutex<Pending>, Condvar)>, root: PathBuf, palette: Vec<u32>)
             let composed = store.compose(&render_context, &query.render);
             match composed {
                 Ok(pixels) => {
-                    cached = Some((query.clone(), revision, render_context));
+                    // Placeholders still pending refinement must not satisfy the next identical query.
+                    cached = (!store.pending).then(|| (query.clone(), revision, render_context));
                     if let Some(error) = store.warning.take() {
                         warning = Some(error);
                     }

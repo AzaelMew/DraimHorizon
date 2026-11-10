@@ -650,11 +650,11 @@ fn map_rect(size: [f32; 2]) -> [f32; 4] {
 fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
     let lang = language();
     let mut out: Vec<_> = [
-        (Button::ZoomIn, "+"),
-        (Button::ZoomOut, "−"),
+        (Button::ZoomIn, lang.text("Приблизить", "Zoom in")),
+        (Button::ZoomOut, lang.text("Отдалить", "Zoom out")),
         (Button::Center, lang.text("К себе", "Center")),
         (Button::Death, lang.text("Смерть", "Death")),
-        (Button::Fit, lang.text("Зоны", "Zones")),
+        (Button::Fit, lang.text("Показать приваты", "Fit claims")),
         (Button::Layer, lang.text("Рельеф", "Terrain")),
         (Button::Grid, lang.text("Сетка", "Grid")),
         (Button::Mobs, lang.text("Фильтр мобов", "Mob filter")),
@@ -670,7 +670,11 @@ fn buttons(size: [f32; 2]) -> Vec<(Button, [f32; 4], String)> {
         )
     })
     .collect();
-    out.push((Button::Seed, [128.0, 4.0, 80.0, 22.0], "Seed Map".into()));
+    out.push((
+        Button::Seed,
+        [128.0, 4.0, 80.0, 22.0],
+        lang.text("Сид-карта", "Seed map").into(),
+    ));
     out.push((
         Button::Back,
         [size[0] - 28.0, 4.0, 22.0, 22.0],
@@ -706,9 +710,19 @@ pub(super) fn tool(
         game,
         batch,
         icon,
-        [rect[0] + 5.0, rect[1] + 5.0, rect[2] - 10.0, rect[3] - 10.0],
+        [rect[0] + 5.0, rect[1] + (rect[3] - 14.0) * 0.5, 14.0, 14.0],
         if selected { 0x88d9bd } else { 0xd2dce4 },
     );
+    if rect[2] > 40.0 {
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, caption, rect[2] - 28.0),
+            [rect[0] + 24.0, rect[1] + (rect[3] - 8.0) * 0.5],
+            crate::game::claim_borders_ui_style::TEXT,
+            false,
+        );
+    }
     if contains(rect, mouse) {
         ui::tooltip(game, batch, caption, mouse);
     }
@@ -1189,8 +1203,8 @@ pub(super) fn render(
                 let icon = match button {
                     Button::ZoomIn => ui::Icon::Plus,
                     Button::ZoomOut => ui::Icon::Minus,
-                    Button::Center => ui::Icon::Home,
-                    Button::Death => ui::Icon::Close,
+                    Button::Center => ui::Icon::Locate,
+                    Button::Death => ui::Icon::Skull,
                     Button::Fit => ui::Icon::Shield,
                     Button::Layer => ui::Icon::Layers,
                     Button::Grid => ui::Icon::Grid,
@@ -1203,6 +1217,16 @@ pub(super) fn render(
                         "{}: {}",
                         language().text("Рельеф", "Terrain"),
                         p.layer.label_in(language())
+                    )
+                } else if matches!(button, Button::Grid) {
+                    format!(
+                        "{}: {}",
+                        language().text("Сетка", "Grid"),
+                        if p.grid {
+                            language().text("вкл.", "on")
+                        } else {
+                            language().text("выкл.", "off")
+                        }
                     )
                 } else {
                     caption
@@ -1288,8 +1312,17 @@ fn draw_mob_filter(game: &Game<'_>, batch: &mut HudBatch, size: [f32; 2], mouse:
     ui::button(
         game,
         batch,
-        [r[0] + 6.0, r[1] + 4.0, r[2] - 12.0, 20.0],
+        [r[0] + 6.0, r[1] + 4.0, r[2] - 38.0, 20.0],
         mode,
+        false,
+        mouse,
+    );
+    tool(
+        game,
+        batch,
+        [r[0] + r[2] - 26.0, r[1] + 4.0, 20.0, 20.0],
+        lang.text("Закрыть фильтр", "Close filter"),
+        ui::Icon::Close,
         false,
         mouse,
     );
@@ -1357,6 +1390,10 @@ pub(super) fn mouse(
         let r = mob_filter_rect(size);
         if contains(r, screen.mouse) {
             if pressed && button == 0 {
+                if screen.mouse[1] < r[1] + 26.0 && screen.mouse[0] >= r[0] + r[2] - 28.0 {
+                    state(|s| s.mob_filter = false);
+                    return true;
+                }
                 let mut p = settings(game);
                 if screen.mouse[1] < r[1] + 26.0 {
                     p.mobs = (p.mobs + 1) % 3;

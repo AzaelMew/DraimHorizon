@@ -71,6 +71,7 @@ struct State {
     gear: Option<[f32; 4]>,
     pressed: BTreeSet<i32>,
     focus: Option<u8>,
+    appearance_page: usize,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -205,7 +206,7 @@ pub(super) fn fill(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], argb: 
         ) {
             style::mix(style::SURFACE, p.accent.color(), 0.24)
         } else if rgb == 0x111520 || rgb == 0x101a25 {
-            0x172230
+            style::BACKGROUND
         } else {
             style::SURFACE
         };
@@ -330,10 +331,18 @@ pub(super) fn button_base(
     } else {
         p.accent.color()
     };
-    let base = style::mix(style::SURFACE, style::RAISED, hover * 0.35);
-    let rgb = style::mix(base, accent, (active * 0.28 + hover * 0.12).min(0.4));
+    let base = style::mix(style::SURFACE, style::RAISED, 0.32 + hover * 0.4);
+    let rgb = style::mix(base, accent, (active * 0.10 + hover * 0.04).min(0.14));
     let a = ((p.alpha() + 0.04).min(0.98) * 255.0) as u32;
-    rounded(game, batch, rect, 4.0, (a << 24) | rgb);
+    let border = style::mix(style::BORDER, accent, (active + hover * 0.6).min(1.0));
+    rounded(game, batch, rect, 4.0, (a << 24) | border);
+    rounded(
+        game,
+        batch,
+        [rect[0] + 0.75, rect[1] + 0.75, rect[2] - 1.5, rect[3] - 1.5],
+        3.25,
+        (a << 24) | rgb,
+    );
     if selected {
         rounded(
             game,
@@ -381,6 +390,33 @@ pub(super) fn switch(game: &Game<'_>, batch: &mut HudBatch, at: [f32; 2], on: bo
         if on { 0xfff2f7fb } else { 0xff93a1b1 },
     );
 }
+/// Reserve trailing space on every toggle. Both text and knob position convey state.
+pub(super) fn toggle_end(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], on: bool) -> f32 {
+    let [x, y, w, h] = rect;
+    switch(game, batch, [x + w - 32.0, y + (h - 12.0) * 0.5], on);
+    let reserve = if w >= 180.0 {
+        let label = if on {
+            language().text("Вкл", "On")
+        } else {
+            language().text("Выкл", "Off")
+        };
+        text(
+            game,
+            batch,
+            label,
+            [
+                x + w - 40.0 - game.native_text_width(label),
+                y + (h - 8.0) * 0.5,
+            ],
+            style::MUTED,
+            false,
+        );
+        76.0
+    } else {
+        48.0
+    };
+    (w - reserve).max(0.0)
+}
 /// The frame every pop-up shares: a shadow, a rounded card with a thin border, the icon and
 /// title on top and a rule under them.
 pub(super) fn popup_frame(
@@ -398,13 +434,13 @@ pub(super) fn popup_frame(
         10.0,
         0x40000000,
     );
-    rounded(game, batch, rect, 8.0, 0xff2f3d52);
+    rounded(game, batch, rect, 8.0, 0xff000000 | style::BORDER);
     rounded(
         game,
         batch,
         [x + 1.0, y + 1.0, w - 2.0, h - 2.0],
         7.0,
-        0xf21b2636,
+        0xf2000000 | style::BACKGROUND,
     );
     icon(
         game,
@@ -429,13 +465,8 @@ pub(super) fn button(
     if rect[2] >= 120.0
         && let Some((name, on)) = style::switch_label(label)
     {
-        switch(
-            game,
-            batch,
-            [rect[0] + rect[2] - 32.0, rect[1] + (rect[3] - 12.0) * 0.5],
-            on,
-        );
-        let name = clip(game, name, rect[2] - 48.0);
+        let label_width = toggle_end(game, batch, rect, on);
+        let name = clip(game, name, label_width);
         text(
             game,
             batch,
@@ -576,6 +607,7 @@ pub(super) fn open_settings(game: &Game<'_>) {
         if s.editor.is_none() {
             s.editor = Some(p);
             s.focus = None;
+            s.appearance_page = 0;
             s.hits.clear();
         }
     });
@@ -618,6 +650,14 @@ fn act(game: &Game<'_>, id: u8) {
                 Err(e) => s.error = Some(SettingsError::Save(e)),
             }
         }
+        9 => {
+            s.appearance_page = s.appearance_page.saturating_sub(1);
+            s.focus = None;
+        }
+        10 => {
+            s.appearance_page = s.appearance_page.saturating_add(1);
+            s.focus = None;
+        }
         _ => {}
     });
 }
@@ -642,16 +682,13 @@ pub(super) fn settings_render(
     }
     let start = batch.vertices.len();
     let p = preferences(game);
-    let w = (batch.width - 24.0).min(360.0);
-    let h = (batch.height - 24.0).min(246.0);
-    let x = (batch.width - w) * 0.5;
-    let y = (batch.height - h) * 0.5;
-    let row = ((h - 100.0) / 6.0).min(24.0);
+    let form = style::DialogLayout::new([batch.width, batch.height], [360.0, 300.0]);
+    let [x, y, w, _h] = form.panel;
     game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x7a09111c);
     popup_frame(
         game,
         batch,
-        [x, y, w, h],
+        form.panel,
         Icon::Settings,
         language().text("Оформление", "Appearance"),
     );
@@ -693,7 +730,7 @@ pub(super) fn settings_render(
         ),
         format!(
             "{}: {}",
-            lang.text("Плавные эффекты", "Smooth effects"),
+            lang.text("Анимации интерфейса", "Interface animations"),
             on(p.motion)
         ),
         format!(
@@ -708,24 +745,35 @@ pub(super) fn settings_render(
         ),
         lang.text("Сбросить оформление", "Reset appearance").into(),
     ];
-    let focus = state(|s| {
+    let pages = labels.len().div_ceil(form.capacity);
+    let (focus, page) = state(|s| {
         s.hits.clear();
-        s.focus
+        if let Some(id @ 0..=6) = s.focus {
+            s.appearance_page = usize::from(id.saturating_sub(1)) / form.capacity;
+        }
+        s.appearance_page = s.appearance_page.min(pages - 1);
+        (s.focus, s.appearance_page)
     });
-    for (i, label) in labels.iter().enumerate() {
-        let yy = y + 58.0 + i as f32 * row;
-        let rect = [x + 12.0, yy, w - 24.0, row - 3.0];
+    for (slot, (i, label)) in labels
+        .iter()
+        .enumerate()
+        .skip(page * form.capacity)
+        .take(form.capacity)
+        .enumerate()
+    {
+        let rect = form.row(slot);
+        let yy = rect[1];
         if i == 0 {
             text(
                 game,
                 batch,
-                label,
-                [rect[0] + 4.0, yy + (row - 11.0) * 0.5],
+                &clip(game, label, rect[2] - 58.0),
+                [rect[0] + 4.0, yy + 6.0],
                 style::TEXT,
                 false,
             );
             for (id, xx, title) in [(0, x + w - 62.0, "−"), (1, x + w - 36.0, "+")] {
-                let r = [xx, yy, 22.0, row - 3.0];
+                let r = [xx, yy, 22.0, rect[3]];
                 button(game, batch, r, title, focus == Some(id), screen.mouse);
                 state(|s| s.hits.push((r, id)));
             }
@@ -735,11 +783,25 @@ pub(super) fn settings_render(
             state(|s| s.hits.push((rect, id)));
         }
     }
-    for (id, xx, title) in [
-        (7, x + 12.0, lang.text("Отмена [Esc]", "Cancel [Esc]")),
-        (8, x + w * 0.5 + 3.0, lang.text("Готово", "Done")),
+    if pages > 1 {
+        for (column, id, label) in [
+            (
+                0,
+                9,
+                format!("{} {}/{}", lang.text("Назад", "Back"), page + 1, pages),
+            ),
+            (1, 10, lang.text("Далее", "Next").to_owned()),
+        ] {
+            let r = form.footer(column, true);
+            button(game, batch, r, &label, false, screen.mouse);
+            state(|s| s.hits.push((r, id)));
+        }
+    }
+    for (id, column, title) in [
+        (7, 0, lang.text("Отмена [Esc]", "Cancel [Esc]")),
+        (8, 1, lang.text("Сохранить", "Save")),
     ] {
-        let r = [xx, y + h - 26.0, w * 0.5 - 15.0, 19.0];
+        let r = form.footer(column, false);
         button(game, batch, r, title, focus == Some(id), screen.mouse);
         state(|s| s.hits.push((r, id)));
     }
@@ -797,6 +859,8 @@ pub(super) fn key_event(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool
         *canceled = true;
         match key {
             "key.keyboard.escape" => act(game, 7),
+            "key.keyboard.page.up" => act(game, 9),
+            "key.keyboard.page.down" => act(game, 10),
             "key.keyboard.tab" => state(|s| {
                 s.focus = Some(if game.modifiers.shift_key() {
                     s.focus.unwrap_or(0).wrapping_add(8) % 9

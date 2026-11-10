@@ -85,11 +85,54 @@ pub struct Setting {
     pub step: i64,
     pub default: i64,
 }
+impl Setting {
+    pub fn is_toggle(&self) -> bool {
+        self.min == 0 && self.max == 1 && self.step == 1
+    }
+    pub fn is_choice(&self) -> bool {
+        matches!(self.key, "corner" | "sidebar_corner")
+    }
+    pub fn value_label(&self, value: i64, language: Language) -> String {
+        if self.is_toggle() {
+            return if value != 0 {
+                language.text("вкл.", "on")
+            } else {
+                language.text("выкл.", "off")
+            }
+            .into();
+        }
+        if self.is_choice() {
+            return [
+                language.text("Сверху слева", "Top left"),
+                language.text("Сверху справа", "Top right"),
+                language.text("Снизу слева", "Bottom left"),
+                language.text("Снизу справа", "Bottom right"),
+            ][value.clamp(0, 3) as usize]
+                .into();
+        }
+        let unit = match self.key {
+            "tab_opacity" | "sidebar_scale" | "sidebar_opacity" | "scale" | "opacity"
+            | "min_roi" | "slippage" | "listing_fee" => "%",
+            "interval" | "quote_ttl" | "ah_ttl" => language.text("с", "s"),
+            "scan_delay" => language.text("мс", "ms"),
+            "sidebar_width" | "width" | "offset_x" | "offset_y" => language.text("пкс", "px"),
+            "min_profit" | "cash_reserve" | "listing_min" => language.text("мон.", "coins"),
+            _ => "",
+        };
+        if unit == "%" {
+            format!("{value}%")
+        } else if unit.is_empty() {
+            value.to_string()
+        } else {
+            format!("{value} {unit}")
+        }
+    }
+}
 pub const SETTINGS: &[Setting] = &[
     Setting {
         key: "custom_auction",
-        label: "Свой вид аукциона · F8",
-        label_en: "Custom auction view · F8",
+        label: "Оформление аукциона (F8)",
+        label_en: "Custom auction screen (F8)",
         group: 0,
         min: 0,
         max: 1,
@@ -97,9 +140,29 @@ pub const SETTINGS: &[Setting] = &[
         default: 1,
     },
     Setting {
+        key: "confirm_buy",
+        label: "Спрашивать перед покупкой на аукционе",
+        label_en: "Ask before buying at the auction",
+        group: 0,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+    },
+    Setting {
+        key: "trade_large",
+        label: "Крупные окна аукциона и рынка",
+        label_en: "Large auction and market windows",
+        group: 0,
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 0,
+    },
+    Setting {
         key: "custom_market",
-        label: "Свой вид Market · F8",
-        label_en: "Custom Market view · F8",
+        label: "Оформление рынка (F8)",
+        label_en: "Custom market screen (F8)",
         group: 0,
         min: 0,
         max: 1,
@@ -108,8 +171,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "sidebar_tps",
-        label: "TPS в sidebar",
-        label_en: "TPS in sidebar",
+        label: "Частота тиков сервера в боковой панели",
+        label_en: "Server tick rate in sidebar",
         group: 5,
         min: 0,
         max: 1,
@@ -118,8 +181,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "tab_tps",
-        label: "TPS в Tab",
-        label_en: "TPS in Tab",
+        label: "Частота тиков сервера в списке игроков",
+        label_en: "Server tick rate in player list",
         group: 6,
         min: 0,
         max: 1,
@@ -128,8 +191,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "tab_opacity",
-        label: "Фон Tab, %",
-        label_en: "Tab background, %",
+        label: "Непрозрачность списка игроков",
+        label_en: "Player list opacity",
         group: 6,
         min: 10,
         max: 90,
@@ -138,7 +201,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "custom_sidebar",
-        label: "Свой sidebar",
+        label: "Оформление боковой панели",
         label_en: "Custom sidebar",
         group: 5,
         min: 0,
@@ -148,7 +211,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "sidebar_width",
-        label: "Ширина sidebar",
+        label: "Ширина боковой панели",
         label_en: "Sidebar width",
         group: 5,
         min: 140,
@@ -158,8 +221,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "sidebar_scale",
-        label: "Масштаб sidebar, %",
-        label_en: "Sidebar scale, %",
+        label: "Масштаб боковой панели",
+        label_en: "Sidebar scale",
         group: 5,
         min: 65,
         max: 125,
@@ -168,8 +231,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "sidebar_opacity",
-        label: "Фон sidebar, %",
-        label_en: "Sidebar background, %",
+        label: "Непрозрачность боковой панели",
+        label_en: "Sidebar opacity",
         group: 5,
         min: 0,
         max: 100,
@@ -178,8 +241,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "sidebar_corner",
-        label: "Угол sidebar: ЛВ ПВ ЛН ПН",
-        label_en: "Sidebar corner: TL TR BL BR",
+        label: "Положение боковой панели",
+        label_en: "Sidebar position",
         group: 5,
         min: 0,
         max: 3,
@@ -188,8 +251,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "custom_tab",
-        label: "Свой Tab",
-        label_en: "Custom Tab",
+        label: "Оформление списка игроков",
+        label_en: "Custom player list",
         group: 6,
         min: 0,
         max: 1,
@@ -198,8 +261,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "tab_columns",
-        label: "Колонки Tab",
-        label_en: "Tab columns",
+        label: "Число колонок",
+        label_en: "Column count",
         group: 6,
         min: 1,
         max: 3,
@@ -248,8 +311,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "hud",
-        label: "HUD экономики",
-        label_en: "Economy HUD",
+        label: "Экономическая панель на экране",
+        label_en: "Economy overlay",
         group: 0,
         min: 0,
         max: 1,
@@ -258,8 +321,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "overlay",
-        label: "Подсказки в AH / market",
-        label_en: "Hints in AH / market",
+        label: "Подсказки на аукционе и рынке",
+        label_en: "Auction and market hints",
         group: 0,
         min: 0,
         max: 1,
@@ -268,7 +331,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "hide_sidebar",
-        label: "Скрывать серверный sidebar",
+        label: "Скрывать боковую панель сервера",
         label_en: "Hide server sidebar",
         group: 0,
         min: 0,
@@ -278,8 +341,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "hud_balance",
-        label: "HUD: баланс",
-        label_en: "HUD: balance",
+        label: "Баланс на экономической панели",
+        label_en: "Balance in economy overlay",
         group: 0,
         min: 0,
         max: 1,
@@ -288,8 +351,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "hud_hand",
-        label: "HUD: цена в руке",
-        label_en: "HUD: price of held item",
+        label: "Цена предмета в руке на панели",
+        label_en: "Held item price in economy overlay",
         group: 0,
         min: 0,
         max: 1,
@@ -298,8 +361,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "corner",
-        label: "Угол HUD (0–3)",
-        label_en: "HUD corner (0–3)",
+        label: "Положение экономической панели",
+        label_en: "Economy overlay position",
         group: 1,
         min: 0,
         max: 3,
@@ -308,8 +371,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "width",
-        label: "Ширина HUD",
-        label_en: "HUD width",
+        label: "Ширина экономической панели",
+        label_en: "Economy overlay width",
         group: 1,
         min: 140,
         max: 360,
@@ -318,8 +381,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "scale",
-        label: "Масштаб HUD, %",
-        label_en: "HUD scale, %",
+        label: "Масштаб экономической панели",
+        label_en: "Economy overlay scale",
         group: 1,
         min: 65,
         max: 150,
@@ -328,8 +391,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "opacity",
-        label: "Непрозрачность HUD, %",
-        label_en: "HUD opacity, %",
+        label: "Непрозрачность экономической панели",
+        label_en: "Economy overlay opacity",
         group: 1,
         min: 0,
         max: 100,
@@ -338,8 +401,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "offset_x",
-        label: "Сдвиг HUD X",
-        label_en: "HUD X offset",
+        label: "Сдвиг панели по горизонтали",
+        label_en: "Overlay horizontal offset",
         group: 1,
         min: -300,
         max: 300,
@@ -348,8 +411,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "offset_y",
-        label: "Сдвиг HUD Y",
-        label_en: "HUD Y offset",
+        label: "Сдвиг панели по вертикали",
+        label_en: "Overlay vertical offset",
         group: 1,
         min: -300,
         max: 300,
@@ -358,7 +421,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "quiet",
-        label: "Тихие служебные ответы",
+        label: "Скрывать служебные ответы команд",
         label_en: "Hide routine command replies",
         group: 2,
         min: 0,
@@ -388,8 +451,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "interval",
-        label: "Интервал запросов, с",
-        label_en: "Request interval, s",
+        label: "Интервал запросов",
+        label_en: "Request interval",
         group: 2,
         min: 10,
         max: 300,
@@ -398,8 +461,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "quote_ttl",
-        label: "Свежесть цен, с",
-        label_en: "Price freshness, s",
+        label: "Срок актуальности цен",
+        label_en: "Price validity period",
         group: 2,
         min: 30,
         max: 600,
@@ -408,8 +471,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "ah_ttl",
-        label: "Свежесть лотов AH, с",
-        label_en: "AH listing freshness, s",
+        label: "Срок актуальности лотов аукциона",
+        label_en: "Auction listing validity period",
         group: 2,
         min: 15,
         max: 180,
@@ -418,8 +481,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "scan_delay",
-        label: "Пауза сканера, мс",
-        label_en: "Scanner delay, ms",
+        label: "Пауза между страницами сканера",
+        label_en: "Delay between scanned pages",
         group: 2,
         min: 500,
         max: 3000,
@@ -438,8 +501,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "min_profit",
-        label: "Минимум прибыли, монет",
-        label_en: "Minimum profit, coins",
+        label: "Минимальная прибыль",
+        label_en: "Minimum profit",
         group: 3,
         min: 0,
         max: 10000,
@@ -448,8 +511,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "min_roi",
-        label: "Минимум ROI, %",
-        label_en: "Minimum ROI, %",
+        label: "Минимальная доходность",
+        label_en: "Minimum return on investment",
         group: 3,
         min: 0,
         max: 100,
@@ -458,8 +521,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "slippage",
-        label: "Запас на движение цены, %",
-        label_en: "Price movement buffer, %",
+        label: "Запас на изменение цены",
+        label_en: "Price movement buffer",
         group: 3,
         min: 0,
         max: 30,
@@ -508,8 +571,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "listing_fee",
-        label: "Ручная комиссия объявления, %",
-        label_en: "Custom listing fee, %",
+        label: "Комиссия размещения лота",
+        label_en: "Listing fee rate",
         group: 4,
         min: 0,
         max: 50,
@@ -518,8 +581,8 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "listing_min",
-        label: "Минимум комиссии AH, монет",
-        label_en: "Minimum AH fee, coins",
+        label: "Минимальная комиссия аукциона",
+        label_en: "Minimum auction fee",
         group: 4,
         min: 0,
         max: 100,
@@ -603,6 +666,11 @@ pub struct Listing {
     pub generation: u64,
 }
 impl Listing {
+    /// A click buys at once only when the question is switched off, the lot has a fixed price
+    /// and the known balance covers it; otherwise the confirmation explains the purchase.
+    pub fn buys_without_asking(&self, ask: bool, balance: Option<Coins>) -> bool {
+        !ask && !self.bid && balance.is_none_or(|v| v >= self.cost)
+    }
     pub fn within_unit_price(&self, cap: Coins) -> bool {
         !self.bid
             && self.count > 0
@@ -1287,6 +1355,84 @@ impl Book {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auction_purchases_ask_first_unless_switched_off() {
+        use super::*;
+        assert!(Preferences::default().flag("confirm_buy"));
+        let lot = |bid| Listing {
+            id: 8716,
+            item: "minecraft:black_banner".into(),
+            label: "Black Banner".into(),
+            count: 16,
+            cost: 4_000,
+            seller: "Alex".into(),
+            bid,
+            seen: 0,
+            expires: 1,
+            generation: 0,
+        };
+        assert!(!lot(false).buys_without_asking(true, Some(10_000)));
+        assert!(lot(false).buys_without_asking(false, Some(10_000)));
+        assert!(lot(false).buys_without_asking(false, None));
+        assert!(!lot(false).buys_without_asking(false, Some(3_999)));
+        assert!(!lot(true).buys_without_asking(false, Some(10_000)));
+    }
+    #[test]
+    fn setting_values_have_localized_states_units_and_corner_names() {
+        let setting = |key| SETTINGS.iter().find(|setting| setting.key == key).unwrap();
+        for s in SETTINGS {
+            assert_eq!(
+                s.is_toggle(),
+                s.max == 1,
+                "boolean metadata changed for {}",
+                s.key
+            );
+            assert!(!s.label.is_empty() && !s.label_en.is_empty());
+        }
+        assert_eq!(
+            setting("custom_tab").value_label(0, Language::Russian),
+            "выкл."
+        );
+        assert_eq!(
+            setting("custom_tab").value_label(1, Language::English),
+            "on"
+        );
+        assert_eq!(
+            setting("tab_opacity").value_label(42, Language::English),
+            "42%"
+        );
+        assert_eq!(
+            setting("scan_delay").value_label(1000, Language::Russian),
+            "1000 мс"
+        );
+        assert_eq!(
+            setting("interval").value_label(30, Language::English),
+            "30 s"
+        );
+        assert_eq!(
+            setting("width").value_label(220, Language::Russian),
+            "220 пкс"
+        );
+        assert_eq!(
+            setting("min_profit").value_label(5, Language::English),
+            "5 coins"
+        );
+        assert_eq!(
+            setting("tab_columns").value_label(3, Language::English),
+            "3"
+        );
+        for (value, ru, en) in [
+            (0, "Сверху слева", "Top left"),
+            (1, "Сверху справа", "Top right"),
+            (2, "Снизу слева", "Bottom left"),
+            (3, "Снизу справа", "Bottom right"),
+        ] {
+            for key in ["corner", "sidebar_corner"] {
+                assert_eq!(setting(key).value_label(value, Language::Russian), ru);
+                assert_eq!(setting(key).value_label(value, Language::English), en);
+            }
+        }
+    }
     use super::*;
     #[test]
     fn english_notes_and_settings_have_no_russian_text() {

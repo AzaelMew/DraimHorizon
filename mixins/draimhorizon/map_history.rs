@@ -4,10 +4,19 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 const SIDE: i32 = 16;
 const REGION: i32 = SIDE * 16;
 const MAX_BYTES: u64 = 550_000;
+// Zoomed-out overview texels per region side at the finest level (2 blocks each).
+const THUMB: usize = 128;
+const THUMB_LEVELS: usize = 3;
+// In-memory overview budget; the finest levels are dropped first.
+const THUMB_BYTES: usize = 32 << 20;
+// Disk/build time one compose may spend on missing overviews before showing
+// chunk summaries and asking the worker to refine on the next query.
+const THUMB_BUILD: Duration = Duration::from_millis(40);
 const MAGIC: &[u8; 8] = b"DHMAP02\0";
 const LEGACY_MAGIC: &[u8; 8] = b"DHMAP01\0";
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -159,13 +168,30 @@ struct Catalog {
     dir: PathBuf,
     regions: BTreeSet<(i32, i32)>,
 }
+// Shaded RGBA overview of one region at 2, 4 and 8 blocks per texel.
+struct Thumb {
+    levels: [Option<Vec<u8>>; THUMB_LEVELS],
+    used: u64,
+    /// The level the compose of `used` reads; finer ones are not needed for it.
+    level: usize,
+}
+impl Thumb {
+    fn bytes(&self) -> usize {
+        self.levels.iter().flatten().map(Vec::len).sum()
+    }
+}
+type ThumbKey = (String, (i32, i32), bool);
 pub struct Store {
     root: PathBuf,
     catalogs: BTreeMap<String, Catalog>,
     cache: BTreeMap<(String, (i32, i32)), Region>,
+    thumbs: BTreeMap<ThumbKey, Thumb>,
+    thumb_clock: u64,
     palette: Vec<u32>,
     clock: u64,
     pub warning: Option<String>,
+    // The last compose showed placeholders while overviews are still being built.
+    pub pending: bool,
 }
 impl Store {
     pub fn new(root: PathBuf, palette: Vec<u32>) -> Self {
@@ -173,9 +199,12 @@ impl Store {
             root,
             catalogs: BTreeMap::new(),
             cache: BTreeMap::new(),
+            thumbs: BTreeMap::new(),
+            thumb_clock: 0,
             palette,
             clock: 0,
             warning: None,
+            pending: false,
         }
     }
     fn catalog(&mut self, c: &Context) -> Result<String, String> {
@@ -286,7 +315,173 @@ impl Store {
         r.tiles.insert(local, tile);
         r.dirty = c.persistent;
         self.catalogs.get_mut(&id).unwrap().regions.insert(at);
+        self.refresh_thumbs(&id, at, local);
         Ok(())
+    }
+    // Repaint the changed chunk, and the chunks whose relief shading reads it,
+    // in already built overviews; overviews missing their finest level are rebuilt later.
+    fn refresh_thumbs(&mut self, id: &str, at: (i32, i32), local: u16) {
+        let region = &self.cache[&(id.to_owned(), at)];
+        let column = |x: i32, z: i32| {
+            ((x.div_euclid(REGION), z.div_euclid(REGION)) == at)
+                .then(|| region.column(x, z))
+                .flatten()
+        };
+        let (cx, cz) = (usize::from(local) % 16, usize::from(local) / 16);
+        let side = THUMB / 16;
+        for shading in [false, true] {
+            let key = (id.to_owned(), at, shading);
+            let Some(thumb) = self.thumbs.get_mut(&key) else {
+                continue;
+            };
+            let Some(fine) = thumb.levels[0].as_mut() else {
+                self.thumbs.remove(&key);
+                continue;
+            };
+            let (x1, y1) = ((cx + 2).min(16) * side, (cz + 2).min(16) * side);
+            for ty in cz * side..y1 {
+                for tx in cx * side..x1 {
+                    if tx >= (cx + 1) * side && ty >= (cz + 1) * side {
+                        continue;
+                    }
+                    let i = (ty * THUMB + tx) * 4;
+                    fine[i..i + 4].copy_from_slice(&thumb_texel(
+                        &column,
+                        at,
+                        tx,
+                        ty,
+                        &self.palette,
+                        shading,
+                    ));
+                }
+            }
+            for level in 1..THUMB_LEVELS {
+                let [coarse, finer] = [level, level - 1].map(|l| thumb.levels[l].take());
+                if let (Some(mut coarse), Some(finer)) = (coarse, finer) {
+                    let (from, to) = (THUMB >> (level - 1), THUMB >> level);
+                    let scale = side >> level;
+                    downsample(
+                        &finer,
+                        from,
+                        &mut coarse,
+                        to,
+                        [cx * scale, cz * scale],
+                        [x1 >> level, y1 >> level],
+                    );
+                    thumb.levels[level] = Some(coarse);
+                    thumb.levels[level - 1] = Some(finer);
+                } else {
+                    self.thumbs.remove(&key);
+                    break;
+                }
+            }
+        }
+    }
+    // Make an overview of `level` (or failing that a coarser one) available for compose.
+    fn ensure_thumb(
+        &mut self,
+        id: &str,
+        at: (i32, i32),
+        level: usize,
+        shading: bool,
+        persistent: bool,
+        started: Instant,
+    ) -> Option<usize> {
+        let key = (id.to_owned(), at, shading);
+        let have = self
+            .thumbs
+            .get(&key)
+            .and_then(|t| (level..THUMB_LEVELS).find(|&l| t.levels[l].is_some()));
+        if have != Some(level) {
+            if started.elapsed() >= THUMB_BUILD {
+                self.pending = true;
+            } else {
+                let built = if let Some(region) = self.cache.get(&(id.to_owned(), at)) {
+                    Some(Ok(build_thumb(region, at, &self.palette, shading)))
+                } else if persistent {
+                    let file = self.catalogs[id]
+                        .dir
+                        .join(format!("{}_{}.region", at.0, at.1));
+                    Some(
+                        read_limited(&file)
+                            .and_then(|bytes| Region::decode(&bytes, at))
+                            .map(|region| build_thumb(&region, at, &self.palette, shading)),
+                    )
+                } else {
+                    None
+                };
+                match built {
+                    Some(Ok(levels)) => {
+                        self.thumbs.insert(
+                            key.clone(),
+                            Thumb {
+                                levels: levels.map(Some),
+                                used: 0,
+                                level: 0,
+                            },
+                        );
+                    }
+                    Some(Err(e)) => self.warning = Some(e),
+                    None => {}
+                }
+            }
+        }
+        let thumb = self.thumbs.get_mut(&key)?;
+        let found = (level..THUMB_LEVELS).find(|&l| thumb.levels[l].is_some())?;
+        // Several levels of one compose keep the finest that any of its reads needs.
+        thumb.level = if thumb.used == self.thumb_clock {
+            thumb.level.min(found)
+        } else {
+            found
+        };
+        thumb.used = self.thumb_clock;
+        Some(found)
+    }
+    // Keep overviews within THUMB_BYTES: finer levels the current compose does not read go
+    // first, then least recently used overviews level by level, and only as a last resort the
+    // overviews the current compose reads (they are rebuilt, centre first, when needed again).
+    fn trim_thumbs(&mut self) {
+        let mut total: usize = self.thumbs.values().map(Thumb::bytes).sum();
+        if total > THUMB_BYTES {
+            for t in self.thumbs.values_mut() {
+                if t.used == self.thumb_clock {
+                    for l in 0..t.level {
+                        total -= t.levels[l].take().map_or(0, |v| v.len());
+                    }
+                }
+            }
+        }
+        for level in 0..THUMB_LEVELS {
+            if total <= THUMB_BYTES {
+                return;
+            }
+            let mut order: Vec<_> = self
+                .thumbs
+                .iter()
+                .filter(|(_, t)| t.used != self.thumb_clock && t.levels[level].is_some())
+                .map(|(k, t)| (t.used, k.clone()))
+                .collect();
+            order.sort();
+            for (_, key) in order {
+                if total <= THUMB_BYTES {
+                    return;
+                }
+                if level + 1 == THUMB_LEVELS {
+                    total -= self.thumbs.remove(&key).map_or(0, |t| t.bytes());
+                } else if let Some(t) = self.thumbs.get_mut(&key) {
+                    total -= t.levels[level].take().map_or(0, |l| l.len());
+                }
+            }
+        }
+        if total > THUMB_BYTES {
+            let keys: Vec<_> = self.thumbs.keys().cloned().collect();
+            for key in keys {
+                if total <= THUMB_BYTES {
+                    break;
+                }
+                total -= self.thumbs.remove(&key).map_or(0, |t| t.bytes());
+            }
+        }
     }
     fn save(&mut self, key: &(String, (i32, i32))) -> Result<(), String> {
         let r = &self.cache[key];
@@ -439,8 +634,74 @@ impl Store {
         // Keep the visible detailed working set within the 24-region LRU,
         // leaving room for neighbour halos and incoming exploration.
         let precise = step < 8.0 && (regions.len() <= 18 || !c.persistent);
+        // Wider views sample shaded per-region overviews of matching density;
+        // only the farthest zooms fall back to one colour per chunk.
+        let finest = step.min(step * spec.aspect);
+        let overview = (!precise && step < 16.0).then(|| {
+            (0..THUMB_LEVELS)
+                .rev()
+                .find(|&l| f64::from(2u32 << l) <= finest)
+                .unwrap_or(0)
+        });
+        self.pending = false;
+        self.thumb_clock = self.thumb_clock.wrapping_add(1);
+        let started = Instant::now();
+        let mut regions = regions;
+        if overview.is_some() {
+            // Build the middle of the view first when the time budget runs out.
+            regions.sort_by(|a, b| {
+                let distance = |r: &(i32, i32)| {
+                    let x = (f64::from(r.0) + 0.5) * f64::from(REGION) - spec.center[0];
+                    let z = (f64::from(r.1) + 0.5) * f64::from(REGION) - spec.center[1];
+                    x * x + z * z
+                };
+                distance(a).total_cmp(&distance(b))
+            });
+        }
         for at in regions {
             let key = (id.clone(), at);
+            let from = [
+                (f64::from(at.0) * f64::from(REGION) - low[0]) / (step * spec.aspect),
+                (f64::from(at.1) * f64::from(REGION) - low[1]) / step,
+            ];
+            let to = [
+                from[0] + f64::from(REGION) / (step * spec.aspect),
+                from[1] + f64::from(REGION) / step,
+            ];
+            if let Some(level) = overview
+                && let Some(level) =
+                    self.ensure_thumb(&id, at, level, spec.shading, c.persistent, started)
+                && let Some(texels) =
+                    self.thumbs[&(id.clone(), at, spec.shading)].levels[level].as_deref()
+            {
+                let side = THUMB >> level;
+                let texel = f64::from(REGION) / side as f64;
+                let origin = [at.0, at.1].map(|v| f64::from(v) * f64::from(REGION));
+                for y in
+                    (from[1].floor().max(0.0) as usize)..(to[1].ceil().max(0.0) as usize).min(size)
+                {
+                    let wz = low[1] + (y as f64 + 0.5) * step - origin[1];
+                    if !(0.0..f64::from(REGION)).contains(&wz) {
+                        continue;
+                    }
+                    let ty = ((wz / texel) as usize).min(side - 1);
+                    for x in (from[0].floor().max(0.0) as usize)
+                        ..(to[0].ceil().max(0.0) as usize).min(size)
+                    {
+                        let wx = low[0] + (x as f64 + 0.5) * step * spec.aspect - origin[0];
+                        if !(0.0..f64::from(REGION)).contains(&wx) {
+                            continue;
+                        }
+                        let tx = ((wx / texel) as usize).min(side - 1);
+                        let t = (ty * side + tx) * 4;
+                        if texels[t + 3] != 0 {
+                            let i = (y * size + x) * 4;
+                            image[i..i + 4].copy_from_slice(&texels[t..t + 4]);
+                        }
+                    }
+                }
+                continue;
+            }
             // Copy only the two height borders before loading the current region.
             // Neighbour loads may evict it; never retain references across load().
             let mut west = [None; REGION as usize];
@@ -534,14 +795,6 @@ impl Store {
                 continue;
             }
             let r = self.cache.get(&key);
-            let from = [
-                (f64::from(at.0) * f64::from(REGION) - low[0]) / (step * spec.aspect),
-                (f64::from(at.1) * f64::from(REGION) - low[1]) / step,
-            ];
-            let to = [
-                from[0] + f64::from(REGION) / (step * spec.aspect),
-                from[1] + f64::from(REGION) / step,
-            ];
             for y in (from[1].floor().max(0.0) as usize)..(to[1].ceil().max(0.0) as usize).min(size)
             {
                 for x in
@@ -576,6 +829,7 @@ impl Store {
                 }
             }
         }
+        self.trim_thumbs();
         Ok(image)
     }
 }
@@ -586,6 +840,114 @@ pub struct Render {
     pub aspect: f64,
     pub size: usize,
     pub shading: bool,
+}
+fn thumb_texel(
+    column: &impl Fn(i32, i32) -> Option<(u8, i16, u8, u32)>,
+    at: (i32, i32),
+    tx: usize,
+    ty: usize,
+    palette: &[u32],
+    shading: bool,
+) -> [u8; 4] {
+    let scale = REGION as usize / THUMB;
+    let mut sum = [0u32; 3];
+    let mut n = 0;
+    for dz in 0..scale {
+        for dx in 0..scale {
+            let x = at.0 * REGION + (tx * scale + dx) as i32;
+            let z = at.1 * REGION + (ty * scale + dz) as i32;
+            if let Some(rgba) = shade_column(column, x, z, palette, shading) {
+                for (s, c) in sum.iter_mut().zip(rgba) {
+                    *s += u32::from(c);
+                }
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return [0; 4];
+    }
+    let [r, g, b] = sum.map(|s| (s / n) as u8);
+    [r, g, b, 255]
+}
+// Alpha-aware 2x2 box filter of `src` into `dst` over the destination texels [from, to).
+fn downsample(
+    src: &[u8],
+    src_side: usize,
+    dst: &mut [u8],
+    dst_side: usize,
+    from: [usize; 2],
+    to: [usize; 2],
+) {
+    for y in from[1]..to[1].min(dst_side) {
+        for x in from[0]..to[0].min(dst_side) {
+            let mut sum = [0u32; 3];
+            let mut n = 0;
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let i = ((y * 2 + dy) * src_side + x * 2 + dx) * 4;
+                if src[i + 3] != 0 {
+                    for (s, c) in sum.iter_mut().zip(&src[i..i + 3]) {
+                        *s += u32::from(*c);
+                    }
+                    n += 1;
+                }
+            }
+            let i = (y * dst_side + x) * 4;
+            dst[i..i + 4].copy_from_slice(&if n == 0 {
+                [0; 4]
+            } else {
+                let [r, g, b] = sum.map(|s| (s / n) as u8);
+                [r, g, b, 255]
+            });
+        }
+    }
+}
+fn build_thumb(
+    region: &Region,
+    at: (i32, i32),
+    palette: &[u32],
+    shading: bool,
+) -> [Vec<u8>; THUMB_LEVELS] {
+    // Dense columns make the 65k-column relief pass cheap; neighbours outside the region read as flat.
+    let side = REGION as usize;
+    let mut dense = vec![None; side * side];
+    for (&id, t) in &region.tiles {
+        let (cx, cz) = (usize::from(id) % 16 * 16, usize::from(id) / 16 * 16);
+        for i in 0..256 {
+            dense[(cz + i / 16) * side + cx + i % 16] =
+                Some((t.color[i], t.height[i], t.depth[i], t.rgb[i]));
+        }
+    }
+    let column = |x: i32, z: i32| {
+        let (lx, lz) = (x - at.0 * REGION, z - at.1 * REGION);
+        if (0..REGION).contains(&lx) && (0..REGION).contains(&lz) {
+            dense[lz as usize * side + lx as usize]
+        } else {
+            None
+        }
+    };
+    let mut levels: [Vec<u8>; THUMB_LEVELS] =
+        std::array::from_fn(|l| vec![0; (THUMB >> l) * (THUMB >> l) * 4]);
+    for ty in 0..THUMB {
+        for tx in 0..THUMB {
+            let i = (ty * THUMB + tx) * 4;
+            levels[0][i..i + 4]
+                .copy_from_slice(&thumb_texel(&column, at, tx, ty, palette, shading));
+        }
+    }
+    for l in 1..THUMB_LEVELS {
+        let (finer, coarse) = levels.split_at_mut(l);
+        let side = THUMB >> l;
+        downsample(
+            &finer[l - 1],
+            side * 2,
+            &mut coarse[0],
+            side,
+            [0, 0],
+            [side, side],
+        );
+    }
+    levels
 }
 fn shade_column(
     column: impl Fn(i32, i32) -> Option<(u8, i16, u8, u32)>,
@@ -872,6 +1234,155 @@ mod tests {
             store.cache.is_empty(),
             "wide views should use checked overviews, not decode/evict all 64 regions"
         );
+    }
+    // Chunk with a red west half and a blue east half; its chunk summary is purple.
+    fn split_tile() -> Tile {
+        let mut t = tile(1, 64);
+        for (i, rgb) in t.rgb.iter_mut().enumerate() {
+            *rgb = if i % 16 < 8 { 0xffd01010 } else { 0xff1010d0 };
+        }
+        t
+    }
+    fn wide_view() -> Render {
+        // 25 explored regions in view at 2.5 blocks per pixel.
+        Render {
+            center: [128.0, 128.0],
+            bpp: 10.0,
+            aspect: 1.0,
+            size: 512,
+            shading: false,
+        }
+    }
+    fn saved_grid(dir: &Dir, c: &Context) {
+        let mut store = Store::new(dir.0.clone(), palette());
+        for z in -2..3 {
+            for x in -2..3 {
+                store.insert(c, (x * 16, z * 16), split_tile()).unwrap();
+            }
+        }
+        store.flush().unwrap();
+    }
+    // Recompose like the worker does until the time-budgeted overviews are complete.
+    fn compose_settled(store: &mut Store, c: &Context, spec: &Render) -> Vec<u8> {
+        for _ in 0..100 {
+            let image = store.compose(c, spec).unwrap();
+            if !store.pending {
+                return image;
+            }
+        }
+        panic!("overviews never finished building");
+    }
+    #[test]
+    fn zoomed_out_explored_map_keeps_block_detail_instead_of_chunk_averages() {
+        let dir = Dir::new();
+        let c = context();
+        saved_grid(&dir, &c);
+        let mut store = Store::new(dir.0.clone(), palette());
+        let image = compose_settled(&mut store, &c, &wide_view());
+        let pixels = image.as_chunks::<4>().0;
+        assert!(pixels.contains(&[0xd0, 0x10, 0x10, 255]));
+        assert!(pixels.contains(&[0x10, 0x10, 0xd0, 255]));
+        assert!(
+            !pixels.contains(&[0x70, 0x10, 0x70, 255]),
+            "chunk-average placeholders must be replaced by overviews"
+        );
+        assert!(
+            store.cache.is_empty(),
+            "overviews are built without evicting the detailed region cache"
+        );
+    }
+    #[test]
+    fn live_terrain_updates_already_built_overviews() {
+        let dir = Dir::new();
+        let c = context();
+        saved_grid(&dir, &c);
+        let mut store = Store::new(dir.0.clone(), palette());
+        store.compose(&c, &wide_view()).unwrap();
+        let mut green = tile(1, 64);
+        green.rgb = [0xff10d010; 256];
+        store.insert(&c, (0, 0), green).unwrap();
+        let image = compose_settled(&mut store, &c, &wide_view());
+        assert!(image.as_chunks::<4>().0.contains(&[0x10, 0xd0, 0x10, 255]));
+    }
+    #[test]
+    fn overview_budget_holds_when_the_whole_view_is_current() {
+        // A wide, fully explored view: every overview is read by the current compose at the
+        // coarsest level, as a full map at 32 blocks per pixel does.
+        let mut store = Store::new(PathBuf::new(), palette());
+        let region = Region {
+            summary: vec![0; 1024],
+            ..Region::default()
+        };
+        store.thumb_clock = 7;
+        for x in 0..48 {
+            for z in 0..24 {
+                let levels = build_thumb(&region, (x, z), &palette(), false);
+                store.thumbs.insert(
+                    ("id".into(), (x, z), false),
+                    Thumb {
+                        levels: levels.map(Some),
+                        used: 7,
+                        level: THUMB_LEVELS - 1,
+                    },
+                );
+            }
+        }
+        store.trim_thumbs();
+        let total: usize = store.thumbs.values().map(Thumb::bytes).sum();
+        assert!(total <= THUMB_BYTES, "{total} bytes");
+        // Every overview keeps the level the view reads.
+        assert_eq!(store.thumbs.len(), 48 * 24);
+        assert!(
+            store
+                .thumbs
+                .values()
+                .all(|t| t.levels[THUMB_LEVELS - 1].is_some())
+        );
+        // Even an impossible working set of current finest levels is trimmed to the budget.
+        for t in store.thumbs.values_mut() {
+            t.level = 0;
+            t.levels = build_thumb(&region, (0, 0), &palette(), false).map(Some);
+        }
+        for x in 48..400 {
+            let levels = build_thumb(&region, (x, 0), &palette(), false);
+            store.thumbs.insert(
+                ("id".into(), (x, 0), false),
+                Thumb {
+                    levels: levels.map(Some),
+                    used: 7,
+                    level: 0,
+                },
+            );
+        }
+        store.trim_thumbs();
+        let total: usize = store.thumbs.values().map(Thumb::bytes).sum();
+        assert!(total <= THUMB_BYTES, "{total} bytes");
+    }
+    #[test]
+    fn overview_memory_stays_bounded() {
+        let mut store = Store::new(PathBuf::new(), palette());
+        let region = Region {
+            summary: vec![0; 1024],
+            ..Region::default()
+        };
+        for x in 0..600 {
+            let levels = build_thumb(&region, (x, 0), &palette(), false);
+            store.thumbs.insert(
+                ("id".into(), (x, 0), false),
+                Thumb {
+                    levels: levels.map(Some),
+                    used: x as u64,
+                    level: 0,
+                },
+            );
+        }
+        store.thumb_clock = 599;
+        store.trim_thumbs();
+        let total: usize = store.thumbs.values().map(Thumb::bytes).sum();
+        assert!(total <= THUMB_BYTES);
+        assert!(store.thumbs[&("id".into(), (599, 0), false)].levels[0].is_some());
+        assert!(store.thumbs[&("id".into(), (0, 0), false)].levels[0].is_none());
+        assert!(store.thumbs[&("id".into(), (0, 0), false)].levels[2].is_some());
     }
     #[test]
     fn explored_negative_chunks_survive_restart_and_zoom_out() {

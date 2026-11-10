@@ -176,8 +176,16 @@ fn controls(size: [f32; 2]) -> Vec<(Control, [f32; 4], &'static str)> {
             [size[0] - 28.0, 4.0, 22.0, 22.0],
             lang.text("Закрыть", "Close"),
         ),
-        (Control::Zoom(0.5), [8.0, 42.0, 24.0, 24.0], "+"),
-        (Control::Zoom(2.0), [8.0, 70.0, 24.0, 24.0], "−"),
+        (
+            Control::Zoom(0.5),
+            [8.0, 42.0, 24.0, 24.0],
+            lang.text("Приблизить", "Zoom in"),
+        ),
+        (
+            Control::Zoom(2.0),
+            [8.0, 70.0, 24.0, 24.0],
+            lang.text("Отдалить", "Zoom out"),
+        ),
         (
             Control::Center,
             [8.0, 106.0, 24.0, 24.0],
@@ -188,7 +196,11 @@ fn controls(size: [f32; 2]) -> Vec<(Control, [f32; 4], &'static str)> {
             [8.0, 134.0, 24.0, 24.0],
             lang.text("Фильтры", "Filters"),
         ),
-        (Control::Claims, [8.0, 162.0, 24.0, 24.0], "Claims"),
+        (
+            Control::Claims,
+            [8.0, 162.0, 24.0, 24.0],
+            lang.text("Приваты", "Claims"),
+        ),
         (
             Control::Settings,
             [8.0, 190.0, 24.0, 24.0],
@@ -740,23 +752,28 @@ pub(super) fn render(
                             )
                             .to_owned()
                     };
+                    // Beside the tool column, which is wider when the buttons carry labels.
+                    let left = model::tool_rect(s.size, 0);
+                    let left = left[0] + left[2] + 10.0;
                     text(
                         game,
                         batch,
                         &status,
-                        [44.0, r[1] + 7.0],
-                        r[2] - 60.0,
+                        [left, r[1] + 7.0],
+                        r[2] - left - 16.0,
                         0xf1c77c,
                     );
                 }
             }
         } else {
+            let left = model::tool_rect(s.size, 0);
+            let left = left[0] + left[2] + 10.0;
             text(
                 game,
                 batch,
                 language().text("Подготовка карты сида…", "Preparing seed map…"),
-                [44.0, r[1] + 8.0],
-                r[2] - 60.0,
+                [left, r[1] + 8.0],
+                r[2] - left - 16.0,
                 0x9cb0bf,
             );
         }
@@ -773,7 +790,7 @@ pub(super) fn render(
             game,
             batch,
             [128.0, 4.0, 80.0, 22.0],
-            "Seed Map",
+            language().text("Сид-карта", "Seed map"),
             true,
             screen.mouse,
         );
@@ -787,17 +804,29 @@ pub(super) fn render(
                     let icon = match control {
                         Control::Zoom(v) if v < 1.0 => ui::Icon::Plus,
                         Control::Zoom(_) => ui::Icon::Minus,
-                        Control::Center => ui::Icon::Home,
+                        Control::Center => ui::Icon::Locate,
                         Control::Filters => ui::Icon::Layers,
                         Control::Claims => ui::Icon::Shield,
                         Control::Settings => ui::Icon::Settings,
                         _ => ui::Icon::Close,
                     };
+                    let caption = if matches!(control, Control::Claims) {
+                        format!(
+                            "{label}: {}",
+                            if s.preferences.claims {
+                                language().text("вкл.", "on")
+                            } else {
+                                language().text("выкл.", "off")
+                            }
+                        )
+                    } else {
+                        label.to_owned()
+                    };
                     terrain::tool(
                         game,
                         batch,
                         rect,
-                        label,
+                        &caption,
                         icon,
                         matches!(control, Control::Filters) && s.filters
                             || matches!(control, Control::Claims) && s.preferences.claims,

@@ -1,21 +1,20 @@
-**DraimHorizon 0.39.3 - Routing through partial blocks, doors and ladders; farm zones, composter and bindings**
+**DraimHorizon 0.39.4 — Unreleased UI update**
 
-Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
+Base: upstream main / release **0.39.3** (`50dcce711b1f0e0d0e4e3574f43298bd76a9cfa7`).
+Horizon target: official Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- All Baritone tasks: diagonal steps, partial blocks judged by shape (slabs, beds, stairs, chests stood on or stepped over; fences, walls and gates never), doors and fence gates opened and closed on the way, ladders and vines climbed.
-- Far walks end each leg at the height they head for; goals far off or at another height use a wide search (96 blocks); walks that arrived are remembered and followed again; no more walking back and forth on an upper floor.
-- Bots walk like people: they look where they go, turn smoothly, turn round instead of walking backwards, keep walking between two plans, and turn to what they aim at instead of snapping.
-- Mining cuts tall trees to the top: logs in the crown count, wide trunks are cut from inside, and a column of blocks under the miner reaches the rest (and is taken down after).
-- Human look switch; the mouse takes the camera without pausing the task. Tunnel, bridge and drain move and aim like the walker; every task swims out of water.
-- Schematics: holograms of placed previews (to place / wrong), kept per world across sessions and listed with show/hide/delete; an on-screen editor moves and turns the selected one with keys; Start builds it, Stop leaves it.
-- Mining: any block of the world ("Own block": aim and press), a prismarine tile, and mining under water with surfacing for air (not needed with Water Breathing; potions of it are drunk by themselves before the effect runs out).
-- Mining: columns from any building block; shulker boxes as a storage on the spot. Schematic builds continue after a restart.
-- Farm: several levels; the composter is looked for by the chests.
-- Farm: the start height is remembered; the field is shared fairly between the selected crops (halves, thirds or quarters).
-- Farm menu lists each binding with coordinates; bound blocks get coloured frames in the world.
-- Farm: empty meal or seeds containers are left alone for 15 minutes; a composter by the field turns spare seeds into bone meal; the harvest is unloaded periodically, not only when the inventory is full.
-- One drop rule for every task: longer drops only when nothing else leads down, as far as health and the fall protection worn allow (six blocks bare, eight with Feather Falling IV boots, up to twelve); wooden trapdoors opened and closed on the way.
-- Farm: trampled farmland is tilled again with a hoe; a hungry farmer without food bakes bread from wheat at a crafting table nearby.
-- Builds on 0.39.2.
+This is one unreleased update. The earlier local-only 0.40.x/0.41.0 test labels have been consolidated into 0.39.4; subsequent fixes and test rebuilds keep this version until publication or an upstream base change. No published tag is reused.
 
-Not verified in game. No installation or publication is implied.
+- Fixed overlapping text in Experiments → Baritone → Mining. Storage/custom-block actions, task status/auto-eat, and action-key hints have distinct footer rows. Compact hints reserve space for Settings/language; wide layouts use the full content width. Schematic footer actions use the same separation.
+- Preserved all current upstream 0.39.3 gameplay additions alongside the UI work, including Human look, arbitrary mining blocks, farm levels/bindings and schematic previews. Helper paging derives its size from actual helper rows so new helpers are not hidden.
+- Includes the broader UI update: dedicated Trading navigation with grouped preferences, responsive trading details and scrolling, grouped inventory tools, clearer map/filter controls, waypoint-list confirmation, readable appearance/helper pages, and translation-role explanations.
+- The J menu groups preferences by feature: Map and claims (claims list, Map, Borders, Colors, Storage), Chat (style, notifications, anti-spam, DeepL, translation) and Settings (General, Network, Player list, Sidebar).
+- Steppers are single rows with a value cell and − / + buttons; choices show their value and a chevron; switch rows no longer look selected; text inputs are inset; single-page settings hide paging. Map tools say Zoom in/Zoom out and use locate/skull icons; seed-map status text no longer covers the tools.
+- Translation languages is a centred card with My messages / Chat messages pairs and all languages visible at once.
+- The auction is a catalogue of every lot, loaded in the background when it opens; one pager, search and sort across all lots, and `/ah buy <number>` purchases behind a confirmation that can be switched off (Ask before buying at the auction). Market screens keep one pager across server pages. Windows are compact by default with an optional large size.
+- Single player no longer sends automatic `/claims` and `/bal`, which raised Horizon's unknown-command prompt.
+- The explored map stays sharp and relief-shaded when zoomed out: wide views use per-region overviews (2/4/8 blocks per texel) instead of one colour per chunk. They are built in the background, centre first, and the saved map format is unchanged.
+- Boolean settings use switches; numeric values have units and read-only value cells; corner choices use names. Chat original-message badges follow the selected UI language. Russian remains the default, with English counterparts.
+- Saved settings, archives, maps, waypoints and server-authoritative gameplay behavior are preserved. Local delivery replaces the installed bundle after checks, without restarting the game or publishing a release.
+
+Regression coverage includes footer separation in Russian/English and compact/wide layouts, alongside the navigation and persistence checks. Menus, settings sections, the explored and seed maps were checked in a real native client (single player, both languages); the auction catalogue, its walk, search, sort, refresh and confirmation dialog, and the market screens were checked on play.playhorizon.dev at 1080p and 1440p without buying, selling or bidding; `/ah buy` itself was not run by the tests; live claim refreshes were not exercised.
