@@ -274,6 +274,8 @@ impl Worker {
                             }
                         })
                     };
+                    // Every planner on this thread goes by the request's drop limit.
+                    model::set_drop_limit(query.drop);
                     // The player may stand on an edge or in the air: plan from the nearest place
                     // that can be stood on (the answer keeps the real start for its own check).
                     let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
@@ -1689,17 +1691,12 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         ),
         goal,
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
-        // A long drop (when nothing else leads down) costs a few health points: only with half
-        // the health or more. Eating gets them back.
-        drop: if game
-            .player
-            .as_ref()
-            .is_some_and(|p| p.health.health() >= 10.0)
-        {
-            model::FAR_DROP
-        } else {
-            model::MAX_DROP
-        },
+        // A long drop (when nothing else leads down) costs a few health points: the shared
+        // rule weighs health and the fall protection worn. Eating gets the points back.
+        drop: model::drop_limit(
+            game.player.as_ref().map_or(0.0, |p| p.health.health()),
+            fall_protection(game),
+        ),
         chunks,
         resources: game.res.clone(),
     };
@@ -2546,6 +2543,21 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         &f.outline,
         model::Cell::Air,
     )
+}
+/// Enchantment protection against falls from the armour worn (`navigation::fall_protection`).
+fn fall_protection(game: &Game<'_>) -> u32 {
+    let levels: Vec<(u32, u32)> = game
+        .armor
+        .iter()
+        .flatten()
+        .map(|piece| {
+            (
+                piece.enchantment_level("minecraft:feather_falling"),
+                piece.enchantment_level("minecraft:protection"),
+            )
+        })
+        .collect();
+    model::fall_protection(&levels)
 }
 /// Doors and gates on the way: the one being opened (with when it was last clicked and how many
 /// times), and those opened by the walker, to be closed again behind it.

@@ -337,9 +337,46 @@ pub fn leg_target(from: [f64; 3], goal: [f64; 3], attempt: usize) -> Option<[f64
 /// The longest drop a walk steps off as a matter of course: three blocks cost no health, and
 /// dunes and pits are full of them.
 pub const MAX_DROP: i32 = 3;
-/// The longest drop at all, taken only when there is no other way (off a roof, down a cliff to
-/// the farm): six blocks cost three health points, which eating makes good again.
-pub const FAR_DROP: i32 = 6;
+/// The longest drop the planner ever considers (with fall protection worn); how far a walk may
+/// really drop is `drop_limit`, the same rule for every task.
+pub const FAR_DROP: i32 = 12;
+/// Fall damage of a drop of `drop` blocks, in health points (two to a heart): a point a block
+/// beyond three, less 4 % per point of enchantment protection against falls (`fall_protection`),
+/// at most 80 % less, as `CombatRules.getDamageAfterMagicAbsorb` takes it.
+pub fn fall_damage(drop: i32, protection: u32) -> f32 {
+    (drop - MAX_DROP).max(0) as f32 * (1.0 - protection.min(20) as f32 * 0.04)
+}
+/// Enchantment protection against falls from what is worn: Feather Falling gives three a level
+/// (boots), Protection one a level (every piece). `levels` holds each piece's two levels.
+pub fn fall_protection(levels: &[(u32, u32)]) -> u32 {
+    levels
+        .iter()
+        .map(|(feather, protection)| feather * 3 + protection)
+        .sum::<u32>()
+        .min(20)
+}
+/// How far a walk may drop, for every task alike: three blocks always (no damage); more only
+/// when there is no other way down, with health above ten, and only as far as costs at most
+/// three points and leaves ten. Boots with Feather Falling make the same health go further.
+pub fn drop_limit(health: f32, protection: u32) -> i32 {
+    let budget = (health - 10.0).clamp(0.0, 3.0);
+    (MAX_DROP..=FAR_DROP)
+        .rev()
+        .find(|d| fall_damage(*d, protection) <= budget + 1e-3)
+        .unwrap_or(MAX_DROP)
+}
+thread_local! {
+    /// The drop limit of the walk being planned on this thread (`set_drop_limit`).
+    static DROP_LIMIT: std::cell::Cell<i32> = const { std::cell::Cell::new(MAX_DROP) };
+}
+/// Sets the drop limit the planners on this thread use (the planner thread sets it from each
+/// request), so walking, following, mining, farm, drain and schematics all go by the same rule.
+pub fn set_drop_limit(limit: i32) {
+    DROP_LIMIT.with(|d| d.set(limit.clamp(MAX_DROP, FAR_DROP)));
+}
+fn current_drop_limit() -> i32 {
+    DROP_LIMIT.with(|d| d.get())
+}
 /// What each block of a drop beyond `MAX_DROP` costs a route: a long detour is taken first.
 const FAR_DROP_COST: i32 = 40;
 /// Where to plan from when the player does not stand on firm ground by the planner's rule: on
@@ -594,8 +631,8 @@ fn heuristic(a: Pos, b: Pos) -> i32 {
 }
 /// Every move tried from a cell, with its base cost: the four sides (up one, level, down to the
 /// drop limit), the four corners (level or down) and a ladder up or down.
-const MOVES: [([i32; 3], i32); 50] = {
-    let mut moves = [([0, 0, 0], 0); 50];
+const MOVES: [([i32; 3], i32); 74] = {
+    let mut moves = [([0, 0, 0], 0); 74];
     let sides = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     let corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
     let mut i = 0;
@@ -646,7 +683,7 @@ pub fn search_near(
     cell: impl FnMut(Pos) -> Cell,
     canceled: impl Fn() -> bool,
 ) -> Option<Path> {
-    search_near_drop(start, goal, radius, MAX_DROP, cell, canceled)
+    search_near_drop(start, goal, radius, current_drop_limit(), cell, canceled)
 }
 /// `search_near`, stepping off drops of up to `max_drop` blocks (beyond `MAX_DROP` only when it
 /// saves a long way: each block more costs as much as four steps).
@@ -1295,11 +1332,11 @@ mod tests {
             flat(p)
         }));
         assert!(!traversable([0, 0, 0], [1, -2, 0], &mut flat));
-        assert!(!traversable([0, 0, 0], [1, -7, 0], &mut |p| if p[1] < -7 {
-            Cell::Solid
-        } else {
-            Cell::Air
-        }));
+        assert!(!traversable(
+            [0, 0, 0],
+            [1, -13, 0],
+            &mut |p| if p[1] < -13 { Cell::Solid } else { Cell::Air }
+        ));
         assert!(!traversable([0, 0, 0], [2, 0, 0], &mut flat));
         assert_eq!(classify("minecraft:magma_block", true, false), Cell::Hazard);
         assert_eq!(classify("minecraft:oak_slab", false, false), Cell::Blocked);
@@ -1440,6 +1477,39 @@ mod tests {
                 .windows(2)
                 .all(|w| w[1][1] - w[0][1] >= -MAX_DROP)
         );
+    }
+    #[test]
+    fn the_drop_limit_follows_health_and_fall_protection() {
+        // No protection, full health: six blocks (three points), never below three.
+        assert_eq!(drop_limit(20.0, 0), 6);
+        assert_eq!(drop_limit(12.0, 0), 5);
+        assert_eq!(drop_limit(9.0, 0), MAX_DROP);
+        // Feather Falling IV boots (12): about half the damage, so further.
+        let boots = fall_protection(&[(4, 0)]);
+        assert_eq!(boots, 12);
+        assert_eq!(drop_limit(20.0, boots), 8);
+        // Full protection is capped at 20 (80 % less), and the drop at the planner's maximum.
+        let full = fall_protection(&[(4, 4), (0, 4), (0, 4), (0, 4)]);
+        assert_eq!(full, 20);
+        assert_eq!(drop_limit(20.0, full), FAR_DROP);
+        assert!((fall_damage(7, 12) - 2.08).abs() < 1e-3);
+        // The planners read the limit set for their thread.
+        set_drop_limit(MAX_DROP);
+        let roof = |p: Pos| {
+            if p[1] < 0 || (p[0] <= 2 && p[1] == 5) {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(search([0, 6, 0], [6, 0, 0], roof, || false).is_none_or(|p| !p.complete));
+        set_drop_limit(6);
+        assert!(
+            search([0, 6, 0], [6, 0, 0], roof, || false)
+                .unwrap()
+                .complete
+        );
+        set_drop_limit(MAX_DROP);
     }
     #[test]
     fn trapdoors_are_walked_over_opened_or_passed_by_their_state() {
