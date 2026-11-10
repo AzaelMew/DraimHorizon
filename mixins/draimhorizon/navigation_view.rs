@@ -2025,7 +2025,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         // rule weighs health and the fall protection worn. Eating gets the points back.
         // Elytra glide any drop down (the walker spreads them on the way).
         drop: if elytra_ready(game) {
-            model::FAR_DROP
+            model::ELYTRA_DROP
         } else {
             model::drop_limit(
                 game.player.as_ref().map_or(0.0, |p| p.health.health()),
@@ -2035,6 +2035,8 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         chunks,
         resources: game.res.clone(),
     };
+    // The walker's own check of each step on this thread goes by the same drop limit.
+    model::set_drop_limit(query.drop);
     s.worker.as_ref().unwrap().tx.try_send(query).map_err(|_| {
         language()
             .text(
@@ -3268,7 +3270,13 @@ fn closed_door(game: &Game<'_>, at: model::Pos) -> bool {
 /// Opens the closed door or gate on the next steps of the route once it is within reach, and
 /// closes behind the walker the ones it opened. True while the walker should wait for a door
 /// to open (the click is asked of the placement driver, which aims and presses use).
-fn door_step(game: &Game<'_>, path: &[model::Pos], next: usize, position: [f64; 3]) -> bool {
+fn door_step(
+    game: &Game<'_>,
+    path: &[model::Pos],
+    next: usize,
+    position: [f64; 3],
+    stalled: u16,
+) -> bool {
     let placement = crate::game::claim_borders_construction_view::open_container;
     let ahead: Vec<model::Pos> = path.iter().skip(next).take(3).copied().collect();
     let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
@@ -3307,6 +3315,29 @@ fn door_step(game: &Game<'_>, path: &[model::Pos], next: usize, position: [f64; 
                     || vertical
                     || game.native_block_property(*at, "half").as_deref() == Some("top"))
         })
+    });
+    // Held up anyway (a door the route did not know was shut, a player who went through and
+    // closed it, a trapdoor under the feet over a ladder): whatever closed door, gate or
+    // trapdoor is under the feet, at them, or one step toward the next point is opened.
+    let wanted = wanted.or_else(|| {
+        if stalled < 6 {
+            return None;
+        }
+        let feet = model::standing_block(position, &game.native_block(model::block(position)));
+        let toward = path.get(next).map_or([0, 0], |n| {
+            [(n[0] - feet[0]).signum(), (n[2] - feet[2]).signum()]
+        });
+        let below_next = path.get(next).is_some_and(|n| n[1] < feet[1]);
+        let mut cells = vec![
+            [feet[0] + toward[0], feet[1], feet[2] + toward[1]],
+            [feet[0] + toward[0], feet[1] + 1, feet[2] + toward[1]],
+            [feet[0], feet[1] + 1, feet[2]],
+            feet,
+        ];
+        if below_next {
+            cells.insert(0, [feet[0], feet[1] - 1, feet[2]]);
+        }
+        cells.into_iter().find(|at| closed_door(game, *at))
     });
     let Some(door) = wanted else {
         if let Some((at, _, _)) = doors.opening.take()
@@ -3614,7 +3645,7 @@ pub(super) fn movement(
         }
         // A closed door or gate on the next steps: open it first, standing still meanwhile.
         if s.nav.status == model::Status::Walking
-            && door_step(game, &s.nav.path, s.nav.next, position)
+            && door_step(game, &s.nav.path, s.nav.next, position, s.nav.stalled())
         {
             s.nav.yielded();
             input = model::Input::default();

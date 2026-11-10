@@ -294,6 +294,16 @@ pub fn classify_shape(
         return cell;
     }
     let short = name.strip_prefix("minecraft:").unwrap_or(name);
+    if short == "snow" {
+        // Snow layers: the body stands on one layer less than they look (eight layers are a full
+        // block). Up to five layers are walked over, six and seven stood on like a block.
+        let top = outline.iter().map(|b| b[4]).fold(0.0f64, f64::max);
+        return if top - 0.125 <= STEP_HEIGHT + 1e-6 {
+            low
+        } else {
+            Cell::Solid
+        };
+    }
     if hand_trapdoor(short) {
         // A wooden trapdoor: shut on the floor it is walked over; shut at the top of its cell
         // (a hatch at head height, over a ladder) it is opened on the way; open, it stands up
@@ -448,8 +458,10 @@ thread_local! {
 /// Sets the drop limit the planners on this thread use (the planner thread sets it from each
 /// request), so walking, following, mining, farm, drain and schematics all go by the same rule.
 pub fn set_drop_limit(limit: i32) {
-    DROP_LIMIT.with(|d| d.set(limit.clamp(MAX_DROP, FAR_DROP)));
+    DROP_LIMIT.with(|d| d.set(limit.clamp(MAX_DROP, ELYTRA_DROP)));
 }
+/// The drop limit with elytra worn: any height of the world (they are glided down).
+pub const ELYTRA_DROP: i32 = 384;
 fn current_drop_limit() -> i32 {
     DROP_LIMIT.with(|d| d.get())
 }
@@ -496,7 +508,7 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
                 }
         }
         (1, 0) | (0, 1) => {
-            (-FAR_DROP..=1).contains(&dy)
+            (-FAR_DROP.max(current_drop_limit())..=1).contains(&dy)
                 // A door is passed on the level, never with a step.
                 && (dy == 0 || !(door(cell(from)) || door(cell(to))))
                 && (dy <= 0 || open(cell([from[0], from[1] + 2, from[2]])))
@@ -827,6 +839,12 @@ pub fn search_near_drop(
         return None;
     }
     let reach = current_reach();
+    // Long drops cost as much as a long way round; glided ones (elytra) much less.
+    let drop_cost = if max_drop > FAR_DROP {
+        6
+    } else {
+        FAR_DROP_COST
+    };
     let began = Instant::now();
     let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
     let mut costs = HashMap::from([(start, 0)]);
@@ -856,7 +874,8 @@ pub fn search_near_drop(
             if dy < -max_drop
                 || (next[0] - start[0]).abs() > reach.radius
                 || (next[2] - start[2]).abs() > reach.radius
-                || (next[1] - start[1]).abs() > 16
+                || next[1] - start[1] > 16
+                || start[1] - next[1] > 16.max(max_drop)
                 || !traversable(at, next, &mut cell)
             {
                 continue;
@@ -867,7 +886,7 @@ pub fn search_near_drop(
                 + base
                 + if dy > 0 { 4 } else { dy.abs() * 2 }
                 + if door { 10 } else { 0 }
-                + (-dy - MAX_DROP).max(0) * FAR_DROP_COST;
+                + (-dy - MAX_DROP).max(0) * drop_cost;
             if costs.get(&next).is_none_or(|old| next_cost < *old) {
                 costs.insert(next, next_cost);
                 parents.insert(next, at);
@@ -876,6 +895,46 @@ pub fn search_near_drop(
                     next_cost,
                     next,
                 )));
+            }
+        }
+        // With elytra: off an edge to wherever the ground is, however far down (glided).
+        if max_drop > FAR_DROP {
+            for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
+                let column = [at[0] + dx, at[2] + dz];
+                if (column[0] - start[0]).abs() > reach.radius
+                    || (column[1] - start[2]).abs() > reach.radius
+                {
+                    continue;
+                }
+                let lowest = (at[1] - max_drop).max(start[1] - max_drop);
+                let mut y = at[1] - FAR_DROP - 1;
+                let landing = loop {
+                    if y < lowest {
+                        break None;
+                    }
+                    let here = [column[0], y, column[1]];
+                    if standable(here, &mut cell) {
+                        break Some(here);
+                    }
+                    if !self::open(cell(here)) {
+                        break None;
+                    }
+                    y -= 1;
+                };
+                let Some(next) = landing.filter(|n| traversable(at, *n, &mut cell)) else {
+                    continue;
+                };
+                let fall = at[1] - next[1];
+                let next_cost = cost + 10 + fall * 2 + (fall - MAX_DROP) * drop_cost;
+                if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                    costs.insert(next, next_cost);
+                    parents.insert(next, at);
+                    open.push(Reverse((
+                        next_cost + heuristic(next, goal),
+                        next_cost,
+                        next,
+                    )));
+                }
             }
         }
     }
@@ -1871,6 +1930,43 @@ mod tests {
                 .complete
         );
         set_drop_limit(MAX_DROP);
+    }
+    #[test]
+    fn snow_layers_are_walked_over_or_stood_on_by_their_height() {
+        let layers = |n: f64| [[0.0, 0.0, 0.0, 1.0, n / 8.0, 1.0]];
+        let snow = |n: f64| classify_shape("minecraft:snow", false, false, &layers(n), Cell::Air);
+        for n in 1..=5 {
+            assert_eq!(snow(f64::from(n)), Cell::Air, "{n} layers");
+        }
+        assert_eq!(snow(6.0), Cell::Solid);
+        assert_eq!(snow(7.0), Cell::Solid);
+        assert_eq!(classify("minecraft:snow_block", true, false), Cell::Solid);
+        assert_eq!(
+            classify("minecraft:powder_snow", false, false),
+            Cell::Hazard
+        );
+    }
+    #[test]
+    fn with_elytra_any_height_is_dropped() {
+        // A cliff forty blocks high with no other way down.
+        let cliff = |p: Pos| {
+            if (p[0] <= 2 && p[1] == 39) || p[1] < 0 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let down = |max| {
+            search_near_drop([0, 40, 0], [6, 0, 0], 0, max, cliff, || false)
+                .is_some_and(|p| p.complete)
+        };
+        assert!(!down(FAR_DROP));
+        set_drop_limit(ELYTRA_DROP);
+        assert!(down(ELYTRA_DROP));
+        // The walker's own check of the step agrees on this thread.
+        assert!(traversable([2, 40, 0], [3, 0, 0], &mut { cliff }));
+        set_drop_limit(MAX_DROP);
+        assert!(!traversable([2, 40, 0], [3, 0, 0], &mut { cliff }));
     }
     #[test]
     fn trapdoors_are_walked_over_opened_or_passed_by_their_state() {
