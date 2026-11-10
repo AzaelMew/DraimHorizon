@@ -1987,8 +1987,6 @@ mod tests {
                 Cell::Solid
             } else if p[0] == 2 && p[1] == 0 {
                 if p[2] == 0 { Cell::Door } else { Cell::Blocked }
-            } else if p[0] == 2 && p[1] == 1 {
-                Cell::Air
             } else {
                 Cell::Air
             }
