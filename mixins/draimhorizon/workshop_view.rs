@@ -2379,9 +2379,24 @@ pub(super) fn tick(game: &Game<'_>) {
                                 if soil != "minecraft:farmland" {
                                     // Farmland of this field trampled to dirt (a jump, a
                                     // fall, a mob): tilled again when a hoe is at hand.
+                                    // Also one trampled before the job began: plain dirt in
+                                    // a bed, next to farmland on two sides or more.
+                                    let in_bed = || {
+                                        [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                                            .iter()
+                                            .filter(|[dx, dz]| {
+                                                game.native_block([
+                                                    below[0] + dx,
+                                                    below[1],
+                                                    below[2] + dz,
+                                                ]) == "minecraft:farmland"
+                                            })
+                                            .count()
+                                            >= 2
+                                    };
                                     if soil == "minecraft:dirt"
-                                        && s.field.contains(&below)
                                         && game.native_block(at) == "minecraft:air"
+                                        && (s.field.contains(&below) || in_bed())
                                     {
                                         trampled.push(below);
                                     }
@@ -2443,7 +2458,29 @@ pub(super) fn tick(game: &Game<'_>) {
                         nav::distance(nav::center(a.0), [p.x, p.y, p.z])
                             .total_cmp(&nav::distance(nav::center(b.0), [p.x, p.y, p.z]))
                     });
-                    if let Some((at, plant, crop)) = targets.first() {
+                    // Trampled soil first (a quick click, and the bed is sown on the next look);
+                    // it waited behind every ripe crop before and was never reached.
+                    let till = trampled
+                        .iter()
+                        .filter(|at| !s.skip.iter().any(|(p, _)| p == *at))
+                        .min_by(|a, b| {
+                            nav::distance(nav::center(**a), [p.x, p.y, p.z])
+                                .total_cmp(&nav::distance(nav::center(**b), [p.x, p.y, p.z]))
+                        })
+                        .copied()
+                        .filter(|_| hoe(game).is_some());
+                    if let Some(at) = till {
+                        s.target = Some(at);
+                        s.plant = false;
+                        s.crop = crops.first().copied();
+                        s.grow = false;
+                        s.till = true;
+                        s.waiting = false;
+                        s.attempt = 0;
+                        s.idle_since = None;
+                        s.parked = false;
+                        s.park = None;
+                    } else if let Some((at, plant, crop)) = targets.first() {
                         s.target = Some(*at);
                         s.plant = *plant;
                         s.crop = *crop;
