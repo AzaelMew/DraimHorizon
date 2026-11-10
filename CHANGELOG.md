@@ -1,5 +1,13 @@
 # История версий
 
+## 0.39.4
+
+- Mining under water: the route is planned from the water too (the planner waited for the feet to touch the ground, which never happens while swimming, so nothing was ever planned), a route answer from a moment ago is not a reason to pause there, and a mining job does not swim off to the shore while it looks for the next block; it swims to the block and mines it.
+- Partial blocks: a step is reached when the walker is across it and on its level, a slab, a bed or a trapdoor lifting the feet up to a block. It used to wait for the exact height, stood still on a slab or a trapdoor and planned again after a couple of seconds.
+- Following and walking: a route answered while the walker had moved on (after a jump, following a moving player) is planned again from where it stands instead of pausing the task.
+- Elytra: worn with durability to spare, any drop the route needs is taken (up to twelve blocks): the walker spreads them while falling (a jump press in the air) and glides toward where the route goes, looking a little down, until it lands.
+- Running jumps across gaps: the planner takes a jump of two to four blocks straight on (gaps of one to three blocks, level or one block down, with the air above the gap clear), dearer than walking round. The walker runs at it with the sprint key and jumps at the edge. Farm level routes never jump.
+
 ## 0.39.3
 
 - Routing for every Baritone task (walk, follow, mining, tunnel, bridge, farm, drain, schematics): steps across corners when both sides of the corner are open, so open ground is crossed diagonally instead of in a staircase.

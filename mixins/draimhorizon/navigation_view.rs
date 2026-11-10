@@ -301,6 +301,7 @@ impl Worker {
                     // Every planner on this thread goes by the request's drop limit.
                     model::set_drop_limit(query.drop);
                     model::set_reach(if query.wide { model::WIDE } else { model::NEAR });
+                    model::set_long_jumps(!query.level);
                     // The player may stand on an edge or in the air: plan from the nearest place
                     // that can be stood on (the answer keeps the real start for its own check).
                     let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
@@ -1870,6 +1871,7 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     leg_frame(game);
     face(game);
+    sprint_frame(game);
     crate::game::claim_borders_schematic_view::keys(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
@@ -1949,8 +1951,15 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     let Some(goal) = s.nav.goal else {
         return Ok(());
     };
-    // A jump is not a valid standing start for the planner. Wait for landing.
-    if s.nav.running && game.player.as_ref().is_some_and(|p| !p.ground.on_ground) {
+    // A jump is not a valid standing start for the planner. Wait for landing (in the water or on
+    // a ladder there is no landing to wait for: plan from there).
+    if s.nav.running
+        && game
+            .player
+            .as_ref()
+            .is_some_and(|p| !p.ground.on_ground && !p.fluids.was_touching_water && !p.swimming)
+        && live_cell(game, model::block([player.x, player.y, player.z])) != model::Cell::Climb
+    {
         s.nav.status = model::Status::Waiting;
         return Ok(());
     }
@@ -2014,10 +2023,15 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
         // A long drop (when nothing else leads down) costs a few health points: the shared
         // rule weighs health and the fall protection worn. Eating gets the points back.
-        drop: model::drop_limit(
-            game.player.as_ref().map_or(0.0, |p| p.health.health()),
-            fall_protection(game),
-        ),
+        // Elytra glide any drop down (the walker spreads them on the way).
+        drop: if elytra_ready(game) {
+            model::FAR_DROP
+        } else {
+            model::drop_limit(
+                game.player.as_ref().map_or(0.0, |p| p.health.health()),
+                fall_protection(game),
+            )
+        },
         chunks,
         resources: game.res.clone(),
     };
@@ -2271,12 +2285,22 @@ pub(super) fn tick(game: &Game<'_>) {
                             )
                         })
                         .unwrap_or_default();
-                    if model::distance(position, model::center(answer.start)) > 1.5 {
+                    let off = model::distance(position, model::center(answer.start));
+                    let wet = game
+                        .player
+                        .as_ref()
+                        .is_some_and(|p| p.fluids.was_touching_water || p.swimming);
+                    if off > 8.0 {
+                        // Far from where the route was asked for (a teleport): a pause.
                         s.nav.running = false;
                         s.nav.status = model::Status::Paused;
                         if let Some(job) = s.mining.as_mut() {
                             job.active = false;
                         }
+                    } else if off > if wet { 3.0 } else { 1.5 } && s.nav.running {
+                        // Moved on while it was planned (following a player, after a jump):
+                        // plan again from here instead of stopping.
+                        s.nav.replan();
                     } else {
                         let walking_complete = answer.path.as_ref().is_some_and(|p| p.complete);
                         let route = answer.dig_plan.filter(|r| !r.steps.is_empty());
@@ -3078,6 +3102,48 @@ fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
     }
     Some(game.pitch > 80.0 && grounded)
 }
+/// Every other tick while falling with elytra: a fresh jump press spreads them.
+static ELYTRA_TAP: Mutex<bool> = Mutex::new(false);
+/// Elytra worn, with durability to spare.
+pub(super) fn elytra_ready(game: &Game<'_>) -> bool {
+    game.armor
+        .get(1)
+        .and_then(Option::as_ref)
+        .is_some_and(|piece| {
+            &*piece.item == "minecraft:elytra"
+                && game
+                    .res
+                    .items()
+                    .items
+                    .get(&*piece.item)
+                    .is_some_and(|info| info.max_damage == 0 || info.max_damage > piece.damage + 10)
+        })
+}
+/// The walker wants to run (a jump across a gap): until when, set by the movement hook and
+/// carried out with the sprint key on the next input tick.
+static SPRINT: Mutex<Option<Instant>> = Mutex::new(None);
+/// Whether the sprint key is held by the walker now (to let go of it after).
+static SPRINT_HELD: Mutex<bool> = Mutex::new(false);
+/// Holds or lets go of the sprint key as the walker asks.
+fn sprint_frame(game: &mut Game<'_>) {
+    let want = SPRINT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
+    let mut held = SPRINT_HELD.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(code) = horizon_client::keybinds::key_code(game.settings.keys.get("key.sprint"))
+    else {
+        return;
+    };
+    if want && !*held {
+        game.keys.press(code, horizon_client::held::Source::Agent);
+        *held = true;
+    } else if !want && *held {
+        game.keys
+            .release(&code, horizon_client::held::Source::Agent);
+        *held = false;
+    }
+}
 /// Swimming up for air: set when the air runs low under water, cleared when it is full again.
 static SURFACING: Mutex<bool> = Mutex::new(false);
 /// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
@@ -3403,6 +3469,13 @@ pub(super) fn movement(
             }
             return;
         }
+        // A mining job under water looks for its next block from here: stay, do not swim off.
+        if state(|s| s.mining.as_ref().is_some_and(|j| j.active)) {
+            *jump = false;
+            *forward = 0.0;
+            *strafe = 0.0;
+            return;
+        }
         *jump = true;
         if let Some(spot) = crate::game::claim_borders_construction_view::dry_spot(game, position) {
             let target = model::center(spot);
@@ -3412,6 +3485,42 @@ pub(super) fn movement(
             *strafe = input.strafe;
         }
         return;
+    }
+    // Elytra: a long drop on the route is glided down instead of fallen. Spread while falling
+    // (one jump press in the air), then glide toward where the route goes, looking a little
+    // down; landing folds them.
+    if task_running()
+        && !body.ground.on_ground
+        && !body.is_in_lava()
+        && elytra_ready(game)
+        && let Some(p) = game.native_player()
+    {
+        let position = [p.x, p.y, p.z];
+        let next = state(|s| {
+            s.nav
+                .path
+                .get(s.nav.next.min(s.nav.path.len().saturating_sub(1)))
+                .copied()
+        });
+        if let Some(next) = next {
+            let goal = model::center(next);
+            if body.fall_flying {
+                let eye = [position[0], position[1] + 1.62, position[2]];
+                let yaw = model::yaw_to(eye, goal);
+                let pitch = model::pitch_to(eye, goal).clamp(15.0, 45.0);
+                *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some((yaw, pitch, Instant::now()));
+                *forward = 0.0;
+                *strafe = 0.0;
+                *jump = false;
+                return;
+            }
+            if position[1] - goal[1] > 3.5 {
+                let mut tap = ELYTRA_TAP.lock().unwrap_or_else(|e| e.into_inner());
+                *tap = !*tap;
+                *jump = *tap;
+            }
+        }
     }
     if body.flying
         || body.fall_flying
@@ -3498,6 +3607,7 @@ pub(super) fn movement(
                         forward: 1.0,
                         strafe: 0.0,
                         jump: false,
+                        sprint: false,
                     };
                 }
             }
@@ -3556,6 +3666,9 @@ pub(super) fn movement(
         // Farm routes are level: nothing there is ever jumped onto (jumping onto farmland
         // tramples it).
         *jump = input.jump && !s.level;
+        if input.sprint {
+            *SPRINT.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+        }
     });
 }
 
