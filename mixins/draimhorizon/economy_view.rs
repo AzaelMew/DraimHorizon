@@ -1298,8 +1298,14 @@ pub(super) fn render(
         vertex.pos[0] += ox;
         vertex.pos[1] += oy;
     }
+    // Drawn after the panel moved to the screen, so it takes the screen's mouse position.
     if let Some(tip) = state(|s| s.tip.clone()) {
-        ui::tooltip(game, batch, &tip, screen.mouse);
+        ui::tooltip(
+            game,
+            batch,
+            &tip,
+            [screen.mouse[0] + ox, screen.mouse[1] + oy],
+        );
     }
     true
 }

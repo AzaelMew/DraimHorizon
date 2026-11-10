@@ -172,6 +172,8 @@ struct Catalog {
 struct Thumb {
     levels: [Option<Vec<u8>>; THUMB_LEVELS],
     used: u64,
+    /// The level the compose of `used` reads; finer ones are not needed for it.
+    level: usize,
 }
 impl Thumb {
     fn bytes(&self) -> usize {
@@ -415,6 +417,7 @@ impl Store {
                             Thumb {
                                 levels: levels.map(Some),
                                 used: 0,
+                                level: 0,
                             },
                         );
                     }
@@ -424,12 +427,30 @@ impl Store {
             }
         }
         let thumb = self.thumbs.get_mut(&key)?;
+        let found = (level..THUMB_LEVELS).find(|&l| thumb.levels[l].is_some())?;
+        // Several levels of one compose keep the finest that any of its reads needs.
+        thumb.level = if thumb.used == self.thumb_clock {
+            thumb.level.min(found)
+        } else {
+            found
+        };
         thumb.used = self.thumb_clock;
-        (level..THUMB_LEVELS).find(|&l| thumb.levels[l].is_some())
+        Some(found)
     }
-    // Keep overviews within THUMB_BYTES without dropping ones used by the current compose.
+    // Keep overviews within THUMB_BYTES: finer levels the current compose does not read go
+    // first, then least recently used overviews level by level, and only as a last resort the
+    // overviews the current compose reads (they are rebuilt, centre first, when needed again).
     fn trim_thumbs(&mut self) {
         let mut total: usize = self.thumbs.values().map(Thumb::bytes).sum();
+        if total > THUMB_BYTES {
+            for t in self.thumbs.values_mut() {
+                if t.used == self.thumb_clock {
+                    for l in 0..t.level {
+                        total -= t.levels[l].take().map_or(0, |v| v.len());
+                    }
+                }
+            }
+        }
         for level in 0..THUMB_LEVELS {
             if total <= THUMB_BYTES {
                 return;
@@ -450,6 +471,15 @@ impl Store {
                 } else if let Some(t) = self.thumbs.get_mut(&key) {
                     total -= t.levels[level].take().map_or(0, |l| l.len());
                 }
+            }
+        }
+        if total > THUMB_BYTES {
+            let keys: Vec<_> = self.thumbs.keys().cloned().collect();
+            for key in keys {
+                if total <= THUMB_BYTES {
+                    break;
+                }
+                total -= self.thumbs.remove(&key).map_or(0, |t| t.bytes());
             }
         }
     }
@@ -1275,6 +1305,60 @@ mod tests {
         assert!(image.as_chunks::<4>().0.contains(&[0x10, 0xd0, 0x10, 255]));
     }
     #[test]
+    fn overview_budget_holds_when_the_whole_view_is_current() {
+        // A wide, fully explored view: every overview is read by the current compose at the
+        // coarsest level, as a full map at 32 blocks per pixel does.
+        let mut store = Store::new(PathBuf::new(), palette());
+        let region = Region {
+            summary: vec![0; 1024],
+            ..Region::default()
+        };
+        store.thumb_clock = 7;
+        for x in 0..48 {
+            for z in 0..24 {
+                let levels = build_thumb(&region, (x, z), &palette(), false);
+                store.thumbs.insert(
+                    ("id".into(), (x, z), false),
+                    Thumb {
+                        levels: levels.map(Some),
+                        used: 7,
+                        level: THUMB_LEVELS - 1,
+                    },
+                );
+            }
+        }
+        store.trim_thumbs();
+        let total: usize = store.thumbs.values().map(Thumb::bytes).sum();
+        assert!(total <= THUMB_BYTES, "{total} bytes");
+        // Every overview keeps the level the view reads.
+        assert_eq!(store.thumbs.len(), 48 * 24);
+        assert!(
+            store
+                .thumbs
+                .values()
+                .all(|t| t.levels[THUMB_LEVELS - 1].is_some())
+        );
+        // Even an impossible working set of current finest levels is trimmed to the budget.
+        for t in store.thumbs.values_mut() {
+            t.level = 0;
+            t.levels = build_thumb(&region, (0, 0), &palette(), false).map(Some);
+        }
+        for x in 48..400 {
+            let levels = build_thumb(&region, (x, 0), &palette(), false);
+            store.thumbs.insert(
+                ("id".into(), (x, 0), false),
+                Thumb {
+                    levels: levels.map(Some),
+                    used: 7,
+                    level: 0,
+                },
+            );
+        }
+        store.trim_thumbs();
+        let total: usize = store.thumbs.values().map(Thumb::bytes).sum();
+        assert!(total <= THUMB_BYTES, "{total} bytes");
+    }
+    #[test]
     fn overview_memory_stays_bounded() {
         let mut store = Store::new(PathBuf::new(), palette());
         let region = Region {
@@ -1288,6 +1372,7 @@ mod tests {
                 Thumb {
                     levels: levels.map(Some),
                     used: x as u64,
+                    level: 0,
                 },
             );
         }

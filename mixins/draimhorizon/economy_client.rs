@@ -859,6 +859,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
         if next {
             start_scan(game, scan::Kind::Auction, true);
         } else {
+            // The workspace cannot open over the server's window, so the walk closes it first.
+            if game.screen == Screen::Inventory {
+                game.close_container();
+                game.screen = Screen::Playing;
+                game.capture(true);
+            }
             client::open_trades(game);
         }
     }

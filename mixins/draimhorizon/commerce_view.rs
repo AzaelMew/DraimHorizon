@@ -112,6 +112,10 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 pub(super) fn reset() {
     state(|s| *s = State::default());
 }
+/// The auction catalogue is on screen, so a click is for it rather than for a scan.
+pub(super) fn catalog_active(game: &Game<'_>) -> bool {
+    live(game).is_some_and(|(page, _)| page.family == scan::Kind::Auction) && state(|s| s.catalog)
+}
 pub(super) fn active(game: &Game<'_>) -> bool {
     live(game).is_some()
 }
@@ -168,6 +172,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if state(|s| std::mem::take(&mut s.close)) && game.screen == Screen::Inventory {
         data::cancel_scan();
         game.close_container();
+        game.screen = Screen::Playing;
+        game.capture(true);
     }
     if let Some(command) = state(|s| s.command.take()) {
         game.send_unattended_command(&command);

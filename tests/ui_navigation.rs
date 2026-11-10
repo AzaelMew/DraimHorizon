@@ -478,3 +478,47 @@ fn map_and_chat_preferences_live_in_their_own_tabs() {
         }
     }
 }
+
+#[test]
+fn claims_next_reaches_every_claim_at_each_size() {
+    use claim_borders::menu::ClaimRow;
+    for count in [11, 12, 13, 25] {
+        let model = ViewModel {
+            claim_rows: (0..count)
+                .map(|i| ClaimRow {
+                    dimension: "minecraft:overworld".into(),
+                    x: i,
+                    z: 0,
+                    label: format!("Claim {i}"),
+                    owner: "Alex".into(),
+                    foreign: false,
+                })
+                .collect(),
+            ..ViewModel::default()
+        };
+        for size in [[800.0, 500.0], [640.0, 360.0], [1280.0, 720.0]] {
+            let mut menu = Menu::default();
+            menu.tab = Tab::Claims;
+            let mut seen = BTreeSet::new();
+            for _ in 0..32 {
+                let widgets = menu.layout(&model, size[0], size[1]);
+                for w in &widgets {
+                    if let Some(Control::ClaimRow(i)) = w.control {
+                        bounded(w.rect, size);
+                        seen.insert(i);
+                    }
+                }
+                let page = menu.claims_page;
+                click(&mut menu, &model, size, Control::ClaimsNext);
+                if menu.claims_page == page {
+                    break;
+                }
+            }
+            assert_eq!(
+                seen.len(),
+                count as usize,
+                "{count} claims at {size:?}: saw {seen:?}"
+            );
+        }
+    }
+}

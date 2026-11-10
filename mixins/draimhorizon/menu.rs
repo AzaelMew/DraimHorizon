@@ -523,6 +523,8 @@ pub enum ChatSection {
     DeepL,
     Priority,
 }
+/// Height reserved above the claims list for the Map and claims section selector.
+const CLAIMS_SELECTOR: f32 = 24.0;
 /// Width of the tab rail on the left of the J menu; the layout and the drawing share it.
 pub const RAIL_WIDTH: f32 = 128.0;
 /// A labelled rail must leave enough room for the editors, not just fit beside them.
@@ -1267,6 +1269,10 @@ impl Menu {
         let pages = self.count(model).div_ceil(self.page_size(height)).max(1);
         self.page = self.page.min(pages - 1);
     }
+    /// Claims per page of the list, from the panel height: rendering and Next share it.
+    pub fn claims_per_page(height: f32) -> usize {
+        (((height - CLAIMS_SELECTOR - 150.0) / 20.0).floor() as usize).clamp(1, 12)
+    }
     pub fn rows_per_page(height: f32) -> usize {
         (((height - 170.0) / 24.0).floor() as usize).clamp(2, 12)
     }
@@ -1860,7 +1866,7 @@ impl Menu {
             hint.muted = true;
             out.push(hint);
         }
-        let per = (((height - 150.0) / 20.0).floor() as usize).clamp(1, 12);
+        let per = Self::claims_per_page(height + CLAIMS_SELECTOR);
         let pages = indices.len().div_ceil(per).max(1);
         let page = self.claims_page.min(pages - 1);
         for (slot, index) in indices
@@ -1970,9 +1976,9 @@ impl Menu {
                     .into_iter()
                     .filter(|w| matches!(w.control, Some(Control::ClaimsSection(_)))),
             );
-            let list = self.claim_list_layout(model, x, w, height - 24.0, Vec::new());
+            let list = self.claim_list_layout(model, x, w, height - CLAIMS_SELECTOR, Vec::new());
             out.extend(list.into_iter().map(|mut widget| {
-                widget.rect[1] += 24.0;
+                widget.rect[1] += CLAIMS_SELECTOR;
                 widget
             }));
             return out;
@@ -4782,7 +4788,7 @@ impl Menu {
                 None
             }
             Control::ClaimsNext => {
-                let per = (((height - 150.0) / 20.0).floor() as usize).clamp(1, 12);
+                let per = Self::claims_per_page(height);
                 self.claims_page = (self.claims_page + 1)
                     .min(self.claim_indices(model).len().div_ceil(per).max(1) - 1);
                 None
