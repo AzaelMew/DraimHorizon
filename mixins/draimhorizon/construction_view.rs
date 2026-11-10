@@ -1363,7 +1363,10 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             .facts()
             .get(game.world.block(anchor[0], anchor[1], anchor[2]));
         if (b.cell != nav::Cell::Solid && external.is_none())
-            || matches!(b.cell, nav::Cell::Hazard | nav::Cell::Unknown)
+            || matches!(
+                b.cell,
+                nav::Cell::Hazard | nav::Cell::Unknown | nav::Cell::Water
+            )
             || facts.block_entity
             || game.native_block(anchor) == "minecraft:air"
         {

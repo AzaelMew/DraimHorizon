@@ -3623,7 +3623,20 @@ pub(super) fn movement(
             return;
         }
         *jump = true;
-        if let Some(spot) = crate::game::claim_borders_construction_view::dry_spot(game, position) {
+        // On a route: swim along it (it climbs out where it leaves the water); otherwise to the
+        // nearest dry ground.
+        let along = state(|s| {
+            if s.nav.running && s.nav.status == model::Status::Walking {
+                // Steps already reached are passed (the keys are set here, not by it).
+                let _ = s.nav.input(position, p.yaw, false);
+            }
+            (s.nav.running && s.nav.status == model::Status::Walking)
+                .then(|| s.nav.path.get(s.nav.next).copied())
+                .flatten()
+        });
+        if let Some(spot) =
+            along.or_else(|| crate::game::claim_borders_construction_view::dry_spot(game, position))
+        {
             let target = model::center(spot);
             look_toward(position, target);
             let input = model::human_steer(position, target, p.yaw);
@@ -3652,8 +3665,19 @@ pub(super) fn movement(
             let goal = model::center(next);
             if body.fall_flying {
                 let eye = [position[0], position[1] + 1.62, position[2]];
-                let yaw = model::yaw_to(eye, goal);
-                let pitch = model::pitch_to(eye, goal).clamp(15.0, 45.0);
+                let above = position[1] - goal[1];
+                let across = (goal[0] - position[0]).hypot(goal[2] - position[2]);
+                // Straight over the landing and still high: circle round it to lose height
+                // instead of diving; low over it: level out (a shallow glide lands softly).
+                let mut yaw = model::yaw_to(eye, goal);
+                if across < 4.0 && above > 6.0 {
+                    yaw += 90.0;
+                }
+                let pitch = if above < 5.0 {
+                    -5.0
+                } else {
+                    model::pitch_to(eye, goal).clamp(12.0, 35.0)
+                };
                 *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some((yaw, pitch, Instant::now()));
                 *forward = 0.0;

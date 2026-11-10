@@ -319,7 +319,7 @@ impl Job {
                     floor.get_or_insert(under);
                 }
                 nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                 // A slab, stair or other partial block is walked over like a floor.
                 nav::Cell::Blocked => {}
                 // Vines under the passage are replaced by the floor like air.
@@ -338,7 +338,7 @@ impl Job {
                     // Air, and vines hanging in the passage (walked through).
                     nav::Cell::Air | nav::Cell::Climb => continue,
                     nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                    nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                    nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                     _ => {}
                 }
                 // Whatever stands in the way is broken, a bridge included. Falling blocks
@@ -357,7 +357,7 @@ impl Job {
                 ] {
                     match block([pos[0] + delta[0], pos[1] + delta[1], pos[2] + delta[2]]).cell {
                         nav::Cell::Unknown => return Scan::Stop(Stop::Unknown),
-                        nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
+                        nav::Cell::Hazard | nav::Cell::Water => return Scan::Stop(Stop::Hazard),
                         _ => {}
                     }
                 }

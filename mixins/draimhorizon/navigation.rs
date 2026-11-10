@@ -173,6 +173,9 @@ pub enum Cell {
     Door,
     /// A ladder or vines: the body fits in it and climbs up or down without a floor.
     Climb,
+    /// Water (or a waterlogged block): swum in, not walked; harmless beside a place to stand
+    /// (unlike lava, a `Hazard`).
+    Water,
 }
 /// Whether the body fits in the cell: open air, a plant, a door to open, a ladder.
 pub fn open(cell: Cell) -> bool {
@@ -216,6 +219,9 @@ fn tall_collision(name: &str) -> bool {
 /// Unknown/partial collision shapes are obstacles in this first walking implementation.
 pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
     let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    if (fluid && name != "lava") || matches!(name, "water" | "bubble_column") {
+        return Cell::Water;
+    }
     if fluid
         || matches!(
             name,
@@ -594,7 +600,7 @@ pub fn dig_step(
         for y in -1..=2 {
             if matches!(
                 cell([to[0] + dx, to[1] + y, to[2] + dz]),
-                Cell::Hazard | Cell::Unknown
+                Cell::Hazard | Cell::Unknown | Cell::Water
             ) {
                 return None;
             }
@@ -622,7 +628,7 @@ pub fn dig_step(
                 ] {
                     if matches!(
                         cell([at[0] + delta[0], at[1] + delta[1], at[2] + delta[2]]),
-                        Cell::Hazard | Cell::Unknown
+                        Cell::Hazard | Cell::Unknown | Cell::Water
                     ) {
                         return None;
                     }
@@ -852,7 +858,8 @@ pub fn search_near_drop(
         dx * dx + dz * dz <= i64::from(radius).pow(2)
             && (at[1] - goal[1]).abs() <= i32::from(radius > 0)
     };
-    if !standable(start, &mut cell) {
+    // In the water the walk starts from where the body swims (it climbs out on the first step).
+    if !standable(start, &mut cell) && cell(start) != Cell::Water {
         return None;
     }
     let reach = current_reach();
@@ -1992,6 +1999,38 @@ mod tests {
         let path = search([0, 0, 0], [30, -30, 0], stairs, || false).unwrap();
         set_reach(NEAR);
         assert!(path.complete);
+    }
+    #[test]
+    fn water_beside_is_harmless_and_a_walk_starts_from_the_water() {
+        // A lake at x <= 0; the shore from x = 1 on.
+        let lake = |p: Pos| {
+            if p[1] < 0 && p[0] >= 1 {
+                Cell::Solid
+            } else if p[0] <= 0 && p[1] <= 0 {
+                Cell::Water
+            } else if p[1] < -10 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert_eq!(classify("minecraft:water", false, true), Cell::Water);
+        assert_eq!(classify("minecraft:seagrass", false, true), Cell::Water);
+        assert_eq!(classify("minecraft:lava", false, true), Cell::Hazard);
+        // The shore right by the water can be stood on (it could not before).
+        assert!(standable([1, 0, 0], &mut { lake }));
+        // Swimming in the lake, the walk climbs out and goes on.
+        let path = search([0, 0, 0], [5, 0, 0], lake, || false).unwrap();
+        assert!(path.complete);
+        // Lava beside still keeps the walker away.
+        let lava = |p: Pos| {
+            if p == [0, 0, 0] {
+                Cell::Hazard
+            } else {
+                lake(p)
+            }
+        };
+        assert!(!standable([1, 0, 0], &mut { lava }));
     }
     #[test]
     fn a_fence_gate_in_a_fenced_tunnel_is_the_way_through() {
