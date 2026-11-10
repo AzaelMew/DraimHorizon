@@ -1313,7 +1313,13 @@ impl Navigator {
         let forward = -dx * yaw.sin() + dz * yaw.cos();
         let left = dx * yaw.cos() + dz * yaw.sin();
         let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
-        if self.human && grounded && matches!(sector.rem_euclid(8), 3..=5) {
+        // Close to the point (the last steps, fine positioning) every direction is taken: turning
+        // round there made the walker overshoot and circle round its goal.
+        let to_end = self.path.last().map_or(0.0, |end| {
+            let e = center(*end);
+            (e[0] - position[0]).hypot(e[2] - position[2])
+        });
+        if self.human && grounded && to_end > 1.5 && matches!(sector.rem_euclid(8), 3..=5) {
             // The way on is behind: turn round first (the caller turns the head), do not walk
             // backwards.
             return Input::default();
@@ -1885,6 +1891,15 @@ mod tests {
         assert_eq!(n.input([0.5, 0.0, 0.5], 90.0, true), Input::default());
         // Facing along it: forward.
         assert_eq!(n.input([0.5, 0.0, 0.5], -90.0, true).forward, 1.0);
+        // Within a step and a half of the end: no turning round, it steps back to its goal.
+        let mut m = Navigator::default();
+        m.begin([1, 0, 0], true);
+        m.human = true;
+        m.accept(Some(Path {
+            nodes: vec![[0, 0, 0], [1, 0, 0]],
+            complete: true,
+        }));
+        assert_eq!(m.input([2.2, 0.0, 0.5], -90.0, true).forward, -1.0);
     }
     #[test]
     fn a_second_floor_reaches_the_ground_by_a_far_slope_with_the_wide_search() {

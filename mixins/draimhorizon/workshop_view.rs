@@ -1580,12 +1580,23 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
     };
     let here = [p.x, p.y, p.z];
     let at = |d: &horizon_client::entities::ItemEntity| [d.position.x, d.position.y, d.position.z];
+    // Besides the field: around the composter and the containers (the bone meal a composter
+    // pops out lands beside it, often outside the field).
+    let spots: Vec<nav::Pos> = storages(game)
+        .into_iter()
+        .flatten()
+        .chain(composter_near(game, origin, radius))
+        .collect();
     let near = |d: &horizon_client::entities::ItemEntity| {
         let a = at(d);
-        (a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
-            && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
-            // Only what lies at the field's level: a drop on a roof would lead the walker up.
-            && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1)
+        let by_spot = spots
+            .iter()
+            .any(|p| nav::distance(nav::center(*p), a) <= 4.0);
+        by_spot
+            || ((a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
+                && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
+                // Only what lies at the field's level: a drop on a roof would lead the walker up.
+                && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1))
     };
     let nearest = game
         .dropped
@@ -1829,6 +1840,13 @@ pub(super) fn pier_goal(position: [f64; 3]) -> Option<[f64; 3]> {
 pub(super) fn clear_pier() {
     state(|s| s.pier = None);
 }
+/// Whether the place to stand at `at` is on top of a container (a block with a block entity).
+pub(super) fn on_container(game: &Game<'_>, at: nav::Pos) -> bool {
+    game.res
+        .facts()
+        .get(game.world.block(at[0], at[1] - 1, at[2]))
+        .block_entity
+}
 fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
     let Some(p) = game.native_player() else {
         return false;
@@ -1849,6 +1867,10 @@ fn approach(game: &Game<'_>, s: &mut State, target: nav::Pos) -> bool {
                     continue;
                 }
                 if !nav::standable(at, &mut |p| placement::block(game, p).cell) {
+                    continue;
+                }
+                // Not on top of a chest, a barrel or the like: that is no place to work from.
+                if on_container(game, at) {
                     continue;
                 }
                 candidates.push(at);
