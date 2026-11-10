@@ -273,6 +273,7 @@ impl Worker {
                                     .is_some_and(|(ore, _)| mining::matches(*ore, &f.name)),
                                 falling: mining::falling(&f.name),
                                 breakable: f.hardness >= 0.0 && !f.block_entity,
+                                soft: mining::clearable(&f.name),
                             }
                         })
                     };
@@ -516,6 +517,7 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
         },
         falling: mining::falling(&f.name),
         breakable: f.hardness >= 0.0 && !f.block_entity,
+        soft: mining::clearable(&f.name),
     }
 }
 /// The stack in slot `slot`: 0..9 the hotbar, 9..36 the main inventory.
@@ -1712,7 +1714,10 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
         return;
     }
     let physical = game.left;
-    let attack = mining_attack(game, physical);
+    let attack = match pillar_frame(game) {
+        Some(attack) => attack,
+        None => mining_attack(game, physical),
+    };
     if attack != physical {
         state(|s| s.attack_restore = Some(physical));
         game.left = attack;
@@ -2059,6 +2064,15 @@ pub(super) fn tick(game: &Game<'_>) {
                 if answer.token == s.token && s.pending {
                     s.pending = false;
                     s.mine_stats = answer.stats;
+                    // Nothing in reach: a tall trunk overhead is climbed to on a column (and a
+                    // column climbed is taken down once nothing more is in reach from its top).
+                    if answer.target.is_none()
+                        && let Some(job) = s.mining.as_ref().filter(|j| {
+                            j.active && j.phase == mining::Phase::Searching && j.ore != u8::MAX
+                        })
+                    {
+                        pillar_consider(game, job.ore, position);
+                    }
                     // Blocks of the kind are around but none can be mined yet: say why.
                     s.mine_note = answer
                         .stats
@@ -2697,6 +2711,188 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         model::Cell::Air,
     )
 }
+/// A column the miner builds under itself to reach a block high over it (the top of a tall
+/// tree once its trunk is cut from below), and takes down again afterwards: jump, put a block
+/// where the feet were, land on it, until the block is in reach; then dig the column away from
+/// the top, one block under the feet at a time, back to the ground.
+struct Pillar {
+    column: [i32; 2],
+    /// The height to stand at: `mining::PILLAR_BELOW` under the block overhead.
+    goal: i32,
+    /// The blocks put down so far, bottom first (only these are dug on the way down).
+    placed: Vec<model::Pos>,
+    /// Up while climbing, false while taking the column down.
+    up: bool,
+    /// A block being put down, since when.
+    placing: Option<(model::Pos, Instant)>,
+    tries: u8,
+    item: String,
+    since: Instant,
+    /// At the top: the miner works from here as from the ground (walking and mining free).
+    top: bool,
+}
+static PILLAR: Mutex<Option<Pillar>> = Mutex::new(None);
+/// The block to build the column from: earth or stone first, never what is being mined.
+fn pillar_item(game: &Game<'_>, ore: u8) -> Option<(String, u32)> {
+    let items = crate::game::claim_borders_construction_view::building_items(game, false);
+    let count = |name: &str| -> u32 {
+        (0..36)
+            .filter_map(|slot| slot_stack(game, slot))
+            .filter(|st| &*st.item == name)
+            .map(|st| st.count)
+            .sum()
+    };
+    let rank = |name: &str| {
+        let n = name.strip_prefix("minecraft:").unwrap_or(name);
+        if matches!(
+            n,
+            "dirt" | "coarse_dirt" | "netherrack" | "cobblestone" | "cobbled_deepslate"
+        ) {
+            0
+        } else {
+            1
+        }
+    };
+    items
+        .into_iter()
+        .filter(|name| !mining::matches(ore, name))
+        .min_by_key(|name| rank(name))
+        .map(|name| {
+            let n = count(&name);
+            (name, n)
+        })
+}
+/// After a search found nothing to mine: a block of the kind high overhead (a tall trunk) is
+/// climbed to on a column of blocks, if there are blocks enough to build it; a column already
+/// climbed is taken down once nothing more is in reach from its top.
+fn pillar_consider(game: &Game<'_>, ore: u8, position: [f64; 3]) {
+    let feet = model::standing_block(position, &game.native_block(model::block(position)));
+    let mut pillar = PILLAR.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = pillar.as_mut() {
+        if p.up && p.placing.is_none() && feet[1] >= p.goal {
+            // At the top and nothing more to mine from here: take the column down.
+            p.up = false;
+            p.since = Instant::now();
+        }
+        return;
+    }
+    let Some(log) = mining::overhead(feet, |at| mining_block(game, ore, at)) else {
+        return;
+    };
+    let goal = log[1] - mining::PILLAR_BELOW;
+    let needed = (goal - feet[1]).max(0) as u32;
+    let Some((item, have)) = pillar_item(game, ore) else {
+        return;
+    };
+    if needed == 0 || have < needed {
+        return;
+    }
+    *pillar = Some(Pillar {
+        column: [feet[0], feet[2]],
+        goal,
+        placed: Vec::new(),
+        up: true,
+        placing: None,
+        tries: 0,
+        item,
+        since: Instant::now(),
+        top: false,
+    });
+}
+/// While a column is in use: the keys to hold (no walking; jump on the way up when no block is
+/// being put down). `None` when there is no column.
+fn pillar_controls() -> Option<bool> {
+    PILLAR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|p| !(p.up && p.top))
+        .map(|p| p.up && p.placing.is_none())
+}
+/// Drives the column each tick. Returns the attack button to hold while it is in use (held
+/// on the way down, to dig the block under the feet), `None` when there is no column.
+fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
+    let mut slot = PILLAR.lock().unwrap_or_else(|e| e.into_inner());
+    let p = slot.as_mut()?;
+    let active = state(|s| s.mining.as_ref().is_some_and(|j| j.active));
+    let player = game.native_player();
+    let grounded = game.player.as_ref().is_some_and(|b| b.ground.on_ground);
+    let (Some(body), true) = (player, active) else {
+        // The job stopped or paused: the column stays, nothing is driven.
+        *slot = None;
+        return None;
+    };
+    if p.since.elapsed() > Duration::from_secs(120) || p.tries >= 6 {
+        *slot = None;
+        return None;
+    }
+    let position = [body.x, body.y, body.z];
+    let feet = model::standing_block(position, &game.native_block(model::block(position)));
+    if p.up {
+        if let Some((at, when)) = p.placing {
+            match crate::game::claim_borders_construction_view::external_result() {
+                Some(Ok(_)) => {
+                    p.placed.push(at);
+                    p.placing = None;
+                }
+                Some(Err(_)) => {
+                    p.tries += 1;
+                    p.placing = None;
+                }
+                None if when.elapsed() > Duration::from_secs(2) => {
+                    p.tries += 1;
+                    p.placing = None;
+                }
+                None => {}
+            }
+            return Some(false);
+        }
+        if feet[1] >= p.goal {
+            // Up there: mining goes on from the top; `pillar_consider` turns it round.
+            p.top = true;
+            return None;
+        }
+        // In the air over the cell the feet left: put the block there.
+        let base = p.placed.last().map_or(feet[1], |b| b[1] + 1);
+        let at = [p.column[0], base, p.column[1]];
+        if !grounded
+            && body.y >= f64::from(base) + 1.0
+            && live_cell(game, at) == model::Cell::Air
+            && !crate::game::claim_borders_construction_view::placement_pending()
+        {
+            let Ok(state) = crate::game::claim_borders_schematic::BlockState::parse(&p.item) else {
+                *slot = None;
+                return None;
+            };
+            let request = crate::game::claim_borders_schematic::PlacementRequest {
+                target: at,
+                item: p.item.clone(),
+                state: state.clone(),
+                allowed: std::collections::BTreeMap::from([(at, state)]),
+            };
+            if crate::game::claim_borders_construction_view::place_external(game, request).is_ok() {
+                p.placing = Some((at, Instant::now()));
+            } else {
+                p.tries += 1;
+            }
+        }
+        return Some(false);
+    }
+    // Down: dig the placed block under the feet, looking straight down; done on the ground.
+    let below = [feet[0], feet[1] - 1, feet[2]];
+    if !p.placed.contains(&below) || live_cell(game, below) != model::Cell::Solid {
+        if live_cell(game, below) != model::Cell::Solid {
+            p.placed.retain(|b| *b != below);
+        }
+        if p.placed.is_empty() || !p.placed.iter().any(|b| b[1] < feet[1]) {
+            *slot = None;
+            return None;
+        }
+        return Some(false);
+    }
+    game.pitch = model::turn_toward(game.pitch, 90.0, 24.0);
+    Some(game.pitch > 80.0 && grounded)
+}
 /// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
 /// route, turned to a little each tick by `face` (the head moves as a person's does).
 static FACE: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
@@ -2892,6 +3088,19 @@ pub(super) fn movement(
         return;
     };
     let position = [p.x, p.y, p.z];
+    // A column being built under the miner (or taken down): stand still, jump to climb.
+    if let Some(climb) = pillar_controls() {
+        if (*forward != 0.0 || *strafe != 0.0 || *sneak) && !input_grace() {
+            *PILLAR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            pause();
+            return;
+        }
+        *forward = 0.0;
+        *strafe = 0.0;
+        *sneak = false;
+        *jump = climb && body.ground.on_ground;
+        return;
+    }
     state(|s| {
         if !s.nav.running {
             return;
