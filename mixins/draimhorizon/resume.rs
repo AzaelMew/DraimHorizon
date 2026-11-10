@@ -54,6 +54,95 @@ pub(super) fn note_start(game: &Game<'_>, goal: Goal, running: bool) {
         _ => None,
     };
 }
+/// A schematic build is kept in the settings (server, file, origin, rotation) until it is
+/// finished or stopped, so that it goes on after a server restart and after the game itself is
+/// started again: the file is loaded once more and the build carries on (placed blocks are
+/// skipped).
+const BUILD_KEY: &str = "schematic_job";
+pub(super) fn note_build(game: &Game<'_>, filename: &str, origin: [i32; 3], rotation: u8) {
+    if let Some(server) = server(game) {
+        let [x, y, z] = origin;
+        game.native_set_setting(
+            claims::SETTINGS_ID,
+            BUILD_KEY,
+            &format!("{server}\t{filename}\t{x}\t{y}\t{z}\t{rotation}"),
+        );
+    }
+}
+/// The build was finished or stopped by the player: it does not come back.
+pub(super) fn forget_build(game: &Game<'_>) {
+    game.native_set_setting(claims::SETTINGS_ID, BUILD_KEY, "");
+}
+/// The kept build: server, file, origin, rotation.
+fn kept_build(game: &Game<'_>) -> Option<(String, String, [i32; 3], u8)> {
+    let value = game.native_setting(claims::SETTINGS_ID, BUILD_KEY)?;
+    let parts: Vec<&str> = value.split('\t').collect();
+    let [server, file, x, y, z, rotation] = parts[..] else {
+        return None;
+    };
+    Some((
+        server.to_owned(),
+        file.to_owned(),
+        [x.parse().ok()?, y.parse().ok()?, z.parse().ok()?],
+        rotation.parse().ok()?,
+    ))
+}
+/// Picking up a kept build: since when the player is back in the world, the last try, how many.
+struct BuildTry {
+    back: Option<Instant>,
+    last: Option<Instant>,
+    tries: u8,
+    done: bool,
+}
+static BUILD: Mutex<BuildTry> = Mutex::new(BuildTry {
+    back: None,
+    last: None,
+    tries: 0,
+    done: false,
+});
+/// Every tick: a kept build on this server is loaded and started again once the world around
+/// the player has loaded (once per visit, a few tries).
+fn build_frame(game: &Game<'_>) {
+    let mut b = BUILD.lock().unwrap_or_else(|e| e.into_inner());
+    if b.done || !enabled(game) {
+        return;
+    }
+    let Some(p) = game.native_player().filter(|_| game.native_playing()) else {
+        b.back = None;
+        return;
+    };
+    let Some((kept_server, file, origin, rotation)) = kept_build(game) else {
+        b.done = true;
+        return;
+    };
+    if server(game).as_deref() != Some(kept_server.as_str()) || !game.native_on(claims::ID) {
+        b.back = None;
+        return;
+    }
+    let back = *b.back.get_or_insert_with(Instant::now);
+    let chunk = (
+        (p.x.floor() as i32).div_euclid(16),
+        (p.z.floor() as i32).div_euclid(16),
+    );
+    if back.elapsed() < SETTLE
+        || !game.world.chunks.contains_key(&chunk)
+        || b.last
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(10))
+    {
+        return;
+    }
+    if walk::task_running() || crate::game::claim_borders_workshop_view::exists() {
+        b.done = true;
+        return;
+    }
+    b.last = Some(Instant::now());
+    b.tries += 1;
+    let started =
+        crate::game::claim_borders_workshop_view::load(game, file, origin, rotation, true).is_ok();
+    if started || b.tries >= 3 {
+        b.done = true;
+    }
+}
 /// The player stopped the task: it is not to come back.
 pub(super) fn forget() {
     *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -61,6 +150,13 @@ pub(super) fn forget() {
 /// The connection is going: if a task is running, mark it to be resumed. Called before the
 /// state of the tasks is cleared.
 pub(super) fn disconnected() {
+    // A kept build is looked at again on the next visit.
+    *BUILD.lock().unwrap_or_else(|e| e.into_inner()) = BuildTry {
+        back: None,
+        last: None,
+        tries: 0,
+        done: false,
+    };
     let running = walk::task_running();
     let mut saved = SAVED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = saved.as_mut() {
@@ -80,6 +176,7 @@ pub(super) fn disconnected() {
 }
 /// Every tick: starts a marked task again when the player is back and the world has loaded.
 pub(super) fn frame(game: &mut Game<'_>) {
+    build_frame(game);
     let mut guard = SAVED.lock().unwrap_or_else(|e| e.into_inner());
     let Some(saved) = guard.as_mut() else {
         return;

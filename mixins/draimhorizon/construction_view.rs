@@ -1300,6 +1300,21 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         stop(model::Stop::Blocked);
         return false;
     }
+    // The head comes round to the block over a few ticks, as a person's does; the exact aim at
+    // a face of its neighbour follows once it points there (a few degrees off at most).
+    if let Some(eye) = game.eye_position() {
+        let middle = nav::center(placement.target);
+        let middle = [middle[0], middle[1] + 0.5, middle[2]];
+        let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
+        if nav::angle_between(game.yaw, yaw).abs() > 12.0 || (game.pitch - pitch).abs() > 12.0 {
+            note_aim();
+            game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);
+            let turned = [game.yaw, game.pitch];
+            state(|s| s.aim = Some(turned));
+            return false;
+        }
+    }
     let mut why = "support";
     for delta in [
         [0, -1, 0],

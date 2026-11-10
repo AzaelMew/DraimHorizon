@@ -86,6 +86,7 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
         model::Hotkey::Stop => {
             // The player ended it: it does not come back after a reconnect.
             crate::game::claim_borders_resume::forget();
+            crate::game::claim_borders_resume::forget_build(game);
             reset();
             Ok(false)
         }
@@ -1654,6 +1655,11 @@ pub(super) fn auto_tool(game: &mut Game<'_>) {
 /// The mining job while a trip to the storage walks: a walk starts the navigator over, which
 /// would drop the job, so it waits here and is put back when the trip is over.
 static HAUL_JOB: Mutex<Option<mining::Job>> = Mutex::new(None);
+/// Puts the right tool for the block at `at` in hand; true once it is there (or none is
+/// needed), false while a swap is on its way.
+pub(super) fn tool_for(game: &mut Game<'_>, at: model::Pos) -> bool {
+    !matches!(ensure_tool(game, Some(at)), Tool::Wait)
+}
 pub(super) fn haul_stash() {
     state(|s| {
         if let Some(job) = s.mining.take() {

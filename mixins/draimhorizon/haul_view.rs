@@ -21,6 +21,12 @@ enum Step {
     Transfer,
     /// Walking back to where the mining stopped.
     Back,
+    /// A shulker box from the inventory is being put down beside the player.
+    Place,
+    /// The filled shulker box is being broken (it drops with what it holds).
+    Break,
+    /// Waiting for the dropped shulker box to be picked up (walking to it if needed).
+    Pickup,
 }
 #[derive(Clone, Copy)]
 struct Trip {
@@ -39,8 +45,70 @@ struct Trip {
     moved: u16,
     stuck: u8,
     sig: usize,
+    /// The trip uses a shulker box from the inventory instead of the storage container.
+    shulker: bool,
+    /// Shulker boxes carried when the box was put down (one more means it is picked up).
+    boxes: u32,
 }
 static TRIP: Mutex<Option<Trip>> = Mutex::new(None);
+/// The shulker box item put down by the trip under way.
+static BOX_ITEM: Mutex<Option<String>> = Mutex::new(None);
+/// Shulker boxes in the inventory with room left: (slot, item), the emptiest first.
+fn boxes_with_room(game: &Game<'_>) -> Vec<(usize, String)> {
+    let mut found: Vec<(usize, usize, String)> = (0..36)
+        .filter_map(|slot| {
+            let stack = if slot < 9 {
+                game.stack_in(slot)
+            } else {
+                game.inventory.get(slot).and_then(Option::as_ref)
+            }?;
+            let filled = stack.container().len();
+            (crate::game::claim_borders_shulker_peek::is_shulker(&stack.item) && filled < 27)
+                .then(|| (filled, slot, stack.item.to_string()))
+        })
+        .collect();
+    found.sort();
+    found
+        .into_iter()
+        .map(|(_, slot, item)| (slot, item))
+        .collect()
+}
+fn box_count(game: &Game<'_>) -> u32 {
+    inventory(game)
+        .into_iter()
+        .flatten()
+        .filter(|(name, _)| crate::game::claim_borders_shulker_peek::is_shulker(name))
+        .map(|(_, n)| n)
+        .sum()
+}
+/// Where to put a shulker box down: beside the player's feet, on firm ground, with room above
+/// for its lid and a clear line from the eye.
+fn box_spot(game: &Game<'_>) -> Option<nav::Pos> {
+    let p = game.native_player()?;
+    let feet = nav::standing_block(
+        [p.x, p.y, p.z],
+        &game.native_block(nav::block([p.x, p.y, p.z])),
+    );
+    let cell = |at: nav::Pos| placement::block(game, at).cell;
+    [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+    ]
+    .into_iter()
+    .map(|[dx, dz]| [feet[0] + dx, feet[1], feet[2] + dz])
+    .find(|at| {
+        cell(*at) == nav::Cell::Air
+            && cell([at[0], at[1] + 1, at[2]]) == nav::Cell::Air
+            && cell([at[0], at[1] - 1, at[2]]) == nav::Cell::Solid
+            && in_sight(game, feet, *at)
+    })
+}
 /// Not another trip before this instant.
 static AFTER: Mutex<Option<Instant>> = Mutex::new(None);
 fn text(russian: &'static str, english: &'static str) -> &'static str {
@@ -63,10 +131,39 @@ pub(super) fn begin(game: &Game<'_>, ore: u8) -> bool {
     {
         return false;
     }
-    let (Some(chest), Some(p)) = (workshop::storage(game), game.native_player()) else {
+    let Some(p) = game.native_player() else {
+        return false;
+    };
+    // A shulker box carried with room in it is the nearest storage: put down, filled, broken
+    // and picked up again, and mining goes on where it is.
+    if let Some((_, item)) = boxes_with_room(game).into_iter().next()
+        && let Some(spot) = box_spot(game)
+    {
+        *BOX_ITEM.lock().unwrap_or_else(|e| e.into_inner()) = Some(item);
+        *TRIP.lock().unwrap_or_else(|e| e.into_inner()) = Some(Trip {
+            step: Step::Place,
+            chest: spot,
+            origin: nav::block([p.x, p.y, p.z]),
+            ore,
+            walking: false,
+            limit: Duration::from_secs(30),
+            since: Instant::now(),
+            last: Instant::now(),
+            tries: 0,
+            moved: 0,
+            stuck: 0,
+            sig: 0,
+            shulker: true,
+            boxes: box_count(game),
+        });
+        return true;
+    }
+    let Some(chest) = workshop::storage(game) else {
         return false;
     };
     *TRIP.lock().unwrap_or_else(|e| e.into_inner()) = Some(Trip {
+        shulker: false,
+        boxes: 0,
         step: Step::Walk,
         chest,
         origin: nav::block([p.x, p.y, p.z]),
@@ -176,9 +273,10 @@ fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
 }
 /// What the miner keeps: tools and armour (anything that wears), food and a totem.
 fn needed(game: &Game<'_>, item: &str) -> bool {
-    game.res.items().items.get(item).is_some_and(|info| {
-        info.max_damage > 0 || info.food.is_some() || item == "minecraft:totem_of_undying"
-    })
+    crate::game::claim_borders_shulker_peek::is_shulker(item)
+        || game.res.items().items.get(item).is_some_and(|info| {
+            info.max_damage > 0 || info.food.is_some() || item == "minecraft:totem_of_undying"
+        })
 }
 /// How long a walk to `goal` may take: ninety seconds, or the way at two blocks a second, so a
 /// storage 800 blocks away still has its time.
@@ -278,6 +376,84 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 transfer(game, t);
             }
         }
+        Step::Place => {
+            let item = BOX_ITEM.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let Some(item) = item else {
+                end(game, false, 30);
+                return;
+            };
+            if game.native_block(t.chest) == item {
+                // It stands: open it as any container.
+                t.step = Step::Open;
+                t.since = Instant::now();
+                save(t);
+                placement::open_container(t.chest);
+            } else if !t.walking {
+                let Ok(state) = crate::game::claim_borders_schematic::BlockState::parse(&item)
+                else {
+                    end(game, false, 60);
+                    return;
+                };
+                let request = crate::game::claim_borders_schematic::PlacementRequest {
+                    target: t.chest,
+                    item: item.clone(),
+                    state: state.clone(),
+                    allowed: std::collections::BTreeMap::from([(t.chest, state)]),
+                };
+                if placement::place_external(game, request).is_ok() {
+                    t.walking = true;
+                    t.since = Instant::now();
+                    save(t);
+                } else {
+                    end(game, false, 30);
+                }
+            } else if matches!(placement::external_result(), Some(Err(_)))
+                || t.since.elapsed() > Duration::from_secs(5)
+            {
+                // Refused or nothing came of it: the storage container, if any, next time.
+                end(game, false, 30);
+            }
+        }
+        Step::Break => {
+            if game.native_block(t.chest).contains("shulker_box") {
+                if t.since.elapsed() > Duration::from_secs(15) {
+                    end(game, false, 60);
+                    return;
+                }
+                // Turn to the box as a person would, then hold the attack with the right tool.
+                if let Some(eye) = game.eye_position() {
+                    let middle = nav::center(t.chest);
+                    let middle = [middle[0], middle[1] + 0.5, middle[2]];
+                    let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
+                    game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
+                    game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);
+                    let aimed = nav::angle_between(game.yaw, yaw).abs() < 4.0
+                        && (game.pitch - pitch).abs() < 4.0
+                        && game.pick().is_some_and(|h| h.pos == t.chest);
+                    if aimed && walk::tool_for(game, t.chest) {
+                        walk::press_for_click(game, false);
+                    }
+                }
+            } else {
+                t.step = Step::Pickup;
+                t.since = Instant::now();
+                t.walking = false;
+                save(t);
+            }
+        }
+        Step::Pickup => {
+            if box_count(game) > t.boxes.saturating_sub(1) {
+                end(game, true, 5);
+            } else if t.since.elapsed() > Duration::from_secs(12) {
+                end(game, false, 60);
+            } else if !t.walking && t.since.elapsed() > Duration::from_millis(1500) {
+                // Not picked up from where it stands: walk onto the spot it dropped at.
+                if go(game, t.chest).is_ok() {
+                    t.walking = true;
+                    save(t);
+                }
+            }
+        }
         Step::Back => {
             if !t.walking {
                 if go(game, t.origin).is_err() {
@@ -301,20 +477,21 @@ fn transfer(game: &mut Game<'_>, mut t: Trip) {
     let inv = inventory(game);
     let kept = |name: &str| mining::matches(t.ore, name);
     let plan = store::deposit_mined(&inv, &|name| needed(game, name), &kept, 64);
-    if plan.is_empty() {
-        // Unloaded: close the window and walk back.
+    let sig = plan.iter().sum::<usize>() + plan.len() * 100;
+    let stuck = if sig == t.sig { t.stuck + 1 } else { 0 };
+    if plan.is_empty() || (t.shulker && stuck >= 3) {
+        // Unloaded (or the box is full): close the window; walk back, or break the box.
         if game.screen == Screen::Inventory {
             game.close_container();
             game.screen = Screen::Playing;
             game.capture(true);
         }
-        t.step = Step::Back;
+        t.step = if t.shulker { Step::Break } else { Step::Back };
         t.walking = false;
+        t.since = Instant::now();
         save(t);
         return;
     }
-    let sig = plan.iter().sum::<usize>() + plan.len() * 100;
-    let stuck = if sig == t.sig { t.stuck + 1 } else { 0 };
     if stuck >= 3 || t.moved >= 300 {
         // Nothing moves any more: the container is full or refuses the stacks.
         end(game, false, 120);
@@ -346,6 +523,9 @@ pub(super) fn status() -> &'static str {
         Some(Step::Open) => text("Склад: открываю", "Storage: opening it"),
         Some(Step::Transfer) => text("Склад: разгрузка", "Storage: unloading"),
         Some(Step::Back) => text("Склад: возвращаюсь", "Storage: walking back"),
+        Some(Step::Place) => text("Шалкер: ставлю", "Shulker: putting it down"),
+        Some(Step::Break) => text("Шалкер: забираю", "Shulker: taking it back"),
+        Some(Step::Pickup) => text("Шалкер: подбираю", "Shulker: picking it up"),
         None => "",
     }
 }

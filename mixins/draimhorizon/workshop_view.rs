@@ -341,6 +341,10 @@ pub(super) fn load(
         return Err(text("Загрузка уже выполняется", "Import already running").into());
     }
     let scope = guard(game)?;
+    if run {
+        // Kept until it is finished or stopped: it goes on after a restart.
+        crate::game::claim_borders_resume::note_build(game, &filename, origin, rotation);
+    }
     let rx = files::spawn(folder(game), Some(filename), origin, rotation)?;
     driver::clear_construction_driver();
     placement::reset();
@@ -2706,6 +2710,7 @@ pub(super) fn tick(game: &Game<'_>) {
                             s.phase = Phase::Done;
                             s.active = false;
                             s.message = text("Готово", "Done").into();
+                            crate::game::claim_borders_resume::forget_build(game);
                             return;
                         }
                         let (at, wanted) = &document.blocks[*cursor];
