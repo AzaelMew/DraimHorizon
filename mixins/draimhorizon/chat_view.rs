@@ -860,14 +860,7 @@ fn draw_card(
             );
         }
     } else if entry.kind.is_chat() {
-        let prefix = format!(
-            "{name}{}: ",
-            if entry.show_original {
-                current_language().text(" [ориг.]", " [orig.]")
-            } else {
-                ""
-            }
-        );
+        let prefix = entry.chat_prefix(&name, current_language());
         for (i, row) in rows.iter().enumerate() {
             let line_y = y + metrics.text_y + i as f32 * 10.0;
             if i == 0
@@ -992,8 +985,8 @@ fn paint_region<'a>(
         } else if inline {
             let label = label(e);
             format!(
-                "{label}{}: {}{count}",
-                if e.show_original { " [ориг.]" } else { "" },
+                "{}{}{count}",
+                e.chat_prefix(&label, context.language),
                 e.display_body(context.translate, context.language)
             )
         } else {

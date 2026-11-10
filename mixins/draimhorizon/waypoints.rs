@@ -10,6 +10,61 @@ use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 
 pub const MAX_WAYPOINTS_PER_SERVER: usize = 64;
+/// Shared geometry for the create/edit popup, including short GUI viewports.
+pub struct EditorLayout {
+    pub panel: [f32; 4],
+    pub compact: bool,
+    pub name: [f32; 4],
+    pub kind: [f32; 4],
+    pub color: [f32; 4],
+    pub swatches: [[f32; 4]; 8],
+    pub coordinates: [[f32; 4]; 3],
+    pub cancel: [f32; 4],
+    pub save: [f32; 4],
+}
+impl EditorLayout {
+    pub fn new(size: [f32; 2]) -> Self {
+        let w = (size[0] - 20.0).clamp(1.0, 360.0);
+        let h = (size[1] - 16.0).clamp(1.0, 262.0);
+        let x = (size[0] - w) * 0.5;
+        let y = (size[1] - h) * 0.5;
+        let compact = h < 262.0;
+        let inner = w - 28.0;
+        let half = (inner - 8.0) * 0.5;
+        let sw = (inner - 28.0) / 8.0;
+        let col = (inner - 12.0) / 3.0;
+        Self {
+            panel: [x, y, w, h],
+            compact,
+            name: [x + 14.0, y + if compact { 47.0 } else { 57.0 }, inner, 22.0],
+            kind: [x + 14.0, y + if compact { 81.0 } else { 98.0 }, half, 22.0],
+            color: [
+                x + 22.0 + half,
+                y + if compact { 81.0 } else { 98.0 },
+                half,
+                22.0,
+            ],
+            swatches: std::array::from_fn(|i| {
+                [
+                    x + 14.0 + i as f32 * (sw + 4.0),
+                    y + if compact { 107.0 } else { 128.0 },
+                    sw,
+                    if compact { 14.0 } else { 20.0 },
+                ]
+            }),
+            coordinates: std::array::from_fn(|i| {
+                [
+                    x + 14.0 + i as f32 * (col + 6.0),
+                    y + if compact { 136.0 } else { 184.0 },
+                    col,
+                    22.0,
+                ]
+            }),
+            cancel: [x + 14.0, y + h - 32.0, half, 22.0],
+            save: [x + 22.0 + half, y + h - 32.0, half, 22.0],
+        }
+    }
+}
 const MAX_SERVERS: usize = 256;
 const MAX_FILE_BYTES: u64 = 262_144;
 const MAX_NAME_CHARS: usize = 48;

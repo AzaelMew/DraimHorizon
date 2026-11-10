@@ -298,3 +298,32 @@ fn explicit_non_latin_source_leaves_text_in_other_scripts_alone() {
     assert!(en.should_translate(Some(TargetLanguage::Japanese), "こんにちは"));
     assert!(!en.should_translate(Some(TargetLanguage::Japanese), "hello"));
 }
+
+#[test]
+fn language_popup_shows_every_choice_at_once_unless_the_gui_is_tiny() {
+    use claim_borders::outgoing::{TranslationControl, TranslationScreen, TranslationTargets};
+    for ui in [Language::English, Language::Russian] {
+        let menu = TranslationScreen::new(TranslationTargets::load(None, None, ui));
+        // A normal GUI: all 21 choices, no paging controls, and the card fits inside the screen.
+        let widgets = menu.layout([640.0, 360.0], ui);
+        let choices = widgets
+            .iter()
+            .filter(|w| matches!(w.control, TranslationControl::Choose(_)))
+            .count();
+        assert_eq!(choices, 21);
+        assert!(!widgets.iter().any(|w| matches!(
+            w.control,
+            TranslationControl::Previous | TranslationControl::Next
+        )));
+        let chrome = menu.chrome([640.0, 360.0], ui);
+        for w in &widgets {
+            assert!(w.rect[0] >= chrome.panel[0] && w.rect[1] >= chrome.panel[1]);
+            assert!(w.rect[0] + w.rect[2] <= chrome.panel[0] + chrome.panel[2]);
+            assert!(w.rect[1] + w.rect[3] <= chrome.panel[1] + chrome.panel[3]);
+        }
+        // A tiny GUI pages the list instead of shrinking it.
+        let tiny = menu.layout([320.0, 180.0], ui);
+        assert!(tiny.iter().any(|w| w.control == TranslationControl::Next));
+        assert!(menu.pages([320.0, 180.0]) > 1);
+    }
+}

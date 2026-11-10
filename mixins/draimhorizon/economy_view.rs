@@ -3,7 +3,7 @@ use crate::game::claim_borders_ui_view as ui;
 use crate::game::{
     Game, claim_borders as claims, claim_borders_economy as model,
     claim_borders_economy_client as data, claim_borders_economy_scan as scan,
-    claim_borders_economy_ui::{Panel, Sort},
+    claim_borders_economy_ui::{DetailScroll, Panel, Sort},
     claim_borders_menu as edit,
 };
 use claim_borders_relay_client::translation::Language;
@@ -43,6 +43,8 @@ pub enum Action {
 #[derive(Clone)]
 enum Hit {
     Tab(u8),
+    Back,
+
     SortMenu,
     SortPick(Sort),
     Close,
@@ -50,6 +52,8 @@ enum Hit {
     Target,
     Row(String, Option<u64>),
     Page(i32),
+    ListBack,
+    DetailScroll(i32),
     Run(Action),
 }
 struct State {
@@ -69,6 +73,10 @@ struct State {
     queue: VecDeque<Action>,
     notice: String,
     suppress: Option<(char, Instant)>,
+    details: bool,
+    detail_scroll: DetailScroll,
+    detail_hover: bool,
+    tip: Option<String>,
 }
 fn editor() -> edit::Menu {
     let mut menu = edit::Menu::default();
@@ -94,6 +102,10 @@ impl Default for State {
             queue: VecDeque::new(),
             notice: String::new(),
             suppress: None,
+            details: false,
+            detail_scroll: DetailScroll::default(),
+            detail_hover: false,
+            tip: None,
         }
     }
 }
@@ -178,7 +190,34 @@ fn button(
     selected: bool,
     mouse: [f32; 2],
 ) {
-    ui::button(game, batch, rect, text, selected, mouse);
+    if let Hit::DetailScroll(direction) = &hit {
+        ui::button_base(game, batch, rect, text, selected, mouse);
+        let center = [rect[0] + rect[2] * 0.5, rect[1] + rect[3] * 0.5];
+        let start = batch.vertices.len();
+        ui::icon(
+            game,
+            batch,
+            if *direction < 0 {
+                ui::Icon::Back
+            } else {
+                ui::Icon::Next
+            },
+            [center[0] - 5.0, center[1] - 5.0, 10.0, 10.0],
+            0xafc0cd,
+        );
+        for vertex in &mut batch.vertices[start..] {
+            let dx = vertex.pos[0] - center[0];
+            let dy = vertex.pos[1] - center[1];
+            vertex.pos = [center[0] - dy, center[1] + dx];
+        }
+    } else {
+        ui::button(game, batch, rect, text, selected, mouse);
+    }
+    if contains(rect, mouse)
+        && (game.native_text_width(text) > rect[2] - 12.0 || matches!(hit, Hit::DetailScroll(_)))
+    {
+        s.tip = Some(text.to_owned());
+    }
     s.hits.push((rect, hit));
 }
 fn age(at: u64, now: u64) -> String {
@@ -300,15 +339,17 @@ pub(super) fn render(
     state(|s| {
         s.hits.clear();
         s.viewport = [batch.width, batch.height];
+        s.tip = None;
+        s.detail_hover = false;
         ui::fill(game, batch, [-2.0, -2.0, w + 4.0, h + 4.0], 0xaa071017);
         ui::fill(game, batch, screen.rect, 0xf0182430);
         ui::fill(game, batch, [0.0, 0.0, w, 2.0], 0xff6bbdb1);
         label(
             game,
             batch,
-            language().text("DRAIMHORIZONS / ЭКОНОМИКА", "DRAIMHORIZONS / ECONOMY"),
-            [8.0, 10.0],
-            w - 42.0,
+            language().text("Торговый кабинет", "Trading workspace"),
+            [72.0, 10.0],
+            (w - 110.0).max(0.0),
             0xe4edf6,
         );
         button(
@@ -321,6 +362,17 @@ pub(super) fn render(
             false,
             screen.mouse,
         );
+        button(
+            game,
+            batch,
+            s,
+            [8.0, 5.0, 54.0, 18.0],
+            language().text("Назад", "Back"),
+            Hit::Back,
+            false,
+            screen.mouse,
+        );
+
         let tabs = [
             language().text("Обзор", "Overview"),
             language().text("Цены", "Prices"),
@@ -550,9 +602,11 @@ pub(super) fn render(
                     );
                 }
             } else {
-                let lw = ((w - 24.0) * 0.44).max(110.0);
-                let rx = lw + 20.0;
-                let rw = w - rx - 8.0;
+                let compact = panel.compact();
+                let lw = panel.list_width();
+                let [rx, _, rw, _] = panel.details();
+                let list_start = batch.vertices.len();
+                let list_hits = s.hits.len();
                 let search = if s.search.name.is_empty() {
                     language()
                         .text("Поиск товара / ника", "Search item / player")
@@ -782,10 +836,54 @@ pub(super) fn render(
                     .item
                     .clone()
                     .or_else(|| status.hand.as_ref().map(|h| h.item.clone()));
+                if compact && s.details {
+                    batch.vertices.truncate(list_start);
+                    s.hits.truncate(list_hits);
+                }
+                s.detail_hover = (!compact || s.details)
+                    && contains([rx, 55.0, rw, (h - 134.0).max(1.0)], screen.mouse);
+                if !compact || s.details {
+                    if compact {
+                        button(
+                            game,
+                            batch,
+                            s,
+                            [rx, 56.0, rw - 52.0, 18.0],
+                            language().text("Назад к списку", "Back to list"),
+                            Hit::ListBack,
+                            false,
+                            screen.mouse,
+                        );
+                    } else {
+                        label(
+                            game,
+                            batch,
+                            language().text("Информация", "Details"),
+                            [rx, 60.0],
+                            rw - 56.0,
+                            0x9aacc0,
+                        );
+                    }
+                    for (i, direction, label) in [
+                        (0, -1, language().text("Прокрутить вверх", "Scroll up")),
+                        (1, 1, language().text("Прокрутить вниз", "Scroll down")),
+                    ] {
+                        button(
+                            game,
+                            batch,
+                            s,
+                            [rx + rw - 48.0 + i as f32 * 26.0, 56.0, 22.0, 18.0],
+                            label,
+                            Hit::DetailScroll(direction),
+                            false,
+                            screen.mouse,
+                        );
+                    }
+                }
                 let detail_start = batch.vertices.len();
                 let detail_hits = s.hits.len();
-                let mut y = 60.0;
-                if let Some(item) = selected.as_ref() {
+                let mut y = 84.0;
+                if let Some(item) = selected.as_ref().filter(|_| !compact || s.details) {
                     line(
                         game,
                         batch,
@@ -953,11 +1051,7 @@ pub(super) fn render(
                                     },
                                     if o.ready { 0x91d1b3 } else { 0xe2ba84 },
                                 );
-                                for note in o
-                                    .notes
-                                    .iter()
-                                    .take(((h - y - 82.0) / 11.0).max(0.0) as usize)
-                                {
+                                for note in o.notes.iter().take(32) {
                                     line(
                                         game,
                                         batch,
@@ -1024,8 +1118,8 @@ pub(super) fn render(
                                         &mut y,
                                         rw,
                                         language().text(
-                                            "Комиссии: Настройки → Торги",
-                                            "Fees: Settings → Trading",
+                                            "Комиссии: Торговля → Комиссии",
+                                            "Fees: Trading → Fees",
                                         ),
                                         0xe4c18b,
                                     );
@@ -1063,10 +1157,15 @@ pub(super) fn render(
                             );
                         }
                     }
-                    batch.clip_since(detail_start, rx, 55.0, w - 8.0, h - 79.0);
+                    s.detail_scroll.set_limit(y - (h - 79.0));
+                    for vertex in &mut batch.vertices[detail_start..] {
+                        vertex.pos[1] -= s.detail_scroll.offset();
+                    }
+                    batch.clip_since(detail_start, rx, 80.0, w - 8.0, h - 79.0);
                     for i in (detail_hits..s.hits.len()).rev() {
+                        s.hits[i].0[1] -= s.detail_scroll.offset();
                         let r = s.hits[i].0;
-                        if r[1] < 55.0 || r[1] + r[3] > h - 79.0 {
+                        if r[1] < 80.0 || r[1] + r[3] > h - 79.0 {
                             s.hits.remove(i);
                         }
                     }
@@ -1166,8 +1265,6 @@ pub(super) fn render(
                 );
             }
             if s.sort_menu && (1..=4).contains(&s.tab) {
-                let lw = ((w - 24.0) * 0.44).max(110.0);
-                let x = (8.0 + lw - 124.0).max(8.0);
                 for (i, sort) in [
                     Sort::Unit,
                     Sort::Total,
@@ -1184,7 +1281,7 @@ pub(super) fn render(
                         game,
                         batch,
                         s,
-                        [x, 77.0 + i as f32 * 19.0, 124.0, 18.0],
+                        panel.sort_option(i),
                         sort.label_in(language()),
                         Hit::SortPick(sort),
                         s.sort[s.tab as usize] == sort,
@@ -1200,6 +1297,15 @@ pub(super) fn render(
     for vertex in &mut batch.vertices[start..] {
         vertex.pos[0] += ox;
         vertex.pos[1] += oy;
+    }
+    // Drawn after the panel moved to the screen, so it takes the screen's mouse position.
+    if let Some(tip) = state(|s| s.tip.clone()) {
+        ui::tooltip(
+            game,
+            batch,
+            &tip,
+            [screen.mouse[0] + ox, screen.mouse[1] + oy],
+        );
     }
     true
 }
@@ -1234,6 +1340,12 @@ pub(super) fn mouse(
             s.sort_menu = false;
         }
         match hit {
+            Some(Hit::Back) => {
+                s.open = false;
+                s.hits.clear();
+                s.focus = 0;
+                crate::game::claim_borders_menu_view::trading_settings();
+            }
             Some(Hit::SortMenu) => s.sort_menu = !s.sort_menu,
             Some(Hit::SortPick(sort)) => {
                 s.sort[s.tab as usize] = sort;
@@ -1242,6 +1354,8 @@ pub(super) fn mouse(
             Some(Hit::Tab(t)) => {
                 s.tab = t;
                 s.page = 0;
+                s.details = false;
+                s.detail_scroll = DetailScroll::default();
                 s.focus = 0;
                 s.token = s.token.wrapping_add(1);
             }
@@ -1260,8 +1374,17 @@ pub(super) fn mouse(
             Some(Hit::Row(item, id)) => {
                 s.item = Some(item);
                 s.listing = id;
+                s.details = true;
+                s.detail_scroll = DetailScroll::default();
                 s.focus = 0;
                 s.token = s.token.wrapping_add(1);
+            }
+            Some(Hit::ListBack) => {
+                s.details = false;
+                s.focus = 0;
+            }
+            Some(Hit::DetailScroll(direction)) => {
+                s.detail_scroll.move_by(direction as f32 * 24.0);
             }
             Some(Hit::Page(dir)) => {
                 s.page = s.page.saturating_add_signed(dir as isize);
@@ -1278,12 +1401,31 @@ pub(super) fn key(game: &Game<'_>, key: &str, mods: u32, canceled: &mut bool) ->
     }
     *canceled = true;
     if key == "key.keyboard.escape" {
+        if state(|s| {
+            if s.details && Panel::new(s.viewport).compact() {
+                s.details = false;
+                s.focus = 0;
+                true
+            } else {
+                false
+            }
+        }) {
+            return true;
+        }
         close();
         state(|s| add(s, Action::Close));
         return true;
     }
     state(|s| {
         if s.focus == 0 {
+            if matches!(key, "key.keyboard.page.up" | "key.keyboard.page.down") {
+                let direction = if key == "key.keyboard.page.up" {
+                    -1.0
+                } else {
+                    1.0
+                };
+                s.detail_scroll.move_by(direction * 48.0);
+            }
             return;
         }
         if mods & (2 | 8) != 0
@@ -1351,7 +1493,11 @@ pub(super) fn scroll(delta: f64, canceled: &mut bool) -> bool {
     *canceled = true;
     state(|s| {
         let d = if delta > 0.0 { -1 } else { 1 };
-        s.page = s.page.saturating_add_signed(d);
+        if s.detail_hover {
+            s.detail_scroll.move_by(d as f32 * 24.0);
+        } else {
+            s.page = s.page.saturating_add_signed(d);
+        }
     });
     true
 }

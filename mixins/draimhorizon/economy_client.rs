@@ -98,6 +98,10 @@ pub struct Status {
     pub menu_token: String,
     pub menu_slots: Vec<(usize, String, Option<u64>)>,
     pub page: Option<scan::Page>,
+    /// The scan walking the open auction for the catalogue view is running.
+    pub catalog: bool,
+    /// When the last catalogue scan finished (0: none this session).
+    pub catalog_at: u64,
 }
 struct State {
     scope: String,
@@ -287,6 +291,7 @@ pub(super) fn cancel_scan() {
             s.scanner.stop();
             s.return_scan = false;
             s.status.scanning = false;
+            s.status.catalog = false;
             s.status.message = Message::StoppedByInput;
         }
     });
@@ -482,6 +487,43 @@ fn lore(stack: &ItemStack) -> Vec<String> {
         .map(|s| claims::strip_formatting(&s))
         .collect()
 }
+fn button(slot: usize, stack: &horizon_client::items::ItemStack) -> scan::Button {
+    scan::Button {
+        slot,
+        item: stack.item.to_string(),
+        name: claims::strip_formatting(
+            &stack
+                .custom_name()
+                .or_else(|| stack.item_name())
+                .unwrap_or_default(),
+        ),
+        lore: lore(stack),
+    }
+}
+/// The auction lots of the open window with their own stacks: each number is read from the
+/// stack it belongs to, so an icon can never be paired with another lot.
+pub(super) fn lot_stacks(game: &mut Game<'_>) -> Vec<(u64, horizon_client::items::ItemStack)> {
+    let now = now();
+    let mut out = Vec::new();
+    let _ = game.menu_session(|menu, _, _| {
+        if matches!(menu.kind(), horizon_client::menu::Kind::Chest(6)) {
+            for slot in 0..45 {
+                if let Some(stack) = menu.slot(slot)
+                    && let Some(l) = model::listing(
+                        &scan::listing_text(&button(slot, stack)).unwrap_or_default(),
+                        &stack.item,
+                        now,
+                        0,
+                    )
+                {
+                    out.push((l.id, stack.clone()));
+                }
+            }
+        }
+        Some(false)
+    });
+    out
+}
 fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
     if game.screen != Screen::Inventory {
         return None;
@@ -505,17 +547,7 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
         }
         for slot in 0..54 {
             if let Some(stack) = menu.slot(slot) {
-                buttons.push(scan::Button {
-                    slot,
-                    item: stack.item.to_string(),
-                    name: claims::strip_formatting(
-                        &stack
-                            .custom_name()
-                            .or_else(|| stack.item_name())
-                            .unwrap_or_default(),
-                    ),
-                    lore: lore(stack),
-                });
+                buttons.push(button(slot, stack));
             }
         }
         Some(false)
@@ -752,12 +784,14 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 true
             };
             if s.scanner.active && ready {
-                match s.scanner.next(
-                    page,
-                    now,
-                    s.pref.get("scan_delay") as u64,
-                    s.pref.get("pages") as u32,
-                ) {
+                // The catalogue walk waits for each page to arrive, then only briefly: the
+                // player is looking at it. Other scans keep the configured pause.
+                let delay = if s.status.catalog {
+                    CATALOG_DELAY_MS
+                } else {
+                    s.pref.get("scan_delay") as u64
+                };
+                match s.scanner.next(page, now, delay, s.pref.get("pages") as u32) {
                     scan::Step::Click(slot) => {
                         click = Some(slot);
                         s.nav_last = now;
@@ -765,6 +799,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     scan::Step::Finished => {
                         s.status.message = Message::ScanFinished;
                         s.status.scanning = false;
+                        if s.status.catalog {
+                            s.status.catalog = false;
+                            s.status.catalog_at = now;
+                        }
                         if page.family == scan::Kind::Auction {
                             let generation = s.book.generation;
                             s.book.listings.retain(|_, l| l.generation == generation);
@@ -776,6 +814,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     scan::Step::Stopped(why) => {
                         s.status.message = Message::ScanStopped(why);
                         s.status.scanning = false;
+                        s.status.catalog = false;
                         s.return_scan = false;
                     }
                     scan::Step::Wait => {}
@@ -784,6 +823,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
         } else if s.scanner.active && now.saturating_sub(s.last_command.max(s.nav_last)) > 10000 {
             s.scanner.stop();
             s.status.scanning = false;
+            s.status.catalog = false;
             s.return_scan = false;
             s.status.message = Message::MenuNotRecognized;
         }
@@ -819,6 +859,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
         if next {
             start_scan(game, scan::Kind::Auction, true);
         } else {
+            // The workspace cannot open over the server's window, so the walk closes it first.
+            if game.screen == Screen::Inventory {
+                game.close_container();
+                game.screen = Screen::Playing;
+                game.capture(true);
+            }
             client::open_trades(game);
         }
     }
@@ -862,12 +908,51 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         None
     });
-    if let Some(command) = read_command {
+    // Single player runs Horizon's own server, which has no economy commands: an automatic
+    // poll there would only raise the game's unknown-command confirmation.
+    if let Some(command) = read_command
+        && game.integrated.is_none()
+    {
         let quiet = read(|_, p, _, _| p.flag("quiet"));
         request(game, command, quiet);
     }
 }
 
+/// Pause after each auction page arrives during the catalogue walk.
+const CATALOG_DELAY_MS: u64 = 200;
+/// Walks the auction that is already open, from its home page through every page of All
+/// listings, so the catalogue view can show and search all lots at once. Nothing is bought or
+/// clicked besides the server's own page buttons.
+pub(super) fn start_catalog() -> bool {
+    let now = now();
+    state(|s| {
+        if !s.pref.flag("enabled") || s.scanner.active || s.scope.is_empty() {
+            return false;
+        }
+        s.opening = None;
+        s.auto_cycle = false;
+        s.return_scan = false;
+        s.scanner.start(scan::Kind::Auction, now);
+        s.status.scanning = true;
+        s.status.catalog = true;
+        s.status.pages = 0;
+        s.status.message = Message::ScanHint;
+        s.seen_pages.clear();
+        s.book.generation = s.book.generation.wrapping_add(1);
+        s.book.complete_scan = false;
+        s.ah_pages.clear();
+        s.book.observed_pages = 0;
+        true
+    })
+}
+/// A lot the player just asked to buy leaves the catalogue at once; the next walk confirms it.
+pub(super) fn forget_listing(id: u64) {
+    state(|s| {
+        if s.book.listings.remove(&id).is_some() {
+            s.dirty = true;
+        }
+    });
+}
 fn start_scan(game: &mut Game<'_>, kind: scan::Kind, automatic: bool) {
     let now = now();
     let old = format!(

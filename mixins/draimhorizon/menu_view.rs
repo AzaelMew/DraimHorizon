@@ -28,14 +28,26 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 }
 pub(super) fn claims_settings() {
     state(|s| {
-        s.menu.tab = model::Tab::Settings;
-        s.menu.settings_section = 2;
+        s.menu.tab = model::Tab::Claims;
+        s.menu.settings_page = 0;
+        s.menu.navigation_menu = false;
         s.menu.claims_section = model::ClaimsSection::Map;
+        s.menu.focus = None;
+    });
+}
+pub(super) fn trading_settings() {
+    state(|s| {
+        s.menu.tab = model::Tab::Trading;
+        s.menu.navigation_menu = false;
+        s.menu.settings_page = 0;
         s.menu.focus = None;
     });
 }
 pub(super) fn experiments_prompt() -> bool {
     state(|s| s.menu.experiments_prompt)
+}
+pub(super) fn navigation_open() -> bool {
+    state(|s| s.menu.navigation_menu)
 }
 pub(super) fn reset() {
     state(|s| {
@@ -141,29 +153,44 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
         10.0,
         0x38000000,
     );
-    ui::rounded(game, batch, [px, py, pw, ph], 8.0, 0xff2b3548);
+    ui::rounded(
+        game,
+        batch,
+        [px, py, pw, ph],
+        8.0,
+        0xff000000 | crate::game::claim_borders_ui_style::BORDER,
+    );
     ui::rounded(
         game,
         batch,
         [px + 1.0, py + 1.0, pw - 2.0, ph - 2.0],
         7.0,
-        0xf0181c28,
+        0xf0000000 | crate::game::claim_borders_ui_style::BACKGROUND,
     );
-    if pw >= 380.0 {
+    if model::rail_width(pw, ph) > 0.0 {
         let rail = model::RAIL_WIDTH;
         ui::rounded(
             game,
             batch,
             [px + 4.0, py + 4.0, rail - 4.0, ph - 8.0],
             6.0,
-            0xff111520,
+            0xff000000 | crate::game::claim_borders_ui_style::SURFACE,
         );
         ui::text(
             game,
             batch,
             "DraimHorizon",
             [px + 10.0, py + 17.0],
-            0xe3ebf3,
+            crate::game::claim_borders_ui_style::TEXT,
+            false,
+        );
+        let caption = state(|s| s.menu.language.text("Инструменты клиента", "Client tools"));
+        ui::text(
+            game,
+            batch,
+            caption,
+            [px + 10.0, py + 30.0],
+            crate::game::claim_borders_ui_style::MUTED,
             false,
         );
     }
@@ -210,6 +237,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     widget.control,
                     Some(
                         model::Control::Tab(_)
+                            | model::Control::NavigationMenu
                             | model::Control::Language
                             | model::Control::Economy
                             | model::Control::Close
@@ -220,8 +248,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
 
             let [mut x, y, mut w, h] = widget.rect;
-            let hover = widget.control.is_some()
-                && screen.mouse[0] >= x
+            let hover = screen.mouse[0] >= x
                 && screen.mouse[0] < x + w
                 && screen.mouse[1] >= y
                 && screen.mouse[1] < y + h;
@@ -258,7 +285,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 });
             }
             // The title and, under it, a line about the tab, on the same left edge as the content.
-            if widget.text == "DraimHorizon" && pw >= 380.0 {
+            if widget.text == "DraimHorizon" && model::rail_width(pw, ph) > 0.0 {
                 let (ru, en) = match s.menu.tab {
                     model::Tab::Waypoints => (
                         "Сохранённые места и быстрые ориентиры",
@@ -269,20 +296,24 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Friends, invitations and mod users",
                     ),
                     model::Tab::Claims => (
-                        "Территории, цвета и память карты",
-                        "Claims, colors and map storage",
+                        "Список приватов, карта, 3D-границы и память",
+                        "Claims list, map, 3D borders and storage",
                     ),
                     model::Tab::Chat => (
-                        "Внешний вид, уведомления и перевод",
-                        "Appearance, notifications and translation",
+                        "Вид, уведомления, антиспам и перевод",
+                        "Style, notifications, anti-spam and translation",
                     ),
                     model::Tab::Experimental => (
-                        "Необязательные функции, выключенные по умолчанию",
-                        "Optional features, off by default",
+                        "Автоматизация, помощники и расширенные инструменты",
+                        "Automation, helpers and advanced tools",
                     ),
                     model::Tab::Settings => (
-                        "Все параметры мода, по разделам",
-                        "Mod settings by category",
+                        "Оформление, связь, список игроков и боковая панель",
+                        "Appearance, network, player list and sidebar",
+                    ),
+                    model::Tab::Trading => (
+                        "Торговые инструменты и настройки по разделам",
+                        "Trading tools and preferences by category",
                     ),
                 };
                 ui::text(
@@ -335,40 +366,107 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 }
                 continue;
             }
+            if widget.row {
+                // A stepper's labelled row: the readout and its buttons are drawn over it.
+                ui::rounded(
+                    game,
+                    batch,
+                    widget.rect,
+                    4.0,
+                    0xff000000 | crate::game::claim_borders_ui_style::BORDER,
+                );
+                ui::rounded(
+                    game,
+                    batch,
+                    [x + 0.75, y + 0.75, w - 1.5, h - 1.5],
+                    3.25,
+                    0xff000000
+                        | crate::game::claim_borders_ui_style::mix(
+                            crate::game::claim_borders_ui_style::SURFACE,
+                            crate::game::claim_borders_ui_style::RAISED,
+                            0.32,
+                        ),
+                );
+                let name = clipped(game, &widget.text, (w * 0.5).max(0.0));
+                ui::text(
+                    game,
+                    batch,
+                    &name,
+                    [x + 6.0, y + (h - 8.0) * 0.5],
+                    crate::game::claim_borders_ui_style::TEXT,
+                    false,
+                );
+                continue;
+            }
+            if widget.readout {
+                ui::rounded(
+                    game,
+                    batch,
+                    widget.rect,
+                    3.0,
+                    0xff000000 | crate::game::claim_borders_ui_style::SURFACE,
+                );
+                let text = ui::clip(game, &widget.text, w - 8.0);
+                ui::text(
+                    game,
+                    batch,
+                    &text,
+                    [
+                        x + (w - game.native_text_width(&text)) * 0.5,
+                        y + (h - 8.0) * 0.5,
+                    ],
+                    crate::game::claim_borders_ui_style::TEXT,
+                    false,
+                );
+                if hover && text != widget.text {
+                    request_tip = Some(widget.text.clone());
+                }
+                continue;
+            }
+            let field = matches!(widget.control, Some(model::Control::Field(_)));
+            // A switch shows its own state, so its row is not drawn as a selected button.
+            let switch = widget.control.is_some()
+                && !field
+                && w >= 120.0
+                && crate::game::claim_borders_ui_style::switch_label(&widget.text).is_some();
             if widget.control.is_some() {
                 ui::button_base(
                     game,
                     batch,
                     widget.rect,
                     &widget.text,
-                    widget.selected,
+                    widget.selected && !switch,
                     screen.mouse,
                 );
             }
-            if let Some(model::Control::SettingsTab(section)) = widget.control
-                && w < 60.0
+            if field {
+                // Text inputs are inset, so they read as editable rather than as buttons.
+                ui::rounded(
+                    game,
+                    batch,
+                    [x + 2.0, y + 2.0, w - 4.0, h - 4.0],
+                    2.5,
+                    0xc0000000 | crate::game::claim_borders_ui_style::BACKGROUND,
+                );
+            }
+            // Arrow captions are paging controls; draw them as Lucide chevrons.
+            if widget.control.is_some()
+                && let Some(icon) = match widget.text.as_str() {
+                    "<" | "←" | "‹" => Some(ui::Icon::Back),
+                    ">" | "→" | "›" => Some(ui::Icon::Next),
+                    _ => None,
+                }
             {
-                let icon = [
-                    ui::Icon::Settings,
-                    ui::Icon::Signal,
-                    ui::Icon::Map,
-                    ui::Icon::Chat,
-                    ui::Icon::Market,
-                    ui::Icon::People,
-                    ui::Icon::Layers,
-                ][usize::from(section.min(6))];
                 ui::icon(
                     game,
                     batch,
                     icon,
-                    [x + (w - 12.0) * 0.5, y + (h - 12.0) * 0.5, 12.0, 12.0],
-                    ui::preferences(game).accent.color(),
+                    [x + (w - 10.0) * 0.5, y + (h - 10.0) * 0.5, 10.0, 10.0],
+                    crate::game::claim_borders_ui_style::TEXT,
                 );
-                if hover {
-                    ui::tooltip(game, batch, &widget.text, screen.mouse);
-                }
                 continue;
             }
+
             if let Some(model::Control::BaritoneMode(mode)) = widget.control
                 && w < 56.0
             {
@@ -398,12 +496,19 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     widget.control,
                     Some(
                         model::Control::SettingsTab(_)
+                            | model::Control::TradingGroup(_)
                             | model::Control::ExperimentalTab(_)
                             | model::Control::BaritoneMode(_)
+                            | model::Control::ClaimsSection(_)
+                            | model::Control::ChatSection(_)
+                            | model::Control::PartyFilter(_)
                     )
                 )
             {
                 let text = ui::clip(game, &widget.text, w - 6.0);
+                if hover && text != widget.text {
+                    request_tip = Some(widget.text.clone());
+                }
                 ui::text(
                     game,
                     batch,
@@ -417,19 +522,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 );
                 continue;
             }
-            if widget.control == Some(model::Control::Tab(model::Tab::Settings)) {
-                ui::icon(
-                    game,
-                    batch,
-                    ui::Icon::Settings,
-                    [x + (w - 12.0) * 0.5, y + (h - 12.0) * 0.5, 12.0, 12.0],
-                    ui::preferences(game).accent.color(),
-                );
-                if hover {
-                    ui::tooltip(game, batch, &widget.text, screen.mouse);
-                }
-                continue;
-            }
+
             if widget.control == Some(model::Control::Close) {
                 ui::icon(
                     game,
@@ -605,34 +698,94 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && let Some((name, on)) =
                     crate::game::claim_borders_ui_style::switch_label(&widget.text)
             {
-                let accent = ui::preferences(game).accent.color();
-                let track = [x + w - 32.0, y + (h - 12.0) * 0.5, 24.0, 12.0];
-                ui::rounded(
-                    game,
-                    batch,
-                    track,
-                    6.0,
-                    if on { 0xff000000 | accent } else { 0xff3a4757 },
-                );
-                ui::rounded(
-                    game,
-                    batch,
-                    [
-                        if on { track[0] + 14.0 } else { track[0] + 2.0 },
-                        track[1] + 2.0,
-                        8.0,
-                        8.0,
-                    ],
-                    4.0,
-                    if on { 0xfff2f7fb } else { 0xff93a1b1 },
-                );
-                let name = clipped(game, name, (w - 48.0).max(0.0));
+                let label_width = ui::toggle_end(game, batch, [x, y, w, h], on);
+                let name = clipped(game, name, label_width);
+                if hover {
+                    request_tip = Some(widget.text.clone());
+                }
                 ui::text(
                     game,
                     batch,
                     &name,
                     [x + 6.0, y + (h - 8.0) * 0.5],
                     if widget.muted { 0x8995a5 } else { 0xe6edf5 },
+                    false,
+                );
+                continue;
+            }
+            // "Name: value" choices: the name on the left, the value and a chevron on the right.
+            if widget.control.is_some()
+                && !field
+                && w >= 150.0
+                && !matches!(
+                    widget.control,
+                    Some(
+                        model::Control::Row(_)
+                            | model::Control::ClaimRow(_)
+                            | model::Control::Tab(_)
+                            | model::Control::NavigationMenu
+                    )
+                )
+                && !widget.text.contains('\n')
+                && let Some((name, value)) = widget.text.split_once(": ")
+                && !value.trim().is_empty()
+            {
+                let value = value.trim_end_matches(['→', ' ']);
+                let value_w = game.native_text_width(value).min(w * 0.5);
+                let value = clipped(game, value, value_w);
+                let name = clipped(game, name, (w - value_w - 34.0).max(0.0));
+                if hover && (name.ends_with('…') || !widget.text.contains(value.as_str())) {
+                    request_tip = Some(widget.text.clone());
+                }
+                ui::text(
+                    game,
+                    batch,
+                    &name,
+                    [x + 6.0, y + (h - 8.0) * 0.5],
+                    if widget.muted { 0x8995a5 } else { 0xe6edf5 },
+                    false,
+                );
+                ui::text(
+                    game,
+                    batch,
+                    &value,
+                    [
+                        x + w - 18.0 - game.native_text_width(&value),
+                        y + (h - 8.0) * 0.5,
+                    ],
+                    ui::preferences(game).accent.color(),
+                    false,
+                );
+                ui::icon(
+                    game,
+                    batch,
+                    ui::Icon::Next,
+                    [x + w - 14.0, y + (h - 8.0) * 0.5, 8.0, 8.0],
+                    crate::game::claim_borders_ui_style::MUTED,
+                );
+                continue;
+            }
+            // An unfocused text input: its label muted, the entered value in full colour.
+            if field
+                && !widget.selected
+                && let Some((name, value)) = widget.text.split_once(": ")
+            {
+                let name = format!("{name}: ");
+                let name_w = game.native_text_width(&name);
+                ui::text(
+                    game,
+                    batch,
+                    &name,
+                    [x + 6.0, y + (h - 8.0) * 0.5],
+                    crate::game::claim_borders_ui_style::MUTED,
+                    false,
+                );
+                ui::text(
+                    game,
+                    batch,
+                    &clipped(game, value, (w - name_w - 12.0).max(0.0)),
+                    [x + 6.0 + name_w, y + (h - 8.0) * 0.5],
+                    0xe6edf5,
                     false,
                 );
                 continue;
@@ -687,10 +840,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                             let (ru, en) = match s.menu.tab {
                                 model::Tab::Waypoints => ("Мои метки", "My waypoints"),
                                 model::Tab::Party => ("Друзья и игроки", "Friends and players"),
-                                model::Tab::Claims => ("Мои приваты", "My claims"),
-                                model::Tab::Chat => ("Чат и уведомления", "Chat and notifications"),
+                                model::Tab::Claims => ("Карта и приваты", "Map and claims"),
+                                model::Tab::Chat => ("Чат", "Chat"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
                                 model::Tab::Settings => ("Настройки", "Settings"),
+                                model::Tab::Trading => ("Торговля", "Trading"),
                             };
                             s.menu.language.text(ru, en).into()
                         }
@@ -711,6 +865,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 } else {
                     clipped(game, &display_text, (w - 8.0).max(0.0))
                 };
+            if hover
+                && text != display_text
+                && !matches!(widget.control, Some(model::Control::Field(_)))
+                && request_tip.is_none()
+            {
+                request_tip = Some(display_text.clone());
+            }
             if widget.selected && matches!(widget.control, Some(model::Control::Field(_))) {
                 let selected = s.menu.selection();
                 if !selected.is_empty()

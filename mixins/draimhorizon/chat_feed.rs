@@ -192,6 +192,15 @@ pub struct Entry {
     raw: String,
 }
 impl Entry {
+    /// Layout and painting must use the same localized prefix, including the original badge.
+    pub fn chat_prefix(&self, label: &str, language: Language) -> String {
+        let badge = if self.show_original {
+            language.text(" [ориг.]", " [orig.]")
+        } else {
+            ""
+        };
+        format!("{label}{badge}: ")
+    }
     pub fn display_body(&self, translated: bool, _language: Language) -> &str {
         if self.kind == Kind::Presence {
             match self.joined {
@@ -887,6 +896,43 @@ pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn original_badge_follows_ui_language_without_changing_message_or_translation() {
+        let mut feed = Feed::default();
+        let id = feed
+            .push_with("<Alex> hello", 1, Preferences::default())
+            .unwrap();
+        feed.translate(id, "привет".into(), Language::Russian);
+        for (language, expected) in [
+            (Language::English, "Alex [orig.]: "),
+            (Language::Russian, "Alex [ориг.]: "),
+        ] {
+            let entry = &feed.entries[0];
+            assert_eq!(entry.chat_prefix(&entry.name, language), "Alex: ");
+            assert_eq!(entry.body(true), "привет");
+            assert!(feed.toggle_original(id));
+            let entry = &feed.entries[0];
+            assert_eq!(entry.chat_prefix(&entry.name, language), expected);
+            assert_eq!(entry.body(true), "hello");
+            assert_eq!(entry.original, "hello");
+            assert_eq!(entry.translated.as_deref(), Some("привет"));
+            assert_eq!(
+                entry.translation_language,
+                TargetLanguage::from(Language::Russian)
+            );
+            let other = language.other();
+            assert_eq!(
+                entry.chat_prefix("Alex", other),
+                if other == Language::English {
+                    "Alex [orig.]: "
+                } else {
+                    "Alex [ориг.]: "
+                }
+            );
+            assert!(feed.toggle_original(id));
+            assert_eq!(feed.entries[0].chat_prefix("Alex", language), "Alex: ");
+        }
+    }
     use super::*;
     #[test]
     fn chat_wrap_moves_a_whole_word_to_the_next_line() {
