@@ -1516,6 +1516,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
+            farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")

@@ -142,6 +142,8 @@ pub struct ViewModel {
     pub farm_storage: [Option<[i32; 3]>; 3],
     /// The safe point the farm waits at, when one is set.
     pub farm_safe: Option<[i32; 3]>,
+    /// The composter found by the running farm's field, if any.
+    pub farm_composter: Option<[i32; 3]>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -2894,6 +2896,7 @@ impl Menu {
                     ));
                     below = tile + 2.0;
                 }
+                let count = rows.len();
                 for (i, (label, c)) in rows.into_iter().enumerate() {
                     out.push(widget(
                         [
@@ -2906,6 +2909,63 @@ impl Menu {
                         Some(c),
                         false,
                     ));
+                }
+                if farm {
+                    // What the buttons are bound to, with the coordinates and the colour of the
+                    // frame drawn around it in the world, as many lines as there is room for.
+                    let at = |pos: Option<[i32; 3]>, none: &str| {
+                        pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
+                    };
+                    let unset = self.language.text("не задан", "not set");
+                    let entries = [
+                        localized!(
+                            self.language,
+                            "Урожай (оранж.): {}",
+                            "Harvest (orange): {}",
+                            at(model.farm_storage[0], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Семена (зелён.): {}",
+                            "Seeds (green): {}",
+                            at(model.farm_storage[1], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Мука (бел.): {}",
+                            "Meal (white): {}",
+                            at(model.farm_storage[2], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Точка (син.): {}",
+                            "Spot (blue): {}",
+                            at(model.farm_safe, unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Компостер (корич.): {}",
+                            "Composter (brown): {}",
+                            at(
+                                model.farm_composter,
+                                self.language.text("рядом нет", "none nearby")
+                            )
+                        ),
+                    ];
+                    let top = 100.0 + below + count.div_ceil(2) as f32 * step + 2.0;
+                    let half = (w - 4.0) / 2.0;
+                    for (i, entry) in entries.into_iter().enumerate() {
+                        let y = top + (i / 2) as f32 * 12.0;
+                        if y + 11.0 > height - 50.0 {
+                            break;
+                        }
+                        out.push(widget(
+                            [x + (i % 2) as f32 * (half + 4.0), y, half, 11.0],
+                            entry,
+                            None,
+                            false,
+                        ));
+                    }
                 }
             } else if matches!(
                 self.baritone_mode,

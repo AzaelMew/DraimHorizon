@@ -1,10 +1,12 @@
-**DraimHorizon 0.39.2 - Farm: auto sell**
+**DraimHorizon 0.39.3 - Routing through partial blocks, doors and ladders; farm zones, composter and bindings**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- New switch "Auto sell" on the Farm tab (off by default): once the harvest container is full, the farm puts each stack of harvest or hay bales in the hand and sends `/sell hand` until none is left.
-- Seeds are never sold; selling stops with a message if the command does nothing.
-- On the way to unload, wheat is crafted into hay bales if a crafting table is close by; otherwise it is put into the container as it is.
-- Builds on 0.39.1.
+- All Baritone tasks: diagonal steps, partial blocks judged by shape (slabs, beds, stairs, chests stood on or stepped over; fences, walls and gates never), doors and fence gates opened and closed on the way, ladders and vines climbed.
+- Far walks end each leg at the height they head for, so bots no longer end up on roofs or trees above a farm.
+- Farm: the start height is remembered; the field is shared fairly between the selected crops (halves, thirds or quarters).
+- Farm menu lists each binding with coordinates; bound blocks get coloured frames in the world.
+- Farm: empty meal or seeds containers are left alone for 15 minutes; a composter by the field turns spare seeds into bone meal; the harvest is unloaded periodically, not only when the inventory is full.
+- Builds on 0.39.2.
 
 Not verified in game. No installation or publication is implied.

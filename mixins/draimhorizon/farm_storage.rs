@@ -40,6 +40,38 @@ pub fn sell_slots(inventory: &[Stack], crops: &[Crop]) -> Vec<usize> {
         })
         .collect()
 }
+/// The seeds a composter takes (it turns them into bone meal): wheat and beetroot seeds.
+pub const COMPOST_SEEDS: [&str; 2] = ["minecraft:wheat_seeds", "minecraft:beetroot_seeds"];
+/// The kind of seeds to put into the composter: the one with most beyond the `keep` kept for
+/// sowing (a crop that is not farmed keeps none). `None` when there are no spare seeds.
+pub fn compost_seed(inventory: &[Stack], crops: &[Crop], keep: u32) -> Option<&'static str> {
+    COMPOST_SEEDS
+        .into_iter()
+        .map(|seed| {
+            let kept = if crops.iter().any(|c| c.seed() == seed) {
+                keep
+            } else {
+                0
+            };
+            (seed, count(inventory, seed).saturating_sub(kept))
+        })
+        .filter(|(_, spare)| *spare > 0)
+        .max_by_key(|(_, spare)| *spare)
+        .map(|(seed, _)| seed)
+}
+/// Whether the harvest should be taken to the containers now, between two crops: the inventory
+/// is (nearly) full, the field is idle, a third of the inventory is harvest, or a few stacks have
+/// gathered and the last unload is a while ago. Not after every crop.
+pub fn unload_due(inventory: &[Stack], stacks: usize, idle: bool, since_unload_s: u64) -> bool {
+    free_slots(inventory) <= 2
+        || idle
+        || stacks >= UNLOAD_STACKS
+        || (stacks >= 3 && since_unload_s >= UNLOAD_EVERY_S)
+}
+/// Stacks of harvest that make an unload worth the walk at once.
+pub const UNLOAD_STACKS: usize = 12;
+/// Seconds after which a few stacks are taken away too.
+pub const UNLOAD_EVERY_S: u64 = 240;
 /// What to craft at a crafting table: the slot of a stack of at least nine wheat and how many
 /// bales to make from it this round. `None` when no stack has enough or wheat is not farmed.
 pub fn hay_plan(inventory: &[Stack], crops: &[Crop]) -> Option<(usize, u32)> {
@@ -480,6 +512,37 @@ mod tests {
         let bales = vec![item(HAY_BLOCK, 3)];
         assert_eq!(deposit(&bales, &[Crop::Wheat], KEEP_SEEDS), vec![0]);
         assert!(deposit(&bales, &[Crop::Carrots], KEEP_SEEDS).is_empty());
+    }
+    #[test]
+    fn spare_seeds_go_to_the_composter_and_unloads_are_not_after_every_crop() {
+        use super::super::claim_borders_farming::Crop;
+        let item = |name: &str, n: u32| Some((name.to_string(), n));
+        let mut inventory = vec![
+            item("minecraft:wheat_seeds", 64),
+            item("minecraft:wheat_seeds", 30),
+            item("minecraft:beetroot_seeds", 10),
+        ];
+        // Wheat is farmed: 64 seeds stay for sowing, 30 are spare; beetroot is not: all spare.
+        assert_eq!(
+            compost_seed(&inventory, &[Crop::Wheat], KEEP_SEEDS),
+            Some("minecraft:wheat_seeds")
+        );
+        assert_eq!(
+            compost_seed(&inventory, &[Crop::Wheat, Crop::Beetroot], KEEP_SEEDS),
+            Some("minecraft:wheat_seeds")
+        );
+        inventory.truncate(1);
+        assert_eq!(compost_seed(&inventory, &[Crop::Wheat], KEEP_SEEDS), None);
+        // Unloads: not for two stacks right after the last one; yes for many, when idle, when
+        // nearly full, or for a few after a while.
+        inventory.resize(36, None);
+        assert!(!unload_due(&inventory, 2, false, 10));
+        assert!(!unload_due(&inventory, 3, false, 60));
+        assert!(unload_due(&inventory, 3, false, UNLOAD_EVERY_S));
+        assert!(unload_due(&inventory, UNLOAD_STACKS, false, 0));
+        assert!(unload_due(&inventory, 0, true, 0));
+        let full = vec![item("minecraft:dirt", 64); 35];
+        assert!(unload_due(&full, 0, false, 0));
     }
     #[test]
     fn free_slots_and_counts_read_the_inventory() {

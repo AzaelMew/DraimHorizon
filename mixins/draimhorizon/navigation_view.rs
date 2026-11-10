@@ -665,21 +665,22 @@ struct Legs {
     budget: u32,
 }
 static LEGS: Mutex<Option<Legs>> = Mutex::new(None);
-/// A standable cell near `near` (columns within two blocks, heights from six above to eight
-/// below the player), for the end of a leg.
-fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32) -> Option<model::Pos> {
+/// A standable cell near `near` (columns within two blocks, heights from sixteen below to
+/// eight above the player), for the end of a leg. Of the places to stand in a column (the
+/// ground, a roof, the top of a tree) the one nearest to the height the walk is heading for is
+/// taken, so that a walk back to a farm ends at the farm's level, not on a roof above it.
+fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32, want_y: i32) -> Option<model::Pos> {
     let column = model::block(near);
     let mut best: Option<(i32, model::Pos)> = None;
     for dz in -2..=2_i32 {
         for dx in -2..=2_i32 {
-            for y in (from_y - 8..=from_y + 6).rev() {
+            for y in from_y - 16..=from_y + 8 {
                 let at = [column[0] + dx, y, column[2] + dz];
                 if model::standable(at, &mut |p| live_cell(game, p)) {
-                    let d = dx * dx + dz * dz + (y - from_y).abs();
+                    let d = dx * dx + dz * dz + 3 * (y - want_y).abs();
                     if best.is_none_or(|(b, _)| d < b) {
                         best = Some((d, at));
                     }
-                    break;
                 }
             }
         }
@@ -700,9 +701,13 @@ fn leg_point(
         return Some((goal, true, first));
     }
     let from_y = from[1].floor() as i32;
+    // The height to aim for at the end of this leg: on the way from here to the goal's.
+    let span = (g[0] - from[0]).hypot(g[2] - from[2]).max(1.0);
     (first..model::LEG_TRIES).find_map(|attempt| {
         let near = model::leg_target(from, g, attempt)?;
-        leg_cell(game, near, from_y).map(|at| (at, false, attempt))
+        let part = ((near[0] - from[0]).hypot(near[2] - from[2]) / span).min(1.0);
+        let want_y = from_y + (f64::from(goal[1] - from_y) * part).round() as i32;
+        leg_cell(game, near, from_y, want_y).map(|at| (at, false, attempt))
     })
 }
 pub(super) fn workshop_walk(
@@ -2528,6 +2533,87 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         model::Cell::Air,
     )
 }
+/// Doors and gates on the way: the one being opened (with when it was last clicked and how many
+/// times), and those opened by the walker, to be closed again behind it.
+struct Doors {
+    opening: Option<(model::Pos, Instant, u8)>,
+    opened: Vec<model::Pos>,
+}
+static DOORS: Mutex<Doors> = Mutex::new(Doors {
+    opening: None,
+    opened: Vec::new(),
+});
+/// Whether the door or gate at `at` is one a hand opens, and closed.
+fn closed_door(game: &Game<'_>, at: model::Pos) -> bool {
+    model::openable(&game.native_block(at))
+        && game.native_block_property(at, "open").as_deref() == Some("false")
+}
+/// Opens the closed door or gate on the next steps of the route once it is within reach, and
+/// closes behind the walker the ones it opened. True while the walker should wait for a door
+/// to open (the click is asked of the placement driver, which aims and presses use).
+fn door_step(game: &Game<'_>, path: &[model::Pos], next: usize, position: [f64; 3]) -> bool {
+    let placement = crate::game::claim_borders_construction_view::open_container;
+    let ahead: Vec<model::Pos> = path.iter().skip(next).take(3).copied().collect();
+    let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
+    // Close the ones left behind: out of the doorway and not on the next steps.
+    if doors.opening.is_none()
+        && let Some(i) = doors.opened.iter().position(|d| {
+            let away = model::distance(model::center(*d), position);
+            away > 6.0
+                || (away >= 1.8
+                    && !ahead
+                        .iter()
+                        .any(|a| a[0] == d[0] && a[2] == d[2] && (a[1] - d[1]).abs() <= 1))
+        })
+    {
+        let door = doors.opened.remove(i);
+        let away = model::distance(model::center(door), position);
+        if away <= 4.0
+            && model::openable(&game.native_block(door))
+            && game.native_block_property(door, "open").as_deref() == Some("true")
+        {
+            placement(door);
+        }
+    }
+    let wanted = ahead.iter().find_map(|n| {
+        (0..=1)
+            .map(|y| [n[0], n[1] + y, n[2]])
+            .find(|at| closed_door(game, *at))
+    });
+    let Some(door) = wanted else {
+        if let Some((at, _, _)) = doors.opening.take()
+            && !doors.opened.contains(&at)
+        {
+            // It opened: remember it, to close it behind.
+            doors.opened.push(at);
+            doors.opened.truncate(4);
+        }
+        return false;
+    };
+    let reach = (model::center(door)[0] - position[0]).hypot(model::center(door)[2] - position[2]);
+    if reach > 2.6 {
+        return false;
+    }
+    match doors.opening {
+        Some((at, when, tries)) if at == door => {
+            if when.elapsed() >= Duration::from_millis(600) {
+                if tries >= 5 {
+                    // It will not open (locked by a plugin, out of reach): let the stall logic
+                    // plan another way.
+                    doors.opening = None;
+                    return false;
+                }
+                placement(door);
+                doors.opening = Some((door, Instant::now(), tries + 1));
+            }
+        }
+        _ => {
+            placement(door);
+            doors.opening = Some((door, Instant::now(), 1));
+        }
+    }
+    true
+}
 /// The direction (horizontal, unit) away from another body (a player, a mob) that touches the
 /// walker, if one does: within a body's width and a head's height of it.
 fn body_in_the_way(game: &Game<'_>, position: [f64; 3]) -> Option<[f64; 2]> {
@@ -2599,7 +2685,15 @@ pub(super) fn movement(
             pause_state(s);
             return;
         }
+        s.nav.climbing = live_cell(game, model::block(position)) == model::Cell::Climb;
         let mut input = s.nav.input(position, p.yaw, body.ground.on_ground);
+        // A closed door or gate on the next steps: open it first, standing still meanwhile.
+        if s.nav.status == model::Status::Walking
+            && door_step(game, &s.nav.path, s.nav.next, position)
+        {
+            s.nav.yielded();
+            input = model::Input::default();
+        }
         if s.nav.status == model::Status::Stuck {
             cancel_pending(s);
             s.nav.blocked(position);

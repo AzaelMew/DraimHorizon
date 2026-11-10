@@ -322,7 +322,10 @@ impl Job {
                 nav::Cell::Hazard => return Scan::Stop(Stop::Hazard),
                 // A slab, stair or other partial block is walked over like a floor.
                 nav::Cell::Blocked => {}
-                nav::Cell::Air => return Scan::Stop(Stop::Floor),
+                // A ladder or a door is no floor to walk the passage on.
+                nav::Cell::Air | nav::Cell::Door | nav::Cell::Climb => {
+                    return Scan::Stop(Stop::Floor);
+                }
             }
             for y in (0..i32::from(self.config.height)).rev() {
                 let pos = [x, at[1] + y, z];

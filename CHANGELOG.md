@@ -1,5 +1,18 @@
 # История версий
 
+## 0.39.3
+
+- Routing for every Baritone task (walk, follow, mining, tunnel, bridge, farm, drain, schematics): steps across corners when both sides of the corner are open, so open ground is crossed diagonally instead of in a staircase.
+- Partial blocks are judged by their real shape instead of being obstacles: up to 0.6 high (bottom slab, carpet, bed, snow layer, stonecutter) is stepped over without a jump; about a block high and covering nearly the whole cell (stairs, top slab, chest, composter, soul sand, cauldron, hopper) is stood on; fences, walls, panes, bars and fence gates are a block and a half high and never stood on.
+- Wooden doors and fence gates on a route are opened by hand when reached (the walker stops, aims and clicks, up to five tries) and the ones it opened are closed behind it; iron doors are not. Ladders and vines are climbed up (jump key) and down, and left at the top onto what they lean on.
+- Far walks: each leg ends on the ground nearest to the height the walk is heading for, not on the highest block in the column, which led bots onto roofs and trees above the farm. Partial routes favour the goal's height too.
+- Farm: the start is remembered with its height. A bot above the field (on a roof, a tree) no longer counts as being at the beds; it walks back down. Dropped items are only chased at the field's level.
+- Farm: with several crops selected the field is shared fairly (two: halves, three: thirds, four: the four corners of the square), each part sown with its own crop; thin lines on the ground show the parts. Before, the first crop with seeds at hand took every empty bed.
+- Farm menu: under the container buttons the menu lists what each is bound to, with coordinates (harvest, seeds, meal, safe spot, composter), and each bound block has a coloured frame in the world (orange, green, white, blue, brown).
+- Farm: a meal or seeds container found empty is not visited again for 15 minutes; the farm sows, harvests and idles as usual meanwhile instead of walking to the empty chest every minute.
+- Farm: composter. With bone meal on and a composter within the field or eight blocks around, spare wheat and beetroot seeds go into it while the meal stock is under 64, and the bone meal it makes is taken out and picked up. When meal runs out and no seeds are spare, two stacks are fetched from the seeds container to compost.
+- Farm: the harvest is taken away when the field is idle, when two slots or fewer are free, when twelve stacks have gathered, or when three or more have waited four minutes; not only when the inventory is full, and not after every crop.
+
 ## 0.39.2
 
 - Farm: on the way to unload, a bot that carries wheat looks for a crafting table nearby (eight blocks, twice a second). If it finds one it goes there first and crafts hay bales, then carries on with the unload; if not, the wheat goes into the container as it is. A table that cannot be used is not tried again for 90 seconds, so it never holds the unload back.

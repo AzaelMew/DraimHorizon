@@ -1057,6 +1057,10 @@ pub(super) fn use_item_on(item: &str, pos: nav::Pos) {
         s.interact_miss = 0;
     });
 }
+/// Whether a `use_item_on` is still under way (the item going to the hand, or the aim).
+pub(super) fn use_busy() -> bool {
+    state(|s| s.use_item.is_some())
+}
 /// The outcome of the last `use_item_on`, once, or `None` while it is still under way.
 pub(super) fn use_result() -> Option<bool> {
     state(|s| s.use_result.take())

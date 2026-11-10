@@ -92,6 +92,40 @@ pub enum Cell {
     Solid,
     Blocked,
     Hazard,
+    /// A door or a fence gate that can be opened by hand: walked through once opened (the
+    /// walker opens it on the way). Iron doors are not opened by hand and are `Blocked`.
+    Door,
+    /// A ladder or vines: the body fits in it and climbs up or down without a floor.
+    Climb,
+}
+/// Whether the body fits in the cell: open air, a plant, a door to open, a ladder.
+pub fn open(cell: Cell) -> bool {
+    matches!(cell, Cell::Air | Cell::Door | Cell::Climb)
+}
+/// Doors and fence gates a hand opens (not iron doors or iron trapdoors).
+pub fn openable(name: &str) -> bool {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    (name.ends_with("_door") && name != "iron_door") || name.ends_with("_fence_gate")
+}
+/// Blocks a body climbs in (the `climbable` tag, scaffolding aside).
+pub fn climbable(name: &str) -> bool {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    matches!(
+        name,
+        "ladder"
+            | "vine"
+            | "weeping_vines"
+            | "weeping_vines_plant"
+            | "twisting_vines"
+            | "twisting_vines_plant"
+            | "cave_vines"
+            | "cave_vines_plant"
+    )
+}
+/// Blocks that are taller than they look (their collision is a block and a half): never
+/// stood on and never walked through, whatever their outline says.
+fn tall_collision(name: &str) -> bool {
+    name.ends_with("_fence") || name.ends_with("_wall") || name.ends_with("_fence_gate")
 }
 
 /// Unknown/partial collision shapes are obstacles in this first walking implementation.
@@ -122,6 +156,10 @@ pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
         Cell::Hazard
     } else if matches!(name, "air" | "cave_air" | "void_air") {
         Cell::Air
+    } else if openable(name) {
+        Cell::Door
+    } else if climbable(name) {
+        Cell::Climb
     } else if full_collision || matches!(name, "farmland" | "dirt_path") {
         Cell::Solid
     } else if passable(name) {
@@ -131,11 +169,30 @@ pub fn classify(name: &str, full_collision: bool, fluid: bool) -> Cell {
     }
 }
 
-/// Whether a block's shape (boxes in block space, `[min x, y, z, max x, y, z]`) is at most half a
-/// block high: a bottom slab, a carpet, a snow layer, a pressure plate. A player steps onto
-/// these without jumping.
+/// How high a player steps up without jumping (`Player.maxUpStep`).
+pub const STEP_HEIGHT: f64 = 0.6;
+/// Whether a block's shape (boxes in block space, `[min x, y, z, max x, y, z]`) is low enough to
+/// step onto without jumping: a bottom slab, a carpet, a snow layer, a pressure plate, a bed, a
+/// stonecutter. Such a block is walked over like the floor it stands on.
 pub fn low_shape(outline: &[[f64; 6]]) -> bool {
-    !outline.is_empty() && outline.iter().all(|b| b[4] <= 0.5 + 1e-6)
+    !outline.is_empty() && outline.iter().all(|b| b[4] <= STEP_HEIGHT + 1e-6)
+}
+/// Whether a shape is a block to stand on although it is not a full cube: its top is at most a
+/// block high and it covers nearly the whole cell (a chest, a composter, a cauldron, a hopper,
+/// an enchanting table, a top slab, a closed top trapdoor). A fence with four arms covers the
+/// cell too, so the tall blocks are left out by name.
+pub fn platform_shape(outline: &[[f64; 6]]) -> bool {
+    if outline.is_empty() || outline.iter().any(|b| b[4] > 1.0 + 1e-6) {
+        return false;
+    }
+    let (mut x0, mut z0, mut x1, mut z1) = (1.0f64, 1.0f64, 0.0f64, 0.0f64);
+    for b in outline {
+        x0 = x0.min(b[0]);
+        z0 = z0.min(b[2]);
+        x1 = x1.max(b[3]);
+        z1 = z1.max(b[5]);
+    }
+    x1 - x0 >= 0.8 && z1 - z0 >= 0.8
 }
 /// `classify`, with the shapes it cannot judge by name looked up in the block's outline: stairs
 /// and top slabs are blocks to stand on, and a low shape is `low` (open to walk through for the
@@ -152,12 +209,14 @@ pub fn classify_shape(
         return cell;
     }
     let short = name.strip_prefix("minecraft:").unwrap_or(name);
-    if short.ends_with("_stairs") {
+    if tall_collision(short) || matches!(short, "iron_bars" | "chain") || short.ends_with("_pane") {
+        Cell::Blocked
+    } else if short.ends_with("_stairs") {
         Cell::Solid
     } else if low_shape(outline) {
         low
-    } else if short.ends_with("_slab") {
-        // A top slab: its top is a full block's.
+    } else if short.ends_with("_slab") || platform_shape(outline) {
+        // A top slab, a chest, a composter: a floor a block high.
         Cell::Solid
     } else {
         Cell::Blocked
@@ -207,7 +266,6 @@ pub fn passable(name: &str) -> bool {
                 | "beetroots"
                 | "nether_wart"
                 | "nether_sprouts"
-                | "vine"
                 | "glow_lichen"
                 | "lever"
                 | "string"
@@ -217,10 +275,13 @@ pub fn passable(name: &str) -> bool {
         )
 }
 
+/// Whether the body can be at `at`: it fits there (air, a plant, a door, a ladder, with room
+/// for the head) and is held up, by a floor or by the ladder it is in, with no hazard beside.
 pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
-    cell(at) == Cell::Air
-        && cell([at[0], at[1] + 1, at[2]]) == Cell::Air
-        && cell([at[0], at[1] - 1, at[2]]) == Cell::Solid
+    let feet = cell(at);
+    open(feet)
+        && open(cell([at[0], at[1] + 1, at[2]]))
+        && (feet == Cell::Climb || cell([at[0], at[1] - 1, at[2]]) == Cell::Solid)
         && [[1, 0], [-1, 0], [0, 1], [0, -1]]
             .into_iter()
             .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
@@ -271,14 +332,46 @@ pub fn nearest_standable(start: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> Opti
         .map(|d| [start[0] + d[0], start[1] + d[1], start[2] + d[2]])
         .find(|at| standable(*at, cell))
 }
+/// One move of a walk: a step to a side (up one, level, or down to `MAX_DROP`), a step across a
+/// corner (level or down, both sides of the corner open so the body does not catch on them), or
+/// a climb up or down a ladder.
 pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
-    let dy = to[1] - from[1];
-    (to[0] - from[0]).abs() + (to[2] - from[2]).abs() == 1
-        && (-MAX_DROP..=1).contains(&dy)
-        && standable(to, cell)
-        && (dy <= 0 || cell([from[0], from[1] + 2, from[2]]) == Cell::Air)
+    let (dx, dy, dz) = (to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+    if !standable(to, cell) {
+        return false;
+    }
+    let door = |c: Cell| c == Cell::Door;
+    let column_open = |cell: &mut dyn FnMut(Pos) -> Cell| {
         // Stepping off an edge: the whole column down to the landing is open.
-        && (dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| cell([to[0], y, to[2]]) == Cell::Air))
+        dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| open(cell([to[0], y, to[2]])))
+    };
+    match (dx.abs(), dz.abs()) {
+        // Up or down a ladder (or out of the top of one onto what it leans on: a side step).
+        (0, 0) => {
+            dy.abs() == 1
+                && if dy > 0 {
+                    cell(from) == Cell::Climb
+                } else {
+                    cell(to) == Cell::Climb
+                }
+        }
+        (1, 0) | (0, 1) => {
+            (-MAX_DROP..=1).contains(&dy)
+                // A door is passed on the level, never with a step.
+                && (dy == 0 || !(door(cell(from)) || door(cell(to))))
+                && (dy <= 0 || open(cell([from[0], from[1] + 2, from[2]])))
+                && column_open(cell)
+        }
+        (1, 1) => {
+            (-MAX_DROP..=0).contains(&dy)
+                && [cell(from), cell(to)].iter().all(|c| *c == Cell::Air)
+                && [[to[0], from[2]], [from[0], to[2]]]
+                    .iter()
+                    .all(|[x, z]| (0..=1).all(|y| cell([*x, from[1] + y, *z]) == Cell::Air))
+                && column_open(cell)
+        }
+        _ => false,
+    }
 }
 
 /// One move of a route that may break and place blocks: what to remove and what to
@@ -332,7 +425,7 @@ pub fn dig_step(
     let mut dig = Vec::new();
     for at in needed {
         match cell(at) {
-            Cell::Air => {}
+            c if open(c) => {}
             Cell::Solid if diggable(at) => {
                 for delta in [
                     [1, 0, 0],
@@ -465,9 +558,44 @@ pub fn search_dig(
     })
 }
 
+/// Octile distance: a step to a side costs 10, one across a corner 14.
 fn heuristic(a: Pos, b: Pos) -> i32 {
-    ((a[0] - b[0]).abs() + (a[2] - b[2]).abs()) * 10 + (a[1] - b[1]).abs() * 2
+    let (x, z) = ((a[0] - b[0]).abs(), (a[2] - b[2]).abs());
+    // Five a level: a drop of three costs 16, so the estimate stays below the real cost, and a
+    // partial route ends nearer the goal's height (not on a roof straight above it).
+    x.max(z) * 10 + x.min(z) * 4 + (a[1] - b[1]).abs() * 5
 }
+/// Every move tried from a cell, with its base cost: the four sides (up one, level, down to the
+/// drop limit), the four corners (level or down) and a ladder up or down.
+const MOVES: [([i32; 3], i32); 38] = {
+    let mut moves = [([0, 0, 0], 0); 38];
+    let sides = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    let corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    let mut i = 0;
+    let mut s = 0;
+    while s < 4 {
+        let mut dy = 1;
+        while dy >= -MAX_DROP {
+            moves[i] = ([sides[s][0], dy, sides[s][1]], 10);
+            i += 1;
+            dy -= 1;
+        }
+        s += 1;
+    }
+    let mut c = 0;
+    while c < 4 {
+        let mut dy = 0;
+        while dy >= -MAX_DROP {
+            moves[i] = ([corners[c][0], dy, corners[c][1]], 14);
+            i += 1;
+            dy -= 1;
+        }
+        c += 1;
+    }
+    moves[i] = ([0, 1, 0], 12);
+    moves[i + 1] = ([0, -1, 0], 12);
+    moves
+};
 #[derive(Clone, Debug)]
 pub struct Path {
     pub nodes: Vec<Pos>,
@@ -524,26 +652,27 @@ pub fn search_near(
         if expanded >= MAX_NODES || began.elapsed() > Duration::from_millis(80) {
             break;
         }
-        for [dx, dz] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            for dy in [0, 1, -1, -2, -3] {
-                let next = [at[0] + dx, at[1] + dy, at[2] + dz];
-                if (next[0] - start[0]).abs() > RADIUS
-                    || (next[2] - start[2]).abs() > RADIUS
-                    || (next[1] - start[1]).abs() > 16
-                    || !traversable(at, next, &mut cell)
-                {
-                    continue;
-                }
-                let next_cost = cost + 10 + if dy > 0 { 4 } else { dy.abs() * 2 };
-                if costs.get(&next).is_none_or(|old| next_cost < *old) {
-                    costs.insert(next, next_cost);
-                    parents.insert(next, at);
-                    open.push(Reverse((
-                        next_cost + heuristic(next, goal),
-                        next_cost,
-                        next,
-                    )));
-                }
+        for ([dx, dy, dz], base) in MOVES {
+            let next = [at[0] + dx, at[1] + dy, at[2] + dz];
+            if (next[0] - start[0]).abs() > RADIUS
+                || (next[2] - start[2]).abs() > RADIUS
+                || (next[1] - start[1]).abs() > 16
+                || !traversable(at, next, &mut cell)
+            {
+                continue;
+            }
+            // A door costs the click that opens it; a ladder is slower than a floor.
+            let door = (0..=1).any(|y| cell([next[0], next[1] + y, next[2]]) == Cell::Door);
+            let next_cost =
+                cost + base + if dy > 0 { 4 } else { dy.abs() * 2 } + if door { 10 } else { 0 };
+            if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                costs.insert(next, next_cost);
+                parents.insert(next, at);
+                open.push(Reverse((
+                    next_cost + heuristic(next, goal),
+                    next_cost,
+                    next,
+                )));
             }
         }
     }
@@ -633,6 +762,9 @@ impl Follow {
 #[derive(Clone, Debug, Default)]
 pub struct Navigator {
     pub precise: bool,
+    /// The body is in a ladder or vines (set by the caller each tick): a node above is reached
+    /// by climbing (the jump key), one below by letting go.
+    pub climbing: bool,
     pub follow: Option<Follow>,
     pub status: Status,
     pub goal: Option<Pos>,
@@ -796,6 +928,14 @@ impl Navigator {
         }
         let dx = target[0] - position[0];
         let dz = target[2] - position[2];
+        if self.climbing && dx.hypot(dz) < 0.2 {
+            // Straight up or down a ladder: climb with the jump key, or let go and slide.
+            return Input {
+                forward: 0.0,
+                strafe: 0.0,
+                jump: target[1] > position[1] + 0.1,
+            };
+        }
         let yaw = f64::from(yaw).to_radians();
         let forward = -dx * yaw.sin() + dz * yaw.cos();
         let left = dx * yaw.cos() + dz * yaw.sin();
@@ -826,7 +966,11 @@ impl Navigator {
         Input {
             forward,
             strafe: if strafe == 0.0 { nudge } else { strafe },
-            jump: unstick || (grounded && target[1] > position[1] + 0.5 && dx.hypot(dz) < 1.25),
+            // Up a step, or out of the top of a ladder onto what it leans on.
+            jump: unstick
+                || ((grounded || self.climbing)
+                    && target[1] > position[1] + 0.5
+                    && dx.hypot(dz) < 1.25),
         }
     }
 }
@@ -1108,7 +1252,7 @@ mod tests {
             flat(p)
         }));
         assert!(!traversable([0, 0, 0], [1, -2, 0], &mut flat));
-        assert!(!traversable([0, 0, 0], [1, 0, 1], &mut flat));
+        assert!(!traversable([0, 0, 0], [2, 0, 0], &mut flat));
         assert_eq!(classify("minecraft:magma_block", true, false), Cell::Hazard);
         assert_eq!(classify("minecraft:oak_slab", false, false), Cell::Blocked);
         // A fern is walked through, not an obstacle (the bridge used to stop in it).
@@ -1150,6 +1294,108 @@ mod tests {
             classify("minecraft:oak_stairs", false, false),
             Cell::Blocked
         );
+    }
+    #[test]
+    fn corners_are_cut_only_when_both_sides_are_open() {
+        // On open ground a straight diagonal is the route, and shorter than a staircase.
+        assert!(traversable([0, 0, 0], [1, 0, 1], &mut flat));
+        let path = search([0, 0, 0], [5, 0, 5], flat, || false).unwrap();
+        assert!(path.complete);
+        assert_eq!(path.nodes.len(), 6);
+        // A block on one side of the corner: no cut (the body would catch on it).
+        let post = |p: Pos| if p == [1, 1, 0] { Cell::Solid } else { flat(p) };
+        assert!(!traversable([0, 0, 0], [1, 0, 1], &mut { post }));
+        // Corners are never cut upward (that takes a jump).
+        let step = |p: Pos| if p == [1, 0, 1] { Cell::Solid } else { flat(p) };
+        assert!(!traversable([0, 0, 0], [1, 1, 1], &mut { step }));
+    }
+    #[test]
+    fn ladders_are_climbed_and_doors_and_gates_are_passed() {
+        // A ladder up the side of a wall four blocks high at x = 1.
+        let world = |p: Pos| {
+            if p[1] < 0 || (p[0] == 1 && p[1] <= 3) {
+                Cell::Solid
+            } else if p[0] == 0 && p[2] == 0 && (0..=3).contains(&p[1]) {
+                Cell::Climb
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(standable([0, 2, 0], &mut { world }));
+        assert!(traversable([0, 2, 0], [0, 3, 0], &mut { world }));
+        assert!(traversable([0, 3, 0], [0, 2, 0], &mut { world }));
+        // Not up through the open air beside the ladder.
+        assert!(!traversable([0, 0, 1], [0, 1, 1], &mut { world }));
+        let path = search([0, 0, 0], [1, 4, 0], world, || false).unwrap();
+        assert!(path.complete, "{:?}", path.nodes);
+        assert!(path.nodes.contains(&[0, 3, 0]));
+        // A wall with a door in it: the door is the way through.
+        let wall = |p: Pos| {
+            if p[1] < 0 {
+                Cell::Solid
+            } else if p[0] == 2 && (-6..=6).contains(&p[2]) && p[1] <= 3 {
+                if p[2] == 3 && p[1] <= 1 {
+                    Cell::Door
+                } else {
+                    Cell::Solid
+                }
+            } else {
+                Cell::Air
+            }
+        };
+        let path = search([0, 0, 0], [4, 0, 0], wall, || false).unwrap();
+        assert!(path.complete);
+        assert!(path.nodes.contains(&[2, 0, 3]));
+        // Never up or down a step in a doorway.
+        assert!(!traversable(
+            [1, 0, 3],
+            [2, 1, 3],
+            &mut |p| if p == [2, 0, 3] { Cell::Solid } else { wall(p) }
+        ));
+        assert_eq!(classify("minecraft:oak_door", false, false), Cell::Door);
+        assert_eq!(
+            classify("minecraft:birch_fence_gate", false, false),
+            Cell::Door
+        );
+        assert_eq!(classify("minecraft:iron_door", false, false), Cell::Blocked);
+        assert_eq!(classify("minecraft:ladder", false, false), Cell::Climb);
+        assert_eq!(classify("minecraft:vine", false, false), Cell::Climb);
+    }
+    #[test]
+    fn partial_blocks_are_floors_steps_or_walls_by_their_shape() {
+        let shaped = |name: &str, outline: &[[f64; 6]]| {
+            classify_shape(
+                &format!("minecraft:{name}"),
+                false,
+                false,
+                outline,
+                Cell::Air,
+            )
+        };
+        // Low enough to step onto: walked over.
+        let bed = [[0.0, 0.0, 0.0, 1.0, 0.5625, 1.0]];
+        assert_eq!(shaped("red_bed", &bed), Cell::Air);
+        // Nearly a block and nearly the whole cell: stood on (a jump up, like a block).
+        let chest = [[0.0625, 0.0, 0.0625, 0.9375, 0.875, 0.9375]];
+        assert_eq!(shaped("chest", &chest), Cell::Solid);
+        let composter = [
+            [0.0, 0.0, 0.0, 1.0, 0.125, 1.0],
+            [0.0, 0.0, 0.0, 0.125, 1.0, 1.0],
+            [0.875, 0.0, 0.0, 1.0, 1.0, 1.0],
+        ];
+        assert_eq!(shaped("composter", &composter), Cell::Solid);
+        // A fence with four arms covers the cell but is a block and a half high.
+        let cross = [
+            [0.375, 0.0, 0.375, 0.625, 1.0, 0.625],
+            [0.0, 0.0, 0.4375, 1.0, 1.0, 0.5625],
+            [0.4375, 0.0, 0.0, 0.5625, 1.0, 1.0],
+        ];
+        assert_eq!(shaped("oak_fence", &cross), Cell::Blocked);
+        assert_eq!(shaped("cobblestone_wall", &cross), Cell::Blocked);
+        assert_eq!(shaped("glass_pane", &cross), Cell::Blocked);
+        // A thin rod a block high is neither a floor nor a way through.
+        let rod = [[0.4375, 0.0, 0.4375, 0.5625, 1.0, 0.5625]];
+        assert_eq!(shaped("end_rod", &rod), Cell::Blocked);
     }
     #[test]
     fn distant_goal_is_segmented_and_cancel_is_honored() {
