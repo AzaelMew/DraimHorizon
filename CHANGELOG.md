@@ -11,6 +11,10 @@
 - Farm menu: under the container buttons the menu lists what each is bound to, with coordinates (harvest, seeds, meal, safe spot, composter), and each bound block has a coloured frame in the world (orange, green, white, blue, brown).
 - Farm: a meal or seeds container found empty is not visited again for 15 minutes; the farm sows, harvests and idles as usual meanwhile instead of walking to the empty chest every minute.
 - Farm: composter. With bone meal on and a composter within the field or eight blocks around, spare wheat and beetroot seeds go into it while the meal stock is under 64, and the bone meal it makes is taken out and picked up. When meal runs out and no seeds are spare, two stacks are fetched from the seeds container to compost.
+- Drops: when nothing else leads down (a roof, a cliff above the farm), a walk steps off drops of up to six blocks, with health at half or more; each block beyond three costs as much as four steps, so stairs or a slope nearby are taken first. Eating on its own makes up the few health points.
+- Wooden trapdoors: walked over when shut on the floor; opened when they are a hatch at head height, shut at the top of their cell, or in the way of a climb up or down a ladder; passed when open; closed again behind like doors. Iron trapdoors are not opened. The cell over the top of a ladder holds the body, so a hatch over a ladder shaft is climbed through.
+- Farm: every farmland block of the field is remembered; one trampled to dirt (a jump, a fall, a mob) is tilled again with any hoe in the inventory and sown on the next look.
+- Farm: a hungry farmer (food bar at seven shanks or less) with nothing to eat bakes up to three loaves of bread from three wheat each at a crafting table within eight blocks; eating on its own then eats them.
 - Farm: the harvest is taken away when the field is idle, when two slots or fewer are free, when twelve stacks have gathered, or when three or more have waited four minutes; not only when the inventory is full, and not after every crop.
 
 ## 0.39.2

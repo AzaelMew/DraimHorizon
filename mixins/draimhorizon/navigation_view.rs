@@ -207,6 +207,8 @@ struct Query {
     start: model::Pos,
     goal: model::Pos,
     radius: u8,
+    /// The longest drop the route may step off (`navigation::FAR_DROP` with health to spare).
+    drop: i32,
     chunks: HashMap<(i32, i32), Arc<Chunk>>,
     resources: Arc<Resources>,
 }
@@ -309,10 +311,11 @@ impl Worker {
                     } else {
                         (
                             None,
-                            model::search_near(
+                            model::search_near_drop(
                                 start,
                                 query.goal,
                                 query.radius,
+                                query.drop,
                                 |at| read(at).cell,
                                 canceled,
                             ),
@@ -1686,6 +1689,17 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         ),
         goal,
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
+        // A long drop (when nothing else leads down) costs a few health points: only with half
+        // the health or more. Eating gets them back.
+        drop: if game
+            .player
+            .as_ref()
+            .is_some_and(|p| p.health.health() >= 10.0)
+        {
+            model::FAR_DROP
+        } else {
+            model::MAX_DROP
+        },
         chunks,
         resources: game.res.clone(),
     };
@@ -2575,10 +2589,21 @@ fn door_step(game: &Game<'_>, path: &[model::Pos], next: usize, position: [f64; 
             placement(door);
         }
     }
-    let wanted = ahead.iter().find_map(|n| {
-        (0..=1)
-            .map(|y| [n[0], n[1] + y, n[2]])
-            .find(|at| closed_door(game, *at))
+    let wanted = ahead.iter().enumerate().find_map(|(k, n)| {
+        // A step straight up or down (a ladder) passes through the cell itself.
+        let vertical = (next + k)
+            .checked_sub(1)
+            .and_then(|i| path.get(i))
+            .is_some_and(|prev| prev[0] == n[0] && prev[2] == n[2]);
+        (0..=1).map(|y| [n[0], n[1] + y, n[2]]).find(|at| {
+            closed_door(game, *at)
+                && (!model::hand_trapdoor(&game.native_block(*at))
+                    // A trapdoor shut on the floor is walked over; one at head height, shut at
+                    // the top of its cell, or in the way of a climb is opened.
+                    || at[1] > n[1]
+                    || vertical
+                    || game.native_block_property(*at, "half").as_deref() == Some("top"))
+        })
     });
     let Some(door) = wanted else {
         if let Some((at, _, _)) = doors.opening.take()
