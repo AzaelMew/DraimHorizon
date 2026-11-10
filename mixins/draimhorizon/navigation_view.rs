@@ -1677,6 +1677,9 @@ static DRINK: Mutex<Option<Drink>> = Mutex::new(None);
 /// need not swim up for air. True while it holds the button.
 fn auto_drink(game: &mut Game<'_>) -> bool {
     let mut drink = DRINK.lock().unwrap_or_else(|e| e.into_inner());
+    if drink.is_none() {
+        merge_bottles(game);
+    }
     if let Some(d) = drink.as_mut() {
         if breathing_ticks(game) > BREATH_RENEW * 2
             || d.since.elapsed() > Duration::from_millis(4000)
@@ -1733,6 +1736,35 @@ fn auto_drink(game: &mut Game<'_>) -> bool {
     });
     game.selected = slot;
     true
+}
+/// A drunk potion leaves a glass bottle in its slot, one per slot: while a task runs they are
+/// put together into one stack (pick one up, put it on another, anything left goes back), a
+/// pair a second, so they do not fill the inventory.
+fn merge_bottles(game: &mut Game<'_>) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    if !task_running() || !game.native_playing() {
+        return;
+    }
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+        return;
+    }
+    let bottles: Vec<usize> = (0..36)
+        .filter(|slot| {
+            slot_stack(game, *slot)
+                .is_some_and(|st| &*st.item == "minecraft:glass_bottle" && st.count < 64)
+        })
+        .collect();
+    let [from, onto, ..] = bottles[..] else {
+        return;
+    };
+    *last = Some(Instant::now());
+    use horizon_client::menu::Input;
+    game.remote_menu_ops(&[
+        (Some(from), 0, Input::Pickup),
+        (Some(onto), 0, Input::Pickup),
+        (Some(from), 0, Input::Pickup),
+    ]);
 }
 /// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
 /// fits the block under the crosshair is selected (the held one stays if it fits).
