@@ -1517,6 +1517,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
             farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
+            mining_custom: {
+                crate::game::claim_borders_navigation_view::load_custom_blocks(game);
+                crate::game::claim_borders_mining::custom()
+            },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")
@@ -1728,6 +1732,38 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())
+        }
+        Action::MiningCustom => {
+            use crate::game::claim_borders_mining as mining;
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let name = l.text("Свой блок", "Own block");
+            let picked = game
+                .pick()
+                .map(|hit| game.native_block(hit.pos))
+                .filter(|b| !b.ends_with(":air") && !b.ends_with("cave_air"));
+            let message = match picked {
+                Some(block) => {
+                    let short = block
+                        .strip_prefix("minecraft:")
+                        .unwrap_or(&block)
+                        .to_owned();
+                    if mining::toggle_custom(&block) {
+                        format!("{name}: + {short}")
+                    } else {
+                        format!("{name}: − {short}")
+                    }
+                }
+                None => {
+                    mining::set_custom(Vec::new());
+                    format!("{name}: {}", l.text("список очищен", "list cleared"))
+                }
+            };
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "mining_custom",
+                &mining::custom().join(","),
+            );
+            Ok(vec![message])
         }
         Action::FarmSafe => {
             use crate::game::claim_borders_workshop_view as workshop;

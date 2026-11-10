@@ -275,6 +275,8 @@ impl Worker {
                                 falling: mining::falling(&f.name),
                                 breakable: f.hardness >= 0.0 && !f.block_entity,
                                 soft: mining::clearable(&f.name),
+                                water: (f.fluid_level > 0 || f.waterlogged)
+                                    && !f.name.contains("lava"),
                             }
                         })
                     };
@@ -519,6 +521,7 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
         falling: mining::falling(&f.name),
         breakable: f.hardness >= 0.0 && !f.block_entity,
         soft: mining::clearable(&f.name),
+        water: (f.fluid_level > 0 || f.waterlogged) && !f.name.contains("lava"),
     }
 }
 /// The stack in slot `slot`: 0..9 the hotbar, 9..36 the main inventory.
@@ -1430,13 +1433,22 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 p.flying
                     || p.fall_flying
                     || p.is_passenger
-                    || p.fluids.was_touching_water
                     || p.is_in_lava()
                     || p.health.health() <= 0.0
             })
         {
             pause_state(s);
             return physical;
+        }
+        // Under water the miner swims for breath first, and swims up to the block before a hit.
+        if *SURFACING.lock().unwrap_or_else(|e| e.into_inner()) {
+            return false;
+        }
+        if let (Some(target), Some(eye)) = (job.target, game.eye_position()) {
+            let middle = model::center(target);
+            if model::distance(eye, [middle[0], middle[1] + 0.5, middle[2]]) > 4.4 {
+                return false;
+            }
         }
         // A screen is open: no hit is made until it is closed, and the job waits for that.
         if !game.native_playing() {
@@ -1877,7 +1889,23 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     s.nav.status = model::Status::Planning;
     Ok(())
 }
+/// The "own block" mining target's blocks, from the settings, when none are set yet (after a
+/// restart of the game).
+pub(super) fn load_custom_blocks(game: &Game<'_>) {
+    if mining::custom().is_empty()
+        && let Some(saved) = game.native_setting(claims::SETTINGS_ID, "mining_custom")
+    {
+        mining::set_custom(
+            saved
+                .split(',')
+                .filter(|b| !b.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+}
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    load_custom_blocks(game);
     let result = start_task(game, goal_request, running);
     if result.is_ok() {
         crate::game::claim_borders_resume::note_start(game, goal_request, running);
@@ -2905,6 +2933,8 @@ fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
     }
     Some(game.pitch > 80.0 && grounded)
 }
+/// Swimming up for air: set when the air runs low under water, cleared when it is full again.
+static SURFACING: Mutex<bool> = Mutex::new(false);
 /// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
 /// route, turned to a little each tick by `face` (the head moves as a person's does).
 static FACE: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
@@ -3154,8 +3184,78 @@ pub(super) fn movement(
         && let Some(p) = game.native_player()
     {
         let position = [p.x, p.y, p.z];
-        *jump = true;
         *sneak = false;
+        // Out of breath: straight up to the surface, and wait there until the air is full.
+        {
+            let mut surfacing = SURFACING.lock().unwrap_or_else(|e| e.into_inner());
+            let under = body.fluids.was_eye_in_water;
+            if under && body.air < mining::AIR_LOW {
+                *surfacing = true;
+            }
+            if *surfacing && body.air >= mining::AIR_FULL {
+                *surfacing = false;
+            }
+            if *surfacing {
+                *jump = true;
+                *forward = 0.0;
+                *strafe = 0.0;
+                return;
+            }
+        }
+        // Mining under water: swim to the block (up with jump, down with sneak), hold still once
+        // it is in reach; the miner aims and breaks it.
+        let below = state(|s| {
+            // A route of the start alone (swum to): it has arrived.
+            if s.nav.running && s.nav.path.len() <= 1 {
+                let _ = s.nav.input(position, p.yaw, false);
+            }
+            s.mining
+                .as_ref()
+                .filter(|j| j.active)
+                .and_then(|j| j.target.map(|t| (t, j.ore)))
+        })
+        .filter(|(target, ore)| mining::underwater(*target, |at| mining_block(game, *ore, at)));
+        if let Some((target, ore)) = below {
+            let eye = [position[0], position[1] + 1.62, position[2]];
+            let middle = model::center(target);
+            let middle = [middle[0], middle[1] + 0.5, middle[2]];
+            *jump = false;
+            *forward = 0.0;
+            *strafe = 0.0;
+            if model::distance(eye, middle) > 3.6 {
+                // The nearest water cell beside the block is where to swim.
+                let goal = [
+                    [0, 1, 0],
+                    [1, 0, 0],
+                    [-1, 0, 0],
+                    [0, 0, 1],
+                    [0, 0, -1],
+                    [0, -1, 0],
+                ]
+                .into_iter()
+                .map(|d| [target[0] + d[0], target[1] + d[1], target[2] + d[2]])
+                .filter(|at| mining_block(game, ore, *at).water)
+                .min_by(|a, b| {
+                    model::distance(model::center(*a), position)
+                        .total_cmp(&model::distance(model::center(*b), position))
+                })
+                .map_or(middle, model::center);
+                let yaw = model::yaw_to(eye, goal);
+                let pitch = model::pitch_to(eye, goal);
+                *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some((yaw, pitch.clamp(-60.0, 60.0), Instant::now()));
+                let input = model::human_steer(position, goal, p.yaw);
+                *forward = input.forward;
+                *strafe = input.strafe;
+                if goal[1] > position[1] + 0.3 {
+                    *jump = true;
+                } else if goal[1] < position[1] - 0.3 {
+                    *sneak = true;
+                }
+            }
+            return;
+        }
+        *jump = true;
         if let Some(spot) = crate::game::claim_borders_construction_view::dry_spot(game, position) {
             let target = model::center(spot);
             look_toward(position, target);

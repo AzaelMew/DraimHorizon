@@ -144,6 +144,8 @@ pub struct ViewModel {
     pub farm_safe: Option<[i32; 3]>,
     /// The composter found by the running farm's field, if any.
     pub farm_composter: Option<[i32; 3]>,
+    /// The blocks of the "own block" mining target.
+    pub mining_custom: Vec<String>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -252,6 +254,8 @@ pub enum Action {
     FarmStorage(super::claim_borders_farm_storage::Role),
     /// The safe point of the farm: set to where the player stands, or cleared.
     FarmSafe,
+    /// The block under the crosshair goes into the "own block" mining target, or out of it.
+    MiningCustom,
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -348,6 +352,7 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
+            Self::MiningCustom => f.write_str("MiningCustom"),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -616,6 +621,9 @@ pub enum Control {
     ConstructFloor,
     BaritoneMode(BaritoneMode),
     MiningTarget(u8),
+    /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
+    /// aimed at nothing, clears the list).
+    MiningCustom,
     MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
@@ -3184,9 +3192,33 @@ impl Menu {
                         self.mining_targets & (1 << index) != 0,
                     ));
                 }
+                // Any block of the world: aim at it and press (again to take it out).
+                let half = (w - 4.0) / 2.0;
+                let names: Vec<&str> = model
+                    .mining_custom
+                    .iter()
+                    .map(|n| n.strip_prefix("minecraft:").unwrap_or(n))
+                    .collect();
+                out.push(widget(
+                    [x + half + 4.0, height - 30.0, half, 14.0],
+                    if names.is_empty() {
+                        self.language
+                            .text("Свой блок: прицел на блок", "Own block: aim at a block")
+                            .to_owned()
+                    } else {
+                        localized!(
+                            self.language,
+                            "Свой блок: {}",
+                            "Own block: {}",
+                            names.join(", ")
+                        )
+                    },
+                    Some(Control::MiningCustom),
+                    !names.is_empty(),
+                ));
                 // The storage the miner unloads into when the inventory is full (the farm's).
                 out.push(widget(
-                    [x, height - 30.0, w, 14.0],
+                    [x, height - 30.0, half, 14.0],
                     match model.farm_storage[0] {
                         Some([sx, sy, sz]) => localized!(
                             self.language,
@@ -4147,6 +4179,11 @@ impl Menu {
                     self.mining_targets ^= 1 << index;
                 }
                 None
+            }
+            Control::MiningCustom => {
+                // Picking a block selects the target too.
+                self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;
+                Some(Action::MiningCustom)
             }
             Control::MiningPage => {
                 self.mining_page = self.mining_page.wrapping_add(1);
