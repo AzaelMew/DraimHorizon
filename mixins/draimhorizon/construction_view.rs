@@ -980,9 +980,13 @@ fn edge_drive(
         .as_ref()
         .is_none_or(|b| !b.ground.on_ground || b.fluids.was_touching_water || b.flying)
     {
-        // Slipping off the edge into the water is not the player taking over: the drain job is
-        // not paused (it could not swim back then), `swim_back` takes the player out.
-        if !crate::game::claim_borders_workshop_view::draining() {
+        // Slipping off the edge into the water is not the player taking over: no job is paused
+        // for it (the walker swims the player out), nor for a moment in the air.
+        let wet_or_air = game
+            .player
+            .as_ref()
+            .is_some_and(|b| b.fluids.was_touching_water || !b.ground.on_ground);
+        if !wet_or_air && !crate::game::claim_borders_workshop_view::draining() {
             pause();
             navigation::pause();
         }

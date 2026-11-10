@@ -1274,6 +1274,11 @@ impl Navigator {
         }
         let dx = target[0] - position[0];
         let dz = target[2] - position[2];
+        if !self.climbing && dx.hypot(dz) < 0.25 && target[1] < position[1] - 0.5 {
+            // Straight down (into a ladder shaft, through an opened trapdoor): let go and fall;
+            // walking on would step off the hole.
+            return Input::default();
+        }
         if self.climbing && dx.hypot(dz) < 0.2 {
             // Straight up or down a ladder: climb with the jump key, or let go and slide.
             return Input {

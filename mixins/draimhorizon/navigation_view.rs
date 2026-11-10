@@ -870,6 +870,16 @@ pub(super) fn leg_frame(game: &Game<'_>) {
     if running {
         extend_trail(model::block(from));
     }
+    // The walk is over (no leg left): its way is remembered, whoever asked for it.
+    if status == model::Status::Arrived
+        && LEGS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_none_or(|l| l.last)
+    {
+        keep_trail();
+    }
     let Some((goal, flat, level, attempt, budget, via, ends)) = LEGS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1247,7 +1257,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     // The inventory is full of the mined kind: unload into the storage (when one is set), then go
     // on from where the trip began. Nothing else is done while a trip runs.
     if crate::game::claim_borders_haul_view::active()
-        || (!room_for_mining(game, job.ore)
+        // No free slot at all also counts: drops of other kinds (sticks, saplings) could not be
+        // picked up, and the miner went back and forth trying.
+        || ((!room_for_mining(game, job.ore) || !free_slot(game))
             && crate::game::claim_borders_haul_view::begin(game, job.ore))
     {
         job.wait = Some(mining::Wait::Storage);
@@ -1526,6 +1538,8 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         if model::angle_between(game.yaw, yaw).abs() > 4.0 || (game.pitch - pitch).abs() > 4.0 {
             game.yaw = model::turn_toward(game.yaw, yaw, 30.0);
             game.pitch = model::turn_toward(game.pitch, pitch, 24.0);
+            // This turn is the miner's own, not the player moving the camera (which pauses).
+            s.mine_aim = Some([game.yaw, game.pitch]);
             return false;
         }
         game.yaw = yaw;
@@ -2157,6 +2171,19 @@ fn start_task(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), 
     } else {
         None
     };
+    // A walk to a place (not following) is remembered once it arrives, and one walked before
+    // between here and there is followed again.
+    if follow.is_none() && running {
+        state(|s| {
+            s.mining = None;
+            s.mine_aim = None;
+            s.stuck_tried = false;
+            s.force_dig = false;
+            cancel_pending(s);
+            s.nav.follow = None;
+        });
+        return workshop_walk(game, goal, false, false);
+    }
     state(|s| {
         s.mining = None;
         s.mine_aim = None;
@@ -3199,9 +3226,9 @@ fn face(game: &mut Game<'_>) {
     }
     let t = since.elapsed().as_secs_f32() + START.get_or_init(Instant::now).elapsed().as_secs_f32();
     let sway_yaw = 1.2 * (t * 1.7).sin();
-    let sway_pitch = 0.8 * (t * 1.1).sin();
     game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
-    game.pitch = model::turn_toward(game.pitch, pitch + sway_pitch, TURN_STEP * 0.6);
+    // The pitch follows slowly (a few degrees a tick): no nodding.
+    game.pitch = model::turn_toward(game.pitch, pitch, 3.0);
     look.set = Some((game.yaw, game.pitch));
 }
 /// The human look's own bookkeeping: where it left the camera, until when the mouse has it,
@@ -3267,20 +3294,28 @@ fn closed_door(game: &Game<'_>, at: model::Pos) -> bool {
     model::openable(&game.native_block(at))
         && game.native_block_property(at, "open").as_deref() == Some("false")
 }
-/// Opens the closed door or gate on the next steps of the route once it is within reach, and
-/// closes behind the walker the ones it opened. True while the walker should wait for a door
-/// to open (the click is asked of the placement driver, which aims and presses use).
-fn door_step(
-    game: &Game<'_>,
-    path: &[model::Pos],
-    next: usize,
-    position: [f64; 3],
-    stalled: u16,
-) -> bool {
+/// The walk is over or waits: a door being opened that is open now counts as opened (to be
+/// closed behind), and those left behind are closed.
+fn settle_doors(game: &Game<'_>, position: [f64; 3]) {
+    {
+        let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, _, _)) = doors.opening
+            && !closed_door(game, at)
+        {
+            doors.opening = None;
+            if !doors.opened.contains(&at) {
+                doors.opened.push(at);
+            }
+        }
+    }
+    close_doors_behind(game, &[], position);
+}
+/// Closes behind the walker a door, gate or trapdoor it opened, once it is out of the doorway
+/// and the next steps do not go through it again; called every tick, also after the walk has
+/// ended right behind the door.
+fn close_doors_behind(game: &Game<'_>, ahead: &[model::Pos], position: [f64; 3]) {
     let placement = crate::game::claim_borders_construction_view::open_container;
-    let ahead: Vec<model::Pos> = path.iter().skip(next).take(3).copied().collect();
     let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
-    // Close the ones left behind: out of the doorway and not on the next steps.
     if doors.opening.is_none()
         && let Some(i) = doors.opened.iter().position(|d| {
             let away = model::distance(model::center(*d), position);
@@ -3300,6 +3335,21 @@ fn door_step(
             placement(door);
         }
     }
+}
+/// Opens the closed door or gate on the next steps of the route once it is within reach, and
+/// closes behind the walker the ones it opened. True while the walker should wait for a door
+/// to open (the click is asked of the placement driver, which aims and presses use).
+fn door_step(
+    game: &Game<'_>,
+    path: &[model::Pos],
+    next: usize,
+    position: [f64; 3],
+    stalled: u16,
+) -> bool {
+    let placement = crate::game::claim_borders_construction_view::open_container;
+    let ahead: Vec<model::Pos> = path.iter().skip(next).take(3).copied().collect();
+    close_doors_behind(game, &ahead, position);
+    let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
     let wanted = ahead.iter().enumerate().find_map(|(k, n)| {
         // A step straight up or down (a ladder) passes through the cell itself.
         let vertical = (next + k)
@@ -3569,6 +3619,10 @@ pub(super) fn movement(
         return;
     };
     let position = [p.x, p.y, p.z];
+    // Doors opened on the way are closed behind also when the walk has just ended.
+    if !state(|s| s.nav.running && s.nav.status == model::Status::Walking) {
+        settle_doors(game, position);
+    }
     // A column being built under the miner (or taken down): stand still, jump to climb.
     if let Some(climb) = pillar_controls() {
         if (*forward != 0.0 || *strafe != 0.0 || *sneak) && !input_grace() {
@@ -3606,7 +3660,10 @@ pub(super) fn movement(
             } else {
                 p.yaw
             };
-            let pitch = model::pitch_to(eye, ahead).clamp(-10.0, 35.0);
+            // A steady glance down at the way ahead, more on the way down, less on the way up;
+            // not the exact angle to each next cell, which made the head nod at every step.
+            let rise = (look[1] - position[1]).clamp(-3.0, 3.0) as f32;
+            let pitch = (14.0 - rise * 6.0).clamp(0.0, 32.0);
             *FACE.lock().unwrap_or_else(|e| e.into_inner()) = Some((yaw, pitch, Instant::now()));
         }
         // Between two plans (a leg ends, the route is planned again) a person keeps walking for

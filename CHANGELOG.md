@@ -8,6 +8,14 @@
 - Elytra: worn with durability to spare, any drop the route needs is taken, however high (the planner looks down the whole column for the ground, and such drops cost little more than walking): the walker spreads them while falling (a jump press in the air) and glides toward where the route goes, looking a little down, until it lands.
 - Doors, gates and trapdoors when held up: if the walker makes no progress for a moment, a closed door, fence gate or wooden trapdoor under its feet, at them or one step toward the next point is opened (a player followed through a door that shut behind them, a trapdoor under the feet over a ladder).
 - Snow layers: the body stands on one layer less than snow looks; up to five layers are walked over, six and seven are stood on like a block, eight are a block.
+- Drops of three blocks and more: a step down the edge counted as being off the route (its landing is more than 2.6 blocks from where the walker stands), so the walker stood and planned again and again; the distance is now taken from the step under way (this also covers jumps across gaps).
+- Straight down (into a ladder shaft, through an opened trapdoor): the walker lets go and falls instead of walking on and stepping off the hole; a trapdoor under the feet over a ladder is opened when it holds the walker up.
+- Doors, gates and trapdoors opened on the way are closed behind also when the walk ends right after them (a gate used to stay open).
+- Mining no longer pauses itself: its smooth turn to the next block was taken for the player moving the camera (logs left uncut, the job paused at a tree).
+- Mining storage: an inventory without a single free slot also sends the miner to the shulker box or the storage (drops of other kinds, sticks and saplings, could not be picked up and the miner went back and forth).
+- Tunnel and bridge are not paused by water or a moment in the air at the edge; the walker swims the player out.
+- Human look: a steady glance down at the way ahead (more on the way down, less on the way up) that changes slowly, instead of the exact angle to each next cell, which made the head nod at every step.
+- Remembered routes work for walks to coordinates and waypoints too, not only for farm and storage walks.
 - Running jumps across gaps: the planner takes a jump of two to four blocks straight on (gaps of one to three blocks, level or one block down, with the air above the gap clear), dearer than walking round. The walker runs at it with the sprint key and jumps at the edge. Farm level routes never jump.
 
 ## 0.39.4
