@@ -244,6 +244,24 @@ impl PlayerRequest {
         self.command(current, language)
     }
 }
+/// What a schematic editor button does to the selected preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchematicEdit {
+    /// Move it by blocks along the world axes.
+    Move([i32; 3]),
+    /// Turn it a quarter clockwise.
+    Rotate,
+    /// Bring its origin to where the player stands.
+    Here,
+    /// Show or hide it.
+    Toggle,
+    /// Forget it.
+    Remove,
+    /// Build it (as the Start key does).
+    Build,
+    /// Turn the camera to it.
+    Look,
+}
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
@@ -259,6 +277,14 @@ pub enum Action {
     FarmSafe,
     /// The block under the crosshair goes into the "own block" mining target, or out of it.
     MiningCustom,
+    /// The schematic editor acting on the selected preview.
+    SchematicEdit(SchematicEdit),
+    /// Places `file` as a preview at `origin` (where the player stands when none), turned.
+    SchematicPreview {
+        file: String,
+        origin: Option<[i32; 3]>,
+        rotation: u8,
+    },
     /// Selects a placed schematic preview (the one Start builds and the keys move).
     SchematicPlace(usize),
     /// Shows or hides a placed schematic preview.
@@ -363,6 +389,10 @@ impl std::fmt::Debug for Action {
             Self::FarmSafe => f.write_str("FarmSafe"),
             Self::MiningCustom => f.write_str("MiningCustom"),
             Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
+            Self::SchematicEdit(e) => f.debug_tuple("SchematicEdit").field(e).finish(),
+            Self::SchematicPreview { file, .. } => {
+                f.debug_tuple("SchematicPreview").field(file).finish()
+            }
             Self::SchematicPlaceShow(i) => f.debug_tuple("SchematicPlaceShow").field(i).finish(),
             Self::SchematicPlaceRemove(i) => {
                 f.debug_tuple("SchematicPlaceRemove").field(i).finish()
@@ -666,6 +696,12 @@ pub enum Control {
     /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
     /// aimed at nothing, clears the list).
     MiningCustom,
+    /// The schematic editor's buttons (on the selected preview).
+    SchematicEdit(SchematicEdit),
+    /// Places the chosen file as a preview (at XYZ, or where the player stands).
+    SchematicPreviewHere,
+    /// Pages through the schematics folder on the tab.
+    SchematicCatalogPage(i8),
     /// A placed schematic preview: select it, show or hide it, forget it.
     SchematicPlace(usize),
     SchematicPlaceShow(usize),
@@ -829,6 +865,8 @@ pub struct Menu {
     /// The schematic file list is open under the file button.
     pub schematic_choices: bool,
     pub schematic_choices_page: usize,
+    /// The page of the schematics folder shown on the tab.
+    pub schematic_catalog_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     pub helper_page: usize,
@@ -888,6 +926,7 @@ impl Default for Menu {
             navigation_choices_page: 0,
             schematic_choices: false,
             schematic_choices_page: 0,
+            schematic_catalog_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
             mining_targets: 1,
@@ -1543,6 +1582,187 @@ impl Menu {
             }
         }
         widgets
+    }
+    /// The Schematics tab below the file and place: the actions on the selected preview, the
+    /// editor that moves and turns it, the files of the schematics folder (click to choose one)
+    /// and the previews placed in this world (select, show or hide, delete).
+    fn schematic_panel(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        top: f32,
+        limit: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        let row = 16.0;
+        let mut y = top;
+        let active = model.schematic_places.iter().find(|p| p.3);
+        // Actions: place the chosen file as a preview, build the selected one, show or hide it,
+        // delete it.
+        if y + row <= limit {
+            let cell = (w - 12.0) / 4.0;
+            let actions = [
+                (
+                    self.language.text("Поставить предпоказ", "Place preview"),
+                    Control::SchematicPreviewHere,
+                    false,
+                ),
+                (
+                    self.language.text("Строить", "Build"),
+                    Control::SchematicEdit(SchematicEdit::Build),
+                    false,
+                ),
+                (
+                    if active.is_some_and(|a| a.2) {
+                        self.language.text("Скрыть", "Hide")
+                    } else {
+                        self.language.text("Показать", "Show")
+                    },
+                    Control::SchematicEdit(SchematicEdit::Toggle),
+                    active.is_some_and(|a| a.2),
+                ),
+                (
+                    self.language.text("Удалить предпоказ", "Delete preview"),
+                    Control::SchematicEdit(SchematicEdit::Remove),
+                    false,
+                ),
+            ];
+            for (i, (label, control, on)) in actions.into_iter().enumerate() {
+                out.push(widget(
+                    [x + i as f32 * (cell + 4.0), y, cell, row - 2.0],
+                    label,
+                    Some(control),
+                    on,
+                ));
+            }
+            y += row;
+        }
+        // The editor: move the selected preview a block along each axis, turn it, bring it here.
+        if y + row <= limit {
+            let cell = (w - 4.0 * 8.0) / 9.0;
+            let edits = [
+                ("X −", SchematicEdit::Move([-1, 0, 0])),
+                ("X +", SchematicEdit::Move([1, 0, 0])),
+                ("Y −", SchematicEdit::Move([0, -1, 0])),
+                ("Y +", SchematicEdit::Move([0, 1, 0])),
+                ("Z −", SchematicEdit::Move([0, 0, -1])),
+                ("Z +", SchematicEdit::Move([0, 0, 1])),
+                (self.language.text("Поворот", "Turn"), SchematicEdit::Rotate),
+                (self.language.text("Ко мне", "To me"), SchematicEdit::Here),
+                (self.language.text("Вид", "View"), SchematicEdit::Look),
+            ];
+            for (i, (label, edit)) in edits.into_iter().enumerate() {
+                out.push(widget(
+                    [x + i as f32 * (cell + 4.0), y, cell, row - 2.0],
+                    label,
+                    Some(Control::SchematicEdit(edit)),
+                    false,
+                ));
+            }
+            y += row + 2.0;
+        }
+        // Two columns: the folder's files and this world's previews.
+        let half = (w - 6.0) / 2.0;
+        let right = x + half + 6.0;
+        if y + 12.0 <= limit {
+            out.push(widget(
+                [x, y, half, 11.0],
+                localized!(
+                    self.language,
+                    "Схемы в папке: {}",
+                    "Schematics in the folder: {}",
+                    model.schematic_files.len()
+                ),
+                None,
+                false,
+            ));
+            out.push(widget(
+                [right, y, half, 11.0],
+                if model.schematic_places.is_empty() {
+                    self.language
+                        .text("Предпоказов в мире нет", "No previews in this world")
+                } else {
+                    self.language
+                        .text("Предпоказы в этом мире:", "Previews in this world:")
+                },
+                None,
+                false,
+            ));
+            y += 13.0;
+        }
+        let rows = ((limit - y) / row).floor().max(0.0) as usize;
+        if rows == 0 {
+            return;
+        }
+        // Files: one page of them, the pager on the last line when there are more.
+        let pager = model.schematic_files.len() > rows;
+        let per_page = if pager {
+            rows.saturating_sub(1).max(1)
+        } else {
+            rows
+        };
+        let pages = model.schematic_files.len().div_ceil(per_page).max(1);
+        let page = self.schematic_catalog_page.min(pages - 1);
+        for (i, (index, name)) in model
+            .schematic_files
+            .iter()
+            .enumerate()
+            .skip(page * per_page)
+            .take(per_page)
+            .enumerate()
+        {
+            out.push(widget(
+                [x, y + i as f32 * row, half, row - 2.0],
+                name.clone(),
+                Some(Control::SchematicChoice(index)),
+                self.schematic_file.as_deref() == Some(name.as_str()),
+            ));
+        }
+        if pager {
+            let py = y + per_page as f32 * row;
+            out.push(widget(
+                [x, py, half / 2.0 - 2.0, row - 2.0],
+                format!("← {}/{}", page + 1, pages),
+                Some(Control::SchematicCatalogPage(-1)),
+                false,
+            ));
+            out.push(widget(
+                [x + half / 2.0 + 2.0, py, half / 2.0 - 2.0, row - 2.0],
+                format!("{}/{} →", page + 1, pages),
+                Some(Control::SchematicCatalogPage(1)),
+                false,
+            ));
+        }
+        // Previews of this world.
+        let button = 44.0_f32.min(half * 0.24);
+        for (i, (index, label, shown, selected)) in
+            model.schematic_places.iter().take(rows).enumerate()
+        {
+            let py = y + i as f32 * row;
+            out.push(widget(
+                [right, py, half - 2.0 * (button + 3.0), row - 2.0],
+                label.clone(),
+                Some(Control::SchematicPlace(*index)),
+                *selected,
+            ));
+            out.push(widget(
+                [right + half - 2.0 * button - 3.0, py, button, row - 2.0],
+                if *shown {
+                    self.language.text("Скрыть", "Hide")
+                } else {
+                    self.language.text("Показ.", "Show")
+                },
+                Some(Control::SchematicPlaceShow(*index)),
+                *shown,
+            ));
+            out.push(widget(
+                [right + half - button, py, button, row - 2.0],
+                self.language.text("Удал.", "Del."),
+                Some(Control::SchematicPlaceRemove(*index)),
+                false,
+            ));
+        }
     }
     fn experiments_dialog(&self, width: f32, height: f32) -> Vec<Widget> {
         let w = (width - 32.0).clamp(200.0, 460.0);
@@ -3226,56 +3446,14 @@ impl Menu {
                     ));
                 }
                 if !farm {
-                    // The previews placed in this world: select one (Start builds it, the
-                    // editor keys move it), show or hide it, or forget it.
-                    let mut y = 100.0 + below + count.div_ceil(2) as f32 * step + 4.0;
-                    let limit = height - 68.0;
-                    if y + 12.0 <= limit {
-                        out.push(widget(
-                            [x, y, w, 11.0],
-                            if model.schematic_places.is_empty() {
-                                self.language.text(
-                                    "Предпоказов нет: клавиша предпросмотра ставит выбранный файл",
-                                    "No previews: the preview key places the chosen file",
-                                )
-                            } else {
-                                self.language
-                                    .text("Предпоказы в этом мире:", "Previews in this world:")
-                            },
-                            None,
-                            false,
-                        ));
-                        y += 13.0;
-                    }
-                    let button = 58.0_f32.min(w * 0.22);
-                    for (index, label, shown, selected) in &model.schematic_places {
-                        if y + 14.0 > limit {
-                            break;
-                        }
-                        out.push(widget(
-                            [x, y, w - 2.0 * (button + 4.0), 14.0],
-                            label.clone(),
-                            Some(Control::SchematicPlace(*index)),
-                            *selected,
-                        ));
-                        out.push(widget(
-                            [x + w - 2.0 * button - 4.0, y, button, 14.0],
-                            if *shown {
-                                self.language.text("Скрыть", "Hide")
-                            } else {
-                                self.language.text("Показать", "Show")
-                            },
-                            Some(Control::SchematicPlaceShow(*index)),
-                            *shown,
-                        ));
-                        out.push(widget(
-                            [x + w - button, y, button, 14.0],
-                            self.language.text("Удалить", "Delete"),
-                            Some(Control::SchematicPlaceRemove(*index)),
-                            false,
-                        ));
-                        y += 16.0;
-                    }
+                    self.schematic_panel(
+                        model,
+                        x,
+                        w,
+                        100.0 + below + count.div_ceil(2) as f32 * step + 4.0,
+                        height - 68.0,
+                        &mut out,
+                    );
                 }
                 if farm {
                     // What the buttons are bound to, with the coordinates and the colour of the
@@ -4540,12 +4718,32 @@ impl Menu {
                 self.navigation_choices = None;
                 self.schematic_choices = false;
                 self.focus = None;
-                None
+                // The schematics folder is read again whenever its tab is opened.
+                (mode == BaritoneMode::Schematic).then_some(Action::RefreshSchematics)
             }
             Control::MiningTarget(index) => {
                 if usize::from(index) < super::claim_borders_mining::COUNT {
                     self.mining_targets ^= 1 << index;
                 }
+                None
+            }
+            Control::SchematicEdit(edit) => Some(Action::SchematicEdit(edit)),
+            Control::SchematicPreviewHere => {
+                let file = self.schematic_file.clone()?;
+                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+                let origin = <[&str; 3]>::try_from(values.as_slice())
+                    .ok()
+                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+                    .map(|p| p.map(|v| v.floor() as i32));
+                Some(Action::SchematicPreview {
+                    file,
+                    origin,
+                    rotation: self.schematic_rotation,
+                })
+            }
+            Control::SchematicCatalogPage(direction) => {
+                self.schematic_catalog_page =
+                    (self.schematic_catalog_page as isize + direction as isize).max(0) as usize;
                 None
             }
             Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),

@@ -1024,6 +1024,7 @@ pub(super) fn aiming() -> bool {
         s.interact.is_some()
             || s.use_item.is_some()
             || s.external.as_ref().is_some_and(|e| e.active)
+            || s.placement.is_some()
     })
 }
 /// When a block was last aimed at by a task (placing, opening, using).
@@ -1076,9 +1077,30 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
             return None;
         }
     }
-    // The middle first, then the top and the four sides: a chest behind a bed of crops has a
-    // clear line only to some of them.
+    // Where the block really is first (a door's panel stands at one side of its cell, a gate's
+    // bar across its middle), then the middle, the top and the four sides: a chest behind a bed
+    // of crops has a clear line only to some of them.
+    let shape = {
+        let facts = game
+            .res
+            .facts()
+            .get(game.world.block(pos[0], pos[1], pos[2]));
+        let boxes = &facts.outline;
+        if boxes.is_empty() {
+            [0.5, 0.5, 0.5]
+        } else {
+            let n = boxes.len() as f64;
+            let mut c = [0.0; 3];
+            for b in boxes.iter() {
+                for i in 0..3 {
+                    c[i] += (b[i] + b[i + 3]) / 2.0 / n;
+                }
+            }
+            c
+        }
+    };
     for [x, y, z] in [
+        shape,
         [0.5, 0.5, 0.5],
         [0.5, 0.9, 0.5],
         [0.15, 0.5, 0.5],
@@ -1310,7 +1332,9 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         let middle = nav::center(placement.target);
         let middle = [middle[0], middle[1] + 0.5, middle[2]];
         let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
-        if nav::angle_between(game.yaw, yaw).abs() > 12.0 || (game.pitch - pitch).abs() > 12.0 {
+        // Only a big turn is made gradually: near the block the exact aim at a face takes over
+        // (going back to the middle every tick made the head spin).
+        if nav::angle_between(game.yaw, yaw).abs() > 35.0 || (game.pitch - pitch).abs() > 35.0 {
             note_aim();
             game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
             game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);

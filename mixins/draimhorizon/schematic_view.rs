@@ -464,6 +464,70 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         );
     }
 }
+/// The editor's buttons on the selected preview of this world.
+pub(super) fn edit_active(
+    game: &mut Game<'_>,
+    edit: crate::game::claim_borders_menu::SchematicEdit,
+) -> Result<(), String> {
+    use crate::game::claim_borders_menu::SchematicEdit as E;
+    let scope = here(game).ok_or("Join a world first")?;
+    let feet = game.native_player().map(|p| {
+        nav::standing_block(
+            [p.x, p.y, p.z],
+            &game.native_block(nav::block([p.x, p.y, p.z])),
+        )
+    });
+    let mut look = None;
+    with_places(game, |p| {
+        let index = p
+            .active
+            .filter(|i| p.list.get(*i).is_some_and(|pl| pl.scope == scope))
+            .ok_or_else(|| {
+                text(
+                    "Сначала поставьте или выберите предпоказ",
+                    "Place or select a preview first",
+                )
+                .to_owned()
+            })?;
+        match edit {
+            E::Move(d) => {
+                let pl = &mut p.list[index];
+                pl.origin = [
+                    pl.origin[0] + d[0],
+                    pl.origin[1] + d[1],
+                    pl.origin[2] + d[2],
+                ];
+                pl.visible = true;
+            }
+            E::Rotate => {
+                let pl = &mut p.list[index];
+                pl.rotation = (pl.rotation + 1) % 4;
+                pl.visible = true;
+            }
+            E::Here => {
+                if let Some(feet) = feet {
+                    p.list[index].origin = feet;
+                    p.list[index].visible = true;
+                }
+            }
+            E::Toggle => p.list[index].visible = !p.list[index].visible,
+            E::Remove => {
+                p.list.remove(index);
+                p.active = None;
+            }
+            E::Look => look = Some(p.list[index].origin),
+            E::Build => {}
+        }
+        save(game, p);
+        Ok::<(), String>(())
+    })?;
+    if let (Some(at), Some(eye)) = (look, game.eye_position()) {
+        let middle = nav::center(at);
+        game.yaw = nav::yaw_to(eye, middle);
+        game.pitch = nav::pitch_to(eye, middle);
+    }
+    Ok(())
+}
 /// The selected preview's file, origin and turn, for the builder.
 pub(super) fn build_target(game: &Game<'_>) -> Option<(String, places::Pos, u8)> {
     active(game).map(|p| (p.file, p.origin, p.rotation))

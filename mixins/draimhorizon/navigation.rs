@@ -99,9 +99,9 @@ pub const NEAR: Reach = Reach {
     millis: 80,
 };
 pub const WIDE: Reach = Reach {
-    radius: 96,
-    nodes: 150_000,
-    millis: 700,
+    radius: 160,
+    nodes: 400_000,
+    millis: 1500,
 };
 /// Whether a walk from `start` to `goal` needs the wide search: far off, or at another height.
 pub fn wide_needed(start: Pos, goal: Pos) -> bool {
@@ -396,7 +396,7 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
 }
 
 /// How far a leg of a far walk goes, and the shorter reach tried when the long one has no way.
-pub const LEG_REACH: [f64; 2] = [72.0, 36.0];
+pub const LEG_REACH: [f64; 2] = [140.0, 60.0];
 /// How many directions a leg is tried in: straight at the goal, then turned to either side.
 const LEG_TURNS: [f64; 7] = [0.0, 35.0, -35.0, 70.0, -70.0, 110.0, -110.0];
 /// How many different ends of a leg there are to try.
@@ -467,6 +467,15 @@ fn current_drop_limit() -> i32 {
 }
 /// What each block of a drop beyond `MAX_DROP` costs a route: a long detour is taken first.
 const FAR_DROP_COST: i32 = 40;
+/// The place to walk to for a goal given as a block: the goal itself when it can be stood in,
+/// otherwise the nearest place to stand in its column, up to three blocks up or down (a goal
+/// typed as the block under the feet, a waypoint saved on the ground). `None` when there is none.
+pub fn standing_goal(goal: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> Option<Pos> {
+    [0, 1, -1, 2, -2, 3, -3]
+        .into_iter()
+        .map(|d| [goal[0], goal[1] + d, goal[2]])
+        .find(|at| standable(*at, cell))
+}
 /// Where to plan from when the player does not stand on firm ground by the planner's rule: on
 /// an edge with the middle over a gap, on a low block, in the air after a jump or a fall. The
 /// cell itself, one up, then down to the drop limit, then the neighbours; `None` when there is
@@ -493,6 +502,14 @@ pub fn traversable(from: Pos, to: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bo
         return false;
     }
     let door = |c: Cell| c == Cell::Door;
+    // Hanging vines (a climbable cell with nothing firm under it) are climbed up or down, not
+    // walked along from one to the next over a drop.
+    let hanging = |at: Pos, cell: &mut dyn FnMut(Pos) -> Cell| {
+        cell(at) == Cell::Climb && cell([at[0], at[1] - 1, at[2]]) != Cell::Solid
+    };
+    if (dx != 0 || dz != 0) && hanging(from, cell) && hanging(to, cell) {
+        return false;
+    }
     let column_open = |cell: &mut dyn FnMut(Pos) -> Cell| {
         // Stepping off an edge: the whole column down to the landing is open.
         dy >= 0 || (to[1] + 1..=from[1] + 1).all(|y| open(cell([to[0], y, to[2]])))
@@ -839,6 +856,10 @@ pub fn search_near_drop(
         return None;
     }
     let reach = current_reach();
+    // How far up or down the search goes: sixteen blocks around a goal on the same level; for a
+    // goal farther up or down (a cave far below, a tower) the whole height between the two and
+    // more, with no fixed limit (the world's height bounds it).
+    let vertical = ((goal[1] - start[1]).abs() + 16).max(16);
     // Long drops cost as much as a long way round; glided ones (elytra) much less.
     let drop_cost = if max_drop > FAR_DROP {
         6
@@ -874,8 +895,8 @@ pub fn search_near_drop(
             if dy < -max_drop
                 || (next[0] - start[0]).abs() > reach.radius
                 || (next[2] - start[2]).abs() > reach.radius
-                || next[1] - start[1] > 16
-                || start[1] - next[1] > 16.max(max_drop)
+                || next[1] - start[1] > vertical
+                || start[1] - next[1] > vertical.max(max_drop)
                 || !traversable(at, next, &mut cell)
             {
                 continue;
@@ -1599,15 +1620,15 @@ mod tests {
     fn a_leg_tries_the_straight_line_then_turns_aside_then_goes_shorter() {
         let (from, goal) = ([0.0, 64.0, 0.0], [800.0, 64.0, 0.0]);
         let straight = leg_target(from, goal, 0).unwrap();
-        assert!((straight[0] - 72.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
+        assert!((straight[0] - 140.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
         // Turned 35 degrees to either side, at the same reach.
         let left = leg_target(from, goal, 1).unwrap();
         let right = leg_target(from, goal, 2).unwrap();
         assert!(left[2] > 1.0 && right[2] < -1.0);
-        assert!((nav_len(left) - 72.0).abs() < 1e-9 && (nav_len(right) - 72.0).abs() < 1e-9);
+        assert!((nav_len(left) - 140.0).abs() < 1e-9 && (nav_len(right) - 140.0).abs() < 1e-9);
         // The shorter reach comes after all the turns at the long one.
         let shorter = leg_target(from, goal, 7).unwrap();
-        assert!((shorter[0] - 36.0).abs() < 1e-9);
+        assert!((shorter[0] - 60.0).abs() < 1e-9);
         assert!(leg_target(from, goal, LEG_TRIES).is_none());
         // Standing on the goal there is no direction.
         assert!(leg_target(goal, goal, 0).is_none());
@@ -1935,6 +1956,63 @@ mod tests {
                 .complete
         );
         set_drop_limit(MAX_DROP);
+    }
+    #[test]
+    fn a_goal_typed_as_the_ground_block_is_stood_on_and_far_levels_are_searched() {
+        // The block under the feet (y = -1) given as the goal: stand on it.
+        assert_eq!(standing_goal([3, -1, 0], &mut flat), Some([3, 0, 0]));
+        assert_eq!(standing_goal([3, 0, 0], &mut flat), Some([3, 0, 0]));
+        // A head-high goal comes down to the feet.
+        assert_eq!(standing_goal([3, 1, 0], &mut flat), Some([3, 0, 0]));
+        assert_eq!(standing_goal([3, 40, 0], &mut flat), None);
+        // A goal thirty blocks down a staircase is found (the search reaches that far down).
+        let stairs = |p: Pos| {
+            if p[1] < -p[0].clamp(0, 30) || p[1] < -40 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        set_reach(WIDE);
+        let path = search([0, 0, 0], [30, -30, 0], stairs, || false).unwrap();
+        set_reach(NEAR);
+        assert!(path.complete);
+    }
+    #[test]
+    fn a_fence_gate_in_a_fenced_tunnel_is_the_way_through() {
+        // A tunnel two blocks high (x from -6 to 6, z from -1 to 1), fenced across at x = 2 with a
+        // gate in the middle.
+        let tunnel = |p: Pos| {
+            if p[1] < 0 || p[1] >= 2 || p[2].abs() > 1 {
+                Cell::Solid
+            } else if p[0] == 2 && p[1] == 0 {
+                if p[2] == 0 { Cell::Door } else { Cell::Blocked }
+            } else if p[0] == 2 && p[1] == 1 {
+                Cell::Air
+            } else {
+                Cell::Air
+            }
+        };
+        let path = search([0, 0, 0], [5, 0, 1], tunnel, || false).unwrap();
+        assert!(path.complete, "{:?}", path.nodes);
+        assert!(path.nodes.contains(&[2, 0, 0]));
+    }
+    #[test]
+    fn hanging_vines_are_climbed_not_walked_along() {
+        // Vines hanging at x = 1..=3 over a gap, nothing under them.
+        let jungle = |p: Pos| {
+            if (1..=3).contains(&p[0]) && p[1] >= 0 && p[1] <= 4 && p[2] == 0 {
+                Cell::Climb
+            } else if p[1] < 0 && !(1..=3).contains(&p[0]) {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        assert!(!traversable([1, 2, 0], [2, 2, 0], &mut { jungle }));
+        // Stepping into one from firm ground, or climbing it, is fine.
+        assert!(traversable([0, 0, 0], [1, 0, 0], &mut { jungle }));
+        assert!(traversable([1, 0, 0], [1, 1, 0], &mut { jungle }));
     }
     #[test]
     fn snow_layers_are_walked_over_or_stood_on_by_their_height() {

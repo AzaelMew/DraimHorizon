@@ -1435,9 +1435,10 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
 }
 pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
     // Mouse buttons pressed behind a screen (clicks in the inventory) are not the player taking
-    // the wheel.
+    // the wheel, nor are the use presses of a task (a door, a potion).
     let grace = input_grace() || !game.native_playing();
-    if (physical || game.right) && !grace {
+    let right = state(|s| s.use_restore).unwrap_or(game.right);
+    if (physical || right) && !grace {
         crate::game::claim_borders_workshop_view::pause();
         crate::game::claim_borders_construction_view::pause();
     }
@@ -1445,7 +1446,7 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         return physical;
     };
     state(|s| {
-        if (physical || game.right) && !grace {
+        if (physical || right) && !grace {
             cancel_pending(s);
             pause_state(s);
             return physical;
@@ -1892,7 +1893,9 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     if auto_eat(game) || auto_drink(game) {
         return;
     }
-    let physical = game.left;
+    // The buttons the player really holds: a task's own presses this tick (breaking a shulker
+    // box, a click on a door) are not the player taking over, which pauses mining.
+    let physical = state(|s| s.attack_restore).unwrap_or(game.left);
     let attack = match pillar_frame(game) {
         Some(attack) => attack,
         None => mining_attack(game, physical),
@@ -1990,8 +1993,8 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         &game.native_block(model::block([player.x, player.y, player.z])),
     );
     let wide = model::wide_needed(start, goal);
-    // The chunks the search may read: six around for the wide one (96 blocks), two otherwise.
-    let span = if wide { 6 } else { 2 };
+    // The chunks the search may read: ten around for the wide one (160 blocks), two otherwise.
+    let span = if wide { 10 } else { 2 };
     let chunks = (-span..=span)
         .flat_map(|z| (-span..=span).map(move |x| (center.0 + x, center.1 + z)))
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
@@ -2087,6 +2090,9 @@ pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Resul
     }
     result
 }
+fn follow_request(goal: Goal) -> bool {
+    matches!(goal, Goal::Follow(_))
+}
 fn start_task(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
     drop_assist();
     assist_reset_budget();
@@ -2153,6 +2159,13 @@ fn start_task(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), 
                 })?;
             model::block(waypoint.position)
         }
+    };
+    // A goal given as a block (the ground under the feet, a waypoint saved on it) is walked to
+    // where one stands at it: in its column, up to three blocks up or down.
+    let goal = if follow_request(goal_request) {
+        goal
+    } else {
+        model::standing_goal(goal, &mut |at| live_cell(game, at)).unwrap_or(goal)
     };
     if goal[0].unsigned_abs() > 29_999_984
         || goal[2].unsigned_abs() > 29_999_984
@@ -3217,9 +3230,18 @@ fn face(game: &mut Game<'_>) {
     let Some((yaw, pitch, since)) = wish else {
         return;
     };
+    // The miner aims at its block itself: the walk's look must not turn the head then (the
+    // miner takes a turn it did not make for the player's mouse, and pauses).
+    let mining_at_block = state(|s| {
+        s.mine_aim.is_some()
+            || s.mining
+                .as_ref()
+                .is_some_and(|j| j.active && j.phase != mining::Phase::Approaching)
+    });
     if since.elapsed() > Duration::from_millis(250)
         || placement::aiming()
         || placement::aimed_recently()
+        || mining_at_block
         || !human_look_enabled(game)
     {
         return;
@@ -3245,6 +3267,16 @@ static LOOK: Mutex<Look> = Mutex::new(Look {
 });
 /// How long the camera stays the player's after the mouse last moved.
 const MOUSE_LEND: Duration = Duration::from_secs(3);
+/// Whether the walker's look turns the head now: the switch is on and the mouse does not have
+/// the camera.
+fn look_active(game: &Game<'_>) -> bool {
+    human_look_enabled(game)
+        && LOOK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .mouse_until
+            .is_none()
+}
 /// "Human look" is on unless the player switched it off (Experiments → Helpers).
 pub(super) fn human_look_enabled(game: &Game<'_>) -> bool {
     game.native_setting(claims::SETTINGS_ID, "human_look")
@@ -3293,6 +3325,37 @@ static DOORS: Mutex<Doors> = Mutex::new(Doors {
 fn closed_door(game: &Game<'_>, at: model::Pos) -> bool {
     model::openable(&game.native_block(at))
         && game.native_block_property(at, "open").as_deref() == Some("false")
+}
+fn unblock_by_door(game: &Game<'_>, position: [f64; 3]) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let blocked = state(|s| {
+        s.nav.goal.is_some() && matches!(s.nav.status, model::Status::NoPath | model::Status::Stuck)
+    });
+    if !blocked {
+        return;
+    }
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+        return;
+    }
+    let feet = model::standing_block(position, &game.native_block(model::block(position)));
+    let door = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .into_iter()
+        .flat_map(|[dx, dz]| (0..=1).map(move |y| [feet[0] + dx, feet[1] + y, feet[2] + dz]))
+        .chain([
+            [feet[0], feet[1] - 1, feet[2]],
+            [feet[0], feet[1] + 1, feet[2]],
+        ])
+        .find(|at| closed_door(game, *at));
+    let Some(door) = door else {
+        return;
+    };
+    *last = Some(Instant::now());
+    crate::game::claim_borders_construction_view::open_container(door);
+    state(|s| {
+        s.nav.running = true;
+        s.nav.replan();
+    });
 }
 /// The walk is over or waits: a door being opened that is open now counts as opened (to be
 /// closed behind), and those left behind are closed.
@@ -3370,22 +3433,24 @@ fn door_step(
     // closed it, a trapdoor under the feet over a ladder): whatever closed door, gate or
     // trapdoor is under the feet, at them, or one step toward the next point is opened.
     let wanted = wanted.or_else(|| {
-        if stalled < 6 {
-            return None;
-        }
         let feet = model::standing_block(position, &game.native_block(model::block(position)));
         let toward = path.get(next).map_or([0, 0], |n| {
             [(n[0] - feet[0]).signum(), (n[2] - feet[2]).signum()]
         });
-        let below_next = path.get(next).is_some_and(|n| n[1] < feet[1]);
+        // Right in front, the way the walk goes (each axis of a corner too): always.
         let mut cells = vec![
             [feet[0] + toward[0], feet[1], feet[2] + toward[1]],
             [feet[0] + toward[0], feet[1] + 1, feet[2] + toward[1]],
-            [feet[0], feet[1] + 1, feet[2]],
-            feet,
+            [feet[0] + toward[0], feet[1], feet[2]],
+            [feet[0], feet[1], feet[2] + toward[1]],
         ];
-        if below_next {
-            cells.insert(0, [feet[0], feet[1] - 1, feet[2]]);
+        // At the feet, the head or under them: once held up for a moment.
+        if stalled >= 3 {
+            if path.get(next).is_some_and(|n| n[1] < feet[1]) {
+                cells.push([feet[0], feet[1] - 1, feet[2]]);
+            }
+            cells.push([feet[0], feet[1] + 1, feet[2]]);
+            cells.push(feet);
         }
         cells.into_iter().find(|at| closed_door(game, *at))
     });
@@ -3623,6 +3688,9 @@ pub(super) fn movement(
     if !state(|s| s.nav.running && s.nav.status == model::Status::Walking) {
         settle_doors(game, position);
     }
+    // No way found or stuck, with a shut door, gate or trapdoor right beside: open it and plan
+    // again (the planner may not have known it can be opened from here).
+    unblock_by_door(game, position);
     // A column being built under the miner (or taken down): stand still, jump to climb.
     if let Some(climb) = pillar_controls() {
         if (*forward != 0.0 || *strafe != 0.0 || *sneak) && !input_grace() {
@@ -3648,7 +3716,9 @@ pub(super) fn movement(
             return;
         }
         s.nav.climbing = live_cell(game, model::block(position)) == model::Cell::Climb;
-        s.nav.human = true;
+        // Turning round before walking back only when the head is really turned (human look on
+        // and the camera not lent to the mouse); otherwise the walker steps back as before.
+        s.nav.human = look_active(game);
         let mut input = s.nav.input(position, p.yaw, body.ground.on_ground);
         // Look where the walk goes: a few blocks ahead, a little down, as a person walks.
         if let Some(look) = s.nav.look_point(position) {
