@@ -119,6 +119,26 @@ pub enum TranslationField {
     ChatSource,
 }
 impl TranslationField {
+    pub fn hint(self, ui: Language) -> &'static str {
+        match self {
+            Self::Input => ui.text(
+                "Язык текста, который вы пишете. Можно определять автоматически.",
+                "The language you type in. Can be detected automatically.",
+            ),
+            Self::Output => ui.text(
+                "На этот язык переводятся ваши отправляемые сообщения.",
+                "Your outgoing messages are translated into this language.",
+            ),
+            Self::Received => ui.text(
+                "На этот язык переводятся входящие сообщения.",
+                "Incoming messages are translated into this language.",
+            ),
+            Self::ChatSource => ui.text(
+                "Исходный язык входящих сообщений. Обычно лучше выбрать автоопределение.",
+                "The original language of incoming messages. Auto detect is usually best.",
+            ),
+        }
+    }
     /// Choices that may be left on provider auto-detection.
     pub fn allows_auto(self) -> bool {
         matches!(self, Self::Input | Self::ChatSource)
@@ -153,6 +173,35 @@ pub struct TranslationScreen {
     pub field: TranslationField,
     pub page: usize,
 }
+/// Text drawn around the controls: the panel, group headings and the arrows between the
+/// language a message is written in and the language it is shown in.
+pub struct TranslationChrome {
+    pub panel: [f32; 4],
+    pub compact: bool,
+    pub headings: Vec<([f32; 2], String)>,
+    pub arrows: Vec<[f32; 4]>,
+}
+/// Shared geometry for layout, drawing and hit-testing.
+struct Plan {
+    panel: [f32; 4],
+    compact: bool,
+    fields: [[f32; 4]; 4],
+    groups: [[f32; 2]; 3],
+    arrows: [[f32; 4]; 2],
+    grid: [f32; 2],
+    width: f32,
+    columns: usize,
+    rows: usize,
+    common: [f32; 4],
+    pager: Option<f32>,
+    footer: f32,
+}
+const FIELDS: [TranslationField; 4] = [
+    TranslationField::Input,
+    TranslationField::Output,
+    TranslationField::ChatSource,
+    TranslationField::Received,
+];
 impl TranslationScreen {
     pub fn new(draft: TranslationTargets) -> Self {
         Self {
@@ -161,12 +210,121 @@ impl TranslationScreen {
             page: 0,
         }
     }
-    fn capacity(size: [f32; 2]) -> usize {
-        let columns = if size[0] < 420.0 { 2 } else { 3 };
-        ((size[1] - 132.0).max(22.0) / 22.0).floor() as usize * columns
+    fn choices(&self) -> usize {
+        TargetLanguage::COMMON.len() + usize::from(self.field.allows_auto())
+    }
+    fn plan(&self, size: [f32; 2]) -> Plan {
+        let width = (size[0] - 16.0).clamp(1.0, 520.0);
+        let x = (size[0] - width) * 0.5;
+        let compact = size[1] < 300.0;
+        let wide = width >= 400.0;
+        let columns = if width >= 360.0 { 3 } else { 2 };
+        let inner = width - 24.0;
+        let header = if compact { 24.0 } else { 44.0 };
+        // Field cards: your messages (written in -> sent in), then chat (from -> shown in).
+        let card_h = if compact { 26.0 } else { 32.0 };
+        let heading = if compact { 0.0 } else { 14.0 };
+        let groups_h = if wide || compact && width >= 300.0 {
+            heading + card_h
+        } else {
+            2.0 * (heading + card_h) + 6.0
+        };
+        let grid_heading = if compact { 0.0 } else { 16.0 };
+        let fixed = header + groups_h + 10.0 + grid_heading + 26.0 + 30.0 + 10.0;
+        let needed = self.choices().div_ceil(columns);
+        let room =
+            |extra: f32| ((size[1] - 16.0 - fixed - extra).max(22.0) / 22.0).floor() as usize;
+        let (rows, paged) = if room(0.0) >= needed {
+            (needed, false)
+        } else {
+            (room(26.0).max(1), true)
+        };
+        let height = fixed + rows as f32 * 22.0 + if paged { 26.0 } else { 0.0 };
+        let y = ((size[1] - height) * 0.5).max(4.0);
+        let left = x + 12.0;
+        let mut top = y + header;
+        let mut fields = [[0.0; 4]; 4];
+        let mut groups = [[0.0; 2]; 3];
+        let mut arrows = [[0.0; 4]; 2];
+        let gap = 18.0;
+        if wide || compact && width >= 300.0 {
+            // Two groups side by side, each "from -> to".
+            let group_w = (inner - 12.0) * 0.5;
+            let card_w = (group_w - gap) * 0.5;
+            for g in 0..2 {
+                let gx = left + g as f32 * (group_w + 12.0);
+                groups[g] = [gx, top];
+                for c in 0..2 {
+                    fields[g * 2 + c] = [
+                        gx + c as f32 * (card_w + gap),
+                        top + heading,
+                        card_w,
+                        card_h,
+                    ];
+                }
+                arrows[g] = [
+                    gx + card_w + 4.0,
+                    top + heading + (card_h - 10.0) * 0.5,
+                    10.0,
+                    10.0,
+                ];
+            }
+            top += heading + card_h;
+        } else {
+            let card_w = (inner - gap) * 0.5;
+            for g in 0..2 {
+                groups[g] = [left, top];
+                for c in 0..2 {
+                    fields[g * 2 + c] = [
+                        left + c as f32 * (card_w + gap),
+                        top + heading,
+                        card_w,
+                        card_h,
+                    ];
+                }
+                arrows[g] = [
+                    left + card_w + 4.0,
+                    top + heading + (card_h - 10.0) * 0.5,
+                    10.0,
+                    10.0,
+                ];
+                top += heading + card_h + 6.0;
+            }
+            top -= 6.0;
+        }
+        top += 10.0;
+        groups[2] = [left, top];
+        top += grid_heading;
+        let grid = [left, top];
+        top += rows as f32 * 22.0 + 4.0;
+        let pager = paged.then(|| {
+            let at = top;
+            top += 26.0;
+            at
+        });
+        let common = [left, top, inner, 20.0];
+        top += 26.0;
+        Plan {
+            panel: [x, y, width, height],
+            compact,
+            fields,
+            groups,
+            arrows,
+            grid,
+            width: inner,
+            columns,
+            rows,
+            common,
+            pager,
+            footer: top,
+        }
+    }
+    fn capacity(&self, size: [f32; 2]) -> usize {
+        let plan = self.plan(size);
+        plan.rows * plan.columns
     }
     pub fn pages(&self, size: [f32; 2]) -> usize {
-        (20_usize + usize::from(self.field.allows_auto())).div_ceil(Self::capacity(size))
+        self.choices().div_ceil(self.capacity(size)).max(1)
     }
     pub fn apply(&mut self, control: TranslationControl, size: [f32; 2]) {
         match control {
@@ -205,9 +363,48 @@ impl TranslationScreen {
             })
             .map(|w| w.control)
     }
+    fn field_label(field: TranslationField, ui: Language) -> &'static str {
+        match field {
+            TranslationField::Input => ui.text("Пишу на", "I write in"),
+            TranslationField::Output => ui.text("Отправлять на", "Send as"),
+            TranslationField::ChatSource => ui.text("Чат на", "Chat is in"),
+            TranslationField::Received => ui.text("Показывать на", "Show as"),
+        }
+    }
+    pub fn chrome(&self, size: [f32; 2], ui: Language) -> TranslationChrome {
+        let plan = self.plan(size);
+        let mut headings = Vec::new();
+        if !plan.compact {
+            headings.push((
+                plan.groups[0],
+                ui.text("Мои сообщения", "My messages").to_owned(),
+            ));
+            headings.push((
+                plan.groups[1],
+                ui.text("Сообщения чата", "Chat messages").to_owned(),
+            ));
+            headings.push((
+                plan.groups[2],
+                match ui {
+                    Language::Russian => format!(
+                        "Выберите язык: {}",
+                        Self::field_label(self.field, ui).to_lowercase()
+                    ),
+                    Language::English => {
+                        format!("Choose a language: {}", Self::field_label(self.field, ui))
+                    }
+                },
+            ));
+        }
+        TranslationChrome {
+            panel: plan.panel,
+            compact: plan.compact,
+            headings,
+            arrows: plan.arrows.to_vec(),
+        }
+    }
     pub fn layout(&self, size: [f32; 2], ui: Language) -> Vec<TranslationWidget> {
-        let width = (size[0] - 16.0).min(620.0);
-        let x = (size[0] - width) * 0.5;
+        let plan = self.plan(size);
         let mut widgets = Vec::new();
         let mut add = |rect, text: String, selected, control| {
             widgets.push(TranslationWidget {
@@ -217,53 +414,24 @@ impl TranslationScreen {
                 control,
             })
         };
-        for (i, field) in [
-            TranslationField::Input,
-            TranslationField::Output,
-            TranslationField::Received,
-            TranslationField::ChatSource,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let (label, language) = match field {
-                TranslationField::Input => (ui.text("Ввод", "Input"), self.draft.input),
-                TranslationField::Output => {
-                    (ui.text("Отправка", "Output"), Some(self.draft.outgoing))
-                }
-                TranslationField::Received => {
-                    (ui.text("Чат на", "Chat into"), Some(self.draft.incoming))
-                }
-                TranslationField::ChatSource => {
-                    (ui.text("Чат с", "Chat from"), self.draft.chat_source)
-                }
+        for (field, rect) in FIELDS.into_iter().zip(plan.fields) {
+            let language = match field {
+                TranslationField::Input => self.draft.input,
+                TranslationField::Output => Some(self.draft.outgoing),
+                TranslationField::Received => Some(self.draft.incoming),
+                TranslationField::ChatSource => self.draft.chat_source,
             };
             add(
-                [
-                    x + i as f32 * (width + 4.0) / 4.0,
-                    34.0,
-                    (width - 12.0) / 4.0,
-                    30.0,
-                ],
+                rect,
                 format!(
-                    "{label}\n{}",
+                    "{}\n{}",
+                    Self::field_label(field, ui),
                     language.map_or(ui.text("Авто", "Auto detect"), |l| l.name(ui))
                 ),
                 self.field == field,
                 TranslationControl::Field(field),
             );
         }
-        add(
-            [x, 70.0, width, 18.0],
-            ui.text(
-                "Автоперевод: только 20 основных языков",
-                "Auto-translate: common languages only",
-            )
-            .into(),
-            self.draft.common_only,
-            TranslationControl::CommonOnly,
-        );
-        let columns = if size[0] < 420.0 { 2 } else { 3 };
         let languages: Vec<_> = std::iter::once(None)
             .filter(|_| self.field.allows_auto())
             .chain(TargetLanguage::COMMON.into_iter().map(Some))
@@ -274,18 +442,21 @@ impl TranslationScreen {
             TranslationField::Received => Some(self.draft.incoming),
             TranslationField::ChatSource => self.draft.chat_source,
         };
+        let capacity = plan.rows * plan.columns;
+        let pages = languages.len().div_ceil(capacity).max(1);
+        let page = self.page.min(pages - 1);
+        let column_w = (plan.width - 4.0 * (plan.columns - 1) as f32) / plan.columns as f32;
         for (i, lang) in languages
             .into_iter()
-            .skip(self.page.min(self.pages(size) - 1) * Self::capacity(size))
-            .take(Self::capacity(size))
+            .skip(page * capacity)
+            .take(capacity)
             .enumerate()
         {
-            let colwidth = (width - 4.0 * (columns - 1) as f32) / columns as f32;
             add(
                 [
-                    x + (i % columns) as f32 * (colwidth + 4.0),
-                    96.0 + (i / columns) as f32 * 22.0,
-                    colwidth,
+                    plan.grid[0] + (i % plan.columns) as f32 * (column_w + 4.0),
+                    plan.grid[1] + (i / plan.columns) as f32 * 22.0,
+                    column_w,
                     20.0,
                 ],
                 lang.map_or(ui.text("Автоопределение", "Auto detect"), |l| l.name(ui))
@@ -294,36 +465,62 @@ impl TranslationScreen {
                 TranslationControl::Choose(lang),
             );
         }
-        let y = size[1] - 28.0;
+        let [left, _, inner, _] = plan.common;
+        if let Some(y) = plan.pager {
+            add(
+                [left, y, 30.0, 20.0],
+                "<".into(),
+                false,
+                TranslationControl::Previous,
+            );
+            add(
+                [left + inner - 30.0, y, 30.0, 20.0],
+                ">".into(),
+                false,
+                TranslationControl::Next,
+            );
+        }
         add(
-            [x, y, 24.0, 20.0],
-            "<".into(),
-            false,
-            TranslationControl::Previous,
-        );
-        add(
-            [x + 28.0, y, 44.0, 20.0],
+            plan.common,
             format!(
-                "{}/{} >",
-                self.page.min(self.pages(size) - 1) + 1,
-                self.pages(size)
+                "{}: {}",
+                ui.text(
+                    "Переводить чат только с основных языков",
+                    "Translate chat only from common languages"
+                ),
+                if self.draft.common_only {
+                    ui.text("вкл.", "on")
+                } else {
+                    ui.text("выкл.", "off")
+                }
             ),
             false,
-            TranslationControl::Next,
+            TranslationControl::CommonOnly,
         );
+        let half = (inner - 6.0) * 0.5;
         add(
-            [x + width - 166.0, y, 80.0, 20.0],
+            [left, plan.footer, half, 22.0],
             ui.text("Отмена", "Cancel").into(),
             false,
             TranslationControl::Cancel,
         );
         add(
-            [x + width - 80.0, y, 80.0, 20.0],
+            [left + half + 6.0, plan.footer, half, 22.0],
             ui.text("Сохранить", "Save").into(),
-            true,
+            false,
             TranslationControl::Save,
         );
         widgets
+    }
+    /// The page indicator between the paging arrows, when the list does not fit.
+    pub fn page_label(&self, size: [f32; 2]) -> Option<([f32; 4], String)> {
+        let plan = self.plan(size);
+        let y = plan.pager?;
+        let pages = self.pages(size);
+        Some((
+            [plan.common[0] + 34.0, y, plan.common[2] - 68.0, 20.0],
+            format!("{} / {}", self.page.min(pages - 1) + 1, pages),
+        ))
     }
 }
 #[derive(Clone, Debug)]

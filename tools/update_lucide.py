@@ -22,7 +22,7 @@ ICONS = dict(Warning="triangle-exclamation-point", Search="search", Portal="door
              Wallet="wallet", Clock="clock", Signal="wifi", Eye="eye", Home="house",
              Grid="grid-2x2", Layers="layers", Chart="chart-no-axes-combined",
              Info="info", Shield="shield", Save="save", Gauge="gauge", Activity="activity",
-             Coins="coins")
+             Coins="coins", Skull="skull", Locate="locate-fixed")
 
 
 def download(path):
@@ -53,7 +53,8 @@ def main():
     target = ROOT / "mixins/draimhorizon/ui_style.rs"
     source = target.read_text(encoding="utf-8")
     start = source.index("/// Original outline icons") if "/// Original outline icons" in source else source.index("/// Lucide icons")
-    end = source.index("pub fn icon_for", start)
+    # Replace only the generated function; helpers may follow it before icon_for.
+    end = source.index("\n}\n", source.index("pub fn strokes", start)) + 3
     generated = f"/// Lucide icons ({REVISION}), ISC license in notices/LICENSE-lucide.\n"
     generated += "/// Official 24px SVG curves flattened onto the native 12px stroke grid.\n"
     generated += '#[allow(clippy::approx_constant, reason = "flattened official SVG coordinates")]\n'

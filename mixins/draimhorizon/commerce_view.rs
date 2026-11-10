@@ -8,7 +8,7 @@ use crate::game::{
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{clipboard::Clipboard, hud::HudBatch};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     sync::{Mutex, OnceLock},
 };
 fn language() -> Language {
@@ -31,10 +31,29 @@ enum Hit {
     Server(scan::Button),
     Confirm,
     Cancel,
-    Page(i32),
+    /// One pager for cards and server pages: it turns the server page at either end.
+    Pager(i32),
     Search,
     Standard,
     Sort,
+    /// A lot of the catalogue, by its auction number.
+    Lot(u64),
+    /// A server command for a page the catalogue does not replace.
+    Command(&'static str),
+    /// Walk the auction again.
+    Refresh,
+    Buy,
+    /// The "ask before buying" switch inside the confirmation.
+    AskToggle,
+}
+/// A server page turn requested by the pager, applied when the server's window changes.
+#[derive(Clone, Copy)]
+enum Nav {
+    /// Forward from a page that had this many card pages.
+    Forward(usize),
+    Backward,
+    /// Anything else (a category, Back, a purchase): numbering starts again.
+    Other,
 }
 #[derive(Default)]
 struct State {
@@ -56,6 +75,32 @@ struct State {
     hover: Option<usize>,
     control_tip: Option<String>,
     modal_scroll: usize,
+    /// Card pages of the server pages already passed, for a continuous page number.
+    passed: Vec<usize>,
+    nav: Option<Nav>,
+    /// When the pending page turn was asked; an unanswered one expires.
+    nav_at: u64,
+    /// The pager as last drawn: card pages and the server's own page buttons.
+    pager: (usize, Option<scan::Button>, Option<scan::Button>),
+    /// The catalogue replaces the auction while it stays open from its home page.
+    catalog: bool,
+    catalog_page: usize,
+    catalog_pages: usize,
+    /// 0 = unit price, 1 = lot price, 2 = ending soonest, 3 = newest.
+    catalog_sort: u8,
+    /// The lot whose purchase waits for confirmation.
+    buy: Option<u64>,
+    /// A confirmed server command, sent on the next frame.
+    command: Option<String>,
+    /// Item stacks seen for each lot, for icons and the item tooltip.
+    stacks: HashMap<u64, horizon_client::items::ItemStack>,
+    hover_lot: Option<u64>,
+    /// Refresh asked from this window: walk again once a newer home page arrives.
+    refresh: Option<String>,
+    /// Close the window on the next frame.
+    close: bool,
+    /// Flip "ask before buying" on the next frame (it needs the game to save).
+    ask_toggle: bool,
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
@@ -111,7 +156,21 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
             Some(false)
         });
-        state(|s| s.icons = icons);
+        let lots = data::lot_stacks(game);
+        state(|s| {
+            if s.stacks.len() > 6000 {
+                s.stacks.clear();
+            }
+            s.stacks.extend(lots);
+            s.icons = icons;
+        });
+    }
+    if state(|s| std::mem::take(&mut s.close)) && game.screen == Screen::Inventory {
+        data::cancel_scan();
+        game.close_container();
+    }
+    if let Some(command) = state(|s| s.command.take()) {
+        game.send_unattended_command(&command);
     }
     let (action, copy, paste) =
         state(|s| (s.action.take(), s.copy.take(), std::mem::take(&mut s.paste)));
@@ -126,6 +185,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             } else {
                 s.query.insert(&v, 64);
                 s.page = 0;
+                s.catalog_page = 0;
             }
         });
     }
@@ -133,6 +193,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
         let ok = data::now().saturating_sub(p.at) <= 10_000
             && data::server_click(game, &p.token, &p.button, p.at);
         state(|s| {
+            if !ok {
+                s.nav = None;
+            }
             s.notice = if ok {
                 t("Запрос отправлен серверу", "Request sent to the server").into()
             } else {
@@ -149,7 +212,684 @@ pub(super) fn frame(game: &mut Game<'_>) {
             s.pending = None;
             s.focus = false;
             s.hits.clear();
+            s.catalog = false;
+            s.buy = None;
         });
+    }
+}
+/// The auction's start page, where the catalogue walk begins.
+fn auction_home(page: &scan::Page) -> bool {
+    page.family == scan::Kind::Auction
+        && page.buttons.iter().any(|b| {
+            b.slot == 10
+                && b.item == "minecraft:nether_star"
+                && (b.name.starts_with("All listings (") || b.name.starts_with("Все лоты ("))
+        })
+}
+/// Panel size: compact by default, larger on request for big screens.
+fn panel(batch: &HudBatch) -> [f32; 4] {
+    let (max_w, max_h) = if data::read(|_, p, _, _| p.flag("trade_large")) {
+        (900.0, 560.0)
+    } else {
+        (620.0, 360.0)
+    };
+    let w = (batch.width - 16.0).clamp(1.0, max_w);
+    let h = (batch.height - 16.0).clamp(1.0, max_h);
+    [(batch.width - w) * 0.5, (batch.height - h) * 0.5, w, h]
+}
+fn coins(value: economy::Coins) -> String {
+    if russian() {
+        format!("{} монет", economy::fmt(value))
+    } else if value == 100 {
+        "1 coin".into()
+    } else {
+        format!("{} coins", economy::fmt(value))
+    }
+}
+fn unit(l: &economy::Listing) -> String {
+    let value = l.cost as f64 / 100.0 / f64::from(l.count.max(1));
+    if russian() {
+        format!("{value:.2} / шт.")
+    } else {
+        format!("{value:.2} each")
+    }
+}
+fn time_left(l: &economy::Listing) -> String {
+    let secs = l.expires.saturating_sub(data::now()) / 1000;
+    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
+    let (dd, hh, mm) = if russian() {
+        ("д", "ч", "м")
+    } else {
+        ("d", "h", "m")
+    };
+    if secs == 0 {
+        t("истёк", "ended").into()
+    } else if d > 0 {
+        format!("{d}{dd} {h}{hh}")
+    } else if h > 0 {
+        format!("{h}{hh} {m}{mm}")
+    } else {
+        format!("{}{mm}", m.max(1))
+    }
+}
+fn lot_icon(
+    game: &Game<'_>,
+    s: &State,
+    l: &economy::Listing,
+) -> Option<horizon_client::items::ItemStack> {
+    let mut stack = match s.stacks.get(&l.id) {
+        Some(stack) => stack.clone(),
+        None if game.res.items().get(&l.item).is_some() => {
+            horizon_client::items::ItemStack::new(&l.item, 1)
+        }
+        None => return None,
+    };
+    stack.count = 1;
+    Some(stack)
+}
+fn lot_title(game: &Game<'_>, l: &economy::Listing) -> String {
+    let name = if l.label.trim().is_empty() {
+        crate::game::claim_borders_economy_view::item_label(game, &l.item)
+    } else {
+        l.label.clone()
+    };
+    format!("{name} ×{}", l.count)
+}
+/// The whole auction as one list: every lot found by the walk, searched and sorted locally,
+/// with one pager. Buying sends `/ah buy <number>` after a confirmation.
+fn render_catalog(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    s: &mut State,
+    screen: &crate::game::native_hooks::NativeScreenView<'_>,
+    rect: [f32; 4],
+) {
+    use crate::game::claim_borders_ui_style as style;
+    let [x, y, w, h] = rect;
+    let mouse = screen.mouse;
+    let accent = ui::preferences(game).accent.color();
+    s.hits.clear();
+    s.hover = None;
+    s.hover_lot = None;
+    s.control_tip = None;
+    let (mut lots, scanning, pages, finished, balance, caps) = data::read(|book, _, status, _| {
+        (
+            book.listings.values().cloned().collect::<Vec<_>>(),
+            status.catalog,
+            status.pages,
+            status.catalog_at,
+            book.balance.map(|(v, _)| v),
+            book.auction_watch.clone(),
+        )
+    });
+    let now = data::now();
+    lots.retain(|l| l.expires > now);
+    let total = lots.len();
+    lots.retain(|l| {
+        crate::game::claim_borders_input::matches(
+            &s.query.value,
+            &format!("{} {} {} #{}", l.label, l.item, l.seller, l.id),
+        )
+    });
+    let per_unit = |l: &economy::Listing| l.cost as f64 / f64::from(l.count.max(1));
+    match s.catalog_sort {
+        1 => lots.sort_by_key(|l| (l.cost, l.id)),
+        2 => lots.sort_by_key(|l| (l.expires, l.id)),
+        3 => lots.sort_by(|a, b| b.id.cmp(&a.id)),
+        _ => lots.sort_by(|a, b| per_unit(a).total_cmp(&per_unit(b)).then(a.id.cmp(&b.id))),
+    }
+    ui::rounded(
+        game,
+        batch,
+        [x - 3.0, y - 1.0, w + 6.0, h + 8.0],
+        10.0,
+        0x40000000,
+    );
+    ui::rounded(game, batch, rect, 8.0, 0xff000000 | style::BORDER);
+    ui::rounded(
+        game,
+        batch,
+        [x + 1.0, y + 1.0, w - 2.0, h - 2.0],
+        7.0,
+        0xf4000000 | style::BACKGROUND,
+    );
+    // Header: title, how much of the auction is loaded, balance and close.
+    ui::icon(
+        game,
+        batch,
+        ui::Icon::Market,
+        [x + 10.0, y + 9.0, 12.0, 12.0],
+        accent,
+    );
+    let title = t("Аукцион", "Auction");
+    ui::text(game, batch, title, [x + 28.0, y + 11.0], style::TEXT, false);
+    let status = if scanning {
+        if russian() {
+            format!("Загрузка · стр. {} · {total} лотов", pages.max(1))
+        } else {
+            format!("Loading · page {} · {total} lots", pages.max(1))
+        }
+    } else if finished > 0 {
+        let ago = now.saturating_sub(finished) / 1000;
+        if russian() {
+            format!("{total} лотов · обновлено {ago} с назад")
+        } else {
+            format!("{total} lots · updated {ago} s ago")
+        }
+    } else if russian() {
+        format!("{total} лотов · сохранённые данные")
+    } else {
+        format!("{total} lots · saved data")
+    };
+    let title_w = game.native_text_width(title);
+    let balance_text = balance.map(coins).unwrap_or_default();
+    let balance_w = game.native_text_width(&balance_text);
+    ui::text(
+        game,
+        batch,
+        &ui::clip(game, &status, (w - title_w - balance_w - 90.0).max(0.0)),
+        [x + 36.0 + title_w, y + 11.0],
+        if scanning { 0xf0d68a } else { style::MUTED },
+        false,
+    );
+    if !balance_text.is_empty() {
+        ui::rounded(
+            game,
+            batch,
+            [x + w - balance_w - 49.0, y + 6.0, balance_w + 14.0, 17.0],
+            8.0,
+            0x30f0d68a,
+        );
+        ui::text(
+            game,
+            batch,
+            &balance_text,
+            [x + w - balance_w - 42.0, y + 11.0],
+            0xf0d68a,
+            false,
+        );
+    }
+    let close = [x + w - 28.0, y + 5.0, 21.0, 19.0];
+    ui::button_base(game, batch, close, "", false, mouse);
+    ui::icon(
+        game,
+        batch,
+        ui::Icon::Close,
+        [close[0] + 6.0, close[1] + 5.0, 9.0, 9.0],
+        0xdfa8b5,
+    );
+    s.hits.push((close, Hit::Command("")));
+    // Toolbar: search, sort and the pages the catalogue does not replace.
+    let bar = y + 30.0;
+    let tools: [(Hit, ui::Icon, &str); 3] = [
+        (Hit::Refresh, ui::Icon::Refresh, t("Обновить", "Refresh")),
+        (
+            Hit::Command("ah mine"),
+            ui::Icon::Chest,
+            t("Мои лоты", "My listings"),
+        ),
+        (
+            Hit::Command("ah mail"),
+            ui::Icon::Restock,
+            t("Почта", "Mail"),
+        ),
+    ];
+    let labelled = w >= 520.0;
+    let tool_w = |label: &str| {
+        if labelled {
+            game.native_text_width(label) + 26.0
+        } else {
+            22.0
+        }
+    };
+    let sort_label = match s.catalog_sort {
+        1 => t("Цена лота", "Lot price"),
+        2 => t("Скоро конец", "Ending soon"),
+        3 => t("Новые", "Newest"),
+        _ => t("Цена за шт.", "Unit price"),
+    };
+    let sort_w = game.native_text_width(sort_label) + 30.0;
+    let mut right = x + w - 8.0;
+    for (hit, icon, label) in tools.into_iter().rev() {
+        let bw = tool_w(label);
+        right -= bw;
+        let r = [right, bar, bw, 18.0];
+        right -= 4.0;
+        ui::button_base(game, batch, r, label, false, mouse);
+        ui::icon(
+            game,
+            batch,
+            icon,
+            [r[0] + 6.0, r[1] + 4.0, 10.0, 10.0],
+            accent,
+        );
+        if labelled {
+            ui::text(
+                game,
+                batch,
+                label,
+                [r[0] + 20.0, r[1] + 5.0],
+                style::TEXT,
+                false,
+            );
+        } else if style::contains(r, mouse) {
+            s.control_tip = Some(label.into());
+        }
+        s.hits.push((r, hit));
+    }
+    right -= sort_w;
+    let sort = [right, bar, sort_w, 18.0];
+    ui::button_base(game, batch, sort, sort_label, false, mouse);
+    ui::icon(
+        game,
+        batch,
+        ui::Icon::Sort,
+        [sort[0] + 6.0, sort[1] + 4.0, 10.0, 10.0],
+        accent,
+    );
+    ui::text(
+        game,
+        batch,
+        sort_label,
+        [sort[0] + 20.0, sort[1] + 5.0],
+        style::TEXT,
+        false,
+    );
+    if style::contains(sort, mouse) {
+        s.control_tip = Some(t("Порядок сортировки", "Sort order").into());
+    }
+    s.hits.push((sort, Hit::Sort));
+    let query = [x + 8.0, bar, right - x - 12.0, 18.0];
+    let editing = s.focus || s.watch_edit.is_some();
+    ui::rounded(
+        game,
+        batch,
+        query,
+        4.0,
+        if editing { 0xff16303a } else { 0xff0e1620 },
+    );
+    if editing {
+        for edge in [
+            [query[0], query[1], query[2], 1.0],
+            [query[0], query[1] + query[3] - 1.0, query[2], 1.0],
+            [query[0], query[1], 1.0, query[3]],
+            [query[0] + query[2] - 1.0, query[1], 1.0, query[3]],
+        ] {
+            ui::fill(game, batch, edge, 0xff000000 | accent);
+        }
+    }
+    ui::icon(
+        game,
+        batch,
+        ui::Icon::Search,
+        [query[0] + 6.0, query[1] + 4.0, 10.0, 10.0],
+        if editing { accent } else { 0x8fa9bb },
+    );
+    let (caption, color) = if let Some((item, edit)) = &s.watch_edit {
+        let name = item.rsplit(':').next().unwrap_or(item);
+        (
+            if russian() {
+                format!("{name} · монет/шт. ≤ {}│", edit.value)
+            } else {
+                format!("{name} · coins/each ≤ {}│", edit.value)
+            },
+            style::TEXT,
+        )
+    } else if s.query.value.is_empty() && !s.focus {
+        (
+            t(
+                "Поиск: предмет, продавец или #номер…",
+                "Search: item, seller or #number…",
+            )
+            .to_string(),
+            0x7b8fa3,
+        )
+    } else {
+        let cursor = if s.focus { "│" } else { "" };
+        (format!("{}{cursor}", s.query.value), style::TEXT)
+    };
+    ui::text(
+        game,
+        batch,
+        &ui::clip(game, &caption, query[2] - 28.0),
+        [query[0] + 22.0, query[1] + 5.0],
+        color,
+        false,
+    );
+    s.hits.push((query, Hit::Search));
+    // The lots: compact cards in as many columns as fit.
+    let top = bar + 24.0;
+    let card_h = 27.0;
+    let footer = y + h - 24.0;
+    let cols = ((w - 16.0) / 196.0).floor().clamp(1.0, 4.0) as usize;
+    let rows = (((footer - top - 2.0) / (card_h + 3.0)).floor() as usize).max(1);
+    let per = cols * rows;
+    let pages_total = lots.len().div_ceil(per).max(1);
+    s.catalog_pages = pages_total;
+    s.catalog_page = s.catalog_page.min(pages_total - 1);
+    let gw = (w - 16.0 + 4.0) / cols as f32;
+    for (i, l) in lots.iter().skip(s.catalog_page * per).take(per).enumerate() {
+        let r = [
+            x + 8.0 + (i % cols) as f32 * gw,
+            top + (i / cols) as f32 * (card_h + 3.0),
+            gw - 4.0,
+            card_h,
+        ];
+        let deal = caps
+            .get(&l.item)
+            .is_some_and(|cap| l.within_unit_price(*cap));
+        ui::button_base(game, batch, r, &l.id.to_string(), deal, mouse);
+        // The count is in the title, so the icon is drawn without its stack number.
+        if let Some(icon) = lot_icon(game, s, l) {
+            game.draw_item(batch, &icon, r[0] + 5.0, r[1] + 5.5);
+        }
+        let price = if l.bid {
+            if russian() {
+                format!("ставка {}", economy::fmt(l.cost))
+            } else {
+                format!("bid {}", economy::fmt(l.cost))
+            }
+        } else {
+            unit(l)
+        };
+        let total = if l.bid { time_left(l) } else { coins(l.cost) };
+        let price_w = game.native_text_width(&price);
+        let total_w = game.native_text_width(&total);
+        let mut name = lot_title(game, l);
+        if caps.contains_key(&l.item) {
+            name.insert_str(0, "* ");
+        }
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &name, r[2] - 36.0 - price_w),
+            [r[0] + 25.0, r[1] + 4.0],
+            if deal { 0x87e4af } else { style::TEXT },
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &price,
+            [r[0] + r[2] - 6.0 - price_w, r[1] + 4.0],
+            if deal {
+                0x87e4af
+            } else if l.bid {
+                0xc8b6ff
+            } else {
+                0xf0d68a
+            },
+            false,
+        );
+        let who = if l.bid {
+            l.seller.clone()
+        } else {
+            format!("{} · {}", l.seller, time_left(l))
+        };
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &who, r[2] - 36.0 - total_w),
+            [r[0] + 25.0, r[1] + 15.0],
+            style::MUTED,
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &total,
+            [r[0] + r[2] - 6.0 - total_w, r[1] + 15.0],
+            style::MUTED,
+            false,
+        );
+        if style::contains(r, mouse) {
+            s.hover_lot = Some(l.id);
+        }
+        s.hits.push((r, Hit::Lot(l.id)));
+    }
+    if lots.is_empty() {
+        let text = if scanning {
+            t("Загружаем лоты аукциона…", "Loading the auction's lots…")
+        } else if total == 0 {
+            t("На аукционе нет лотов", "The auction has no lots")
+        } else {
+            t("Ничего не найдено", "Nothing matches the search")
+        };
+        ui::text(
+            game,
+            batch,
+            text,
+            [x + 12.0, top + 6.0],
+            style::MUTED,
+            false,
+        );
+    }
+    // Footer: hints on the left, the one pager in the middle.
+    ui::fill(game, batch, [x + 8.0, footer, w - 16.0, 1.0], 0x22ffffff);
+    let center = x + w * 0.5;
+    let pager_y = footer + 4.0;
+    let caption = format!("{} / {}", s.catalog_page + 1, pages_total);
+    let caption_w = game.native_text_width(&caption);
+    for (dir, r, icon, enabled) in [
+        (
+            -1,
+            [center - caption_w * 0.5 - 30.0, pager_y, 22.0, 16.0],
+            ui::Icon::Back,
+            s.catalog_page > 0,
+        ),
+        (
+            1,
+            [center + caption_w * 0.5 + 8.0, pager_y, 22.0, 16.0],
+            ui::Icon::Next,
+            s.catalog_page + 1 < pages_total,
+        ),
+    ] {
+        if enabled {
+            ui::button_base(game, batch, r, "", false, mouse);
+            s.hits.push((r, Hit::Pager(dir)));
+        }
+        ui::icon(
+            game,
+            batch,
+            icon,
+            [r[0] + 6.0, r[1] + 3.0, 10.0, 10.0],
+            if enabled { style::TEXT } else { 0x4d5b68 },
+        );
+    }
+    ui::text(
+        game,
+        batch,
+        &caption,
+        [center - caption_w * 0.5, pager_y + 4.0],
+        0xc9d6e3,
+        false,
+    );
+    let hint = if !s.notice.is_empty() {
+        s.notice.clone()
+    } else if s.watch_edit.is_some() {
+        t(
+            "Enter — сохранить · 0 — убрать · Esc — отменить",
+            "Enter — save · 0 — remove · Esc — cancel",
+        )
+        .into()
+    } else {
+        if data::read(|_, prefs, _, _| prefs.flag("confirm_buy")) {
+            t(
+                "ЛКМ купить · ПКМ порог цены · F8 окно сервера",
+                "LMB buy · RMB price alert · F8 server window",
+            )
+        } else {
+            t(
+                "ЛКМ купить сразу · ПКМ порог цены · F8 окно сервера",
+                "LMB buys at once · RMB price alert · F8 server window",
+            )
+        }
+        .into()
+    };
+    ui::text(
+        game,
+        batch,
+        &ui::clip(
+            game,
+            &hint,
+            (center - caption_w * 0.5 - 40.0 - x - 10.0).max(0.0),
+        ),
+        [x + 10.0, pager_y + 4.0],
+        0xb8cdce,
+        false,
+    );
+    if let Some(id) = s.buy {
+        render_buy(game, batch, s, screen, id, balance);
+    }
+}
+/// The purchase confirmation: what, from whom, for how much, and the command it sends.
+fn render_buy(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    s: &mut State,
+    screen: &crate::game::native_hooks::NativeScreenView<'_>,
+    id: u64,
+    balance: Option<economy::Coins>,
+) {
+    use crate::game::claim_borders_ui_style as style;
+    s.hits.clear();
+    s.hover = None;
+    s.hover_lot = None;
+    s.control_tip = None;
+    let Some(l) = data::read(|book, _, _, _| book.listings.get(&id).cloned()) else {
+        s.buy = None;
+        return;
+    };
+    let form = style::DialogLayout::new([batch.width, batch.height], [360.0, 224.0]);
+    let [mx, _, mw, _] = form.panel;
+    game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x9009111c);
+    ui::popup_frame(
+        game,
+        batch,
+        form.panel,
+        if l.bid {
+            ui::Icon::Info
+        } else {
+            ui::Icon::Shield
+        },
+        if l.bid {
+            t("Лот с торгами", "Auction lot")
+        } else {
+            t("Подтвердите покупку", "Confirm purchase")
+        },
+    );
+    let [bx, by, _, _] = form.body;
+    if let Some(icon) = lot_icon(game, s, &l) {
+        game.draw_item(batch, &icon, bx, by);
+    }
+    ui::text(
+        game,
+        batch,
+        &ui::clip(game, &lot_title(game, &l), mw - 48.0),
+        [bx + 22.0, by + 4.0],
+        style::TEXT,
+        false,
+    );
+    let mut lines = vec![if russian() {
+        format!("Продавец: {} · осталось {}", l.seller, time_left(&l))
+    } else {
+        format!("Seller: {} · {} left", l.seller, time_left(&l))
+    }];
+    if l.bid {
+        lines.push(if russian() {
+            format!("Текущая ставка: {}", coins(l.cost))
+        } else {
+            format!("Current bid: {}", coins(l.cost))
+        });
+        lines.push(
+            t(
+                "Ставки делаются в виде сервера (F8).",
+                "Bids are placed in the server view (F8).",
+            )
+            .into(),
+        );
+    } else {
+        lines.push(if russian() {
+            format!("Цена: {} · {}", coins(l.cost), unit(&l))
+        } else {
+            format!("Price: {} · {}", coins(l.cost), unit(&l))
+        });
+        if let Some(balance) = balance {
+            lines.push(if balance < l.cost {
+                t(
+                    "Похоже, монет не хватает.",
+                    "You may not have enough coins.",
+                )
+                .into()
+            } else if russian() {
+                format!("После покупки: {}", coins(balance - l.cost))
+            } else {
+                format!("After buying: {}", coins(balance - l.cost))
+            });
+        }
+        lines.push(if russian() {
+            format!("Покупка сразу: /ah buy {} · без отмены", l.id)
+        } else {
+            format!("Buys at once: /ah buy {} · cannot be undone", l.id)
+        });
+    }
+    for (i, line) in lines.iter().enumerate() {
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, line, mw - 24.0),
+            [mx + 12.0, by + 26.0 + i as f32 * 12.0],
+            if line.contains("enough") || line.contains("хватает") {
+                0xe39ca8
+            } else {
+                0xb6c7d9
+            },
+            false,
+        );
+    }
+    let cancel = form.footer(0, false);
+    let ok = form.footer(1, false);
+    if !l.bid {
+        let ask = data::read(|_, prefs, _, _| prefs.flag("confirm_buy"));
+        let r = form.footer(0, true);
+        let r = [r[0], r[1], ok[0] + ok[2] - r[0], r[3]];
+        let label = format!(
+            "{}: {}",
+            t("Спрашивать перед покупкой", "Ask before buying"),
+            if ask {
+                t("вкл.", "on")
+            } else {
+                t("выкл.", "off")
+            }
+        );
+        ui::button(game, batch, r, &label, false, screen.mouse);
+        if style::contains(r, screen.mouse) {
+            s.control_tip = Some(
+                t(
+                    "Выкл.: щелчок по лоту сразу покупает его. Меняется и в Торговля → Основное.",
+                    "Off: clicking a lot buys it at once. Also under Trading → General.",
+                )
+                .into(),
+            );
+        }
+        s.hits.push((r, Hit::AskToggle));
+    }
+    ui::button(
+        game,
+        batch,
+        cancel,
+        if l.bid {
+            t("Понятно", "Got it")
+        } else {
+            t("Отмена [Esc]", "Cancel [Esc]")
+        },
+        false,
+        screen.mouse,
+    );
+    s.hits.push((cancel, Hit::Cancel));
+    if !l.bid {
+        ui::button(game, batch, ok, t("Купить", "Buy"), false, screen.mouse);
+        s.hits.push((ok, Hit::Buy));
     }
 }
 
@@ -233,9 +973,19 @@ fn label(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
             };
             format!("{name} ×{count}")
         }
-        Category => local_category(&b.name),
+        // "All listings (264 listings)": the count goes on the card's second line.
+        Category => local_category(category_count(&b.name).map_or(&b.name, |(name, _)| name)),
         Inspect => b.name.clone(),
     }
+}
+/// "Farming (13 listings)" -> ("Farming", "13").
+fn category_count(raw: &str) -> Option<(&str, &str)> {
+    let (name, rest) = raw.rsplit_once(" (")?;
+    let count = rest.strip_suffix(" listings)")?;
+    count
+        .chars()
+        .all(|c| c.is_ascii_digit())
+        .then_some((name, count))
 }
 fn local_category(raw: &str) -> String {
     if !russian() {
@@ -267,10 +1017,13 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
             .name
             .split_once(" for ")
             .map(|(_, s)| {
+                let value = s.replace(" coins", "").replace(" coin", "");
                 if russian() {
-                    format!("{} монет", s.replace(" coins", ""))
+                    format!("{value} монет")
+                } else if value == "1" {
+                    "1 coin".into()
                 } else {
-                    format!("{} coins", s.replace(" coins", ""))
+                    format!("{value} coins")
                 }
             })
             .unwrap_or_default(),
@@ -302,6 +1055,15 @@ fn detail(game: &Game<'_>, page: &scan::Page, b: &scan::Button) -> String {
                 format!("Лот {id} · ×{count}")
             } else {
                 format!("Lot {id} · ×{count}")
+            }
+        }
+        Category if let Some((_, count)) = category_count(&b.name) => {
+            if russian() {
+                format!("{count} лотов")
+            } else if count == "1" {
+                "1 listing".into()
+            } else {
+                format!("{count} listings")
             }
         }
         _ => {
@@ -394,16 +1156,8 @@ fn control(
     }
     if crate::game::claim_borders_ui_style::contains(r, mouse) {
         s.control_tip = Some(match &hit {
-            Hit::Page(n) if *n < 0 => t(
-                "Предыдущие карточки этой страницы",
-                "Previous cards on this page",
-            )
-            .into(),
-            Hit::Page(_) => t(
-                "Следующие карточки этой страницы",
-                "Next cards on this page",
-            )
-            .into(),
+            Hit::Pager(n) if *n < 0 => t("Предыдущая страница", "Previous page").into(),
+            Hit::Pager(_) => t("Следующая страница", "Next page").into(),
             Hit::Standard => t(
                 "F8 — стандартный вид · ПКМ по лоту AH — порог избранного",
                 "F8 — standard view · RMB on an AH listing — favorite threshold",
@@ -509,6 +1263,64 @@ fn goods(
         s.hits.push((r, Hit::Server(b.clone())));
         return;
     }
+    // A market item: its unit price on the right, the day's trend and trade limits below.
+    if page.family == scan::Kind::Market
+        && scan::role(page, b) == scan::Role::Goods
+        && let Some((price, note)) = b.lore.first().and_then(|l| market_price(l))
+    {
+        let price = if russian() {
+            format!("{price} / шт.")
+        } else {
+            format!("{price} each")
+        };
+        let trend = b
+            .lore
+            .iter()
+            .find(|l| l.starts_with("24 h"))
+            .map(|l| crate::game::claim_borders_economy_view::market_lore(game, l));
+        let below = match (trend, note) {
+            (Some(trend), Some(note)) => format!("{trend} · {note}"),
+            (Some(trend), None) => trend,
+            (None, Some(note)) => note.into(),
+            (None, None) => String::new(),
+        };
+        let price_w = game.native_text_width(&price);
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &title, r[2] - 40.0 - price_w),
+            [r[0] + 26.0, r[1] + 5.0],
+            0xe3ebf3,
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &price,
+            [r[0] + r[2] - 8.0 - price_w, r[1] + 5.0],
+            0xf0d68a,
+            false,
+        );
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &below, r[2] - 34.0),
+            [r[0] + 26.0, r[1] + 18.0],
+            if below.contains('▲') {
+                0x87e4af
+            } else if below.contains('▼') {
+                0xe39ca8
+            } else {
+                0x9aacc0
+            },
+            false,
+        );
+        if crate::game::claim_borders_ui_style::contains(r, mouse) {
+            s.hover = Some(b.slot);
+        }
+        s.hits.push((r, Hit::Server(b.clone())));
+        return;
+    }
     ui::text(
         game,
         batch,
@@ -525,10 +1337,26 @@ fn goods(
         0x9aacc0,
         false,
     );
-    if crate::game::claim_borders_ui_style::contains(r, mouse) {
+    // A category's tooltip repeats its card, so only other entries show the server tooltip.
+    if crate::game::claim_borders_ui_style::contains(r, mouse)
+        && scan::role(page, b) != scan::Role::Category
+    {
         s.hover = Some(b.slot);
     }
     s.hits.push((r, Hit::Server(b.clone())));
+}
+/// "Price: 1.56 coins each, to buy or sell" -> ("1.56", None); a one-way price gets a note.
+fn market_price(line: &str) -> Option<(String, Option<&'static str>)> {
+    let rest = line.strip_prefix("Price: ")?;
+    let (price, tail) = rest.split_once(" coins each")?;
+    let note = if tail.contains("doesn't buy") {
+        Some(t("только покупка", "buy only"))
+    } else if tail.contains("doesn't sell") {
+        Some(t("только продажа", "sell only"))
+    } else {
+        None
+    };
+    Some((price.trim().to_owned(), note))
 }
 fn fixed_listing(page: &scan::Page, b: &scan::Button) -> Option<economy::Listing> {
     if page.family != scan::Kind::Auction || scan::role(page, b) != scan::Role::Listing {
@@ -546,27 +1374,96 @@ pub(super) fn render(
         return false;
     };
     use scan::Role::*;
-    let w = (batch.width - 16.0).clamp(1.0, 620.0);
-    let h = (batch.height - 16.0).clamp(1.0, 360.0);
-    let x = (batch.width - w) * 0.5;
-    let y = (batch.height - h) * 0.5;
+    let [x, y, w, h] = panel(batch);
     let start = batch.vertices.len();
     game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x80111b27);
+    // The auction's home page starts the catalogue: the walk runs behind it, and its pages
+    // are never drawn. A fresh walk is skipped when one just finished.
+    if auction_home(&page) {
+        let (running, finished) = data::read(|_, _, status, _| (status.catalog, status.catalog_at));
+        let fresh = finished > 0 && data::now().saturating_sub(finished) < 15_000;
+        let first = state(|s| !std::mem::replace(&mut s.catalog, true));
+        let refresh = state(|s| {
+            let due = s.refresh.as_ref().is_some_and(|old| *old != token);
+            if due {
+                s.refresh = None;
+            }
+            due
+        });
+        if !running && (first && !fresh || refresh) {
+            data::start_catalog();
+        }
+    }
+    // A server confirmation page (Buy / Bid buttons) is shown as itself.
+    let confirming = page
+        .buttons
+        .iter()
+        .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
+    if page.family == scan::Kind::Auction && !confirming && state(|s| s.catalog) {
+        state(|s| {
+            s.token = token.clone();
+            render_catalog(game, batch, s, screen, [x, y, w, h]);
+        });
+        ui::finish(game, batch, start, "commerce", "catalog");
+        tooltip(game, batch, screen);
+        return true;
+    }
     state(|s| {
         if s.token != token {
+            let first = s.token.is_empty();
             s.token = token.clone();
             s.pending = None;
             s.modal_scroll = 0;
-            s.page = 0;
             s.notice.clear();
-            s.query = TextInput::default();
-            s.focus = false;
             s.watch_edit = None;
+            // A page turn continues the numbering; any other new window starts it again, and
+            // a refresh of the same window (no request) keeps the place.
+            match if first {
+                Some(Nav::Other)
+            } else {
+                s.nav.take()
+            } {
+                Some(Nav::Forward(pages)) => {
+                    s.passed.push(pages);
+                    s.page = 0;
+                }
+                Some(Nav::Backward) => {
+                    s.passed.pop();
+                    s.page = usize::MAX;
+                }
+                Some(Nav::Other) => {
+                    s.passed.clear();
+                    s.page = 0;
+                    s.query = TextInput::default();
+                    s.focus = false;
+                }
+                None => {}
+            }
         }
         s.hits.clear();
         s.hover = None;
         s.control_tip = None;
-        ui::fill(game, batch, [x, y, w, h], 0xee182636);
+        ui::rounded(
+            game,
+            batch,
+            [x - 3.0, y - 1.0, w + 6.0, h + 8.0],
+            10.0,
+            0x40000000,
+        );
+        ui::rounded(
+            game,
+            batch,
+            [x, y, w, h],
+            8.0,
+            0xff000000 | crate::game::claim_borders_ui_style::BORDER,
+        );
+        ui::rounded(
+            game,
+            batch,
+            [x + 1.0, y + 1.0, w - 2.0, h - 2.0],
+            7.0,
+            0xf4000000 | crate::game::claim_borders_ui_style::BACKGROUND,
+        );
         ui::icon(
             game,
             batch,
@@ -576,14 +1473,14 @@ pub(super) fn render(
         );
         let title = if page.family == scan::Kind::Market {
             if scan::market_detail(&page) {
-                t("MARKET · Товар", "MARKET · Item")
+                t("Товар", "Item details")
             } else {
-                t("MARKET · Рынок", "MARKET · Market")
+                t("Рынок", "Market")
             }
         } else {
-            t("AH · Аукцион", "AH · Auction")
+            t("Аукцион", "Auction")
         };
-        ui::text(game, batch, title, [x + 30.0, y + 12.0], 0xe3ebf3, false);
+
         let balance = page
             .buttons
             .iter()
@@ -602,6 +1499,14 @@ pub(super) fn render(
         let bw = (w * 0.45).min(220.0);
         let balance = ui::clip(game, &balance, bw);
         let balance_w = game.native_text_width(&balance);
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, title, (w - balance_w - 86.0).max(0.0)),
+            [x + 30.0, y + 12.0],
+            0xe3ebf3,
+            false,
+        );
         ui::rounded(
             game,
             batch,
@@ -875,7 +1780,9 @@ pub(super) fn render(
                 );
                 s.hits.push((query, Hit::Search));
             }
-            let cols = if w >= 560.0 {
+            let cols = if w >= 820.0 {
+                4
+            } else if w >= 560.0 {
                 3
             } else if w >= 300.0 {
                 2
@@ -940,65 +1847,90 @@ pub(super) fn render(
                     false,
                 );
             }
-            // These controls change actual server pages and do not disappear under a search filter.
+            // One pager: it steps through the cards, then turns the server's page at either
+            // end, so a long list reads as one numbered sequence.
             let bottom = y + h - 46.0;
-            if let Some(b) = page
+            let previous = page
                 .buttons
                 .iter()
                 .find(|b| scan::role(&page, b) == Previous)
-            {
-                control(
+                .cloned();
+            let next = page
+                .buttons
+                .iter()
+                .find(|b| scan::role(&page, b) == Next)
+                .cloned();
+            s.pager = (pages, previous.clone(), next.clone());
+            if pages > 1 || previous.is_some() || next.is_some() {
+                let passed: usize = s.passed.iter().sum();
+                let number = passed + s.page + 1;
+                let caption = if next.is_none() {
+                    format!("{number} / {}", passed + pages)
+                } else if russian() {
+                    format!("Стр. {number}")
+                } else {
+                    format!("Page {number}")
+                };
+                let center = x + w * 0.5;
+                let back = s.page > 0 || previous.is_some();
+                let forward = s.page + 1 < pages || next.is_some();
+                for (rect, enabled, dir, icon, label) in [
+                    (
+                        [center - 104.0, bottom, 64.0, 18.0],
+                        back,
+                        -1,
+                        ui::Icon::Back,
+                        t("Назад", "Back"),
+                    ),
+                    (
+                        [center + 40.0, bottom, 64.0, 18.0],
+                        forward,
+                        1,
+                        ui::Icon::Next,
+                        t("Далее", "Next"),
+                    ),
+                ] {
+                    if enabled {
+                        control(
+                            game,
+                            batch,
+                            s,
+                            rect,
+                            label,
+                            Hit::Pager(dir),
+                            screen.mouse,
+                            icon,
+                        );
+                    } else {
+                        ui::rounded(
+                            game,
+                            batch,
+                            rect,
+                            4.0,
+                            0x60000000 | crate::game::claim_borders_ui_style::SURFACE,
+                        );
+                        ui::text(
+                            game,
+                            batch,
+                            label,
+                            [rect[0] + 19.0, rect[1] + 5.0],
+                            0x5d6b78,
+                            false,
+                        );
+                    }
+                }
+                ui::text(
                     game,
                     batch,
-                    s,
-                    [x + 8.0, bottom, 112.0, 18.0],
-                    t("Пред. страница", "Prev. page"),
-                    Hit::Server(b.clone()),
-                    screen.mouse,
-                    ui::Icon::Back,
+                    &caption,
+                    [
+                        center - game.native_text_width(&caption) * 0.5,
+                        bottom + 5.0,
+                    ],
+                    0xc9d6e3,
+                    false,
                 );
             }
-            if let Some(b) = page.buttons.iter().find(|b| scan::role(&page, b) == Next) {
-                control(
-                    game,
-                    batch,
-                    s,
-                    [x + w - 120.0, bottom, 112.0, 18.0],
-                    t("След. страница", "Next page"),
-                    Hit::Server(b.clone()),
-                    screen.mouse,
-                    ui::Icon::Next,
-                );
-            }
-            let center = x + w * 0.5;
-            control(
-                game,
-                batch,
-                s,
-                [center - 48.0, bottom, 18.0, 18.0],
-                "",
-                Hit::Page(-1),
-                screen.mouse,
-                ui::Icon::Back,
-            );
-            ui::text(
-                game,
-                batch,
-                &format!("{}/{}", s.page + 1, pages),
-                [center - 23.0, bottom + 5.0],
-                0x9aacc0,
-                false,
-            );
-            control(
-                game,
-                batch,
-                s,
-                [center + 27.0, bottom, 18.0, 18.0],
-                "",
-                Hit::Page(1),
-                screen.mouse,
-                ui::Icon::Next,
-            );
             // Server confirmation buttons are controls, never items in the results grid.
             let trades: Vec<_> = page
                 .buttons
@@ -1082,28 +2014,32 @@ pub(super) fn render(
             s.control_tip = None;
             let role = scan::role(&page, &p.button);
             let transaction = role.transaction() || role == Listing;
-            let mw = (w - 16.0).min(440.0);
-            let mh = (h - 16.0).min(270.0);
-            let mx = x + (w - mw) * 0.5;
-            let my = y + (h - mh) * 0.5;
-            game.native_fill(batch, [mx, my, mw, mh], 0xff1c2b3c);
-            ui::text(
+            let form = crate::game::claim_borders_ui_style::DialogLayout::new(
+                [batch.width, batch.height],
+                [(w - 16.0).min(440.0), (h - 16.0).min(270.0)],
+            );
+            let [mx, my, mw, mh] = form.panel;
+            game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x9009111c);
+            ui::popup_frame(
                 game,
                 batch,
+                form.panel,
+                if transaction {
+                    ui::Icon::Shield
+                } else {
+                    ui::Icon::Info
+                },
                 if transaction {
                     t("Подтверждение действия", "Confirm action")
                 } else {
                     t("Информация", "Information")
                 },
-                [mx + 10.0, my + 10.0],
-                0xf0d68a,
-                false,
             );
             ui::text(
                 game,
                 batch,
                 &ui::clip(game, &label(game, &page, &p.button), mw - 20.0),
-                [mx + 10.0, my + 27.0],
+                [form.body[0], form.body[1]],
                 0xe3ebf3,
                 false,
             );
@@ -1177,7 +2113,7 @@ pub(super) fn render(
                 );
             }
             lines.dedup();
-            let max = (((mh - 100.0) / 11.0).floor() as usize).max(1);
+            let max = (((form.body[3] - 34.0) / 11.0).floor() as usize).max(1);
             let lines: Vec<_> = lines
                 .iter()
                 .filter(|l| !l.is_empty())
@@ -1194,13 +2130,13 @@ pub(super) fn render(
                     game,
                     batch,
                     &ui::clip(game, l, mw - 20.0),
-                    [mx + 10.0, my + 45.0 + i as f32 * 11.0],
+                    [form.body[0], form.body[1] + 22.0 + i as f32 * 11.0],
                     0xb6c7d9,
                     false,
                 );
             }
-            let cr = [mx + 10.0, my + mh - 28.0, (mw - 26.0) * 0.5, 20.0];
-            let ok = [mx + mw * 0.5 + 3.0, my + mh - 28.0, (mw - 26.0) * 0.5, 20.0];
+            let cr = form.footer(0, false);
+            let ok = form.footer(1, false);
             ui::button(
                 game,
                 batch,
@@ -1219,7 +2155,13 @@ pub(super) fn render(
                     game,
                     batch,
                     ok,
-                    t("Подтвердить", "Confirm"),
+                    match role {
+                        Buy(_) => t("Купить", "Buy"),
+                        Sell(_) | SellAll => t("Продать", "Sell"),
+                        Bid => t("Сделать ставку", "Place bid"),
+                        Claim | ClaimAll => t("Забрать", "Claim"),
+                        _ => t("Подтвердить выбор", "Confirm selection"),
+                    },
                     false,
                     screen.mouse,
                 );
@@ -1249,6 +2191,34 @@ pub(super) fn render(
         }
     });
     ui::finish(game, batch, start, "commerce", "live");
+    tooltip(game, batch, screen);
+    true
+}
+fn tooltip(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    screen: &crate::game::native_hooks::NativeScreenView<'_>,
+) {
+    if let Some((id, stack)) = state(|s| s.hover_lot.map(|id| (id, s.stacks.get(&id).cloned()))) {
+        let lines = stack
+            .map(|stack| game.stack_tooltip(&stack))
+            .unwrap_or_default();
+        if lines.is_empty()
+            && let Some(l) = data::read(|book, _, _, _| book.listings.get(&id).cloned())
+        {
+            let text = format!(
+                "{}\n{} · {}\n#{}",
+                lot_title(game, &l),
+                l.seller,
+                coins(l.cost),
+                l.id
+            );
+            ui::tooltip(game, batch, &text, screen.mouse);
+            return;
+        }
+        game.draw_tooltip_lines(batch, &lines, screen.mouse[0], screen.mouse[1]);
+        return;
+    }
     let hover = state(|s| {
         s.hover.and_then(|slot| {
             s.icons
@@ -1263,7 +2233,6 @@ pub(super) fn render(
     } else if let Some(tip) = state(|s| s.control_tip.clone()).filter(|s| !s.is_empty()) {
         ui::tooltip(game, batch, &tip, screen.mouse);
     }
-    true
 }
 pub(super) fn mouse(
     game: &Game<'_>,
@@ -1294,6 +2263,20 @@ pub(super) fn mouse(
             .rev()
             .find(|(r, _)| crate::game::claim_borders_ui_style::contains(*r, screen.mouse))
             .map(|(_, h)| h.clone());
+        if button == 1
+            && s.buy.is_none()
+            && let Some(Hit::Lot(id)) = &hit
+            && let Some(listing) = data::read(|book, _, _, _| book.listings.get(id).cloned())
+        {
+            let cap = data::read(|book, _, _, _| book.auction_watch.get(&listing.item).copied());
+            s.watch_edit = Some((
+                listing.item,
+                TextInput::new(cap.map(economy::fmt).unwrap_or_default()),
+            ));
+            s.focus = false;
+            s.notice.clear();
+            return false;
+        }
         if button == 1
             && s.pending.is_none()
             && let Some(Hit::Server(b)) = &hit
@@ -1327,6 +2310,11 @@ pub(super) fn mouse(
                         data::read(|_, _, _, own| seller.eq_ignore_ascii_case(own))
                     });
                 if role.navigation() || (role == scan::Role::Listing && !own_lot) {
+                    s.nav = Some(match role {
+                        scan::Role::Next => Nav::Forward(s.pager.0),
+                        scan::Role::Previous => Nav::Backward,
+                        _ => Nav::Other,
+                    });
                     s.action = Some(p)
                 } else {
                     s.modal_scroll = 0;
@@ -1334,17 +2322,64 @@ pub(super) fn mouse(
                 }
             }
             Some(Hit::Confirm) => {
+                s.nav = Some(Nav::Other);
                 s.action = s.pending.take();
             }
-            Some(Hit::Cancel) => s.pending = None,
-            Some(Hit::Page(n)) => {
-                s.page = if n < 0 {
-                    s.page.saturating_sub(1)
+            Some(Hit::Cancel) => {
+                s.pending = None;
+                s.buy = None;
+            }
+            Some(Hit::Lot(id)) => {
+                // Without the question a click buys at once, except lots taking bids and
+                // purchases the known balance cannot cover, which still explain themselves.
+                let direct = data::read(|book, prefs, _, _| {
+                    book.listings.get(&id).is_some_and(|l| {
+                        l.buys_without_asking(
+                            prefs.flag("confirm_buy"),
+                            book.balance.map(|(v, _)| v),
+                        )
+                    })
+                });
+                if direct {
+                    buy(s, id);
                 } else {
-                    s.page + 1
+                    s.buy = Some(id);
+                    s.notice.clear();
                 }
             }
+            Some(Hit::Buy) => {
+                if let Some(id) = s.buy.take() {
+                    buy(s, id);
+                }
+            }
+            Some(Hit::AskToggle) => {
+                s.ask_toggle = true;
+            }
+            Some(Hit::Command("")) => s.close = true,
+            Some(Hit::Command(command)) => {
+                // My listings and Mail are server pages; the catalogue steps aside for them.
+                data::cancel_scan();
+                s.catalog = false;
+                s.command = Some(command.into());
+            }
+            Some(Hit::Refresh) => {
+                // The walk starts from the home page: from there at once, otherwise once the
+                // reopened auction arrives.
+                data::cancel_scan();
+                if auction_home(&page) {
+                    data::start_catalog();
+                } else {
+                    s.refresh = Some(token.clone());
+                    s.command = Some("ah".into());
+                }
+            }
+            Some(Hit::Pager(dir)) if s.catalog => catalog_step(s, dir),
+            Some(Hit::Pager(dir)) => step(s, &token, dir),
             Some(Hit::Search) => s.focus = true,
+            Some(Hit::Sort) if s.catalog => {
+                s.catalog_sort = (s.catalog_sort + 1) % 4;
+                s.catalog_page = 0;
+            }
             Some(Hit::Sort) => {
                 s.sort = (s.sort + 1) % 3;
                 s.page = 0;
@@ -1356,6 +2391,9 @@ pub(super) fn mouse(
     });
     if standard {
         toggle_view(game, page.family);
+    }
+    if state(|s| std::mem::take(&mut s.ask_toggle)) {
+        data::configure(game, "confirm_buy", 1);
     }
     true
 }
@@ -1420,7 +2458,9 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         return true;
     }
     if key == "key.keyboard.escape" {
-        if state(|s| s.pending.take().is_some() || std::mem::take(&mut s.focus)) {
+        if state(|s| {
+            s.pending.take().is_some() || s.buy.take().is_some() || std::mem::take(&mut s.focus)
+        }) {
             *canceled = true;
             return true;
         }
@@ -1446,6 +2486,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
                 _ => {}
             }
             s.page = 0;
+            s.catalog_page = 0;
         }
     });
     true
@@ -1463,6 +2504,7 @@ pub(super) fn character(game: &Game<'_>, c: char, canceled: &mut bool) -> bool {
             } else if s.focus {
                 s.query.insert(&c.to_string(), 64);
                 s.page = 0;
+                s.catalog_page = 0;
             }
         });
     }
@@ -1480,13 +2522,56 @@ pub(super) fn scroll(game: &Game<'_>, amount: f64, canceled: &mut bool) -> bool 
             } else {
                 s.modal_scroll.saturating_add(1)
             };
+        } else if s.catalog {
+            catalog_step(s, if amount > 0.0 { -1 } else { 1 });
         } else {
-            s.page = if amount > 0.0 {
-                s.page.saturating_sub(1)
-            } else {
-                s.page + 1
-            };
+            let token = s.token.clone();
+            step(s, &token, if amount > 0.0 { -1 } else { 1 });
         }
     });
     true
+}
+/// Sends `/ah buy <number>`: the server buys at once, with no window of its own.
+fn buy(s: &mut State, id: u64) {
+    // A walk must not read the server's answer page as the end of the list.
+    data::cancel_scan();
+    s.command = Some(format!("ah buy {id}"));
+    data::forget_listing(id);
+    s.notice = if russian() {
+        format!("Отправлено /ah buy {id} · ответ сервера в чате")
+    } else {
+        format!("Sent /ah buy {id} · the server replies in chat")
+    };
+}
+fn catalog_step(s: &mut State, dir: i32) {
+    s.catalog_page = if dir < 0 {
+        s.catalog_page.saturating_sub(1)
+    } else {
+        (s.catalog_page + 1).min(s.catalog_pages.saturating_sub(1))
+    };
+}
+/// One pager step: the next or previous cards, or the server's page beyond them. A server
+/// turn waits for its window before another can be asked, so a fast wheel cannot skip pages.
+fn step(s: &mut State, token: &str, dir: i32) {
+    let (pages, previous, next) = s.pager.clone();
+    if dir < 0 && s.page > 0 {
+        s.page -= 1;
+    } else if dir > 0 && s.page + 1 < pages {
+        s.page += 1;
+    } else if (s.nav.is_none() || data::now().saturating_sub(s.nav_at) > 3_000)
+        && s.action.is_none()
+        && let Some(button) = if dir < 0 { previous } else { next }
+    {
+        s.nav = Some(if dir < 0 {
+            Nav::Backward
+        } else {
+            Nav::Forward(pages)
+        });
+        s.nav_at = data::now();
+        s.action = Some(Pending {
+            token: token.to_owned(),
+            button,
+            at: data::now(),
+        });
+    }
 }

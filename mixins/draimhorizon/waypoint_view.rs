@@ -51,6 +51,7 @@ fn coordinate_inputs(position: [f64; 3]) -> [TextInput; 3] {
 enum Hit {
     Row(u64),
     Delete(u64),
+    ConfirmDelete,
     World,
     Page(i32),
     Create,
@@ -70,6 +71,7 @@ enum Action {
 #[derive(Default)]
 struct State {
     draft: Option<Draft>,
+    pending_delete: Option<u64>,
     quick: bool,
     rows: Vec<model::Waypoint>,
     filter: Option<String>,
@@ -100,7 +102,7 @@ fn language() -> claim_borders_relay_client::translation::Language {
     crate::game::claim_borders_chat_view::current_language()
 }
 pub(super) fn editing() -> bool {
-    state(|s| s.draft.is_some())
+    state(|s| s.draft.is_some() || s.pending_delete.is_some())
 }
 pub(super) fn open_create(dimension: String, position: [f64; 3], quick: bool) {
     state(|s| {
@@ -221,6 +223,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
 }
 fn list_owned(game: &Game<'_>) -> bool {
     game.native_mod_screen() == Some(claims::ID)
+        && !crate::game::claim_borders_menu_view::navigation_open()
         && crate::game::claim_borders_menu_view::waypoints_tab()
         && !crate::game::claim_borders_map_view::visible()
         && !crate::game::claim_borders_economy_view::visible()
@@ -244,11 +247,7 @@ pub(super) fn render_list(game: &Game<'_>, batch: &mut HudBatch, screen: &Native
     }
     let pw = (screen.rect[2] - 16.).clamp(220., 720.);
     let ph = (screen.rect[3] - 16.).clamp(200., 400.);
-    let sidebar = if pw >= 380. {
-        crate::game::claim_borders_menu::RAIL_WIDTH
-    } else {
-        0.
-    };
+    let sidebar = crate::game::claim_borders_menu::rail_width(pw, ph);
     let x = (screen.rect[2] - pw) * 0.5 + sidebar + 9.;
     let y = (screen.rect[3] - ph) * 0.5 + 54.;
     let width = pw - sidebar - 18.;
@@ -469,21 +468,81 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
         return;
     }
     let start = batch.vertices.len();
-    let w = (batch.width - 20.).min(360.);
-    let h = 262.;
-    let x = (batch.width - w) * 0.5;
-    let y = (batch.height - h) * 0.5;
+    let form = model::EditorLayout::new([batch.width, batch.height]);
+    let [x, y, w, _h] = form.panel;
     let language = crate::game::claim_borders_chat_view::language(game);
     game.native_fill(batch, [0., 0., batch.width, batch.height], 0x7a09111c);
     state(|s| {
         s.hits.clear();
+        if let Some(id) = s.pending_delete {
+            let form = crate::game::claim_borders_ui_style::DialogLayout::new(
+                [batch.width, batch.height],
+                [360.0, 180.0],
+            );
+            ui::popup_frame(
+                game,
+                batch,
+                form.panel,
+                ui::Icon::Trash,
+                language.text("Удалить метку?", "Delete waypoint?"),
+            );
+            let name = s
+                .rows
+                .iter()
+                .find(|w| w.id == id)
+                .map_or("", |w| w.name.as_str());
+            let message = format!(
+                "{}\n{}",
+                name,
+                language.text(
+                    "Метка будет удалена из списка и с карты.",
+                    "The waypoint will be removed from the list and map."
+                )
+            );
+            for (i, line) in
+                crate::game::claim_borders_chat_feed::wrap(&message, form.body[2], |text| {
+                    game.native_text_width(text)
+                })
+                .iter()
+                .take(6)
+                .enumerate()
+            {
+                ui::text(
+                    game,
+                    batch,
+                    line,
+                    [form.body[0], form.body[1] + i as f32 * 12.0],
+                    crate::game::claim_borders_ui_style::TEXT,
+                    false,
+                );
+            }
+            button(
+                game,
+                batch,
+                screen,
+                s,
+                form.footer(0, false),
+                language.text("Отмена [Esc]", "Cancel [Esc]"),
+                Hit::Cancel,
+            );
+            button(
+                game,
+                batch,
+                screen,
+                s,
+                form.footer(1, false),
+                language.text("Удалить", "Delete"),
+                Hit::ConfirmDelete,
+            );
+            return;
+        }
         let Some(d) = s.draft.clone() else {
             return;
         };
         ui::popup_frame(
             game,
             batch,
-            [x, y, w, h],
+            form.panel,
             icon(d.kind),
             if d.id.is_some() {
                 language.text("Редактировать метку", "Edit waypoint")
@@ -496,24 +555,32 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             ui::text(game, batch, text, at, 0x8fa9bb, false);
         };
         // Name.
-        caption(batch, language.text("Название", "Name"), [x + 14., y + 46.]);
-        let name = [x + 14., y + 57., inner, 22.];
+        caption(
+            batch,
+            language.text("Название", "Name"),
+            [x + 14., form.name[1] - 11.],
+        );
+        let name = form.name;
         field(game, batch, name, &d.name, d.focus == 0);
         s.hits.push((name, Hit::Name));
         // Type and colour side by side.
         let half = (inner - 8.) * 0.5;
-        caption(batch, language.text("Вид", "Type"), [x + 14., y + 87.]);
+        caption(
+            batch,
+            language.text("Вид", "Type"),
+            [x + 14., form.kind[1] - 11.],
+        );
         caption(
             batch,
             language.text("Цвет (HEX)", "Colour (HEX)"),
-            [x + 22. + half, y + 87.],
+            [x + 22. + half, form.color[1] - 11.],
         );
         button(
             game,
             batch,
             screen,
             s,
-            [x + 14., y + 98., half, 22.],
+            form.kind,
             language.text(
                 d.kind.label(),
                 match d.kind {
@@ -526,11 +593,10 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             ),
             Hit::Kind,
         );
-        let color = [x + 22. + half, y + 98., half, 22.];
+        let color = form.color;
         field(game, batch, color, &d.color, d.focus == 1);
         s.hits.push((color, Hit::Color));
         // Swatches, the chosen one ringed.
-        let swatch_w = (inner - 7. * 4.) / 8.;
         for (i, color) in [
             0xffcc55u32,
             0xa4d3c9,
@@ -544,12 +610,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
         .into_iter()
         .enumerate()
         {
-            let r = [
-                x + 14. + i as f32 * (swatch_w + 4.),
-                y + 128.,
-                swatch_w,
-                20.,
-            ];
+            let r = form.swatches[i];
             if d.color.value.eq_ignore_ascii_case(&format!("#{color:06X}")) {
                 ui::rounded(
                     game,
@@ -563,33 +624,38 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             s.hits.push((r, Hit::Swatch(color)));
         }
         // Coordinates: a letter over each box, the world named on the right.
-        caption(
-            batch,
-            language.text("Координаты", "Coordinates"),
-            [x + 14., y + 160.],
-        );
+        if !form.compact {
+            caption(
+                batch,
+                language.text("Координаты", "Coordinates"),
+                [x + 14., y + 160.],
+            );
+        }
         let world_name = world(&d.dimension);
         let world_w = game.native_text_width(&world_name);
         ui::text(
             game,
             batch,
             &world_name,
-            [x + w - 14. - world_w, y + 160.],
+            [
+                x + w - 14. - world_w,
+                y + if form.compact { 26.0 } else { 160.0 },
+            ],
             0xa6c9e5,
             false,
         );
-        let col = (inner - 12.) / 3.;
         for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
-            let left = x + 14. + i as f32 * (col + 6.);
+            let r = form.coordinates[i];
+            let left = r[0];
             ui::text(
                 game,
                 batch,
                 axis,
-                [left + 3., y + 173.],
+                [left + 3., r[1] - 11.],
                 ui::preferences(game).accent.color(),
                 false,
             );
-            let r = [left, y + 184., col, 22.];
+
             field(game, batch, r, &d.coordinates[i], d.focus == i + 2);
             s.hits.push((r, Hit::Coordinate(i)));
         }
@@ -598,7 +664,10 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
                 game,
                 batch,
                 &ui::clip(game, &s.error, inner),
-                [x + 14., y + 212.],
+                [
+                    x + 14.,
+                    form.cancel[1] - if form.compact { 9.0 } else { 18.0 },
+                ],
                 0xdfa8b5,
                 false,
             );
@@ -608,7 +677,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             batch,
             screen,
             s,
-            [x + 14., y + h - 32., (inner - 8.) * 0.5, 22.],
+            form.cancel,
             language.text("Отмена [Esc]", "Cancel [Esc]"),
             Hit::Cancel,
         );
@@ -617,12 +686,7 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
             batch,
             screen,
             s,
-            [
-                x + 22. + (inner - 8.) * 0.5,
-                y + h - 32.,
-                (inner - 8.) * 0.5,
-                22.,
-            ],
+            form.save,
             language.text("Сохранить", "Save"),
             Hit::Save,
         );
@@ -632,7 +696,17 @@ pub(super) fn render_popup(game: &Game<'_>, batch: &mut HudBatch, screen: &Nativ
 fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
     let language = crate::game::claim_borders_chat_view::language(game);
     match hit {
-        Hit::Delete(id) => s.action = Some(Action::Delete(id)),
+        Hit::Delete(id) => {
+            s.pending_delete = Some(id);
+            s.error.clear();
+        }
+        Hit::ConfirmDelete => {
+            if let Some(id) = s.pending_delete.take()
+                && s.rows.iter().any(|waypoint| waypoint.id == id)
+            {
+                s.action = Some(Action::Delete(id));
+            }
+        }
         Hit::Row(id) => {
             if let Some(w) = s.rows.iter().find(|w| w.id == id) {
                 s.error.clear();
@@ -733,6 +807,9 @@ fn choose(game: &Game<'_>, s: &mut State, hit: Hit) {
             }
         }
         Hit::Cancel => {
+            if s.pending_delete.take().is_some() {
+                return;
+            }
             s.draft = None;
             if s.quick {
                 s.action = Some(Action::Close);
@@ -792,7 +869,15 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
     *canceled = true;
     state(|s| match key {
         "key.keyboard.escape" => choose(game, s, Hit::Cancel),
-        "key.keyboard.enter" => choose(game, s, Hit::Save),
+        "key.keyboard.enter" => choose(
+            game,
+            s,
+            if s.pending_delete.is_some() {
+                Hit::ConfirmDelete
+            } else {
+                Hit::Save
+            },
+        ),
         "key.keyboard.tab" => {
             if let Some(d) = s.draft.as_mut() {
                 d.focus = (d.focus + 1) % 5;

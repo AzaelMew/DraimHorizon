@@ -105,12 +105,13 @@ pub struct ClaimRow {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ClaimsSection {
+    /// The claims list opens first; the map preferences follow it.
     #[default]
+    List,
     Map,
     Borders,
     Colours,
     Storage,
-    List,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MapOption {
@@ -471,7 +472,21 @@ pub enum Tab {
     Claims,
     Chat,
     Experimental,
+    Trading,
     Settings,
+}
+impl Tab {
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Waypoints => language.text("Метки", "Waypoints"),
+            Self::Party => language.text("Друзья", "Friends"),
+            Self::Claims => language.text("Карта и приваты", "Map and claims"),
+            Self::Chat => language.text("Чат", "Chat"),
+            Self::Experimental => language.text("Эксперименты", "Experiments"),
+            Self::Trading => language.text("Торговля", "Trading"),
+            Self::Settings => language.text("Настройки", "Settings"),
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
@@ -509,7 +524,16 @@ pub enum ChatSection {
     Priority,
 }
 /// Width of the tab rail on the left of the J menu; the layout and the drawing share it.
-pub const RAIL_WIDTH: f32 = 112.0;
+pub const RAIL_WIDTH: f32 = 128.0;
+/// A labelled rail must leave enough room for the editors, not just fit beside them.
+pub const RAIL_BREAKPOINT: f32 = 520.0;
+pub fn rail_width(panel_width: f32, panel_height: f32) -> f32 {
+    if panel_width >= RAIL_BREAKPOINT && panel_height >= 244.0 {
+        RAIL_WIDTH
+    } else {
+        0.0
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ExperimentalSection {
     #[default]
@@ -592,6 +616,9 @@ pub enum ChatOption {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
+    NavigationMenu,
+    /// Absolute page for an editor that would otherwise shrink its controls to fit.
+    SettingsContentPage(usize),
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
     FarmStorage(super::claim_borders_farm_storage::Role),
     /// Takes the cell the player stands on as the farm's safe point (or clears it).
@@ -651,8 +678,10 @@ pub enum Control {
     SchematicChoicesPage(i8),
     SchematicOpenFolder,
     ExperimentalTab(ExperimentalSection),
+    HelperPage(usize),
     ToggleReconnect,
     SettingsTab(u8),
+    TradingGroup(u8),
     ConfirmExperiments,
     DeclineExperiments,
     SaveDeepLKey,
@@ -661,6 +690,7 @@ pub enum Control {
     SettingsSection(i8),
     SettingsPage(i8),
     EconomySetting(&'static str, i64),
+    EconomyChoice(&'static str),
     Appearance,
     ClaimFilter,
     PartyAccept(usize),
@@ -757,6 +787,10 @@ pub struct Widget {
     pub control: Option<Control>,
     pub selected: bool,
     pub muted: bool,
+    /// A non-editable numeric readout, visually distinct from action buttons and text inputs.
+    pub readout: bool,
+    /// A labelled row background behind a stepper's readout and buttons.
+    pub row: bool,
 }
 #[derive(Clone)]
 pub struct Menu {
@@ -795,10 +829,13 @@ pub struct Menu {
     pub schematic_choices_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
+    pub helper_page: usize,
     deepl_key: String,
     pub language: Language,
     pub tab: Tab,
+    pub navigation_menu: bool,
     pub settings_section: u8,
+    pub trading_group: u8,
     pub settings_page: usize,
     pub claim_owner: String,
     pub claim_filter: u8,
@@ -859,16 +896,19 @@ impl Default for Menu {
             construct_height: 2,
             construct_floor: true,
             experimental_section: ExperimentalSection::default(),
+            helper_page: 0,
             deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
+            navigation_menu: false,
             settings_section: 0,
+            trading_group: 0,
             settings_page: 0,
             claim_owner: String::new(),
             claim_filter: 0,
             party_filter: PartyFilter::Users,
             chat_section: ChatSection::Appearance,
-            claims_section: ClaimsSection::Map,
+            claims_section: ClaimsSection::List,
             claims_page: 0,
             own_claim_color: "#55FF88".into(),
             friend_claim_color: "#55BBFF".into(),
@@ -902,7 +942,67 @@ fn widget(
         control,
         selected,
         muted: false,
+        readout: false,
+        row: false,
     }
+}
+/// Pairs of `Name − value` / `Name + value` buttons become one labelled stepper row:
+/// the name, a readout of the value and compact − and + buttons that keep their controls.
+fn merge_steppers(widgets: Vec<Widget>) -> Vec<Widget> {
+    let mut out = Vec::with_capacity(widgets.len());
+    let mut items = widgets.into_iter().peekable();
+    while let Some(a) = items.next() {
+        let pair = items.peek().and_then(|b| {
+            let (name, value) = a.text.split_once(" − ")?;
+            let (other, same) = b.text.split_once(" + ")?;
+            (a.control.is_some()
+                && b.control.is_some()
+                && !name.is_empty()
+                && name == other
+                && value == same
+                && a.rect[1] == b.rect[1]
+                && a.rect[3] == b.rect[3])
+                .then(|| (name.to_owned(), value.to_owned()))
+        });
+        let Some((name, value)) = pair else {
+            out.push(a);
+            continue;
+        };
+        let b = items.next().expect("peeked");
+        let [x, y, _, h] = a.rect;
+        let right = b.rect[0] + b.rect[2];
+        let button = h.clamp(18.0, 22.0);
+        let readout_w = 76.0_f32.min((right - x) * 0.35);
+        let mut row = widget([x, y, right - x, h], name, None, false);
+        row.row = true;
+        out.push(row);
+        let mut readout = widget(
+            [
+                right - 2.0 * button - 6.0 - readout_w,
+                y + 2.0,
+                readout_w,
+                (h - 4.0).max(1.0),
+            ],
+            value,
+            None,
+            false,
+        );
+        readout.readout = true;
+        out.push(readout);
+        out.push(widget(
+            [right - 2.0 * button - 3.0, y, button, h],
+            "−",
+            a.control,
+            false,
+        ));
+        out.push(widget(
+            [right - button, y, button, h],
+            "+",
+            b.control,
+            false,
+        ));
+    }
+    out
 }
 fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[1] >= r[1] && p[0] < r[0] + r[2] && p[1] < r[1] + r[3]
@@ -1111,7 +1211,7 @@ impl Menu {
                     }
                 })
             }),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Settings => None,
+            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => None,
         });
         if self.tab == Tab::Party
             && self
@@ -1186,63 +1286,116 @@ impl Menu {
                 self.important_names(model).len()
             }
             Tab::Party => self.party_indices(model).len(),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Settings => 0,
+            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => 0,
+        }
+    }
+    /// The preferences page on screen: Settings shows its own category, while Map and claims,
+    /// Chat and Trading show their preferences in their own tabs.
+    pub fn section(&self) -> u8 {
+        match self.tab {
+            Tab::Claims => 2,
+            Tab::Chat => 3,
+            Tab::Trading => 4,
+            _ => self.settings_section,
         }
     }
     pub fn layout(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
+        merge_steppers(self.layout_widgets(model, width, height))
+    }
+    fn layout_widgets(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
         if self.experiments_prompt {
             return self.experiments_dialog(width, height);
         }
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
-        let sidebar = if panel_w >= 380.0 { RAIL_WIDTH } else { 0.0 };
-        let nav_step = ((panel_h - 80.0) / 6.0).min(26.0);
+        let sidebar = rail_width(panel_w, panel_h);
+        let nav_step = ((panel_h - 104.0) / 6.0).min(28.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
         for widget in &mut widgets {
+            if sidebar > 0.0
+                && self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Baritone
+                && widget.control.is_none()
+                && widget.rect[1] == panel_h - 24.0
+            {
+                // Settings and language moved into the rail, so the key hint may use the full row.
+                widget.rect[2] += 100.0;
+            }
             widget.rect[0] += x + sidebar;
             widget.rect[1] += y;
-            if sidebar > 0.0 && widget.control == Some(Control::Economy) {
-                widget.rect = [
-                    x + 6.0,
-                    y + 44.0 + 5.0 * nav_step,
-                    sidebar - 10.0,
-                    nav_step - 4.0,
-                ];
-            }
+
             if sidebar > 0.0 && widget.control == Some(Control::Language) {
-                widget.rect = [x + 63.0, y + panel_h - 28.0, 27.0, 22.0];
+                widget.rect = [x + 6.0, y + panel_h - 28.0, sidebar - 12.0, 22.0];
             }
             if sidebar > 0.0
                 && let Some(Control::Tab(tab)) = widget.control
             {
                 let i = match tab {
                     Tab::Waypoints => 0,
-                    Tab::Party => 1,
-                    Tab::Claims => 2,
+                    Tab::Claims => 1,
+                    Tab::Party => 2,
                     Tab::Chat => 3,
-                    Tab::Experimental => 4,
+                    Tab::Trading => 4,
+                    Tab::Experimental => 5,
                     Tab::Settings => 6,
                 };
                 widget.rect = [
                     x + 6.0,
                     if tab == Tab::Settings {
-                        y + panel_h - 28.0
+                        y + panel_h - 54.0
                     } else {
                         y + 44.0 + i as f32 * nav_step
                     },
-                    if tab == Tab::Settings {
-                        54.0
-                    } else {
-                        sidebar - 10.0
-                    },
+                    sidebar - 12.0,
                     if tab == Tab::Settings {
                         22.0
                     } else {
                         nav_step - 4.0
                     },
                 ];
+            }
+        }
+        if sidebar == 0.0 {
+            let navigation = |control: Option<Control>| {
+                matches!(control,
+                Some(Control::Tab(tab)) if tab != Tab::Settings)
+            };
+            if self.navigation_menu {
+                let mut index = 0;
+                widgets.retain_mut(|widget| {
+                    if navigation(widget.control) {
+                        widget.rect = [
+                            x + 8.0 + (index % 2) as f32 * (panel_w - 16.0) / 2.0,
+                            y + 56.0 + (index / 2) as f32 * 30.0,
+                            (panel_w - 20.0) / 2.0,
+                            26.0,
+                        ];
+                        index += 1;
+                        return true;
+                    }
+                    widget.text == "DraimHorizon"
+                        || matches!(
+                            widget.control,
+                            Some(Control::Close | Control::Language | Control::Tab(Tab::Settings))
+                        )
+                });
+            } else {
+                widgets.retain(|widget| !navigation(widget.control));
+            }
+            widgets.push(widget(
+                [x + 8.0, y + 30.0, panel_w - 16.0, 20.0],
+                format!(
+                    "{}: {}",
+                    self.language.text("Раздел", "Section"),
+                    self.tab.label(self.language)
+                ),
+                Some(Control::NavigationMenu),
+                self.navigation_menu,
+            ));
+            if self.navigation_menu {
+                return widgets;
             }
         }
         if self.tab == Tab::Experimental
@@ -1456,18 +1609,18 @@ impl Menu {
             ),
             (
                 Control::Tab(Tab::Party),
-                self.language.text("Пати", "Friends"),
+                self.language.text("Друзья", "Friends"),
             ),
-            (
-                Control::Tab(Tab::Claims),
-                self.language.text("Клеймы", "Claims"),
-            ),
+            (Control::Tab(Tab::Claims), Tab::Claims.label(self.language)),
             (Control::Tab(Tab::Chat), self.language.text("Чат", "Chat")),
             (
                 Control::Tab(Tab::Experimental),
                 self.language.text("Эксперименты", "Experiments"),
             ),
-            (Control::Economy, self.language.text("Торги", "Trading")),
+            (
+                Control::Tab(Tab::Trading),
+                self.language.text("Торговля", "Trading"),
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -1491,48 +1644,19 @@ impl Menu {
             Some(Control::Language),
             false,
         ));
-        if self.tab == Tab::Settings {
+        if matches!(
+            self.tab,
+            Tab::Settings | Tab::Trading | Tab::Chat | Tab::Claims
+        ) {
             return self.settings_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Experimental {
             return self.experimental_layout(model, x, w, height, out);
         }
-        if self.tab == Tab::Chat {
-            for (i, (label, control, selected)) in [
-                (
-                    localized!(
-                        self.language,
-                        "Перевод входящих: {}",
-                        "Incoming translation: {}",
-                        self.on(model.chat_translate)
-                    ),
-                    Control::ChatTranslate,
-                    model.chat_translate,
-                ),
-                (
-                    self.outgoing_label(model.chat_outgoing),
-                    Control::ChatOutgoing,
-                    model.chat_outgoing,
-                ),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                out.push(widget(
-                    [x, 64.0 + i as f32 * 28.0, w, 24.0],
-                    label,
-                    Some(control),
-                    selected,
-                ));
-            }
-            return out;
-        }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
         }
-        if self.tab == Tab::Claims {
-            return self.claim_list_layout(model, x, w, height, out);
-        } else {
+        {
             let per = Self::rows_per_page(height);
             let start = self.page * per;
             let end = (start + per).min(self.count(model));
@@ -1689,7 +1813,7 @@ impl Menu {
             false,
         ));
         out.push(widget(
-            [x, 80.0, w * 0.5 - 3.0, 18.0],
+            [x, 80.0, w * 0.4 - 3.0, 18.0],
             localized!(
                 self.language,
                 "Порядок: {}",
@@ -1700,12 +1824,42 @@ impl Menu {
             false,
         ));
         out.push(widget(
-            [x + w * 0.5, 80.0, w * 0.5, 18.0],
+            [x + w * 0.4, 80.0, w * 0.25 - 3.0, 18.0],
+            if model.map_preferences.all_dimensions {
+                self.language.text("Все миры", "All worlds")
+            } else {
+                self.language.text("Этот мир", "This world")
+            },
+            Some(Control::MapDimensions),
+            false,
+        ));
+        out.push(widget(
+            [x + w * 0.65, 80.0, w * 0.35, 18.0],
             self.language.text("Обновить /claims", "Refresh /claims"),
             Some(Control::Refresh),
             false,
         ));
         let indices = self.claim_indices(model);
+        if indices.is_empty() {
+            let mut hint = widget(
+                [x + 4.0, 108.0, w - 8.0, 14.0],
+                if model.claim_rows.is_empty() {
+                    self.language.text(
+                        "Приватов пока нет. На сервере нажмите «Обновить /claims».",
+                        "No claims yet. On a server, press Refresh /claims.",
+                    )
+                } else {
+                    self.language.text(
+                        "Нет приватов под этот фильтр.",
+                        "No claims match this filter.",
+                    )
+                },
+                None,
+                false,
+            );
+            hint.muted = true;
+            out.push(hint);
+        }
         let per = (((height - 150.0) / 20.0).floor() as usize).clamp(1, 12);
         let pages = indices.len().div_ceil(per).max(1);
         let page = self.claims_page.min(pages - 1);
@@ -1758,19 +1912,36 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let titles = [
-            self.language.text("Основное", "General"),
-            self.language.text("Связь", "Network"),
-            self.language.text("Карта", "Map"),
-            self.language.text("Чат", "Chat"),
-            self.language.text("Торги", "Trading"),
-            "TAB",
-            "HUD",
-        ];
-        let columns = 7_usize;
+        // Map and chat preferences live in their own tabs; Settings keeps what is mod-wide.
+        let titles = match self.tab {
+            Tab::Trading => vec![
+                (0, self.language.text("Основное", "General")),
+                (1, self.language.text("Панель", "Overlay")),
+                (2, self.language.text("Обновления", "Updates")),
+                (3, self.language.text("Прибыль", "Profit")),
+                (4, self.language.text("Комиссии", "Fees")),
+            ],
+            Tab::Settings => vec![
+                (0, self.language.text("Общее", "General")),
+                (1, self.language.text("Связь", "Network")),
+                (5, self.language.text("Список игроков", "Player list")),
+                (6, self.language.text("Боковая панель", "Sidebar")),
+            ],
+            _ => Vec::new(),
+        };
+        // One row of categories when the labels fit, otherwise wrap into rows of three.
+        let columns = if titles.len() as f32 * 104.0 <= w {
+            titles.len().max(1)
+        } else {
+            3
+        };
         let rows = titles.len().div_ceil(columns);
-        let body_top = 56.0 + rows as f32 * 22.0 + 4.0;
-        for (i, title) in titles.into_iter().enumerate() {
+        let body_top = if rows == 0 {
+            56.0
+        } else {
+            56.0 + rows as f32 * 22.0 + 4.0
+        };
+        for (i, (section, title)) in titles.into_iter().enumerate() {
             out.push(widget(
                 [
                     x + (i % columns) as f32 * w / columns as f32,
@@ -1779,42 +1950,90 @@ impl Menu {
                     20.0,
                 ],
                 title,
-                Some(Control::SettingsTab(i as u8)),
-                self.settings_section == i as u8,
+                Some(if self.tab == Tab::Trading {
+                    Control::TradingGroup(section)
+                } else {
+                    Control::SettingsTab(section)
+                }),
+                if self.tab == Tab::Trading {
+                    self.trading_group == section
+                } else {
+                    self.settings_section == section
+                },
             ));
         }
-        let mut inner = match self.settings_section {
+        let section = self.section();
+        if self.tab == Tab::Claims && self.claims_section == ClaimsSection::List {
+            // The claims list keeps its own filters and paging under the section selector.
+            out.extend(
+                self.claims_layout(model, x, w, 400.0, Vec::new())
+                    .into_iter()
+                    .filter(|w| matches!(w.control, Some(Control::ClaimsSection(_)))),
+            );
+            let list = self.claim_list_layout(model, x, w, height - 24.0, Vec::new());
+            out.extend(list.into_iter().map(|mut widget| {
+                widget.rect[1] += 24.0;
+                widget
+            }));
+            return out;
+        }
+        let mut inner = match section {
             0 => {
-                out.push(widget(
-                    [x, body_top, w, 22.0],
-                    self.language
-                        .text("Оформление интерфейса", "Interface appearance"),
-                    Some(Control::Appearance),
-                    false,
-                ));
-                out.push(widget(
-                    [x, body_top + 28.0, w, 22.0],
-                    localized!(
-                        self.language,
-                        "Авто-реконнект: {}",
-                        "Auto reconnect: {}",
-                        self.on(model.auto_reconnect)
+                let detailed = height >= 300.0;
+                let step = if detailed { 52.0 } else { 24.0 };
+                let rows = [
+                    (
+                        self.language
+                            .text("Оформление интерфейса", "Interface appearance")
+                            .to_owned(),
+                        Control::Appearance,
+                        false,
+                        self.language.text(
+                            "Цвет, прозрачность, эффекты и контраст",
+                            "Accent, opacity, motion and contrast",
+                        ),
                     ),
-                    Some(Control::ToggleReconnect),
-                    model.auto_reconnect,
-                ));
-                out.push(widget(
-                    [x, body_top + 56.0, w, 22.0],
-                    localized!(
-                        self.language,
-                        "Содержимое шалкеров: {}",
-                        "Shulker preview: {}",
-                        self.on(model.shulker_peek)
+                    (
+                        localized!(
+                            self.language,
+                            "Авто-реконнект: {}",
+                            "Auto reconnect: {}",
+                            self.on(model.auto_reconnect)
+                        ),
+                        Control::ToggleReconnect,
+                        model.auto_reconnect,
+                        self.language.text(
+                            "Вернуться на сервер после потери соединения",
+                            "Rejoin the server after a lost connection",
+                        ),
                     ),
-                    Some(Control::ToggleShulkerPeek),
-                    model.shulker_peek,
-                ));
-                return out;
+                    (
+                        localized!(
+                            self.language,
+                            "Содержимое шалкеров: {}",
+                            "Shulker preview: {}",
+                            self.on(model.shulker_peek)
+                        ),
+                        Control::ToggleShulkerPeek,
+                        model.shulker_peek,
+                        self.language.text(
+                            "Показывать предметы шалкера в подсказке",
+                            "Show the items inside a shulker in its tooltip",
+                        ),
+                    ),
+                ];
+                let mut v = Vec::new();
+                for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
+                    let y = 54.0 + index as f32 * step;
+                    v.push(widget([x, y, w, 22.0], label, Some(control), selected));
+                    if detailed {
+                        let mut hint =
+                            widget([x + 6.0, y + 26.0, w - 12.0, 14.0], hint, None, false);
+                        hint.muted = true;
+                        v.push(hint);
+                    }
+                }
+                v
             }
             1 => {
                 let mut copy = self.clone();
@@ -1823,41 +2042,69 @@ impl Menu {
                 for widget in &mut v {
                     widget.rect[0] += x - 8.0;
                 }
-                v.retain(|v| v.rect[1] < 212.0);
+                // Back returns from the Friends tab's relay page; Settings has its own tabs,
+                // so the auto-connect switch takes the whole row.
+                v.retain(|v| v.rect[1] < 212.0 && v.control != Some(Control::RelayBack));
+                for widget in &mut v {
+                    if widget.control == Some(Control::ToggleAutoRelay) {
+                        widget.rect[0] = x;
+                        widget.rect[2] = w;
+                    }
+                }
                 v.push(widget(
                     [x, 212.0, w, 18.0],
-                    format!("Auto Trust: {}", self.on(model.auto_trust)),
+                    localized!(
+                        self.language,
+                        "Автодоверие: {}",
+                        "Auto trust: {}",
+                        self.on(model.auto_trust)
+                    ),
                     Some(Control::ToggleAutoTrust),
                     model.auto_trust,
                 ));
                 v
             }
-            2 => self.claims_layout(model, x, w, height - 26.0, Vec::new()),
-            3 => self.chat_layout(model, x, w, height - 26.0, Vec::new()),
+            2 => self.claims_layout(model, x, w, 400.0, Vec::new()),
+            3 => self.chat_layout(model, x, w, 400.0, Vec::new()),
             section => {
                 let settings: Vec<_> = super::claim_borders_economy::SETTINGS
                     .iter()
                     .filter(|setting| match section {
+                        4 if self.tab == Tab::Trading => setting.group == self.trading_group,
                         4 => setting.group <= 4,
                         5 => setting.group == 6,
                         _ => setting.group == 5,
                     })
                     .collect();
-                let per = (((height - body_top - 56.0) / 22.0).floor() as usize).max(1);
+                let reserve = if self.tab == Tab::Trading { 82.0 } else { 56.0 };
+                let per = (((height - body_top - reserve) / 22.0).floor() as usize).max(1);
                 let pages = settings.len().div_ceil(per).max(1);
                 let page = self.settings_page.min(pages - 1);
                 for (i, setting) in settings.into_iter().skip(page * per).take(per).enumerate() {
                     let y = body_top + i as f32 * 22.0;
-                    out.push(widget(
-                        [x, y, w - 48.0, 20.0],
-                        format!(
-                            "{}: {}",
-                            self.language.text(setting.label, setting.label_en),
-                            model.economy_preferences.get(setting.key)
-                        ),
-                        None,
-                        false,
-                    ));
+                    let label = self.language.text(setting.label, setting.label_en);
+                    let value = model.economy_preferences.get(setting.key);
+                    let shown = setting.value_label(value, self.language);
+                    if setting.is_toggle() || setting.is_choice() {
+                        out.push(widget(
+                            [x, y, w, 20.0],
+                            format!("{label}: {shown}"),
+                            Some(if setting.is_toggle() {
+                                Control::EconomySetting(setting.key, 1)
+                            } else {
+                                Control::EconomyChoice(setting.key)
+                            }),
+                            setting.is_toggle() && value != 0,
+                        ));
+                        continue;
+                    }
+                    let mut row = widget([x, y, w, 20.0], label, None, false);
+                    row.row = true;
+                    out.push(row);
+                    let mut readout =
+                        widget([x + w - 134.0, y + 2.0, 84.0, 16.0], shown, None, false);
+                    readout.readout = true;
+                    out.push(readout);
                     out.push(widget(
                         [x + w - 46.0, y, 22.0, 20.0],
                         "−",
@@ -1871,32 +2118,114 @@ impl Menu {
                         false,
                     ));
                 }
-                out.push(widget(
-                    [x, height - 48.0, w / 2.0 - 3.0, 18.0],
-                    format!("← {} / {}", page + 1, pages),
-                    Some(Control::SettingsPage(-1)),
-                    false,
-                ));
-                out.push(widget(
-                    [x + w / 2.0, height - 48.0, w / 2.0, 18.0],
-                    "→",
-                    Some(Control::SettingsPage(1)),
-                    false,
-                ));
+                if self.tab == Tab::Trading {
+                    out.push(widget(
+                        [x, height - 74.0, w, 22.0],
+                        self.language
+                            .text("Открыть торговый кабинет", "Open trading workspace"),
+                        Some(Control::Economy),
+                        false,
+                    ));
+                }
+                if pages > 1 {
+                    out.push(widget(
+                        [x, height - 48.0, w / 2.0 - 3.0, 18.0],
+                        localized!(
+                            self.language,
+                            "Назад · {} / {}",
+                            "Back · {} / {}",
+                            page + 1,
+                            pages
+                        ),
+                        Some(Control::SettingsPage(-1)),
+                        false,
+                    ));
+                    out.push(widget(
+                        [x + w / 2.0, height - 48.0, w / 2.0, 18.0],
+                        self.language.text("Далее", "Next"),
+                        Some(Control::SettingsPage(1)),
+                        false,
+                    ));
+                }
                 return out;
             }
         };
-        // Preserve each editor's spacing while keeping its last row above the footer.
-        let bottom = inner
-            .iter()
-            .map(|widget| widget.rect[1] + widget.rect[3])
-            .fold(80.0_f32, f32::max);
-        let scale = ((height - body_top - 28.0) / (bottom - 54.0).max(1.0)).min(1.0);
-        for widget in &mut inner {
-            widget.rect[1] = body_top + (widget.rect[1] - 54.0).max(0.0) * scale;
-            widget.rect[3] *= scale;
+        // Keep nested section selectors visible, and paginate rows instead of making text and
+        // hit targets microscopic on small GUI sizes. Fields and actions stay in their rows.
+        let mut selectors = Vec::new();
+        inner.retain(|widget| {
+            if matches!(
+                widget.control,
+                Some(Control::ChatSection(_) | Control::ClaimsSection(_))
+            ) {
+                selectors.push(widget.clone());
+                false
+            } else {
+                true
+            }
+        });
+        let content_top = body_top + if selectors.is_empty() { 0.0 } else { 24.0 };
+        for mut widget in selectors {
+            widget.rect[1] = body_top;
+            out.push(widget);
         }
-        out.extend(inner);
+        inner.sort_by(|a, b| a.rect[1].total_cmp(&b.rect[1]));
+        let available = (height - content_top - 52.0).max(22.0);
+        let mut pages: Vec<Vec<Widget>> = vec![Vec::new()];
+        let mut start = inner.first().map_or(0.0, |widget| widget.rect[1]);
+        let mut row = 0;
+        while row < inner.len() {
+            let y = inner[row].rect[1];
+            let end = (row + 1..inner.len())
+                .find(|&i| inner[i].rect[1] != y)
+                .unwrap_or(inner.len());
+            let bottom = inner[row..end]
+                .iter()
+                .map(|widget| y + widget.rect[3])
+                .fold(y, f32::max);
+            if bottom - start > available && !pages.last().unwrap().is_empty() {
+                pages.push(Vec::new());
+                start = y;
+            }
+            for widget in &inner[row..end] {
+                let mut widget = widget.clone();
+                widget.rect[1] = content_top + y - start;
+                pages.last_mut().unwrap().push(widget);
+            }
+            row = end;
+        }
+        let page = self
+            .focus
+            .and_then(|field| {
+                pages.iter().position(|page| {
+                    page.iter()
+                        .any(|widget| widget.control == Some(Control::Field(field)))
+                })
+            })
+            .unwrap_or_else(|| self.settings_page.min(pages.len() - 1));
+        out.extend(pages[page].iter().cloned());
+        if pages.len() > 1 {
+            out.push(widget(
+                [x, height - 48.0, w / 2.0 - 3.0, 20.0],
+                localized!(
+                    self.language,
+                    "Назад · {} / {}",
+                    "Back · {} / {}",
+                    page + 1,
+                    pages.len()
+                ),
+                Some(Control::SettingsContentPage(page.saturating_sub(1))),
+                false,
+            ));
+            out.push(widget(
+                [x + w / 2.0, height - 48.0, w / 2.0, 20.0],
+                self.language.text("Далее", "Next"),
+                Some(Control::SettingsContentPage(
+                    (page + 1).min(pages.len() - 1),
+                )),
+                false,
+            ));
+        }
         out
     }
     fn claims_layout(
@@ -1908,6 +2237,7 @@ impl Menu {
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
         for (i, (section, label)) in [
+            (ClaimsSection::List, self.language.text("Приваты", "Claims")),
             (ClaimsSection::Map, self.language.text("Карта", "Map")),
             (
                 ClaimsSection::Borders,
@@ -1926,7 +2256,7 @@ impl Menu {
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 4.0, 56.0, w / 4.0 - 3.0, 18.0],
+                [x + i as f32 * w / 5.0, 56.0, w / 5.0 - 3.0, 18.0],
                 label,
                 Some(Control::ClaimsSection(section)),
                 self.claims_section == section,
@@ -1946,9 +2276,7 @@ impl Menu {
         let rows = match self.claims_section {
             ClaimsSection::Map => vec![
                 pair(
-                    self.language
-                        .text("Открыть карту · J", "Open map · J")
-                        .into(),
+                    self.language.text("Открыть карту", "Open map").into(),
                     Control::OpenMap,
                     self.language
                         .text("Обновить /claims", "Refresh /claims")
@@ -2203,79 +2531,8 @@ impl Menu {
                     Control::MapLabels,
                 )],
             ],
-            ClaimsSection::List => {
-                out.push(widget(
-                    [x, 80.0, w * 0.62 - 3.0, 18.0],
-                    localized!(
-                        self.language,
-                        "Сортировка: {}",
-                        "Sort: {}",
-                        p.sort.label_in(self.language)
-                    ),
-                    Some(Control::MapSort),
-                    false,
-                ));
-                out.push(widget(
-                    [x + w * 0.62, 80.0, w * 0.38 - 3.0, 18.0],
-                    if p.all_dimensions {
-                        self.language.text("Все миры", "All worlds")
-                    } else {
-                        self.language.text("Этот мир", "This world")
-                    },
-                    Some(Control::MapDimensions),
-                    false,
-                ));
-                let per = (((height - 140.0) / 20.0).floor() as usize).clamp(2, 10);
-                let pages = model.claim_rows.len().div_ceil(per).max(1);
-                let page = self.claims_page.min(pages - 1);
-                for (slot, index) in
-                    (page * per..((page + 1) * per).min(model.claim_rows.len())).enumerate()
-                {
-                    out.push(widget(
-                        [x, 102.0 + slot as f32 * 20.0, w, 18.0],
-                        &model.claim_rows[index].label,
-                        Some(Control::ClaimRow(index)),
-                        false,
-                    ));
-                }
-                if model.claim_rows.is_empty() {
-                    out.push(widget(
-                        [x, 112.0, w, 18.0],
-                        self.language.text(
-                            "Нет данных. Нажми «Обновить /claims» в «Карта».",
-                            "No data. Use “Refresh /claims” under Map.",
-                        ),
-                        None,
-                        false,
-                    ));
-                }
-                out.push(widget(
-                    [x, height - 30.0, w * 0.3 - 3.0, 18.0],
-                    "←",
-                    Some(Control::ClaimsPrevious),
-                    false,
-                ));
-                out.push(widget(
-                    [x + w * 0.3, height - 30.0, w * 0.4 - 3.0, 18.0],
-                    localized!(
-                        self.language,
-                        "{}/{} · {} чанков",
-                        "{}/{} · {} chunks",
-                        page + 1,
-                        pages,
-                        model.claim_rows.len()
-                    ),
-                    None,
-                    false,
-                ));
-                out.push(widget(
-                    [x + w * 0.7, height - 30.0, w * 0.3, 18.0],
-                    "→",
-                    Some(Control::ClaimsNext),
-                    false,
-                ));
-                return out;
-            }
+            // Drawn by `claim_list_layout` under the same selector.
+            ClaimsSection::List => return out,
         };
         if self.claims_section == ClaimsSection::Storage {
             for (i, text) in [
@@ -2966,11 +3223,7 @@ impl Menu {
                     // The previews placed in this world: select one (Start builds it, the
                     // editor keys move it), show or hide it, or forget it.
                     let mut y = 100.0 + below + count.div_ceil(2) as f32 * step + 4.0;
-                    let limit = if height >= 300.0 {
-                        height - 70.0
-                    } else {
-                        height - 52.0
-                    };
+                    let limit = height - 68.0;
                     if y + 12.0 <= limit {
                         out.push(widget(
                             [x, y, w, 11.0],
@@ -3273,7 +3526,7 @@ impl Menu {
                     .map(|n| n.strip_prefix("minecraft:").unwrap_or(n))
                     .collect();
                 out.push(widget(
-                    [x + half + 4.0, height - 30.0, half, 14.0],
+                    [x + half + 4.0, height - 64.0, half, 18.0],
                     if names.is_empty() {
                         self.language
                             .text("Свой блок: прицел на блок", "Own block: aim at a block")
@@ -3291,7 +3544,7 @@ impl Menu {
                 ));
                 // The storage the miner unloads into when the inventory is full (the farm's).
                 out.push(widget(
-                    [x, height - 30.0, half, 14.0],
+                    [x, height - 64.0, half, 18.0],
                     match model.farm_storage[0] {
                         Some([sx, sy, sz]) => localized!(
                             self.language,
@@ -3370,14 +3623,20 @@ impl Menu {
             }
             // The status line, and the switch for eating on its own beside it.
             let eat_w = 92.0_f32.min(w * 0.4);
+            let extra_footer = matches!(
+                self.baritone_mode,
+                BaritoneMode::Mining | BaritoneMode::Schematic
+            );
+            let status_y = height - if extra_footer { 44.0 } else { 48.0 };
+            let status_h = if extra_footer { 18.0 } else { 14.0 };
             out.push(widget(
-                [x, height - 48.0, w - eat_w - 4.0, 14.0],
+                [x, status_y, w - eat_w - 4.0, status_h],
                 &model.navigation_status,
                 None,
                 false,
             ));
             out.push(widget(
-                [x + w - eat_w, height - 48.0, eat_w, 14.0],
+                [x + w - eat_w, status_y, eat_w, status_h],
                 localized!(
                     self.language,
                     "Еда: {}",
@@ -3393,36 +3652,27 @@ impl Menu {
             ));
             if self.baritone_mode == BaritoneMode::Schematic {
                 out.push(widget(
-                    [x, height - 30.0, tab_width, 14.0],
+                    [x, height - 64.0, tab_width, 18.0],
                     self.language
                         .text("Материалы → буфер", "Materials → clipboard"),
                     Some(Control::SchematicMaterials),
                     false,
                 ));
                 out.push(widget(
-                    [x + tab_width + 4.0, height - 30.0, tab_width, 14.0],
+                    [x + tab_width + 4.0, height - 64.0, tab_width, 18.0],
                     self.language.text("Открыть папку", "Open folder"),
                     Some(Control::SchematicFolder),
                     false,
                 ));
-                // The two buttons above use the last line; the keys go one row higher
-                // when the panel is tall enough not to touch the controls.
-                if height >= 300.0 {
-                    out.push(widget(
-                        [x, height - 66.0, w, 14.0],
-                        self.hotkey_hint(model),
-                        None,
-                        false,
-                    ));
-                }
-            } else {
-                out.push(widget(
-                    [x, height - 30.0, w, 14.0],
-                    self.hotkey_hint(model),
-                    None,
-                    false,
-                ));
             }
+            let mut hint = widget(
+                [x, height - 24.0, (w - 100.0).max(1.0), 18.0],
+                self.hotkey_hint(model),
+                None,
+                false,
+            );
+            hint.muted = true;
+            out.push(hint);
             return out;
         }
         if self.experimental_section == ExperimentalSection::Helpers {
@@ -3545,8 +3795,8 @@ impl Menu {
                 Control::AutoEat,
                 model.auto_eat,
                 self.language.text(
-                    "ест сама при голоде, всегда, не только в задачах",
-                    "eats by itself when hungry, always, not only in tasks",
+                    "Ест сама при голоде, всегда, не только в задачах",
+                    "Eats by itself when hungry, always, not only during tasks",
                 ),
             ),
             (
@@ -3559,8 +3809,8 @@ impl Menu {
                 Control::Helper(Helper::Totem),
                 model.helpers[Helper::Totem.index()],
                 self.language.text(
-                    "пустая вторая рука: тотем берётся из инвентаря",
-                    "empty off hand: a totem is taken from the inventory",
+                    "Пустая вторая рука: тотем берётся из инвентаря",
+                    "Empty off hand: a totem is taken from the inventory",
                 ),
             ),
             (
@@ -3573,8 +3823,8 @@ impl Menu {
                 Control::Helper(Helper::Fill),
                 model.helpers[Helper::Fill.index()],
                 self.language.text(
-                    "стак закончился: тот же предмет встаёт в тот же слот",
-                    "a stack ran out: the same item goes into the same slot",
+                    "Стак закончился: тот же предмет встаёт в тот же слот",
+                    "A stack ran out: the same item goes into the same slot",
                 ),
             ),
             (
@@ -3587,8 +3837,8 @@ impl Menu {
                 Control::Helper(Helper::Tools),
                 model.helpers[Helper::Tools.index()],
                 self.language.text(
-                    "для ломаемого блока берётся нужный инструмент",
-                    "the right tool is taken for the block being broken",
+                    "Для ломаемого блока берётся нужный инструмент",
+                    "The right tool is picked for the block being broken",
                 ),
             ),
         ];
@@ -3605,8 +3855,8 @@ impl Menu {
                 Control::Helper(Helper::Resume),
                 model.helpers[Helper::Resume.index()],
                 self.language.text(
-                    "после рестарта сервера задача бота продолжается сама",
-                    "after a server restart the bot's task goes on by itself",
+                    "После рестарта сервера задача бота продолжается сама",
+                    "After a server restart the bot's task carries on by itself",
                 ),
             ),
             (
@@ -3619,8 +3869,8 @@ impl Menu {
                 Control::Helper(Helper::HumanLook),
                 model.helpers[Helper::HumanLook.index()],
                 self.language.text(
-                    "бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
-                    "the bot looks where it goes; the mouse takes the camera, the task goes on",
+                    "Бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
+                    "The bot looks where it walks; moving the mouse takes the camera back",
                 ),
             ),
             (
@@ -3633,55 +3883,94 @@ impl Menu {
                 Control::Helper(Helper::AutoClick),
                 model.helpers[Helper::AutoClick.index()],
                 self.language.text(
-                    "нажимает выбранную кнопку мыши в заданном темпе",
-                    "presses the chosen mouse button at the chosen pace",
+                    "Нажимает выбранную кнопку мыши в заданном темпе",
+                    "Presses the chosen mouse button at the chosen pace",
                 ),
             ),
         ]);
-        let step = ((height - 92.0) / 8.0).clamp(15.0, 34.0);
-        let note = step >= 30.0;
-        for (index, (label, control, on, hint)) in rows.enumerate() {
-            let y = 84.0 + index as f32 * step;
-            out.push(widget(
-                [x, y, w, if note { 20.0 } else { (step - 2.0).min(20.0) }],
-                label,
-                Some(control),
-                on,
-            ));
+        let rows: Vec<_> = rows.collect();
+        let click_options = rows.len();
+        let note = height >= 340.0;
+        let step = if note { 34.0 } else { 24.0 };
+        let per = (((height - 136.0) / step).floor() as usize).max(1);
+        let pages = (click_options + 1).div_ceil(per);
+        let page = self.helper_page.min(pages - 1);
+        for (index, (label, control, on, hint)) in
+            rows.into_iter().enumerate().skip(page * per).take(per)
+        {
+            let y = 84.0 + (index - page * per) as f32 * step;
+            out.push(widget([x, y, w, 20.0], label, Some(control), on));
             if note {
-                out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
+                let mut hint = widget([x + 4.0, y + 21.0, w - 8.0, 11.0], hint, None, false);
+                hint.muted = true;
+                out.push(hint);
             }
         }
-        let y = 84.0 + 7.0 * step;
-        let half = (w - 4.0) * 0.5;
-        let row_h = if note { 20.0 } else { (step - 2.0).min(20.0) };
-        let russian = self.language == Language::Russian;
-        out.push(widget(
-            [x, y, half, row_h],
-            localized!(
-                self.language,
-                "Кнопка: {}",
-                "Button: {}",
-                if model.click_right {
-                    self.language.text("ПКМ", "right")
-                } else {
-                    self.language.text("ЛКМ", "left")
-                }
-            ),
-            Some(Control::AutoClickButton),
-            false,
-        ));
-        out.push(widget(
-            [x + half + 4.0, y, half, row_h],
-            localized!(
-                self.language,
-                "Частота: {}",
-                "Rate: {}",
-                super::claim_borders_autoclick::label(model.click_rate, russian)
-            ),
-            Some(Control::AutoClickRate),
-            false,
-        ));
+        if page * per <= click_options && click_options < (page + 1) * per {
+            let y = 84.0 + (click_options - page * per) as f32 * step;
+            let half = (w - 4.0) * 0.5;
+            let row_h = 20.0;
+            let russian = self.language == Language::Russian;
+            out.push(widget(
+                [x, y, half, row_h],
+                localized!(
+                    self.language,
+                    "Кнопка: {}",
+                    "Button: {}",
+                    if model.click_right {
+                        self.language.text("ПКМ", "right")
+                    } else {
+                        self.language.text("ЛКМ", "left")
+                    }
+                ),
+                Some(Control::AutoClickButton),
+                false,
+            ));
+            out.push(widget(
+                [x + half + 4.0, y, half, row_h],
+                localized!(
+                    self.language,
+                    "Частота: {}",
+                    "Rate: {}",
+                    super::claim_borders_autoclick::label(model.click_rate, russian)
+                ),
+                Some(Control::AutoClickRate),
+                false,
+            ));
+        }
+        if pages > 1 {
+            for (column, target, text) in [
+                (
+                    0,
+                    page.saturating_sub(1),
+                    localized!(
+                        self.language,
+                        "Назад · {} / {}",
+                        "Back · {} / {}",
+                        page + 1,
+                        pages
+                    ),
+                ),
+                (
+                    1,
+                    (page + 1).min(pages - 1),
+                    self.language.text("Далее", "Next").into(),
+                ),
+            ] {
+                out.push(widget(
+                    [
+                        x + column as f32 * (w + 4.0) * 0.5,
+                        height - 48.0,
+                        (w - 4.0) * 0.5,
+                        20.0,
+                    ],
+                    text,
+                    Some(Control::HelperPage(target)),
+                    false,
+                ));
+            }
+        }
+
         out
     }
     fn important_names(&self, model: &ViewModel) -> Vec<String> {
@@ -4319,13 +4608,61 @@ impl Menu {
             }
             Control::ExperimentalTab(section) => {
                 self.experimental_section = section;
+                self.helper_page = 0;
+                self.focus = None;
+                None
+            }
+            Control::HelperPage(page) => {
+                self.helper_page = page;
                 self.focus = None;
                 None
             }
             Control::Language => Some(Action::SetLanguage(self.language.other())),
+            Control::NavigationMenu => {
+                self.navigation_menu = !self.navigation_menu;
+                self.focus = None;
+                None
+            }
             Control::Appearance => Some(Action::Appearance),
             Control::EconomySetting(key, dir) => Some(Action::EconomySetting(key, dir)),
+            Control::EconomyChoice(key) => {
+                let setting = super::claim_borders_economy::SETTINGS
+                    .iter()
+                    .find(|setting| setting.key == key && setting.is_choice())?;
+                let current = model.economy_preferences.get(key);
+                let direction = if current >= setting.max {
+                    (setting.min - current) / setting.step
+                } else {
+                    1
+                };
+                Some(Action::EconomySetting(key, direction))
+            }
             Control::ToggleReconnect => Some(Action::ToggleReconnect),
+            Control::TradingGroup(group) => {
+                self.trading_group = group.min(4);
+                self.settings_page = 0;
+                self.focus = None;
+                None
+            }
+            Control::SettingsTab(4) => {
+                self.tab = Tab::Trading;
+                self.settings_page = 0;
+                self.focus = None;
+                None
+            }
+            Control::SettingsTab(2) => {
+                self.tab = Tab::Claims;
+                self.claims_section = ClaimsSection::Map;
+                self.settings_page = 0;
+                self.focus = None;
+                None
+            }
+            Control::SettingsTab(3) => {
+                self.tab = Tab::Chat;
+                self.settings_page = 0;
+                self.focus = None;
+                None
+            }
             Control::SettingsTab(section) => {
                 self.settings_section = section.min(6);
                 self.settings_page = 0;
@@ -4338,7 +4675,13 @@ impl Menu {
             }
             Control::SettingsSection(dir) => {
                 self.deepl_key.clear();
-                self.settings_section = (self.settings_section as i8 + dir).rem_euclid(7) as u8;
+                let sections = [0, 1, 5, 6];
+                let index = sections
+                    .iter()
+                    .position(|s| *s == self.settings_section)
+                    .unwrap_or(0);
+                self.settings_section =
+                    sections[(index as i8 + dir).rem_euclid(sections.len() as i8) as usize];
                 self.settings_page = 0;
                 self.focus = None;
                 if self.settings_section == 1 {
@@ -4346,11 +4689,22 @@ impl Menu {
                 }
                 None
             }
+            Control::SettingsContentPage(page) => {
+                self.settings_page = page;
+                self.focus = None;
+                None
+            }
             Control::SettingsPage(dir) => {
-                let per = (((height - 138.0) / 22.0).floor() as usize).max(1);
+                let reserve = if self.tab == Tab::Trading {
+                    186.0
+                } else {
+                    160.0
+                };
+                let per = (((height - reserve) / 22.0).floor() as usize).max(1);
                 let count = super::claim_borders_economy::SETTINGS
                     .iter()
                     .filter(|s| match self.settings_section {
+                        _ if self.tab == Tab::Trading => s.group == self.trading_group,
                         4 => s.group <= 4,
                         5 => s.group == 6,
                         _ => s.group == 5,
@@ -4409,6 +4763,7 @@ impl Menu {
             Control::ClaimsSection(section) => {
                 self.claims_section = section;
                 self.focus = None;
+                self.settings_page = 0;
                 self.claims_page = 0;
                 if section == ClaimsSection::Colours {
                     self.own_claim_color = format!("#{:06X}", model.claims.own_color);
@@ -4544,6 +4899,7 @@ impl Menu {
             Control::ChatSection(section) => {
                 self.deepl_key.clear();
                 self.focus = None;
+                self.settings_page = 0;
                 self.chat_section = section;
                 None
             }
@@ -4745,13 +5101,18 @@ impl Menu {
             Control::Close => Some(Action::Close),
             Control::ConfirmExperiments | Control::DeclineExperiments => None,
             Control::Tab(Tab::Experimental) if !model.experiments_accepted => {
+                self.navigation_menu = false;
                 self.experiments_prompt = true;
                 self.focus = None;
                 None
             }
             Control::Tab(t) => {
+                self.navigation_menu = false;
                 self.deepl_key.clear();
                 self.tab = t;
+                if t == Tab::Settings && matches!(self.settings_section, 2..=4) {
+                    self.settings_section = 0;
+                }
                 self.page = 0;
                 self.selected = None;
                 self.focus = None;
@@ -5154,6 +5515,10 @@ impl Menu {
             if self.navigation_choices.take().is_some() {
                 return true;
             }
+            if self.navigation_menu {
+                self.navigation_menu = false;
+                return true;
+            }
             if self.schematic_choices {
                 self.schematic_choices = false;
                 return true;
@@ -5178,10 +5543,7 @@ impl Menu {
                 self.focus = None;
                 return true;
             }
-            if self.tab == Tab::Settings
-                && self.settings_section == 3
-                && self.chat_section == ChatSection::DeepL
-            {
+            if self.section() == 3 && self.chat_section == ChatSection::DeepL {
                 self.focus = Some(Field::DeepLKey);
                 self.caret = usize::MAX;
                 self.anchor = None;
@@ -5200,18 +5562,13 @@ impl Menu {
                             _ => Field::NavigationX,
                         }
                     }
-                } else if self.relay_setup
-                    || (self.tab == Tab::Settings && self.settings_section == 1)
-                {
+                } else if self.relay_setup || self.section() == 1 {
                     if self.focus == Some(Field::RelayUrl) {
                         Field::RelayToken
                     } else {
                         Field::RelayUrl
                     }
-                } else if self.tab == Tab::Settings
-                    && self.settings_section == 2
-                    && self.claims_section == ClaimsSection::Colours
-                {
+                } else if self.section() == 2 && self.claims_section == ClaimsSection::Colours {
                     if self.focus == Some(Field::OwnClaimColor) {
                         Field::FriendClaimColor
                     } else {
@@ -5314,6 +5671,530 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn economy_switches_toggle_once_in_both_directions_and_keep_saved_preferences() {
+        for language in [Language::Russian, Language::English] {
+            for enabled in [false, true] {
+                let values: serde_json::Map<String, serde_json::Value> =
+                    super::super::claim_borders_economy::SETTINGS
+                        .iter()
+                        .filter(|setting| setting.is_toggle())
+                        .map(|setting| (setting.key.into(), serde_json::json!(i64::from(enabled))))
+                        .collect();
+                let mut model = ViewModel {
+                    language,
+                    economy_preferences: super::super::claim_borders_economy::Preferences::decode(
+                        &serde_json::json!({"schema":1,"values":values}).to_string(),
+                    )
+                    .unwrap(),
+                    ..ViewModel::default()
+                };
+                for section in 4..7 {
+                    for page in 0..32 {
+                        let mut menu = Menu {
+                            language,
+                            tab: Tab::Settings,
+                            settings_section: section,
+                            settings_page: page,
+                            ..Menu::default()
+                        };
+                        let widgets = menu.layout(&model, 800.0, 500.0);
+                        for setting in super::super::claim_borders_economy::SETTINGS
+                            .iter()
+                            .filter(|s| s.is_toggle())
+                        {
+                            let Some(button) = widgets.iter().find(|w| {
+                                w.control == Some(Control::EconomySetting(setting.key, 1))
+                            }) else {
+                                continue;
+                            };
+                            assert_eq!(
+                                crate::ui_style::switch_label(&button.text).unwrap().1,
+                                enabled
+                            );
+                            assert_eq!(button.selected, enabled);
+                            assert!(!widgets.iter().any(
+                                |w| w.control == Some(Control::EconomySetting(setting.key, -1))
+                            ));
+                            let r = button.rect;
+                            let Some(Action::EconomySetting(key, dir)) = menu.click(
+                                &model,
+                                [800.0, 500.0],
+                                [r[0] + r[2] * 0.5, r[1] + r[3] * 0.5],
+                            ) else {
+                                panic!("switch must produce one configuration action")
+                            };
+                            let previous = model.economy_preferences.clone();
+                            model.economy_preferences.adjust(key, dir);
+                            assert_eq!(model.economy_preferences.flag(key), !enabled);
+                            let saved = model.economy_preferences.encode();
+                            assert_eq!(
+                                super::super::claim_borders_economy::Preferences::decode(&saved)
+                                    .unwrap(),
+                                model.economy_preferences
+                            );
+                            model.economy_preferences = previous;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn corner_choices_use_names_and_wrap_without_affecting_numeric_settings() {
+        for key in ["corner", "sidebar_corner"] {
+            let mut model = ViewModel::default();
+            let original = model.economy_preferences.get(key);
+            let width = model.economy_preferences.get("width");
+            let mut menu = Menu::default();
+            for _ in 0..4 {
+                let current = model.economy_preferences.get(key);
+                let Some(Action::EconomySetting(changed, direction)) =
+                    menu.activate(&model, 400.0, Control::EconomyChoice(key))
+                else {
+                    panic!("corner choice must configure its existing key")
+                };
+                assert_eq!(changed, key);
+                model.economy_preferences.adjust(changed, direction);
+                assert_eq!(model.economy_preferences.get(key), (current + 1) % 4);
+                assert_eq!(model.economy_preferences.get("width"), width);
+            }
+            assert_eq!(model.economy_preferences.get(key), original);
+        }
+        assert!(
+            Menu::default()
+                .activate(
+                    &ViewModel::default(),
+                    400.0,
+                    Control::EconomyChoice("width")
+                )
+                .is_none()
+        );
+    }
+    #[test]
+    fn numeric_readouts_are_separate_from_labels_and_do_not_act_like_inputs() {
+        let model = ViewModel::default();
+        for language in [Language::Russian, Language::English] {
+            for size in [[240.0, 216.0], [800.0, 500.0]] {
+                for section in 4..7 {
+                    for page in 0..32 {
+                        let menu = Menu {
+                            language,
+                            tab: Tab::Settings,
+                            settings_section: section,
+                            settings_page: page,
+                            ..Menu::default()
+                        };
+                        let widgets = menu.layout(&model, size[0], size[1]);
+                        for readout in widgets.iter().filter(|widget| widget.readout) {
+                            assert!(readout.control.is_none());
+                            assert!(readout.rect[0] + readout.rect[2] <= size[0]);
+                            assert!(readout.rect[1] + readout.rect[3] <= size[1]);
+                            let stepper = widgets
+                                .iter()
+                                .find(|widget| {
+                                    // The readout is inset within its row.
+                                    widget.rect[1] <= readout.rect[1]
+                                        && readout.rect[1] < widget.rect[1] + widget.rect[3]
+                                        && matches!(
+                                            widget.control,
+                                            Some(Control::EconomySetting(_, -1))
+                                        )
+                                })
+                                .unwrap();
+                            let Some(Control::EconomySetting(key, _)) = stepper.control else {
+                                unreachable!()
+                            };
+                            let setting = super::super::claim_borders_economy::SETTINGS
+                                .iter()
+                                .find(|s| s.key == key)
+                                .unwrap();
+                            assert!(!setting.is_toggle() && !setting.is_choice());
+                            assert_eq!(
+                                readout.text,
+                                setting.value_label(model.economy_preferences.get(key), language)
+                            );
+                            assert!(readout.rect[0] + readout.rect[2] <= stepper.rect[0]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn every_trading_player_and_hud_setting_can_be_adjusted_after_paging() {
+        let model = ViewModel::default();
+        for size in [[240.0, 216.0], [640.0, 360.0], [800.0, 500.0]] {
+            for section in 4..7 {
+                let mut menu = Menu {
+                    tab: Tab::Settings,
+                    settings_section: section,
+                    ..Menu::default()
+                };
+                let mut found = std::collections::BTreeSet::new();
+                loop {
+                    let widgets = menu.layout(&model, size[0], size[1]);
+                    for widget in &widgets {
+                        if let Some(Control::EconomySetting(key, direction)) = widget.control {
+                            found.insert((key, direction));
+                            assert_eq!(widget.rect[3], 20.0);
+                        }
+                        if let Some(Control::EconomyChoice(key)) = widget.control {
+                            found.insert((key, 0));
+                        }
+                    }
+                    // A single page has no paging controls.
+                    let Some(next) = widgets
+                        .iter()
+                        .find(|widget| widget.control == Some(Control::SettingsPage(1)))
+                        .map(|widget| widget.rect)
+                    else {
+                        break;
+                    };
+                    let previous = menu.settings_page;
+                    menu.click(
+                        &model,
+                        size,
+                        [next[0] + next[2] / 2.0, next[1] + next[3] / 2.0],
+                    );
+                    if menu.settings_page == previous {
+                        break;
+                    }
+                    assert!(menu.settings_page < 64);
+                }
+                for setting in super::super::claim_borders_economy::SETTINGS
+                    .iter()
+                    .filter(|s| match section {
+                        4 => s.group <= 4,
+                        5 => s.group == 6,
+                        _ => s.group == 5,
+                    })
+                {
+                    if setting.is_choice() {
+                        assert!(
+                            found.contains(&(setting.key, 0)),
+                            "missing choice for {}",
+                            setting.key
+                        );
+                        continue;
+                    }
+                    assert!(
+                        found.contains(&(setting.key, -1)) != setting.is_toggle(),
+                        "missing decrease for {}",
+                        setting.key
+                    );
+                    assert!(
+                        found.contains(&(setting.key, 1)),
+                        "missing increase for {}",
+                        setting.key
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn nested_settings_toggles_are_localized_in_both_languages() {
+        for chat_section in [
+            ChatSection::Appearance,
+            ChatSection::Notifications,
+            ChatSection::Spam,
+            ChatSection::Priority,
+        ] {
+            for claims_section in [
+                ClaimsSection::Map,
+                ClaimsSection::Borders,
+                ClaimsSection::Colours,
+                ClaimsSection::Storage,
+            ] {
+                for section in [2, 3] {
+                    for page in 0..32 {
+                        let ru = Menu {
+                            tab: Tab::Settings,
+                            settings_section: section,
+                            settings_page: page,
+                            chat_section,
+                            claims_section,
+                            ..Menu::default()
+                        };
+                        let en = Menu {
+                            language: Language::English,
+                            ..ru.clone()
+                        };
+                        let english = en.layout(&ViewModel::default(), 800.0, 500.0);
+                        for widget in ru.layout(&ViewModel::default(), 800.0, 500.0) {
+                            if let Some((name, on)) = crate::ui_style::switch_label(&widget.text) {
+                                assert!(
+                                    name.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)),
+                                    "{name}"
+                                );
+                                let counterpart = english
+                                    .iter()
+                                    .find(|w| w.control == widget.control)
+                                    .unwrap();
+                                let (name, state) =
+                                    crate::ui_style::switch_label(&counterpart.text).unwrap();
+                                assert!(name.is_ascii(), "{name}");
+                                assert_eq!(on, state);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn keyboard_focus_reveals_a_field_on_a_different_settings_page() {
+        let model = ViewModel::default();
+        for (section, chat_section, fields) in [
+            (
+                1,
+                ChatSection::Appearance,
+                vec![Field::RelayUrl, Field::RelayToken],
+            ),
+            (3, ChatSection::DeepL, vec![Field::DeepLKey]),
+            (
+                2,
+                ChatSection::Appearance,
+                vec![Field::OwnClaimColor, Field::FriendClaimColor],
+            ),
+        ] {
+            let mut menu = Menu {
+                tab: Tab::Settings,
+                settings_section: section,
+                chat_section,
+                claims_section: ClaimsSection::Colours,
+                settings_page: 30,
+                ..Menu::default()
+            };
+            for field in fields {
+                menu.key("key.keyboard.tab", 0);
+                assert_eq!(menu.focus, Some(field));
+                assert!(
+                    menu.layout(&model, 240.0, 216.0)
+                        .iter()
+                        .any(|w| w.control == Some(Control::Field(field)) && w.selected)
+                );
+            }
+        }
+    }
+    #[test]
+    fn redesigned_settings_keep_every_editor_control_readable_and_reachable() {
+        let model = ViewModel::default();
+        for language in [Language::Russian, Language::English] {
+            for size in [
+                [240.0, 216.0],
+                [320.0, 240.0],
+                [536.0, 216.0],
+                [800.0, 500.0],
+            ] {
+                for section in 0..4 {
+                    for chat_section in [
+                        ChatSection::Appearance,
+                        ChatSection::Notifications,
+                        ChatSection::Spam,
+                        ChatSection::DeepL,
+                        ChatSection::Priority,
+                    ] {
+                        for claims_section in [
+                            ClaimsSection::Map,
+                            ClaimsSection::Borders,
+                            ClaimsSection::Colours,
+                            ClaimsSection::Storage,
+                        ] {
+                            // Map and chat preferences are reached from their own tabs.
+                            let mut menu = Menu {
+                                language,
+                                tab: match section {
+                                    2 => Tab::Claims,
+                                    3 => Tab::Chat,
+                                    _ => Tab::Settings,
+                                },
+                                settings_section: section,
+                                chat_section,
+                                claims_section,
+                                ..Menu::default()
+                            };
+                            let mut found = Vec::new();
+                            loop {
+                                let widgets = menu.layout(&model, size[0], size[1]);
+                                let controls: Vec<_> =
+                                    widgets.iter().filter(|w| w.control.is_some()).collect();
+                                for (i, a) in controls.iter().enumerate() {
+                                    assert!(
+                                        a.rect[3] >= 18.0,
+                                        "unreadable control: {:?}",
+                                        a.control
+                                    );
+                                    assert!(
+                                        a.rect[0] >= 0.0
+                                            && a.rect[1] >= 0.0
+                                            && a.rect[0] + a.rect[2] <= size[0]
+                                            && a.rect[1] + a.rect[3] <= size[1]
+                                    );
+                                    for b in &controls[i + 1..] {
+                                        assert!(
+                                            a.rect[0] + a.rect[2] <= b.rect[0]
+                                                || b.rect[0] + b.rect[2] <= a.rect[0]
+                                                || a.rect[1] + a.rect[3] <= b.rect[1]
+                                                || b.rect[1] + b.rect[3] <= a.rect[1],
+                                            "overlap at {size:?}, {section}, {chat_section:?}, {claims_section:?}: {:?} and {:?}",
+                                            a.control,
+                                            b.control
+                                        );
+                                    }
+                                    found.push(a.control.unwrap());
+                                }
+                                let next = widgets
+                                    .iter()
+                                    .filter_map(|w| match w.control {
+                                        Some(Control::SettingsContentPage(page))
+                                            if page > menu.settings_page =>
+                                        {
+                                            Some(page)
+                                        }
+                                        _ => None,
+                                    })
+                                    .max();
+                                let Some(next) = next else { break };
+                                assert!(next < 64);
+                                menu.activate(
+                                    &model,
+                                    size[1] - 16.0,
+                                    Control::SettingsContentPage(next),
+                                );
+                            }
+                            let raw = match section {
+                                0 => vec![
+                                    Control::Appearance,
+                                    Control::ToggleReconnect,
+                                    Control::ToggleShulkerPeek,
+                                ],
+                                1 => {
+                                    menu.relay_setup = true;
+                                    let mut controls: Vec<_> = menu
+                                        .party_layout(&model, 480.0, 400.0, Vec::new())
+                                        .into_iter()
+                                        .filter(|w| w.rect[1] < 212.0)
+                                        .filter_map(|w| w.control)
+                                        .filter(|c| *c != Control::RelayBack)
+                                        .collect();
+                                    controls.push(Control::ToggleAutoTrust);
+                                    controls
+                                }
+                                2 => menu
+                                    .claims_layout(&model, 0.0, 480.0, 400.0, Vec::new())
+                                    .into_iter()
+                                    .filter_map(|w| w.control)
+                                    .collect(),
+                                _ => menu
+                                    .chat_layout(&model, 0.0, 480.0, 400.0, Vec::new())
+                                    .into_iter()
+                                    .filter_map(|w| w.control)
+                                    .collect(),
+                            };
+                            for control in raw {
+                                assert!(found.contains(&control), "lost control: {control:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn toggle_captions_have_matching_russian_and_english_controls() {
+        let model = ViewModel::default();
+        assert_eq!(Menu::default().language, Language::Russian);
+        let mut count = 0;
+        for section in 0..7 {
+            for page in 0..32 {
+                for tab in [Tab::Settings, Tab::Experimental, Tab::Chat] {
+                    for experimental_section in [
+                        ExperimentalSection::Ores,
+                        ExperimentalSection::Baritone,
+                        ExperimentalSection::Helpers,
+                    ] {
+                        for baritone_mode in [
+                            BaritoneMode::Navigation,
+                            BaritoneMode::Mining,
+                            BaritoneMode::Tunnel,
+                            BaritoneMode::Bridge,
+                            BaritoneMode::Farm,
+                            BaritoneMode::Drain,
+                            BaritoneMode::Schematic,
+                        ] {
+                            let ru = Menu {
+                                tab,
+                                settings_section: section,
+                                settings_page: page,
+                                experimental_section,
+                                baritone_mode,
+                                language: Language::Russian,
+                                ..Menu::default()
+                            };
+                            let en = Menu {
+                                language: Language::English,
+                                ..ru.clone()
+                            };
+                            let english = en.layout(&model, 800.0, 500.0);
+                            for widget in ru.layout(&model, 800.0, 500.0) {
+                                let Some((russian, state)) =
+                                    crate::ui_style::switch_label(&widget.text)
+                                else {
+                                    continue;
+                                };
+                                let counterpart = english
+                                    .iter()
+                                    .find(|w| w.control == widget.control)
+                                    .unwrap();
+                                let (name, english_state) =
+                                    crate::ui_style::switch_label(&counterpart.text).unwrap();
+                                assert_eq!(state, english_state);
+                                assert!(
+                                    russian
+                                        .chars()
+                                        .any(|c| ('\u{400}'..='\u{4ff}').contains(&c)),
+                                    "untranslated: {russian}"
+                                );
+                                assert!(name.is_ascii(), "untranslated: {name}");
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(count > 100);
+    }
+    fn reveal_control(
+        menu: &mut Menu,
+        model: &ViewModel,
+        size: [f32; 2],
+        control: Control,
+    ) -> Widget {
+        menu.settings_page = 0;
+        for _ in 0..64 {
+            let widgets = menu.layout(model, size[0], size[1]);
+            if let Some(widget) = widgets
+                .iter()
+                .find(|widget| widget.control == Some(control))
+            {
+                return widget.clone();
+            }
+            let next = widgets
+                .iter()
+                .filter_map(|widget| match widget.control {
+                    Some(Control::SettingsContentPage(page)) if page > menu.settings_page => {
+                        Some(page)
+                    }
+                    _ => None,
+                })
+                .max()
+                .expect("requested control must remain reachable through the editor pages");
+            menu.activate(model, size[1] - 16.0, Control::SettingsContentPage(next));
+        }
+        panic!("settings pagination must be bounded");
+    }
+    #[test]
     fn deepl_settings_mask_the_key_and_offer_save_and_remove() {
         let mut menu = Menu {
             tab: Tab::Settings,
@@ -5323,12 +6204,7 @@ mod tests {
         let model = ViewModel::default();
         let size = [240.0, 216.0];
         let click = |menu: &mut Menu, control| {
-            let [x, y, w, h] = menu
-                .layout(&model, size[0], size[1])
-                .into_iter()
-                .find(|widget| widget.control == Some(control))
-                .unwrap()
-                .rect;
+            let [x, y, w, h] = reveal_control(menu, &model, size, control).rect;
             menu.click(&model, size, [x + w / 2.0, y + h / 2.0])
         };
         let key = "test-key:fx";
@@ -5373,8 +6249,17 @@ mod tests {
                 .iter()
                 .find(|w| w.control == Some(Control::Tab(Tab::Settings)))
                 .unwrap();
-            assert_eq!(settings.rect[1], y);
-            assert!(settings.rect[0] + settings.rect[2] <= x);
+            if (size[0] - 16.0).min(720.0) >= RAIL_BREAKPOINT {
+                assert_eq!(settings.rect[0], x);
+                assert!(settings.rect[1] + settings.rect[3] <= y);
+                assert!(
+                    settings.rect[2] >= 100.0,
+                    "settings must have a visible label"
+                );
+            } else {
+                assert_eq!(settings.rect[1], y);
+                assert!(settings.rect[0] + settings.rect[2] <= x);
+            }
             assert!(matches!(
                 menu.click(&model, size, [x + w / 2.0, y + h / 2.0]),
                 Some(Action::SetLanguage(Language::English))
@@ -6548,6 +7433,13 @@ mod tests {
     fn screen_geometry_is_clickable_in_gui_pixels() {
         let mut m = Menu::default();
         let v = ViewModel::default();
+        let selector = m
+            .layout(&v, 400.0, 280.0)
+            .into_iter()
+            .find(|w| w.control == Some(Control::NavigationMenu))
+            .unwrap()
+            .rect;
+        m.click(&v, [400.0, 280.0], [selector[0] + 1.0, selector[1] + 1.0]);
         let rect = m
             .layout(&v, 400.0, 280.0)
             .iter()
@@ -6626,11 +7518,13 @@ mod tests {
                 language,
                 ..ViewModel::default()
             };
-            let widgets = menu.layout(&model, 320.0, 240.0);
-            let button = widgets
-                .iter()
-                .find(|w| w.text.starts_with(caption))
-                .expect("chat spacing control");
+            let button = reveal_control(
+                &mut menu,
+                &model,
+                [320.0, 240.0],
+                Control::ChatCompactMessages,
+            );
+            assert!(button.text.starts_with(caption));
             let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, button.control.unwrap())
             else {
                 panic!("spacing must update chat preferences");
@@ -6909,7 +7803,8 @@ mod tests {
             tab: Tab::Settings,
             ..Menu::default()
         };
-        for section in 0..7 {
+        for section in [0, 1, 5, 6] {
+            menu.tab = Tab::Settings;
             menu.settings_page = 10;
             let rect = menu
                 .layout(&model, 320.0, 240.0)

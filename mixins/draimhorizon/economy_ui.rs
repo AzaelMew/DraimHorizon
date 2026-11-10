@@ -1,6 +1,29 @@
 // Shared geometry and ordering for a bounded, centred trading window.
 use super::claim_borders_economy::{Book, Listing, Preferences};
 use claim_borders_relay_client::translation::Language;
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DetailScroll {
+    offset: f32,
+    limit: f32,
+}
+impl DetailScroll {
+    pub fn set_limit(&mut self, limit: f32) {
+        self.limit = if limit.is_finite() {
+            limit.max(0.0)
+        } else {
+            0.0
+        };
+        self.offset = self.offset.clamp(0.0, self.limit);
+    }
+    pub fn move_by(&mut self, distance: f32) {
+        if distance.is_finite() {
+            self.offset = (self.offset + distance).clamp(0.0, self.limit);
+        }
+    }
+    pub fn offset(self) -> f32 {
+        self.offset
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Panel {
     pub rect: [f32; 4],
@@ -15,6 +38,43 @@ impl Panel {
     }
     pub fn local(self, mouse: [f32; 2]) -> [f32; 2] {
         [mouse[0] - self.rect[0], mouse[1] - self.rect[1]]
+    }
+    pub fn compact(self) -> bool {
+        self.rect[2] < 440.0
+    }
+    pub fn list_width(self) -> f32 {
+        if self.compact() {
+            self.rect[2] - 16.0
+        } else {
+            ((self.rect[2] - 24.0) * 0.44).max(110.0)
+        }
+    }
+    pub fn details(self) -> [f32; 4] {
+        let x = if self.compact() {
+            8.0
+        } else {
+            self.list_width() + 20.0
+        };
+        [
+            x,
+            80.0,
+            self.rect[2] - x - 8.0,
+            (self.rect[3] - 159.0).max(1.0),
+        ]
+    }
+    pub fn sort_option(self, index: usize) -> [f32; 4] {
+        let columns = if self.compact() || self.rect[3] < 240.0 {
+            2
+        } else {
+            1
+        };
+        let width = ((self.rect[2] - 20.0) / columns as f32).min(124.0);
+        [
+            8.0 + (index % columns) as f32 * (width + 4.0),
+            77.0 + (index / columns) as f32 * 20.0,
+            width,
+            18.0,
+        ]
     }
 }
 #[derive(Clone, Copy, Default, Debug, PartialEq)]

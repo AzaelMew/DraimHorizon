@@ -58,6 +58,8 @@ enum Button {
     Signs,
     Virtual,
     Collapse,
+    Page(usize),
+    Group(u8),
 }
 struct Hit {
     rect: [f32; 4],
@@ -81,6 +83,9 @@ struct Editor {
     before: Preferences,
     storage: bool,
     collapsed: bool,
+    page: usize,
+    group: u8,
+    rect: [f32; 4],
 }
 
 enum SettingsError {
@@ -527,17 +532,60 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
         } else {
             let collapsed = s.editor.as_ref().unwrap().collapsed;
-            let pw = 146.0f32.min(batch.width - 8.0);
+            let panel =
+                crate::game::claim_borders_ui_style::PagedPanel::new([batch.width, batch.height])
+                    .with_tabs();
+            let pw = panel.rect[2];
             let px = if screen.rect[0] >= pw + 8.0 {
                 screen.rect[0] - pw - 6.0
             } else {
                 4.0
             };
             let py = 4.0;
-            button(game,batch,screen,s,[px,py,pw,15.0],if collapsed {t("Настройки [Tab]", "Settings [Tab]")} else {t("Редактор [Tab]", "Editor [Tab]")},Button::Collapse,
+            let mut panel = panel;
+            panel.rect[0] = px;
+            s.editor.as_mut().unwrap().rect = if collapsed {
+                [px, py, pw, 18.0]
+            } else {
+                panel.rect
+            };
+            ui::rounded(
+                game,
+                batch,
+                s.editor.as_ref().unwrap().rect,
+                6.0,
+                0xf8000000 | crate::game::claim_borders_ui_style::BACKGROUND,
+            );
+            button(game,batch,screen,s,[px,py,pw,18.0],if collapsed {t("Показать настройки [Tab]", "Show settings [Tab]")} else {t("Инвентарь · свернуть [Tab]", "Inventory tools · collapse [Tab]")},Button::Collapse,
                 t("Tab: свернуть панель, чтобы выбрать любой слот. ЛКМ по слоту: исключить / вернуть.", "Tab: collapse the panel to pick any slot. LMB on a slot: exclude / restore.").into(),false);
             if !collapsed {
-                let max_rows = ((batch.height - 24.0) / 16.0).floor().max(1.0) as usize;
+                let group = s.editor.as_ref().unwrap().group;
+                let tab_width = (pw - 12.0) / 3.0;
+                for (index, label) in [
+                    t("Сортировка", "Sorting"),
+                    t("Кнопки", "Buttons"),
+                    t("Защита", "Safety"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    button(
+                        game,
+                        batch,
+                        screen,
+                        s,
+                        [
+                            px + 6.0 + index as f32 * tab_width,
+                            py + 24.0,
+                            tab_width - 3.0,
+                            20.0,
+                        ],
+                        label,
+                        Button::Group(index as u8),
+                        label.into(),
+                        group == index as u8,
+                    );
+                }
                 let storage = s.editor.as_ref().unwrap().storage;
                 let area = selected(&l, storage);
                 let p = s.preferences.policy(&area.key);
@@ -554,8 +602,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     (if language()==Language::Russian{format!("Сортировка: {}",on(p.enabled))}else{format!("Sorting: {}",on(p.enabled))},Button::Enabled,t("Разрешить операции для этой области.", "Allow operations for this area.").into()),
                     (p.mode.label_in(language()).into(),Button::Mode,t("ID → имя в языке игры → количество по убыванию.", "ID → name in the game language → quantity descending.").into()),
                     (if language()==Language::Russian{format!("Порядок: {}",if p.columns{"столбцы"}else{"строки"})}else{format!("Order: {}",if p.columns{"columns"}else{"rows"})},Button::Columns,t("Направление заполнения свободных слотов.", "Fill direction for free slots.").into()),
-                    (t("← кнопки / → ПКМ", "← buttons / → RMB").into(),Button::Offset(-2,0),t("ЛКМ сдвигает влево, ПКМ вправо.", "LMB moves left, RMB moves right.").into()),
-                    (t("↑ кнопки / ↓ ПКМ", "↑ buttons / ↓ RMB").into(),Button::Offset(0,-2),t("ЛКМ сдвигает вверх, ПКМ вниз.", "LMB moves up, RMB moves down.").into()),
+                    (t("Сдвинуть кнопки влево", "Move buttons left").into(),Button::Offset(-2,0),t("Сдвиг на 2 пикселя. ПКМ: обратное направление.", "Move by 2 pixels. RMB reverses direction.").into()),
+                    (t("Сдвинуть кнопки вправо", "Move buttons right").into(),Button::Offset(2,0),t("Сдвиг на 2 пикселя. ПКМ: обратное направление.", "Move by 2 pixels. RMB reverses direction.").into()),
+                    (t("Сдвинуть кнопки вверх", "Move buttons up").into(),Button::Offset(0,-2),t("Сдвиг на 2 пикселя. ПКМ: обратное направление.", "Move by 2 pixels. RMB reverses direction.").into()),
+                    (t("Сдвинуть кнопки вниз", "Move buttons down").into(),Button::Offset(0,2),t("Сдвиг на 2 пикселя. ПКМ: обратное направление.", "Move by 2 pixels. RMB reverses direction.").into()),
                     (if language()==Language::Russian{format!("Снять исключения ({})",p.ignored.len())}else{format!("Clear exclusions ({})",p.ignored.len())},Button::Clear,t("Вернуть все слоты выбранной области. Хотбар всегда защищён.", "Restore all slots of the selected area. The hotbar is always protected.").into()),
                     (t("Сбросить область", "Reset area").into(),Button::Default,t("Вернуть стандартную раскладку выбранной области.", "Restore the default layout of the selected area.").into()),
                     (t("Сохранить как шаблон", "Save as template").into(),Button::SaveDefault,t("Настройки кнопок и порядка для новых контейнеров. Исключения не копируются.", "Button and order settings for new containers. Exclusions are not copied.").into()),
@@ -566,26 +616,85 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     (t("Отмена [Esc]", "Cancel [Esc]").into(),Button::Cancel,t("Закрыть без сохранения.", "Close without saving.").into()),
                     (t("Готово", "Done").into(),Button::Done,t("Сохранить настройки и закрыть редактор.", "Save settings and close the editor.").into()),
                 ];
-                // Split into two compact columns on short screens, without unreachable buttons.
-                let columns = rows.len().div_ceil(max_rows);
-                let rw = if columns > 1 { pw / columns as f32 } else { pw };
-                for (i, (label, action, tip)) in rows.into_iter().enumerate() {
-                    let col = i / max_rows;
-                    let row = i % max_rows;
+                let rows: Vec<_> = rows
+                    .into_iter()
+                    .filter(|(_, action, _)| match group {
+                        0 => matches!(
+                            action,
+                            Button::Area
+                                | Button::Enabled
+                                | Button::Mode
+                                | Button::Columns
+                                | Button::Clear
+                        ),
+                        1 => matches!(
+                            action,
+                            Button::Area
+                                | Button::Visibility
+                                | Button::Offset(_, _)
+                                | Button::Default
+                                | Button::SaveDefault
+                        ),
+                        _ => matches!(
+                            action,
+                            Button::Frames | Button::Signs | Button::Virtual | Button::Undo
+                        ),
+                    })
+                    .collect();
+                let pages = rows.len().div_ceil(panel.capacity).max(1);
+                let page = s.editor.as_ref().unwrap().page.min(pages - 1);
+                s.editor.as_mut().unwrap().page = page;
+                for (i, (label, action, tip)) in rows
+                    .into_iter()
+                    .skip(page * panel.capacity)
+                    .take(panel.capacity)
+                    .enumerate()
+                {
                     button(
                         game,
                         batch,
                         screen,
                         s,
-                        [
-                            px + col as f32 * rw,
-                            py + 16.0 + row as f32 * 16.0,
-                            rw - 1.0,
-                            15.0,
-                        ],
+                        panel.row(i),
                         &label,
                         action,
                         tip,
+                        false,
+                    );
+                }
+                for (column, target, label) in [
+                    (
+                        0,
+                        page.saturating_sub(1),
+                        format!("{} {}/{}", t("Назад", "Back"), page + 1, pages),
+                    ),
+                    (1, (page + 1).min(pages - 1), t("Далее", "Next").to_owned()),
+                ] {
+                    button(
+                        game,
+                        batch,
+                        screen,
+                        s,
+                        panel.footer(column, true),
+                        &label,
+                        Button::Page(target),
+                        t("Страница настроек", "Settings page").into(),
+                        false,
+                    );
+                }
+                for (column, action, label) in [
+                    (0, Button::Cancel, t("Отмена [Esc]", "Cancel [Esc]")),
+                    (1, Button::Done, t("Сохранить", "Save")),
+                ] {
+                    button(
+                        game,
+                        batch,
+                        screen,
+                        s,
+                        panel.footer(column, false),
+                        label,
+                        action,
+                        label.into(),
                         false,
                     );
                 }
@@ -663,6 +772,9 @@ fn edit(s: &mut State) {
         before: s.preferences.clone(),
         storage: s.layout.as_ref().is_some_and(|l| l.storage.is_some()),
         collapsed: false,
+        page: 0,
+        group: 0,
+        rect: [0.0; 4],
     });
 }
 fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bool) {
@@ -687,6 +799,12 @@ fn operate(game: &Game<'_>, s: &mut State, l: &Layout, action: Button, right: bo
     let mut p = s.preferences.policy(&area.key);
     let mut policy = false;
     match action {
+        Button::Group(group) => {
+            let editor = s.editor.as_mut().unwrap();
+            editor.group = group.min(2);
+            editor.page = 0;
+        }
+        Button::Page(page) => s.editor.as_mut().unwrap().page = page,
         Button::Area => {
             if l.storage.is_some() {
                 s.editor.as_mut().unwrap().storage = !editor_storage;
@@ -800,6 +918,12 @@ pub(super) fn mouse(
         if s.editor.is_some() {
             *canceled = true;
             s.pressed.insert(button);
+            if s.editor
+                .as_ref()
+                .is_some_and(|editor| contains(editor.rect, screen.mouse))
+            {
+                return;
+            }
             if button == 0 {
                 for storage in [true, false] {
                     if storage && l.storage.is_none() {

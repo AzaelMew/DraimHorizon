@@ -258,7 +258,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         if let Some(land) = land {
             claims::with_state(|s| s.restore(land));
-        } else {
+        } else if game.integrated.is_none() {
+            // Single player has no claims plugin; asking would raise an unknown-command prompt.
             claims::with_state(|s| s.begin_refresh());
             game.send_unattended_command("claims");
         }
