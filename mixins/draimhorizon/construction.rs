@@ -438,31 +438,9 @@ impl Placement {
             .map(|_| solid && name == self.material)
     }
 }
+/// The keys toward `target`: the shared walker's way of moving (`navigation::human_steer`).
 pub fn steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> nav::Input {
-    let dx = target[0] - position[0];
-    let dz = target[2] - position[2];
-    if dx.hypot(dz) < 0.06 {
-        return nav::Input::default();
-    }
-    let yaw = f64::from(yaw).to_radians();
-    let forward = -dx * yaw.sin() + dz * yaw.cos();
-    let left = dx * yaw.cos() + dz * yaw.sin();
-    let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
-    let (forward, strafe) = match sector.rem_euclid(8) {
-        0 => (1., 0.),
-        1 => (1., 1.),
-        2 => (0., 1.),
-        3 => (-1., 1.),
-        4 => (-1., 0.),
-        5 => (-1., -1.),
-        6 => (0., -1.),
-        _ => (1., -1.),
-    };
-    nav::Input {
-        forward,
-        strafe,
-        jump: false,
-    }
+    nav::human_steer(position, target, yaw)
 }
 #[cfg(test)]
 mod tests {

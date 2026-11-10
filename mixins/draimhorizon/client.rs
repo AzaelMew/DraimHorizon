@@ -1526,7 +1526,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             helpers: menu::Helper::ALL.map(|helper| {
                 let value = game.native_setting(claims::SETTINGS_ID, helper.key());
                 // Resuming after a reconnect is on unless it was switched off.
-                if helper == menu::Helper::Resume {
+                if matches!(helper, menu::Helper::Resume | menu::Helper::HumanLook) {
                     value.as_deref() != Some("false")
                 } else {
                     value.as_deref() == Some("true")

@@ -2732,8 +2732,9 @@ struct Pillar {
     top: bool,
 }
 static PILLAR: Mutex<Option<Pillar>> = Mutex::new(None);
-/// The block to build the column from: earth or stone first, never what is being mined.
-fn pillar_item(game: &Game<'_>, ore: u8) -> Option<(String, u32)> {
+/// The block to build the column from: earth or stone first, then any plain building block,
+/// the kind being mined included (what is put down is dug again with the same tool).
+fn pillar_item(game: &Game<'_>, _ore: u8) -> Option<(String, u32)> {
     let items = crate::game::claim_borders_construction_view::building_items(game, false);
     let count = |name: &str| -> u32 {
         (0..36)
@@ -2755,8 +2756,7 @@ fn pillar_item(game: &Game<'_>, ore: u8) -> Option<(String, u32)> {
     };
     items
         .into_iter()
-        .filter(|name| !mining::matches(ore, name))
-        .min_by_key(|name| rank(name))
+        .min_by_key(|name| (rank(name), std::cmp::Reverse(count(name))))
         .map(|name| {
             let n = count(&name);
             (name, n)
@@ -2891,6 +2891,12 @@ fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
         return Some(false);
     }
     game.pitch = model::turn_toward(game.pitch, 90.0, 24.0);
+    // The right tool for the block under the feet (a shovel for earth, a pickaxe for stone).
+    drop(slot);
+    match ensure_tool(game, Some(below)) {
+        Tool::Wait => return Some(false),
+        Tool::Ready | Tool::Missing => {}
+    }
     Some(game.pitch > 80.0 && grounded)
 }
 /// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
@@ -2904,13 +2910,41 @@ const TURN_STEP: f32 = 22.0;
 /// person's view; nothing while a block is being aimed at (a door, a chest, mining) or when the
 /// wish is stale.
 fn face(game: &mut Game<'_>) {
+    use crate::game::claim_borders_construction_view as placement;
+    let mut look = LOOK.lock().unwrap_or_else(|e| e.into_inner());
+    let now = (game.yaw, game.pitch);
+    let moved = |a: (f32, f32), b: (f32, f32)| {
+        model::angle_between(a.0, b.0).abs() > 0.5 || (a.1 - b.1).abs() > 0.5
+    };
+    // The camera is not where it was left and nothing else aimed it: the mouse moved. The
+    // camera is the player's for a while; the task goes on.
+    let aimed = placement::aimed_recently() || state(|s| s.mine_aim.is_some());
+    if let Some(set) = look.set.take()
+        && moved(set, now)
+        && !aimed
+    {
+        look.mouse_until = Some(Instant::now() + MOUSE_LEND);
+    }
+    if let Some(until) = look.mouse_until {
+        if moved(look.seen, now) {
+            look.mouse_until = Some(Instant::now() + MOUSE_LEND);
+        } else if Instant::now() >= until {
+            look.mouse_until = None;
+        }
+        look.seen = now;
+        if look.mouse_until.is_some() {
+            return;
+        }
+    }
+    look.seen = now;
     let wish = *FACE.lock().unwrap_or_else(|e| e.into_inner());
     let Some((yaw, pitch, since)) = wish else {
         return;
     };
     if since.elapsed() > Duration::from_millis(250)
-        || crate::game::claim_borders_construction_view::aiming()
-        || !state(|s| s.nav.running && s.nav.status == model::Status::Walking)
+        || placement::aiming()
+        || placement::aimed_recently()
+        || !human_look_enabled(game)
     {
         return;
     }
@@ -2919,6 +2953,39 @@ fn face(game: &mut Game<'_>) {
     let sway_pitch = 0.8 * (t * 1.1).sin();
     game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
     game.pitch = model::turn_toward(game.pitch, pitch + sway_pitch, TURN_STEP * 0.6);
+    look.set = Some((game.yaw, game.pitch));
+}
+/// The human look's own bookkeeping: where it left the camera, until when the mouse has it,
+/// and where the camera was last seen.
+struct Look {
+    set: Option<(f32, f32)>,
+    mouse_until: Option<Instant>,
+    seen: (f32, f32),
+}
+static LOOK: Mutex<Look> = Mutex::new(Look {
+    set: None,
+    mouse_until: None,
+    seen: (0.0, 0.0),
+});
+/// How long the camera stays the player's after the mouse last moved.
+const MOUSE_LEND: Duration = Duration::from_secs(3);
+/// "Human look" is on unless the player switched it off (Experiments → Helpers).
+pub(super) fn human_look_enabled(game: &Game<'_>) -> bool {
+    game.native_setting(claims::SETTINGS_ID, "human_look")
+        .as_deref()
+        != Some("false")
+}
+/// Any task moving on its own (tunnel, bridge, drain, swimming back) asks the head to turn
+/// toward the point it heads for, as the walker does.
+pub(super) fn look_toward(position: [f64; 3], point: [f64; 3]) {
+    let eye = [position[0], position[1] + 1.62, position[2]];
+    let ahead = [point[0], point[1] + 0.9, point[2]];
+    if (ahead[0] - eye[0]).hypot(ahead[2] - eye[2]) < 0.3 {
+        return;
+    }
+    let yaw = model::yaw_to(eye, ahead);
+    let pitch = model::pitch_to(eye, ahead).clamp(-10.0, 35.0);
+    *FACE.lock().unwrap_or_else(|e| e.into_inner()) = Some((yaw, pitch, Instant::now()));
 }
 static START: OnceLock<Instant> = OnceLock::new();
 /// Enchantment protection against falls from the armour worn (`navigation::fall_protection`).
@@ -3072,6 +3139,26 @@ pub(super) fn movement(
         pause();
         return;
     };
+    // In the water, whatever the task: stay at the surface (jump held) and swim to the nearest
+    // dry ground, looking where it goes; the task goes on from there. Nobody drowns.
+    if (body.swimming || body.fluids.was_touching_water)
+        && !body.is_in_lava()
+        && !body.flying
+        && task_running()
+        && let Some(p) = game.native_player()
+    {
+        let position = [p.x, p.y, p.z];
+        *jump = true;
+        *sneak = false;
+        if let Some(spot) = crate::game::claim_borders_construction_view::dry_spot(game, position) {
+            let target = model::center(spot);
+            look_toward(position, target);
+            let input = model::human_steer(position, target, p.yaw);
+            *forward = input.forward;
+            *strafe = input.strafe;
+        }
+        return;
+    }
     if body.flying
         || body.fall_flying
         || body.swimming

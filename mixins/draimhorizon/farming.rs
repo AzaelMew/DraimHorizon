@@ -75,10 +75,22 @@ pub struct Config {
     pub bonemeal: bool,
     /// A full harvest container is not the end: the harvest is sold with `/sell hand`.
     pub autosell: bool,
+    /// A field on several levels (terraces, floors): beds this many blocks above or below the
+    /// start belong to it. 0 is a flat field (a block of unevenness either way).
+    pub levels: u8,
 }
+/// The choices of `Config::levels` in the menu, in order.
+pub const LEVELS: [u8; 6] = [0, 2, 3, 4, 6, 8];
 impl Config {
     pub fn valid(self) -> bool {
-        (1..=12).contains(&self.radius) && self.limit <= 64 && self.crops & Crop::MASK != 0
+        (1..=12).contains(&self.radius)
+            && self.limit <= 64
+            && self.crops & Crop::MASK != 0
+            && self.levels <= 8
+    }
+    /// How far above and below the start beds are looked for.
+    pub fn reach_y(self) -> i32 {
+        i32::from(self.levels.max(1))
     }
     /// The selected crops, in menu order.
     pub fn selected(self) -> impl Iterator<Item = Crop> {
@@ -131,6 +143,7 @@ mod tests {
             replant: true,
             bonemeal: false,
             autosell: false,
+            levels: 0,
         };
         let count = |config: Config| {
             let mut seen = [0usize; 4];
@@ -169,6 +182,7 @@ mod tests {
             replant: true,
             bonemeal: true,
             autosell: false,
+            levels: 0,
         };
         assert!(both.valid());
         assert_eq!(

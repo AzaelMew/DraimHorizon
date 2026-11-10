@@ -133,7 +133,7 @@ pub struct ViewModel {
     /// Eating on its own (on by default).
     pub auto_eat: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
-    pub helpers: [bool; 5],
+    pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
     pub click_right: bool,
     /// The auto-clicker's pace: an index into `autoclick::RATES`.
@@ -514,14 +514,18 @@ pub enum Helper {
     /// A bot task picks itself up after the server restarts and the client reconnects (on by
     /// default, unlike the others).
     Resume,
+    /// A walking bot turns its head toward where it goes, as a person does (on by default);
+    /// moving the mouse lends the camera back for a while without stopping the task.
+    HumanLook,
 }
 impl Helper {
-    pub const ALL: [Helper; 5] = [
+    pub const ALL: [Helper; 6] = [
         Helper::Totem,
         Helper::Fill,
         Helper::Tools,
         Helper::AutoClick,
         Helper::Resume,
+        Helper::HumanLook,
     ];
     pub fn index(self) -> usize {
         match self {
@@ -530,6 +534,7 @@ impl Helper {
             Self::Tools => 2,
             Self::AutoClick => 3,
             Self::Resume => 4,
+            Self::HumanLook => 5,
         }
     }
     /// The settings key the choice is kept under.
@@ -540,6 +545,7 @@ impl Helper {
             Self::Tools => "auto_tools",
             Self::AutoClick => "auto_click",
             Self::Resume => "auto_resume",
+            Self::HumanLook => "human_look",
         }
     }
 }
@@ -576,6 +582,8 @@ pub enum Control {
     FarmBonemeal,
     /// Sells the harvest with `/sell hand` once the harvest container is full, on or off.
     FarmAutoSell,
+    /// Cycles the field between flat and several levels (`farming::LEVELS`).
+    FarmLevels,
     /// Switches eating on its own.
     AutoEat,
     /// Switches one of the helpers of the Helpers tab.
@@ -734,6 +742,7 @@ pub struct Menu {
     pub farm_replant: bool,
     pub farm_bonemeal: bool,
     pub farm_autosell: bool,
+    pub farm_levels: u8,
     pub drain_radius: u8,
     pub drain_pattern: super::claim_borders_draining::Pattern,
     pub drain_spacing: u8,
@@ -799,6 +808,7 @@ impl Default for Menu {
             farm_replant: true,
             farm_bonemeal: true,
             farm_autosell: false,
+            farm_levels: 0,
             drain_radius: 6,
             drain_pattern: super::claim_borders_draining::Pattern::Fill,
             drain_spacing: 4,
@@ -897,6 +907,7 @@ impl Menu {
         self.farm_replant = from.farm_replant;
         self.farm_bonemeal = from.farm_bonemeal;
         self.farm_autosell = from.farm_autosell;
+        self.farm_levels = from.farm_levels;
         self.drain_radius = from.drain_radius;
         self.drain_pattern = from.drain_pattern;
         self.drain_spacing = from.drain_spacing;
@@ -1024,6 +1035,7 @@ impl Menu {
                     replant: self.farm_replant,
                     bonemeal: self.farm_bonemeal,
                     autosell: self.farm_autosell,
+                    levels: self.farm_levels,
                 }),
                 running,
             }),
@@ -2824,6 +2836,21 @@ impl Menu {
                             ),
                             Control::FarmAutoSell,
                         ),
+                        (
+                            if self.farm_levels == 0 {
+                                self.language
+                                    .text("Уровни: плоская", "Levels: flat")
+                                    .to_owned()
+                            } else {
+                                localized!(
+                                    self.language,
+                                    "Уровни: ±{}",
+                                    "Levels: ±{}",
+                                    self.farm_levels
+                                )
+                            },
+                            Control::FarmLevels,
+                        ),
                     ]
                 } else {
                     vec![
@@ -3460,8 +3487,8 @@ impl Menu {
                 ),
             ),
         ];
-        // The auto-resume switch is the fifth row, the auto-clicker's the sixth and its two
-        // choices share the seventh.
+        // The auto-resume switch is the fifth row, the human look the sixth, the auto-clicker's
+        // the seventh and its two choices share the eighth.
         let rows = rows.into_iter().chain([
             (
                 localized!(
@@ -3480,6 +3507,20 @@ impl Menu {
             (
                 localized!(
                     self.language,
+                    "Человеческий взгляд: {}",
+                    "Human Look: {}",
+                    state(model.helpers[Helper::HumanLook.index()])
+                ),
+                Control::Helper(Helper::HumanLook),
+                model.helpers[Helper::HumanLook.index()],
+                self.language.text(
+                    "бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
+                    "the bot looks where it goes; the mouse takes the camera, the task goes on",
+                ),
+            ),
+            (
+                localized!(
+                    self.language,
                     "Авто-клик: {}",
                     "Auto Click: {}",
                     state(model.helpers[Helper::AutoClick.index()])
@@ -3492,7 +3533,7 @@ impl Menu {
                 ),
             ),
         ]);
-        let step = ((height - 92.0) / 7.0).clamp(15.0, 34.0);
+        let step = ((height - 92.0) / 8.0).clamp(15.0, 34.0);
         let note = step >= 30.0;
         for (index, (label, control, on, hint)) in rows.enumerate() {
             let y = 84.0 + index as f32 * step;
@@ -3506,7 +3547,7 @@ impl Menu {
                 out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
             }
         }
-        let y = 84.0 + 6.0 * step;
+        let y = 84.0 + 7.0 * step;
         let half = (w - 4.0) * 0.5;
         let row_h = if note { 20.0 } else { (step - 2.0).min(20.0) };
         let russian = self.language == Language::Russian;
@@ -4014,6 +4055,15 @@ impl Menu {
             }
             Control::FarmAutoSell => {
                 self.farm_autosell = !self.farm_autosell;
+                None
+            }
+            Control::FarmLevels => {
+                use super::claim_borders_farming::LEVELS;
+                let at = LEVELS
+                    .iter()
+                    .position(|l| *l == self.farm_levels)
+                    .unwrap_or(0);
+                self.farm_levels = LEVELS[(at + 1) % LEVELS.len()];
                 None
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
@@ -6975,6 +7025,7 @@ mod tests {
                                     | Control::FarmSafe
                                     | Control::FarmBonemeal
                                     | Control::FarmAutoSell
+                                    | Control::FarmLevels
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant

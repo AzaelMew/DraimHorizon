@@ -544,8 +544,29 @@ fn composter_near(game: &Game<'_>, origin: nav::Pos, radius: i32) -> Option<nav:
     {
         return found;
     }
-    let reach = radius + 8;
+    // By the containers first: that is where a composter belongs (seeds go in and meal comes
+    // out next to the chests). Then the field and eight blocks around it.
     let mut best: Option<(i32, nav::Pos)> = None;
+    for chest in storages(game).into_iter().flatten() {
+        for dx in -4..=4 {
+            for dz in -4..=4 {
+                for dy in -2..=2 {
+                    let at = [chest[0] + dx, chest[1] + dy, chest[2] + dz];
+                    let d = dx * dx + dz * dz + dy * dy;
+                    if best.is_none_or(|(b, _)| d < b)
+                        && game.native_block(at) == "minecraft:composter"
+                    {
+                        best = Some((d, at));
+                    }
+                }
+            }
+        }
+    }
+    if let Some((_, at)) = best {
+        *cache = Some((Instant::now(), origin, Some(at)));
+        return Some(at);
+    }
+    let reach = radius + 8;
     for dx in -reach..=reach {
         for dz in -reach..=reach {
             for dy in -3..=3 {
@@ -1369,7 +1390,9 @@ fn park_step(game: &Game<'_>, s: &mut State) {
         s.parked = true;
         return;
     }
-    if driver::workshop_walk(game, spot, true, false).is_ok() {
+    // Like every walk: on foot first; with no way on foot, blocks in the way are broken and
+    // gaps bridged (when a tool and blocks are at hand).
+    if driver::workshop_walk(game, spot, false, false).is_ok() {
         s.park = Some((spot, Instant::now()));
         s.message = text("иду в безопасное место", "walking to the safe spot").into();
     } else {
@@ -1542,8 +1565,10 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
 /// that has not been picked up and waits for the pickup, giving up on an item that cannot be
 /// reached or taken. True while it is busy with one (the job waits).
 fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => (*origin, i32::from(config.radius)),
+    let (origin, radius, reach_y) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => {
+            (*origin, i32::from(config.radius), config.reach_y())
+        }
         _ => return false,
     };
     let Some(p) = game.native_player() else {
@@ -1556,7 +1581,7 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
         (a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
             && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
             // Only what lies at the field's level: a drop on a roof would lead the walker up.
-            && (a[1] - f64::from(origin[1])).abs() <= 2.0
+            && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1)
     };
     let nearest = game
         .dropped
@@ -1626,8 +1651,12 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
 /// are not loaded (from a distance the field reads as empty, and the job would wait for crops
 /// that are not there). True while it is walking there.
 fn home_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => (*origin, f64::from(config.radius)),
+    let (origin, radius, height) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => (
+            *origin,
+            f64::from(config.radius),
+            f64::from(config.reach_y() + 2),
+        ),
         _ => return false,
     };
     let Some(p) = game.native_player() else {
@@ -1637,7 +1666,7 @@ fn home_step(game: &Game<'_>, s: &mut State) -> bool {
     // there no crop can be reached, and the scan would only find unreachable ones).
     let near = (p.x - (f64::from(origin[0]) + 0.5)).hypot(p.z - (f64::from(origin[2]) + 0.5))
         <= radius + 6.0
-        && (p.y - f64::from(origin[1])).abs() <= 3.0;
+        && (p.y - f64::from(origin[1])).abs() <= height;
     let loaded = game
         .world
         .chunks
@@ -1649,7 +1678,7 @@ fn home_step(game: &Game<'_>, s: &mut State) -> bool {
     let message = text("возвращаюсь к грядкам", "walking back to the beds");
     match s.home {
         None => {
-            match driver::workshop_walk(game, origin, true, false) {
+            match driver::workshop_walk(game, origin, false, false) {
                 Ok(()) => {
                     s.home = Some(Instant::now());
                     s.message = message.into();
@@ -2314,9 +2343,10 @@ pub(super) fn tick(game: &Game<'_>) {
                     };
                     for z in -r..=r {
                         for x in -r..=r {
-                            // Beds at other heights count too (a raised bed, a terrace): every
-                            // layer from two below the start to two above is looked at.
-                            for dy in -2..=2 {
+                            // Beds at other heights count too: a block of unevenness on a flat
+                            // field, the chosen number of levels on a terraced one.
+                            let reach_y = plan.reach_y();
+                            for dy in -reach_y..=reach_y {
                                 let at = [origin[0] + x, origin[1] + dy, origin[2] + z];
                                 let below = [at[0], at[1] - 1, at[2]];
                                 let soil = game.native_block(below);

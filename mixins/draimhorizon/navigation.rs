@@ -943,6 +943,41 @@ pub struct Input {
     pub strafe: f32,
     pub jump: bool,
 }
+/// Keys toward `target` for any task that moves on its own (tunnel, bridge, drain, swimming),
+/// the way the walker moves: forward, with a side step while turning, and a target behind is
+/// turned to first (the head turns, see the human look) instead of walked to backwards. Close by
+/// (fine positioning on an edge) every direction is allowed.
+pub fn human_steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> Input {
+    let dx = target[0] - position[0];
+    let dz = target[2] - position[2];
+    let distance = dx.hypot(dz);
+    if distance < 0.06 {
+        return Input::default();
+    }
+    let yaw = f64::from(yaw).to_radians();
+    let forward = -dx * yaw.sin() + dz * yaw.cos();
+    let left = dx * yaw.cos() + dz * yaw.sin();
+    let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
+    let sector = sector.rem_euclid(8);
+    if distance > 0.4 && (3..=5).contains(&sector) {
+        return Input::default();
+    }
+    let (forward, strafe) = match sector {
+        0 => (1., 0.),
+        1 => (1., 1.),
+        2 => (0., 1.),
+        3 => (-1., 1.),
+        4 => (-1., 0.),
+        5 => (-1., -1.),
+        6 => (0., -1.),
+        _ => (1., -1.),
+    };
+    Input {
+        forward,
+        strafe,
+        jump: false,
+    }
+}
 /// The yaw (degrees, the game's convention) that faces from `from` toward `to`.
 pub fn yaw_to(from: [f64; 3], to: [f64; 3]) -> f32 {
     (-(to[0] - from[0])).atan2(to[2] - from[2]).to_degrees() as f32
