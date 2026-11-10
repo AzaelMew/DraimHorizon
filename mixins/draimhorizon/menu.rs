@@ -133,7 +133,7 @@ pub struct ViewModel {
     /// Eating on its own (on by default).
     pub auto_eat: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
-    pub helpers: [bool; 5],
+    pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
     pub click_right: bool,
     /// The auto-clicker's pace: an index into `autoclick::RATES`.
@@ -142,6 +142,12 @@ pub struct ViewModel {
     pub farm_storage: [Option<[i32; 3]>; 3],
     /// The safe point the farm waits at, when one is set.
     pub farm_safe: Option<[i32; 3]>,
+    /// The composter found by the running farm's field, if any.
+    pub farm_composter: Option<[i32; 3]>,
+    /// The blocks of the "own block" mining target.
+    pub mining_custom: Vec<String>,
+    /// The schematic previews placed in this world: (index, label, shown, selected).
+    pub schematic_places: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -250,6 +256,14 @@ pub enum Action {
     FarmStorage(super::claim_borders_farm_storage::Role),
     /// The safe point of the farm: set to where the player stands, or cleared.
     FarmSafe,
+    /// The block under the crosshair goes into the "own block" mining target, or out of it.
+    MiningCustom,
+    /// Selects a placed schematic preview (the one Start builds and the keys move).
+    SchematicPlace(usize),
+    /// Shows or hides a placed schematic preview.
+    SchematicPlaceShow(usize),
+    /// Forgets a placed schematic preview.
+    SchematicPlaceRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -346,6 +360,12 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
+            Self::MiningCustom => f.write_str("MiningCustom"),
+            Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
+            Self::SchematicPlaceShow(i) => f.debug_tuple("SchematicPlaceShow").field(i).finish(),
+            Self::SchematicPlaceRemove(i) => {
+                f.debug_tuple("SchematicPlaceRemove").field(i).finish()
+            }
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -512,14 +532,18 @@ pub enum Helper {
     /// A bot task picks itself up after the server restarts and the client reconnects (on by
     /// default, unlike the others).
     Resume,
+    /// A walking bot turns its head toward where it goes, as a person does (on by default);
+    /// moving the mouse lends the camera back for a while without stopping the task.
+    HumanLook,
 }
 impl Helper {
-    pub const ALL: [Helper; 5] = [
+    pub const ALL: [Helper; 6] = [
         Helper::Totem,
         Helper::Fill,
         Helper::Tools,
         Helper::AutoClick,
         Helper::Resume,
+        Helper::HumanLook,
     ];
     pub fn index(self) -> usize {
         match self {
@@ -528,6 +552,7 @@ impl Helper {
             Self::Tools => 2,
             Self::AutoClick => 3,
             Self::Resume => 4,
+            Self::HumanLook => 5,
         }
     }
     /// The settings key the choice is kept under.
@@ -538,6 +563,7 @@ impl Helper {
             Self::Tools => "auto_tools",
             Self::AutoClick => "auto_click",
             Self::Resume => "auto_resume",
+            Self::HumanLook => "human_look",
         }
     }
 }
@@ -574,6 +600,8 @@ pub enum Control {
     FarmBonemeal,
     /// Sells the harvest with `/sell hand` once the harvest container is full, on or off.
     FarmAutoSell,
+    /// Cycles the field between flat and several levels (`farming::LEVELS`).
+    FarmLevels,
     /// Switches eating on its own.
     AutoEat,
     /// Switches one of the helpers of the Helpers tab.
@@ -606,6 +634,13 @@ pub enum Control {
     ConstructFloor,
     BaritoneMode(BaritoneMode),
     MiningTarget(u8),
+    /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
+    /// aimed at nothing, clears the list).
+    MiningCustom,
+    /// A placed schematic preview: select it, show or hide it, forget it.
+    SchematicPlace(usize),
+    SchematicPlaceShow(usize),
+    SchematicPlaceRemove(usize),
     MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
@@ -732,6 +767,7 @@ pub struct Menu {
     pub farm_replant: bool,
     pub farm_bonemeal: bool,
     pub farm_autosell: bool,
+    pub farm_levels: u8,
     pub drain_radius: u8,
     pub drain_pattern: super::claim_borders_draining::Pattern,
     pub drain_spacing: u8,
@@ -797,6 +833,7 @@ impl Default for Menu {
             farm_replant: true,
             farm_bonemeal: true,
             farm_autosell: false,
+            farm_levels: 0,
             drain_radius: 6,
             drain_pattern: super::claim_borders_draining::Pattern::Fill,
             drain_spacing: 4,
@@ -895,6 +932,7 @@ impl Menu {
         self.farm_replant = from.farm_replant;
         self.farm_bonemeal = from.farm_bonemeal;
         self.farm_autosell = from.farm_autosell;
+        self.farm_levels = from.farm_levels;
         self.drain_radius = from.drain_radius;
         self.drain_pattern = from.drain_pattern;
         self.drain_spacing = from.drain_spacing;
@@ -1022,6 +1060,7 @@ impl Menu {
                     replant: self.farm_replant,
                     bonemeal: self.farm_bonemeal,
                     autosell: self.farm_autosell,
+                    levels: self.farm_levels,
                 }),
                 running,
             }),
@@ -2822,6 +2861,21 @@ impl Menu {
                             ),
                             Control::FarmAutoSell,
                         ),
+                        (
+                            if self.farm_levels == 0 {
+                                self.language
+                                    .text("Уровни: плоская", "Levels: flat")
+                                    .to_owned()
+                            } else {
+                                localized!(
+                                    self.language,
+                                    "Уровни: ±{}",
+                                    "Levels: ±{}",
+                                    self.farm_levels
+                                )
+                            },
+                            Control::FarmLevels,
+                        ),
                     ]
                 } else {
                     vec![
@@ -2894,6 +2948,7 @@ impl Menu {
                     ));
                     below = tile + 2.0;
                 }
+                let count = rows.len();
                 for (i, (label, c)) in rows.into_iter().enumerate() {
                     out.push(widget(
                         [
@@ -2906,6 +2961,119 @@ impl Menu {
                         Some(c),
                         false,
                     ));
+                }
+                if !farm {
+                    // The previews placed in this world: select one (Start builds it, the
+                    // editor keys move it), show or hide it, or forget it.
+                    let mut y = 100.0 + below + count.div_ceil(2) as f32 * step + 4.0;
+                    let limit = if height >= 300.0 {
+                        height - 70.0
+                    } else {
+                        height - 52.0
+                    };
+                    if y + 12.0 <= limit {
+                        out.push(widget(
+                            [x, y, w, 11.0],
+                            if model.schematic_places.is_empty() {
+                                self.language.text(
+                                    "Предпоказов нет: клавиша предпросмотра ставит выбранный файл",
+                                    "No previews: the preview key places the chosen file",
+                                )
+                            } else {
+                                self.language
+                                    .text("Предпоказы в этом мире:", "Previews in this world:")
+                            },
+                            None,
+                            false,
+                        ));
+                        y += 13.0;
+                    }
+                    let button = 58.0_f32.min(w * 0.22);
+                    for (index, label, shown, selected) in &model.schematic_places {
+                        if y + 14.0 > limit {
+                            break;
+                        }
+                        out.push(widget(
+                            [x, y, w - 2.0 * (button + 4.0), 14.0],
+                            label.clone(),
+                            Some(Control::SchematicPlace(*index)),
+                            *selected,
+                        ));
+                        out.push(widget(
+                            [x + w - 2.0 * button - 4.0, y, button, 14.0],
+                            if *shown {
+                                self.language.text("Скрыть", "Hide")
+                            } else {
+                                self.language.text("Показать", "Show")
+                            },
+                            Some(Control::SchematicPlaceShow(*index)),
+                            *shown,
+                        ));
+                        out.push(widget(
+                            [x + w - button, y, button, 14.0],
+                            self.language.text("Удалить", "Delete"),
+                            Some(Control::SchematicPlaceRemove(*index)),
+                            false,
+                        ));
+                        y += 16.0;
+                    }
+                }
+                if farm {
+                    // What the buttons are bound to, with the coordinates and the colour of the
+                    // frame drawn around it in the world, as many lines as there is room for.
+                    let at = |pos: Option<[i32; 3]>, none: &str| {
+                        pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
+                    };
+                    let unset = self.language.text("не задан", "not set");
+                    let entries = [
+                        localized!(
+                            self.language,
+                            "Урожай (оранж.): {}",
+                            "Harvest (orange): {}",
+                            at(model.farm_storage[0], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Семена (зелён.): {}",
+                            "Seeds (green): {}",
+                            at(model.farm_storage[1], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Мука (бел.): {}",
+                            "Meal (white): {}",
+                            at(model.farm_storage[2], unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Точка (син.): {}",
+                            "Spot (blue): {}",
+                            at(model.farm_safe, unset)
+                        ),
+                        localized!(
+                            self.language,
+                            "Компостер (корич.): {}",
+                            "Composter (brown): {}",
+                            at(
+                                model.farm_composter,
+                                self.language.text("рядом нет", "none nearby")
+                            )
+                        ),
+                    ];
+                    let top = 100.0 + below + count.div_ceil(2) as f32 * step + 2.0;
+                    let half = (w - 4.0) / 2.0;
+                    for (i, entry) in entries.into_iter().enumerate() {
+                        let y = top + (i / 2) as f32 * 12.0;
+                        if y + 11.0 > height - 50.0 {
+                            break;
+                        }
+                        out.push(widget(
+                            [x + (i % 2) as f32 * (half + 4.0), y, half, 11.0],
+                            entry,
+                            None,
+                            false,
+                        ));
+                    }
                 }
             } else if matches!(
                 self.baritone_mode,
@@ -3097,9 +3265,33 @@ impl Menu {
                         self.mining_targets & (1 << index) != 0,
                     ));
                 }
+                // Any block of the world: aim at it and press (again to take it out).
+                let half = (w - 4.0) / 2.0;
+                let names: Vec<&str> = model
+                    .mining_custom
+                    .iter()
+                    .map(|n| n.strip_prefix("minecraft:").unwrap_or(n))
+                    .collect();
+                out.push(widget(
+                    [x + half + 4.0, height - 30.0, half, 14.0],
+                    if names.is_empty() {
+                        self.language
+                            .text("Свой блок: прицел на блок", "Own block: aim at a block")
+                            .to_owned()
+                    } else {
+                        localized!(
+                            self.language,
+                            "Свой блок: {}",
+                            "Own block: {}",
+                            names.join(", ")
+                        )
+                    },
+                    Some(Control::MiningCustom),
+                    !names.is_empty(),
+                ));
                 // The storage the miner unloads into when the inventory is full (the farm's).
                 out.push(widget(
-                    [x, height - 30.0, w, 14.0],
+                    [x, height - 30.0, half, 14.0],
                     match model.farm_storage[0] {
                         Some([sx, sy, sz]) => localized!(
                             self.language,
@@ -3400,8 +3592,8 @@ impl Menu {
                 ),
             ),
         ];
-        // The auto-resume switch is the fifth row, the auto-clicker's the sixth and its two
-        // choices share the seventh.
+        // The auto-resume switch is the fifth row, the human look the sixth, the auto-clicker's
+        // the seventh and its two choices share the eighth.
         let rows = rows.into_iter().chain([
             (
                 localized!(
@@ -3420,6 +3612,20 @@ impl Menu {
             (
                 localized!(
                     self.language,
+                    "Человеческий взгляд: {}",
+                    "Human Look: {}",
+                    state(model.helpers[Helper::HumanLook.index()])
+                ),
+                Control::Helper(Helper::HumanLook),
+                model.helpers[Helper::HumanLook.index()],
+                self.language.text(
+                    "бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
+                    "the bot looks where it goes; the mouse takes the camera, the task goes on",
+                ),
+            ),
+            (
+                localized!(
+                    self.language,
                     "Авто-клик: {}",
                     "Auto Click: {}",
                     state(model.helpers[Helper::AutoClick.index()])
@@ -3432,7 +3638,7 @@ impl Menu {
                 ),
             ),
         ]);
-        let step = ((height - 92.0) / 7.0).clamp(15.0, 34.0);
+        let step = ((height - 92.0) / 8.0).clamp(15.0, 34.0);
         let note = step >= 30.0;
         for (index, (label, control, on, hint)) in rows.enumerate() {
             let y = 84.0 + index as f32 * step;
@@ -3446,7 +3652,7 @@ impl Menu {
                 out.push(widget([x, y + 21.0, w, 11.0], hint, None, false));
             }
         }
-        let y = 84.0 + 6.0 * step;
+        let y = 84.0 + 7.0 * step;
         let half = (w - 4.0) * 0.5;
         let row_h = if note { 20.0 } else { (step - 2.0).min(20.0) };
         let russian = self.language == Language::Russian;
@@ -3956,6 +4162,15 @@ impl Menu {
                 self.farm_autosell = !self.farm_autosell;
                 None
             }
+            Control::FarmLevels => {
+                use super::claim_borders_farming::LEVELS;
+                let at = LEVELS
+                    .iter()
+                    .position(|l| *l == self.farm_levels)
+                    .unwrap_or(0);
+                self.farm_levels = LEVELS[(at + 1) % LEVELS.len()];
+                None
+            }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
@@ -4037,6 +4252,14 @@ impl Menu {
                     self.mining_targets ^= 1 << index;
                 }
                 None
+            }
+            Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),
+            Control::SchematicPlaceShow(i) => Some(Action::SchematicPlaceShow(i)),
+            Control::SchematicPlaceRemove(i) => Some(Action::SchematicPlaceRemove(i)),
+            Control::MiningCustom => {
+                // Picking a block selects the target too.
+                self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;
+                Some(Action::MiningCustom)
             }
             Control::MiningPage => {
                 self.mining_page = self.mining_page.wrapping_add(1);
@@ -6915,6 +7138,7 @@ mod tests {
                                     | Control::FarmSafe
                                     | Control::FarmBonemeal
                                     | Control::FarmAutoSell
+                                    | Control::FarmLevels
                                     | Control::FarmRadius
                                     | Control::FarmLimit
                                     | Control::FarmReplant

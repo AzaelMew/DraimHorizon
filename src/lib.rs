@@ -34,6 +34,9 @@ pub use draining as claim_borders_draining;
 #[path = "../mixins/draimhorizon/autoclick.rs"]
 pub mod autoclick;
 pub use autoclick as claim_borders_autoclick;
+#[path = "../mixins/draimhorizon/schematic_places.rs"]
+pub mod schematic_places;
+pub use schematic_places as claim_borders_schematic_places;
 #[path = "../mixins/draimhorizon/shulker_peek.rs"]
 pub mod shulker_peek;
 pub use shulker_peek as claim_borders_shulker_peek;

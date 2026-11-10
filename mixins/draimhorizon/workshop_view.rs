@@ -8,7 +8,7 @@ use crate::game::{
 };
 use horizon_client::gizmos::Gizmos;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::PathBuf,
     sync::{Mutex, OnceLock, mpsc::Receiver},
     time::{Duration, Instant},
@@ -55,6 +55,8 @@ enum Phase {
     Placing,
     /// Bone meal is being used on a crop: the click is under way, then the result is looked at.
     Growing,
+    /// A hoe is being used on trampled soil of the field, to make it farmland again.
+    Tilling,
     Done,
 }
 /// A dropped item the farm is collecting.
@@ -85,6 +87,12 @@ enum Purpose {
     Meal,
     /// Craft hay bales from wheat at a crafting table nearby.
     Craft,
+    /// Put spare seeds into the composter by the field, and take out the bone meal it makes.
+    Compost,
+    /// Take seeds out of the seeds container to compost them (the meal ran out).
+    CompostSeeds,
+    /// Bake bread from wheat at a crafting table nearby: the farmer is hungry and has no food.
+    Bread,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Step {
@@ -96,6 +104,8 @@ enum Step {
     Transfer,
     /// Closing the window.
     Close,
+    /// Using items on a block without a window (the composter).
+    Use,
 }
 /// A trip to the farm's storage container, driven between two harvest targets.
 #[derive(Clone, Copy)]
@@ -158,6 +168,8 @@ struct State {
     store: Option<Store>,
     store_after: Instant,
     idle_deposit: bool,
+    // When the harvest was last taken to the containers (a few stacks go after a while).
+    last_unload: Instant,
     // The harvest container is full and the harvest is to be sold (`/sell hand`).
     sell_due: bool,
     // Failed placements in a row, and cells given up on, for the end message.
@@ -172,6 +184,10 @@ struct State {
     grow_sent: bool,
     grow_meal: u32,
     grow_clicks: u8,
+    // Every farmland block of the field seen so far, and whether the target is one of them
+    // trampled to dirt, to be tilled again with a hoe.
+    field: HashSet<nav::Pos>,
+    till: bool,
     grow_at: Instant,
     // Waiting in a safe spot: the walk to it and since when, whether it is there, and since
     // when the farm has had nothing to do.
@@ -211,6 +227,7 @@ impl Default for State {
             store: None,
             store_after: Instant::now(),
             idle_deposit: false,
+            last_unload: Instant::now(),
             sell_due: false,
             errors: 0,
             missed: 0,
@@ -220,6 +237,8 @@ impl Default for State {
             grow_sent: false,
             grow_meal: 0,
             grow_clicks: 0,
+            field: HashSet::new(),
+            till: false,
             grow_at: Instant::now(),
             park: None,
             parked: false,
@@ -322,6 +341,10 @@ pub(super) fn load(
         return Err(text("Загрузка уже выполняется", "Import already running").into());
     }
     let scope = guard(game)?;
+    if run {
+        // Kept until it is finished or stopped: it goes on after a restart.
+        crate::game::claim_borders_resume::note_build(game, &filename, origin, rotation);
+    }
     let rx = files::spawn(folder(game), Some(filename), origin, rotation)?;
     driver::clear_construction_driver();
     placement::reset();
@@ -433,6 +456,7 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
         s.target = None;
         s.plant = false;
         s.grow = false;
+        s.till = false;
         s.attempt = 0;
         s.store = None;
         s.home = None;
@@ -494,8 +518,82 @@ fn purpose_chest(game: &Game<'_>, purpose: Purpose) -> Option<nav::Pos> {
         Purpose::Deposit => harvest,
         Purpose::DepositSeeds | Purpose::Seeds(_) => seeds.or(harvest),
         Purpose::Meal => meal,
-        Purpose::Craft => table_near(game),
+        Purpose::Craft | Purpose::Bread => table_near(game),
+        Purpose::CompostSeeds => seeds,
+        // Found by the field, not set: see `composter_near`.
+        Purpose::Compost => None,
     }
+}
+/// Containers found empty, not asked again for a while: the seeds of each crop (by its index)
+/// and, last, the bone meal. Without this the farm walked to an empty chest every minute.
+static EMPTY_SOURCE: Mutex<[Option<Instant>; 6]> = Mutex::new([None; 6]);
+const MEAL_SOURCE: usize = 4;
+const COMPOST_SOURCE: usize = 5;
+fn source_empty(index: usize) -> bool {
+    EMPTY_SOURCE.lock().unwrap_or_else(|e| e.into_inner())[index]
+        .is_some_and(|until| Instant::now() < until)
+}
+fn mark_source(index: usize, empty: bool) {
+    EMPTY_SOURCE.lock().unwrap_or_else(|e| e.into_inner())[index] =
+        empty.then(|| Instant::now() + Duration::from_secs(15 * 60));
+}
+/// The composter by the field: the nearest one within the field and eight blocks around it,
+/// three blocks up or down from its start. Looked for again every 20 seconds at most.
+static COMPOSTER: Mutex<Option<(Instant, nav::Pos, Option<nav::Pos>)>> = Mutex::new(None);
+fn composter_near(game: &Game<'_>, origin: nav::Pos, radius: i32) -> Option<nav::Pos> {
+    let mut cache = COMPOSTER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((when, at, found)) = *cache
+        && at == origin
+        && when.elapsed() < Duration::from_secs(20)
+    {
+        return found;
+    }
+    // By the containers first: that is where a composter belongs (seeds go in and meal comes
+    // out next to the chests). Then the field and eight blocks around it.
+    let mut best: Option<(i32, nav::Pos)> = None;
+    for chest in storages(game).into_iter().flatten() {
+        for dx in -4..=4 {
+            for dz in -4..=4 {
+                for dy in -2..=2 {
+                    let at = [chest[0] + dx, chest[1] + dy, chest[2] + dz];
+                    let d = dx * dx + dz * dz + dy * dy;
+                    if best.is_none_or(|(b, _)| d < b)
+                        && game.native_block(at) == "minecraft:composter"
+                    {
+                        best = Some((d, at));
+                    }
+                }
+            }
+        }
+    }
+    if let Some((_, at)) = best {
+        *cache = Some((Instant::now(), origin, Some(at)));
+        return Some(at);
+    }
+    let reach = radius + 8;
+    for dx in -reach..=reach {
+        for dz in -reach..=reach {
+            for dy in -3..=3 {
+                let at = [origin[0] + dx, origin[1] + dy, origin[2] + dz];
+                let d = dx * dx + dz * dz + dy * dy;
+                if best.is_none_or(|(b, _)| d < b) && game.native_block(at) == "minecraft:composter"
+                {
+                    best = Some((d, at));
+                }
+            }
+        }
+    }
+    let found = best.map(|(_, at)| at);
+    *cache = Some((Instant::now(), origin, found));
+    found
+}
+/// The composter the current farm uses, for the menu.
+pub(super) fn farm_composter(game: &Game<'_>) -> Option<nav::Pos> {
+    let (origin, radius) = state(|s| match &s.task {
+        Some(Task::Farm { origin, config, .. }) => Some((*origin, i32::from(config.radius))),
+        _ => None,
+    })?;
+    composter_near(game, origin, radius)
 }
 /// A crafting table close to the player (eight blocks around, three up and down), the nearest.
 fn table_near(game: &Game<'_>) -> Option<nav::Pos> {
@@ -546,35 +644,81 @@ fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
 }
 /// Why a trip to a container is due now, if it is, and which container.
 fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
-    let Some(Task::Farm { config, .. }) = &s.task else {
+    let Some(Task::Farm { config, origin, .. }) = &s.task else {
         return None;
     };
     if Instant::now() < s.store_after {
         return None;
     }
     let inv = inventory(game);
-    // Empty farmland and a selected crop with no seeds on hand: fetch them.
+    let crops: Vec<_> = config.selected().collect();
+    // Hungry with nothing to eat: bread from the wheat, at a crafting table nearby.
+    if hungry_without_food(game)
+        && store::count(&inv, WHEAT) >= 3
+        && craft_allowed()
+        && let Some(table) = purpose_chest(game, Purpose::Bread)
+    {
+        craft_started();
+        return Some((Purpose::Bread, table));
+    }
+    // Empty farmland and a selected crop with no seeds on hand: fetch them (not from a
+    // container that had none a moment ago).
     if config.replant
         && s.unplanted
-        && let Some(crop) = config.selected().find(|c| !seed(game, *c))
+        && let Some(crop) = config
+            .selected()
+            .find(|c| !seed(game, *c) && !source_empty(*c as usize))
         && let Some(chest) = purpose_chest(game, Purpose::Seeds(crop))
     {
         return Some((Purpose::Seeds(crop), chest));
     }
-    // Crops are growing and the meal ran out: fetch meal, or blocks to craft it from.
-    if config.bonemeal
-        && s.growing
-        && store::count(&inv, store::BONE_MEAL) < 8
-        && store::count(&inv, store::BONE_BLOCK) == 0
+    let meal = store::count(&inv, store::BONE_MEAL);
+    let low =
+        config.bonemeal && s.growing && meal < 8 && store::count(&inv, store::BONE_BLOCK) == 0;
+    // Crops are growing and the meal ran out: fetch meal, or blocks to craft it from. An empty
+    // meal container is left alone for a while: the farm just sows and harvests meanwhile.
+    if low
+        && !source_empty(MEAL_SOURCE)
         && let Some(chest) = purpose_chest(game, Purpose::Meal)
     {
         return Some((Purpose::Meal, chest));
     }
-    let crops: Vec<_> = config.selected().collect();
+    let composter = if config.bonemeal {
+        composter_near(game, *origin, i32::from(config.radius))
+    } else {
+        None
+    };
+    let spare = store::compost_seed(&inv, &crops, store::KEEP_SEEDS).is_some();
+    if low && let Some(at) = composter {
+        // No meal to fetch: the seeds make it. Spare seeds on hand go into the composter;
+        // without any, two stacks are fetched from the seeds container first.
+        if spare {
+            return Some((Purpose::Compost, at));
+        }
+        if !source_empty(COMPOST_SOURCE)
+            && let Some(chest) = purpose_chest(game, Purpose::CompostSeeds)
+        {
+            return Some((Purpose::CompostSeeds, chest));
+        }
+    }
     let [_, seeds_chest, _] = storages(game);
     let split = store::deposit_split(&inv, &crops, store::KEEP_SEEDS, seeds_chest.is_some());
-    if !(store::free_slots(&inv) <= 2 || s.idle_deposit) {
+    // Not after every crop: when the inventory fills up, the field is idle, a lot has gathered,
+    // or a few stacks have waited a while.
+    if !store::unload_due(
+        &inv,
+        split.harvest.len() + split.seeds.len(),
+        s.idle_deposit,
+        s.last_unload.elapsed().as_secs(),
+    ) {
         return None;
+    }
+    // Spare seeds make bone meal before they go into the seeds container.
+    if spare
+        && meal < store::MEAL_STOCK
+        && let Some(at) = composter
+    {
+        return Some((Purpose::Compost, at));
     }
     // Wheat to bales first, so that the bales go in with the same unload.
     if store::hay_plan(&inv, &crops).is_some()
@@ -595,6 +739,40 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
         return Some((Purpose::DepositSeeds, chest));
     }
     None
+}
+const WHEAT: &str = "minecraft:wheat";
+/// Whether anything in the inventory can be eaten (and is not one of the foods eating on its
+/// own leaves alone).
+fn has_food(game: &Game<'_>) -> bool {
+    (0..36).any(|g| {
+        let stack = if g < 9 {
+            game.stack_in(g)
+        } else {
+            game.inventory.get(g).and_then(Option::as_ref)
+        };
+        stack.filter(|st| st.count > 0).is_some_and(|st| {
+            !crate::game::claim_borders_auto_eat::avoid(&st.item)
+                && game
+                    .res
+                    .items()
+                    .get(&st.item)
+                    .is_some_and(|item| item.food.is_some())
+        })
+    })
+}
+/// The food bar is where eating on its own starts and there is nothing to eat.
+fn hungry_without_food(game: &Game<'_>) -> bool {
+    game.player.as_ref().is_some_and(|p| {
+        (p.health.food.food as i32) <= crate::game::claim_borders_auto_eat::HUNGRY_AT
+    }) && !has_food(game)
+}
+/// The first hoe in the inventory, any material.
+fn hoe(game: &Game<'_>) -> Option<String> {
+    inventory(game)
+        .into_iter()
+        .flatten()
+        .map(|(name, _)| name)
+        .find(|name| name.ends_with("_hoe"))
 }
 /// Crafting is not tried again for a while after a trip to a table: one that cannot be opened
 /// must not hold the unload back.
@@ -670,6 +848,15 @@ fn store_walk(game: &Game<'_>, s: &mut State) {
         approach(game, s, chest);
         return;
     }
+    if s.store.is_some_and(|t| t.purpose == Purpose::Compost) {
+        // A composter has no window: items are used on it.
+        if let Some(t) = s.store.as_mut() {
+            t.step = Step::Use;
+            t.since = Instant::now();
+            t.last = Instant::now();
+        }
+        return;
+    }
     if let Some(t) = s.store.as_mut() {
         t.step = Step::Open;
         t.since = Instant::now();
@@ -720,7 +907,8 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
     let open = game.screen == Screen::Inventory
         && game.remote_menu_type().is_some_and(|menu| {
             store::is_container_menu(menu)
-                || (t.purpose == Purpose::Craft && menu == "minecraft:crafting")
+                || (matches!(t.purpose, Purpose::Craft | Purpose::Bread)
+                    && menu == "minecraft:crafting")
         });
     match t.step {
         Step::Walk => craft_on_the_way(game, t),
@@ -766,7 +954,94 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
             }
         }
         Step::Close => end_store(game, None),
+        Step::Use => compost_frame(game, t),
     }
+}
+/// At the composter: spare seeds go in one click at a time (each fills a layer by chance),
+/// a full composter is emptied with a click (the bone meal pops out and is picked up after),
+/// and the trip ends when no seeds are spare or the meal stock is full.
+fn compost_frame(game: &mut Game<'_>, t: Store) {
+    let Some(at) = state(|s| s.target) else {
+        end_store(game, None);
+        return;
+    };
+    if placement::use_busy() || t.last.elapsed() < Duration::from_millis(300) {
+        return;
+    }
+    let clicked = placement::use_result();
+    if clicked == Some(false) {
+        end_store(
+            game,
+            Some(text(
+                "Компостер не виден отсюда",
+                "The composter cannot be reached from here",
+            )),
+        );
+        return;
+    }
+    if game.native_block(at) != "minecraft:composter" {
+        end_store(
+            game,
+            Some(text("Компостер пропал", "The composter is gone")),
+        );
+        return;
+    }
+    let crops = state(|s| match &s.task {
+        Some(Task::Farm { config, .. }) => config.selected().collect::<Vec<_>>(),
+        _ => Vec::new(),
+    });
+    let level: u8 = game
+        .native_block_property(at, "level")
+        .and_then(|l| l.parse().ok())
+        .unwrap_or(0);
+    let inv = inventory(game);
+    let spare = store::compost_seed(&inv, &crops, store::KEEP_SEEDS);
+    let meal = store::count(&inv, store::BONE_MEAL);
+    // Anything in hand empties a full composter; seeds are always about.
+    let any = store::COMPOST_SEEDS
+        .into_iter()
+        .chain(crops.iter().map(|c| c.seed()))
+        .chain([store::BONE_MEAL])
+        .find(|item| store::count(&inv, item) > 0);
+    let item = match level {
+        8.. => any,
+        // Ready in a moment (the server turns 7 into 8 after a second).
+        7 if t.last.elapsed() < Duration::from_millis(2500) => return,
+        7 => any,
+        _ if meal < store::MEAL_STOCK => spare,
+        _ => None,
+    };
+    let Some(item) = item else {
+        // Done: the meal it made is picked up by the loot pass on the way back.
+        end_store_for(game, None, 5);
+        return;
+    };
+    let seeds = spare.map_or(0, |seed| store::count(&inv, seed)) as usize;
+    let stuck = if level < 7 && seeds == t.sig {
+        t.stuck + 1
+    } else {
+        0
+    };
+    if stuck >= 5 || t.moved >= 400 {
+        end_store(
+            game,
+            Some(text(
+                "Компостер не принимает семена",
+                "The composter does not take the seeds",
+            )),
+        );
+        return;
+    }
+    placement::use_item_on(item, at);
+    state(|s| {
+        s.message = text("компостирую семена", "composting seeds").into();
+        if let Some(t) = s.store.as_mut() {
+            t.last = Instant::now();
+            t.moved += 1;
+            t.stuck = stuck;
+            t.sig = seeds;
+        }
+    });
 }
 /// One round of shift-clicks between the inventory and the open container.
 fn transfer(game: &mut Game<'_>, t: Store) {
@@ -859,6 +1134,53 @@ fn transfer(game: &mut Game<'_>, t: Store) {
                 .collect();
             (plan, ops)
         }
+        Purpose::CompostSeeds => {
+            // Two stacks beyond the ones kept for sowing, of whichever seeds the chest has.
+            let plan = store::COMPOST_SEEDS
+                .into_iter()
+                .map(|seed| store::withdraw(&chest, &inv, seed, store::KEEP_SEEDS + 128))
+                .find(|plan| !plan.is_empty())
+                .unwrap_or_default();
+            let ops = plan
+                .iter()
+                .take(2)
+                .map(|i| (Some(300 + *i), 0, Input::QuickMove))
+                .collect();
+            (plan, ops)
+        }
+        Purpose::Bread => {
+            use horizon_client::menu::Input;
+            // Three wheat in the top row of the 3x3 grid make a loaf: the stack goes in one per
+            // cell, up to three loaves, a shift-click takes them, the rest goes back. Done once
+            // there is food.
+            let plan = if has_food(game) {
+                Vec::new()
+            } else {
+                inv.iter()
+                    .position(|st| st.as_ref().is_some_and(|(n, c)| n == WHEAT && *c >= 3))
+                    .map(|slot| {
+                        let n = inv[slot].as_ref().map_or(0, |(_, c)| *c);
+                        vec![
+                            slot,
+                            (n / 3).min(3) as usize,
+                            store::count(&inv, WHEAT) as usize,
+                        ]
+                    })
+                    .unwrap_or_default()
+            };
+            let mut ops = Vec::new();
+            if let [slot, loaves, _] = plan[..] {
+                ops.push((Some(slot), 0, Input::Pickup));
+                for _ in 0..loaves {
+                    ops.extend((0..3).map(|cell| (Some(100 + cell), 1, Input::Pickup)));
+                }
+                ops.push((Some(200), 0, Input::QuickMove));
+                ops.push((Some(slot), 0, Input::Pickup));
+            }
+            (plan, ops)
+        }
+        // No window to move stacks in: done in `compost_frame`.
+        Purpose::Compost => (Vec::new(), Vec::new()),
     };
     let sig = plan.iter().sum::<usize>() + plan.len() * 100;
     let stuck = if sig == t.sig { t.stuck + 1 } else { 0 };
@@ -871,8 +1193,19 @@ fn transfer(game: &mut Game<'_>, t: Store) {
                 store::count(&inv, store::BONE_MEAL) == 0
                     && store::count(&inv, store::BONE_BLOCK) == 0
             }
+            Purpose::CompostSeeds => store::compost_seed(&inv, &crops, store::KEEP_SEEDS).is_none(),
             _ => false,
         };
+        // An empty container is not visited again for a while; a full one is fine again.
+        match t.purpose {
+            Purpose::Seeds(crop) => mark_source(crop as usize, none),
+            Purpose::Meal => mark_source(MEAL_SOURCE, none),
+            Purpose::CompostSeeds => mark_source(COMPOST_SOURCE, none),
+            Purpose::Deposit | Purpose::DepositSeeds => {
+                state(|s| s.last_unload = Instant::now());
+            }
+            _ => {}
+        }
         // The harvest is in: the spare seeds are the next trip, soon.
         let more = t.purpose == Purpose::Craft
             || (t.purpose == Purpose::Deposit
@@ -899,9 +1232,10 @@ fn transfer(game: &mut Game<'_>, t: Store) {
         if none {
             state(|s| {
                 s.message = match t.purpose {
-                    Purpose::Meal => text(
-                        "в сундуке нет костной муки, жду",
-                        "no bone meal in the container, waiting",
+                    // No meal is no reason to stop: sow, harvest and wait as without it.
+                    Purpose::Meal | Purpose::CompostSeeds => text(
+                        "костная мука закончилась, работаю без неё",
+                        "out of bone meal, farming without it",
                     ),
                     _ => text(
                         "в складе нет семян, жду созревания",
@@ -909,7 +1243,7 @@ fn transfer(game: &mut Game<'_>, t: Store) {
                     ),
                 }
                 .into();
-                s.waiting = true;
+                s.waiting = matches!(t.purpose, Purpose::Seeds(_));
             });
         }
         return;
@@ -968,6 +1302,27 @@ fn grow_click(game: &Game<'_>, s: &mut State, target: nav::Pos, crop: farm::Crop
     s.grow_sent = false;
     s.grow_at = Instant::now();
     s.phase = Phase::Growing;
+}
+/// Uses the hoe on the trampled soil at `target`; the `Tilling` phase looks at the result.
+fn till_click(game: &Game<'_>, s: &mut State, target: nav::Pos) {
+    let Some(hoe) = hoe(game).filter(|_| game.native_block(target) == "minecraft:dirt") else {
+        // No hoe any more, or it is farmland (or something else) already.
+        s.till = false;
+        s.target = None;
+        return;
+    };
+    placement::use_item_on(&hoe, target);
+    s.grow_sent = false;
+    s.grow_at = Instant::now();
+    s.phase = Phase::Tilling;
+}
+fn till_give_up(s: &mut State, target: nav::Pos) {
+    placement::cancel_use();
+    s.skip
+        .push((target, Instant::now() + Duration::from_secs(30)));
+    s.till = false;
+    s.target = None;
+    s.phase = Phase::Ready;
 }
 /// Leaves this crop alone for a while (no line to it, or the meal does nothing) and goes on.
 fn grow_give_up(s: &mut State, target: nav::Pos) {
@@ -1039,7 +1394,9 @@ fn park_step(game: &Game<'_>, s: &mut State) {
         s.parked = true;
         return;
     }
-    if driver::workshop_walk(game, spot, true, false).is_ok() {
+    // Like every walk: on foot first; with no way on foot, blocks in the way are broken and
+    // gaps bridged (when a tool and blocks are at hand).
+    if driver::workshop_walk(game, spot, false, false).is_ok() {
         s.park = Some((spot, Instant::now()));
         s.message = text("иду в безопасное место", "walking to the safe spot").into();
     } else {
@@ -1212,8 +1569,10 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
 /// that has not been picked up and waits for the pickup, giving up on an item that cannot be
 /// reached or taken. True while it is busy with one (the job waits).
 fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => (*origin, i32::from(config.radius)),
+    let (origin, radius, reach_y) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => {
+            (*origin, i32::from(config.radius), config.reach_y())
+        }
         _ => return false,
     };
     let Some(p) = game.native_player() else {
@@ -1225,7 +1584,8 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
         let a = at(d);
         (a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
             && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
-            && (a[1] - f64::from(origin[1])).abs() <= 4.0
+            // Only what lies at the field's level: a drop on a roof would lead the walker up.
+            && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1)
     };
     let nearest = game
         .dropped
@@ -1295,15 +1655,22 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
 /// are not loaded (from a distance the field reads as empty, and the job would wait for crops
 /// that are not there). True while it is walking there.
 fn home_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => (*origin, f64::from(config.radius)),
+    let (origin, radius, height) = match &s.task {
+        Some(Task::Farm { origin, config, .. }) => (
+            *origin,
+            f64::from(config.radius),
+            f64::from(config.reach_y() + 2),
+        ),
         _ => return false,
     };
     let Some(p) = game.native_player() else {
         return false;
     };
+    // Near in height too: a walker on a roof or a tree over the field is not at the beds (from
+    // there no crop can be reached, and the scan would only find unreachable ones).
     let near = (p.x - (f64::from(origin[0]) + 0.5)).hypot(p.z - (f64::from(origin[2]) + 0.5))
-        <= radius + 6.0;
+        <= radius + 6.0
+        && (p.y - f64::from(origin[1])).abs() <= height;
     let loaded = game
         .world
         .chunks
@@ -1315,7 +1682,7 @@ fn home_step(game: &Game<'_>, s: &mut State) -> bool {
     let message = text("возвращаюсь к грядкам", "walking back to the beds");
     match s.home {
         None => {
-            match driver::workshop_walk(game, origin, true, false) {
+            match driver::workshop_walk(game, origin, false, false) {
                 Ok(()) => {
                     s.home = Some(Instant::now());
                     s.message = message.into();
@@ -1863,6 +2230,37 @@ pub(super) fn tick(game: &Game<'_>) {
                     grow_give_up(s, target);
                 }
             }
+            Phase::Tilling => {
+                let Some(target) = s.target else {
+                    s.till = false;
+                    s.phase = Phase::Ready;
+                    return;
+                };
+                if !s.grow_sent {
+                    match placement::use_result() {
+                        None if s.grow_at.elapsed() > Duration::from_secs(8) => {
+                            till_give_up(s, target);
+                        }
+                        None => {}
+                        Some(false) => till_give_up(s, target),
+                        Some(true) => {
+                            s.grow_sent = true;
+                            s.grow_at = Instant::now();
+                        }
+                    }
+                    return;
+                }
+                if s.grow_at.elapsed() < Duration::from_millis(450) {
+                    return;
+                }
+                if game.native_block(target) == "minecraft:farmland" {
+                    s.till = false;
+                    s.target = None;
+                    s.phase = Phase::Ready;
+                } else {
+                    till_give_up(s, target);
+                }
+            }
             Phase::Ready => {}
         }
         if !placement::external_settled() {
@@ -1928,23 +2326,47 @@ pub(super) fn tick(game: &Game<'_>) {
                     let mut growing_at: Vec<(nav::Pos, farm::Crop)> = Vec::new();
                     let mut dark = 0;
                     let mut unplanted = false;
+                    let mut trampled: Vec<nav::Pos> = Vec::new();
                     let crops: Vec<_> = config.selected().collect();
-                    // What can be sown now: the first selected crop whose seeds are at hand.
-                    let sow = if config.replant {
-                        crops.iter().copied().find(|c| seed(game, *c))
-                    } else {
-                        None
+                    // What is sown where: the field is shared between the selected crops (a
+                    // quarter each for four), each part gets its own crop. Without seeds for a
+                    // part they are fetched; only when its container has none either does
+                    // another crop with seeds at hand stand in until the next harvest.
+                    let have: Vec<farm::Crop> =
+                        crops.iter().copied().filter(|c| seed(game, *c)).collect();
+                    let plan = *config;
+                    let sow_at = |x: i32, z: i32| {
+                        let zone = plan.zone_crop(x, z).filter(|_| plan.replant)?;
+                        if have.contains(&zone) {
+                            Some(zone)
+                        } else if source_empty(zone as usize) {
+                            have.first().copied()
+                        } else {
+                            None
+                        }
                     };
                     for z in -r..=r {
                         for x in -r..=r {
-                            // Beds at other heights count too (a raised bed, a terrace): every
-                            // layer from two below the start to two above is looked at.
-                            for dy in -2..=2 {
+                            // Beds at other heights count too: a block of unevenness on a flat
+                            // field, the chosen number of levels on a terraced one.
+                            let reach_y = plan.reach_y();
+                            for dy in -reach_y..=reach_y {
                                 let at = [origin[0] + x, origin[1] + dy, origin[2] + z];
-                                if game.native_block([at[0], at[1] - 1, at[2]])
-                                    != "minecraft:farmland"
-                                {
+                                let below = [at[0], at[1] - 1, at[2]];
+                                let soil = game.native_block(below);
+                                if soil != "minecraft:farmland" {
+                                    // Farmland of this field trampled to dirt (a jump, a
+                                    // fall, a mob): tilled again when a hoe is at hand.
+                                    if soil == "minecraft:dirt"
+                                        && s.field.contains(&below)
+                                        && game.native_block(at) == "minecraft:air"
+                                    {
+                                        trampled.push(below);
+                                    }
                                     continue;
+                                }
+                                if s.field.len() < 8192 {
+                                    s.field.insert(below);
                                 }
                                 let name = game.native_block(at);
                                 let ripe = crops.iter().copied().find(|c| {
@@ -1964,6 +2386,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 // block light): in a cave the server refuses the seed.
                                 let light = i32::from(game.world.light(at[0], at[1], at[2]));
                                 let lit = (light >> 4).max(light & 15) >= 9;
+                                let sow = sow_at(x, z);
                                 let empty = config.replant && name == "minecraft:air";
                                 if empty && !lit {
                                     dark += 1;
@@ -2003,6 +2426,26 @@ pub(super) fn tick(game: &Game<'_>) {
                         s.plant = *plant;
                         s.crop = *crop;
                         s.grow = false;
+                        s.waiting = false;
+                        s.attempt = 0;
+                        s.idle_since = None;
+                        s.parked = false;
+                        s.park = None;
+                    } else if let Some(at) = trampled
+                        .iter()
+                        .filter(|at| !s.skip.iter().any(|(p, _)| p == *at))
+                        .min_by(|a, b| {
+                            nav::distance(nav::center(**a), [p.x, p.y, p.z])
+                                .total_cmp(&nav::distance(nav::center(**b), [p.x, p.y, p.z]))
+                        })
+                        .filter(|_| hoe(game).is_some())
+                    {
+                        // Trampled soil: a hoe makes it farmland again, sown on the next look.
+                        s.target = Some(*at);
+                        s.plant = false;
+                        s.crop = crops.first().copied();
+                        s.grow = false;
+                        s.till = true;
                         s.waiting = false;
                         s.attempt = 0;
                         s.idle_since = None;
@@ -2267,6 +2710,7 @@ pub(super) fn tick(game: &Game<'_>) {
                             s.phase = Phase::Done;
                             s.active = false;
                             s.message = text("Готово", "Done").into();
+                            crate::game::claim_borders_resume::forget_build(game);
                             return;
                         }
                         let (at, wanted) = &document.blocks[*cursor];
@@ -2321,6 +2765,10 @@ pub(super) fn tick(game: &Game<'_>) {
                     s.target = None;
                     return;
                 };
+                if s.till {
+                    till_click(game, s, target);
+                    return;
+                }
                 if s.grow {
                     grow_click(game, s, target, crop);
                     return;
@@ -2498,6 +2946,8 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    // The schematic previews of this world, whether or not a build runs.
+    crate::game::claim_borders_schematic_view::render(game, g);
     state(|s| {
         if driver::scope(game).as_deref() != Some(s.scope.as_str()) {
             return;
@@ -2537,6 +2987,61 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
                 ([x0, y, z1], [x0, y, z0]),
             ] {
                 g.line(a, b, 0xff88ccaa, 1.5);
+            }
+        }
+        if let Some(Task::Farm { origin, config, .. }) = &s.task {
+            let r = i32::from(config.radius);
+            let y = f64::from(origin[1]) + 0.05;
+            // Where one crop's part of the field meets the next: the zones sown apart.
+            let mut cuts_x = Vec::new();
+            let mut cuts_z = Vec::new();
+            for d in -r + 1..=r {
+                if config.zone_crop(d - 1, -r) != config.zone_crop(d, -r) {
+                    cuts_x.push(origin[0] + d);
+                }
+                if config.zone_crop(-r, d - 1) != config.zone_crop(-r, d) {
+                    cuts_z.push(origin[2] + d);
+                }
+            }
+            let (x0, x1) = (f64::from(origin[0] - r), f64::from(origin[0] + r + 1));
+            let (z0, z1) = (f64::from(origin[2] - r), f64::from(origin[2] + r + 1));
+            for x in cuts_x {
+                g.line(
+                    [f64::from(x), y, z0],
+                    [f64::from(x), y, z1],
+                    0x9988ccaa,
+                    1.0,
+                );
+            }
+            for z in cuts_z {
+                g.line(
+                    [x0, y, f64::from(z)],
+                    [x1, y, f64::from(z)],
+                    0x9988ccaa,
+                    1.0,
+                );
+            }
+            // What the farm is bound to, each in its colour (the menu lists the same with the
+            // coordinates): harvest orange, seeds green, bone meal white, the composter brown,
+            // the safe spot blue.
+            let [harvest, seeds, meal] = storages(game);
+            let marks = [
+                (harvest, 0xffffa040_u32),
+                (seeds, 0xff60e060),
+                (meal, 0xfff0f0f0),
+                (composter_near(game, *origin, r), 0xffb07840),
+                (safe_point(game), 0xff60a0ff),
+            ];
+            for (at, color) in marks {
+                let Some(at) = at else {
+                    continue;
+                };
+                if nav::distance(nav::center(at), [p.x, p.y, p.z]) > 96.0 {
+                    continue;
+                }
+                let min = at.map(|v| f64::from(v) - 0.02);
+                let max = at.map(|v| f64::from(v) + 1.02);
+                g.cuboid(min, max, color, 2.0);
             }
         }
         for at in blocks {

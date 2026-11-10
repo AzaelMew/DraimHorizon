@@ -1,7 +1,10 @@
 // Bounded ore mining jobs. Only server-confirmed block changes advance the count.
 use super::{claim_borders_experimental::ORES, claim_borders_navigation as nav};
 use std::{
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
     time::{Duration, Instant},
 };
 pub const SCAN_RADIUS: i32 = 16;
@@ -12,6 +15,12 @@ pub struct Block {
     pub falling: bool,
     /// Solid and safe to break: not bedrock-like and without a block entity.
     pub breakable: bool,
+    /// Leaves, grass and the like: cleared on the way to a target, so a target behind them
+    /// (a trunk inside its crown) counts as open.
+    pub soft: bool,
+    /// Water (or a waterlogged block): swum through to reach a target under water, not a
+    /// hazard to mine beside.
+    pub water: bool,
 }
 impl Default for Block {
     fn default() -> Self {
@@ -20,6 +29,8 @@ impl Default for Block {
             ore: false,
             falling: false,
             breakable: false,
+            soft: false,
+            water: false,
         }
     }
 }
@@ -29,7 +40,7 @@ pub struct Target {
     pub label_en: &'static str,
     pub blocks: &'static [&'static str],
 }
-const EXTRA: [Target; 13] = [
+const EXTRA: [Target; 15] = [
     Target {
         label: "Камень",
         label_en: "Stone",
@@ -131,7 +142,52 @@ const EXTRA: [Target; 13] = [
         label_en: "Pumpkins and melons",
         blocks: &["minecraft:pumpkin", "minecraft:melon"],
     },
+    Target {
+        label: "Призмарин",
+        label_en: "Prismarine",
+        blocks: &[
+            "minecraft:prismarine",
+            "minecraft:prismarine_bricks",
+            "minecraft:dark_prismarine",
+            "minecraft:sea_lantern",
+            "minecraft:wet_sponge",
+            "minecraft:sponge",
+        ],
+    },
+    // Any block at all: the ones the player picked with the crosshair (`set_custom`).
+    Target {
+        label: "Свой блок",
+        label_en: "Own block",
+        blocks: &[],
+    },
 ];
+/// The target that mines whatever blocks the player picked (`set_custom`).
+pub const CUSTOM: u8 = (ORES.len() + EXTRA.len() - 1) as u8;
+static CUSTOM_BLOCKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Sets the blocks of the "own block" target: any block of the world can be mined this way (a
+/// sunken temple's prismarine, terracotta, wool, ice).
+pub fn set_custom(blocks: Vec<String>) {
+    *CUSTOM_BLOCKS.lock().unwrap_or_else(|e| e.into_inner()) = blocks;
+}
+pub fn custom() -> Vec<String> {
+    CUSTOM_BLOCKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+/// Adds the block to the "own block" target, or takes it out if it is in already. True when
+/// it is in now.
+pub fn toggle_custom(block: &str) -> bool {
+    let mut list = CUSTOM_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(at) = list.iter().position(|b| b == block) {
+        list.remove(at);
+        false
+    } else {
+        list.push(block.to_owned());
+        list.truncate(16);
+        true
+    }
+}
 /// Number of things the miner can collect: the highlighted ores, then the extra targets.
 pub const COUNT: usize = ORES.len() + EXTRA.len();
 /// (Russian label, English label, blocks) for a mining target index.
@@ -169,6 +225,8 @@ const ICONS: [&str; COUNT] = [
     "minecraft:sandstone",
     "minecraft:end_stone",
     "minecraft:pumpkin",
+    "minecraft:prismarine",
+    "minecraft:spyglass",
 ];
 /// The icon item of a mining target index.
 pub fn icon(index: u8) -> Option<&'static str> {
@@ -187,13 +245,22 @@ pub fn selection() -> u32 {
     SELECTION.load(Ordering::Relaxed)
 }
 pub fn matches(ore: u8, name: &str) -> bool {
+    let one = |i: u8| {
+        if i == CUSTOM {
+            CUSTOM_BLOCKS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|b| b == name)
+        } else {
+            target(i).is_some_and(|(_, _, blocks)| blocks.contains(&name))
+        }
+    };
     if ore == ANY {
         let mask = selection();
-        return (0..COUNT as u8).any(|i| {
-            mask & (1 << i) != 0 && target(i).is_some_and(|(_, _, blocks)| blocks.contains(&name))
-        });
+        return (0..COUNT as u8).any(|i| mask & (1 << i) != 0 && one(i));
     }
-    target(ore).is_some_and(|(_, _, blocks)| blocks.contains(&name))
+    one(ore)
 }
 /// Plants and leaves that stand between the player and the block to mine and are cleared out
 /// of the way (they break at once and are of no value).
@@ -267,10 +334,14 @@ pub fn safe_target(
         [0, 0, -1],
     ]
     .map(|d| block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]));
-    neighbors.iter().any(|b| b.cell == nav::Cell::Air)
+    // Water beside the block is the way to it under water, not a hazard; lava and unknown
+    // terrain are.
+    neighbors
+        .iter()
+        .any(|b| b.cell == nav::Cell::Air || b.soft || b.water)
         && neighbors
             .iter()
-            .all(|b| !matches!(b.cell, nav::Cell::Hazard | nav::Cell::Unknown))
+            .all(|b| b.cell != nav::Cell::Unknown && (b.cell != nav::Cell::Hazard || b.water))
 }
 /// Why a search found nothing, for the status line: how many blocks of the kind were seen and
 /// where each one was given up on.
@@ -338,7 +409,10 @@ pub fn plan_with_stats(
                     ]
                     .iter()
                     .any(|d| {
-                        block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]).cell == nav::Cell::Air
+                        // Leaves count as open: a trunk inside its crown is reached by clearing
+                        // them on the way.
+                        let side = block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]);
+                        side.cell == nav::Cell::Air || side.soft || side.water
                     });
                     if open {
                         candidates.push((x * x + y * y + z * z, at));
@@ -354,11 +428,20 @@ pub fn plan_with_stats(
     stats.candidates = candidates.len() as u32;
     candidates.sort_unstable();
     candidates.truncate(32);
+    // A target under water is swum to, not walked to: the nearest one that is safe to mine is
+    // kept in case nothing on dry land can be reached.
+    let mut swim: Option<nav::Pos> = None;
     for (_, target) in candidates {
         let (mut safe, mut stand) = (false, false);
-        for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1]] {
-            // Standing below the block reaches up a trunk: logs several blocks above the ground.
-            for y in [0, -1, 1, -2, -3, -4, -5] {
+        for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0]] {
+            // Standing below the block reaches up a trunk: logs several blocks above the ground,
+            // from beside the trunk or from inside a wide one (a 2x2 spruce cut from below).
+            let heights: &[i32] = if x == 0 && z == 0 {
+                &[-2, -3, -4, -5]
+            } else {
+                &[0, -1, 1, -2, -3, -4, -5]
+            };
+            for &y in heights {
                 if canceled() {
                     return None;
                 }
@@ -381,12 +464,90 @@ pub fn plan_with_stats(
                 }
             }
         }
+        let wet = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ]
+        .iter()
+        .any(|d| block([target[0] + d[0], target[1] + d[1], target[2] + d[2]]).water);
+        if wet && safe && swim.is_none() {
+            swim = Some(target);
+        }
         if !safe {
             stats.unsafe_ += 1;
         } else if !stand {
             stats.no_stand += 1;
         } else {
             stats.no_path += 1;
+        }
+    }
+    // Swum to from where the player is: the route is the start alone, the swimming is done by
+    // the walker in the water (`navigation_view`), the job mines once in reach.
+    swim.map(|target| {
+        (
+            target,
+            nav::Path {
+                nodes: vec![start],
+                complete: true,
+            },
+        )
+    })
+}
+/// Whether a target is reached by swimming: water beside it.
+pub fn underwater(target: nav::Pos, mut block: impl FnMut(nav::Pos) -> Block) -> bool {
+    [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ]
+    .iter()
+    .any(|d| block([target[0] + d[0], target[1] + d[1], target[2] + d[2]]).water)
+}
+/// Air left (of 300 ticks) under which a miner under water swims up for breath, and the air it
+/// waits for at the surface before diving again.
+pub const AIR_LOW: i32 = 90;
+pub const AIR_FULL: i32 = 290;
+/// How far below a block the miner stands to reach it from a column of blocks it builds under
+/// itself: four blocks (the eye is 1.62 up, the reach 4.5).
+pub const PILLAR_BELOW: i32 = 4;
+/// A block of the kind high over the miner that no place to stand reaches (the top of a tall
+/// tree once its trunk is cut from below): the nearest one in the miner's column or the ones
+/// beside it, six to twenty blocks up, with the miner's column open up to where it would have
+/// to stand. The miner builds a column under itself to reach it, then takes the column down.
+pub fn overhead(feet: nav::Pos, mut block: impl FnMut(nav::Pos) -> Block) -> Option<nav::Pos> {
+    for up in 6..=20 {
+        for [x, z] in [
+            [0, 0],
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+            [1, 1],
+            [1, -1],
+            [-1, 1],
+            [-1, -1],
+        ] {
+            let at = [feet[0] + x, feet[1] + up, feet[2] + z];
+            if !block(at).ore {
+                continue;
+            }
+            // Room to climb: the column over the head is clear up to the standing place and
+            // the head above it.
+            let stand = at[1] - PILLAR_BELOW;
+            let clear = (feet[1] + 2..=stand + 1).all(|y| {
+                block([feet[0], y, feet[2]]).cell == nav::Cell::Air
+                    || (x == 0 && z == 0 && y > stand)
+            });
+            if clear {
+                return Some(at);
+            }
         }
     }
     None
@@ -702,12 +863,78 @@ impl Job {
     }
 }
 #[cfg(test)]
+mod tree_tests {
+    use super::*;
+    /// A 2x2 spruce at x, z in 0..=1: its logs from y = 6 to y = 15 (the lower part cut), with
+    /// leaves around the top logs; ground below y = 0.
+    fn spruce(at: nav::Pos) -> Block {
+        let trunk = (0..=1).contains(&at[0]) && (0..=1).contains(&at[2]);
+        if trunk && (6..=15).contains(&at[1]) {
+            Block {
+                cell: nav::Cell::Solid,
+                ore: true,
+                falling: false,
+                breakable: true,
+                soft: false,
+                water: false,
+            }
+        } else if (9..=15).contains(&at[1])
+            && (-1..=2).contains(&at[0])
+            && (-1..=2).contains(&at[2])
+        {
+            Block {
+                cell: nav::Cell::Solid,
+                breakable: true,
+                soft: true,
+                water: false,
+                ..Block::default()
+            }
+        } else if at[1] < 0 {
+            Block {
+                cell: nav::Cell::Solid,
+                breakable: true,
+                ..Block::default()
+            }
+        } else {
+            Block {
+                cell: nav::Cell::Air,
+                ..Block::default()
+            }
+        }
+    }
+    #[test]
+    fn a_tall_trunk_out_of_reach_is_climbed_to_and_leaves_count_as_open() {
+        // Inside the cut trunk on the ground: nothing stands within reach, the trunk overhead
+        // is found, at its lowest log.
+        assert!(plan([0, 0, 0], &[], spruce, || false).is_none());
+        let log = overhead([0, 0, 0], spruce).unwrap();
+        assert_eq!(log, [0, 6, 0]);
+        // From the top of a column four below it, the log is a target.
+        let on_column = |at: nav::Pos| {
+            if at[0] == 0 && at[2] == 0 && (0..2).contains(&at[1]) {
+                Block {
+                    cell: nav::Cell::Solid,
+                    breakable: true,
+                    ..Block::default()
+                }
+            } else {
+                spruce(at)
+            }
+        };
+        assert!(plan([0, 2, 0], &[], on_column, || false).is_some());
+        // A log inside the crown (leaves on every outer side) is open: the leaves are cleared.
+        assert!(safe_target([0, 12, 0], [-0.5, 12.0, 0.5], &mut spruce));
+        // Nothing overhead on open ground.
+        assert!(overhead([10, 0, 10], spruce).is_none());
+    }
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn every_target_has_a_label_and_blocks_and_ores_keep_their_indices() {
-        assert_eq!(COUNT, ORES.len() + 13);
-        for index in 0..COUNT as u8 {
+        assert_eq!(COUNT, ORES.len() + 15);
+        for index in (0..COUNT as u8).filter(|i| *i != CUSTOM) {
             let (ru, en, blocks) = target(index).unwrap();
             assert!(!ru.is_empty() && !en.is_empty() && !blocks.is_empty());
             assert!(blocks.iter().all(|b| b.starts_with("minecraft:")));
@@ -777,6 +1004,8 @@ mod tests {
             ore: true,
             falling: true,
             breakable: true,
+            soft: false,
+            water: false,
         };
         if at[1] < 0 || (at[0] == 4 && (0..3).contains(&at[1])) {
             sand
@@ -823,6 +1052,8 @@ mod tests {
             ore: true,
             falling: true,
             breakable: true,
+            soft: false,
+            water: false,
         };
         if at[1] <= -4 || (at[0] == 0 && at[2] == 0 && at[1] <= -1) {
             sand
@@ -849,6 +1080,8 @@ mod tests {
             ore: false,
             falling: false,
             breakable: true,
+            soft: false,
+            water: false,
         };
         match at[1] {
             0 | 1 if at[0] == 0 && at[2] == 0 => Block {
@@ -939,6 +1172,8 @@ mod tests {
             ore: p == ore,
             falling: false,
             breakable: true,
+            soft: false,
+            water: false,
         };
         // Nothing is exposed, so the exposed-ore planner finds nothing here.
         assert!(plan([0, 0, 0], &[], world, || false).is_none());
@@ -952,6 +1187,8 @@ mod tests {
         assert!(plan_buried([0, 0, 0], &[ore], &[], false, world, || false).is_none());
         let sealed = |p: nav::Pos| Block {
             breakable: false,
+            soft: false,
+            water: false,
             ..world(p)
         };
         assert!(plan_buried([0, 0, 0], &[], &[], false, sealed, || false).is_none());
@@ -990,6 +1227,8 @@ mod tests {
             ore: p == ore,
             falling: false,
             breakable: true,
+            soft: false,
+            water: false,
         };
         let (target, path) = plan([0, 0, 0], &[], &mut block, || false).unwrap();
         assert_eq!(target, ore);
@@ -1006,6 +1245,8 @@ mod tests {
                     ore: false,
                     falling: true,
                     breakable: true,
+                    soft: false,
+                    water: false,
                 }
             } else {
                 block(p)
@@ -1020,6 +1261,8 @@ mod tests {
                     ore: false,
                     falling: false,
                     breakable: true,
+                    soft: false,
+                    water: false,
                 }
             } else {
                 block(p)
@@ -1033,9 +1276,59 @@ mod tests {
             assert!(item.starts_with("minecraft:"), "{i}: {item}");
             // The icon is an item that the target actually yields or is made of.
             let (_, _, blocks) = target(i).unwrap();
-            assert!(!blocks.is_empty());
+            assert!(i == CUSTOM || !blocks.is_empty());
         }
         assert_eq!(icon(COUNT as u8), None);
+    }
+    #[test]
+    fn any_block_can_be_picked_and_targets_under_water_are_swum_to() {
+        set_custom(Vec::new());
+        assert!(!matches(CUSTOM, "minecraft:white_terracotta"));
+        assert!(toggle_custom("minecraft:white_terracotta"));
+        assert!(matches(CUSTOM, "minecraft:white_terracotta"));
+        assert!(!toggle_custom("minecraft:white_terracotta"));
+        assert!(custom().is_empty());
+        assert!(matches(CUSTOM - 1, "minecraft:prismarine_bricks"));
+        // A prismarine block on the sea floor, water all around and above, no dry land: it is
+        // the target, swum to from where the player is.
+        let sea = |at: nav::Pos| {
+            if at == [3, 0, 0] {
+                Block {
+                    cell: nav::Cell::Solid,
+                    ore: true,
+                    breakable: true,
+                    ..Block::default()
+                }
+            } else if at[1] < 0 {
+                Block {
+                    cell: nav::Cell::Solid,
+                    breakable: true,
+                    ..Block::default()
+                }
+            } else {
+                Block {
+                    cell: nav::Cell::Hazard,
+                    water: true,
+                    ..Block::default()
+                }
+            }
+        };
+        let (target, path) = plan([0, 4, 0], &[], sea, || false).unwrap();
+        assert_eq!(target, [3, 0, 0]);
+        assert_eq!(path.nodes, vec![[0, 4, 0]]);
+        assert!(underwater(target, sea));
+        // Lava beside a block is still a reason to leave it.
+        let lava = |at: nav::Pos| {
+            if at == [3, 1, 0] {
+                Block {
+                    cell: nav::Cell::Hazard,
+                    ..Block::default()
+                }
+            } else {
+                sea(at)
+            }
+        };
+        assert!(!safe_target([3, 0, 0], [0.5, 4.0, 0.5], &mut { lava }));
     }
     #[test]
     fn an_unlimited_job_collects_drops_after_each_block_and_never_finishes() {

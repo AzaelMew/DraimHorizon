@@ -764,12 +764,20 @@ pub(super) fn movement(
         return false;
     };
     let position = [p.x, p.y, p.z];
+    // In the water the walker swims the player out (`navigation_view::movement`); the job
+    // waits on dry ground instead of being paused.
+    if game
+        .player
+        .as_ref()
+        .is_some_and(|p| p.fluids.was_touching_water && !p.is_in_lava())
+    {
+        return false;
+    }
     if game.player.as_ref().is_none_or(|p| {
         !p.ground.on_ground
             || p.flying
             || p.fall_flying
             || p.is_passenger
-            || p.fluids.was_touching_water
             || p.is_in_lava()
             || p.health.health() <= 0.0
     }) {
@@ -793,7 +801,7 @@ pub(super) fn movement(
                 } else if nav::distance(position, nav::center(station)) < 0.1 {
                     j.phase = model::Phase::Ready;
                 } else {
-                    input = model::steer(position, nav::center(station), p.yaw);
+                    input = steer(position, nav::center(station), p.yaw);
                 }
             }
             model::Phase::Walking => {
@@ -807,10 +815,10 @@ pub(super) fn movement(
                     // Keep walking when the next section is already open: no pause per block.
                     if let model::Action::Walk(next) = j.next(|at| block(game, at)) {
                         j.phase = model::Phase::Walking;
-                        input = model::steer(position, nav::center(next), p.yaw);
+                        input = steer(position, nav::center(next), p.yaw);
                     }
                 } else {
-                    input = model::steer(position, nav::center(goal), p.yaw);
+                    input = steer(position, nav::center(goal), p.yaw);
                 }
             }
             model::Phase::Placing
@@ -824,7 +832,7 @@ pub(super) fn movement(
                 {
                     j.stop(model::Stop::Floor);
                 } else {
-                    input = model::steer(position, j.edge(), p.yaw);
+                    input = steer(position, j.edge(), p.yaw);
                 }
             }
             _ => {}
@@ -840,7 +848,8 @@ pub(super) fn movement(
 }
 /// The nearest dry spot to stand on around `position`: open air at the feet and head over a
 /// solid block, within a few blocks.
-fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
+/// The nearest dry place to stand within eight blocks (three up or down) of `position`.
+pub(super) fn dry_spot(game: &Game<'_>, position: [f64; 3]) -> Option<nav::Pos> {
     let here = nav::block(position);
     let mut best: Option<(i32, nav::Pos)> = None;
     for dy in -3..=3 {
@@ -885,7 +894,7 @@ fn pier_walk(
     let Some(goal) = crate::game::claim_borders_workshop_view::pier_goal(position) else {
         return false;
     };
-    let input = model::steer(position, goal, p.yaw);
+    let input = steer(position, goal, p.yaw);
     *forward = input.forward;
     *strafe = input.strafe;
     *jump = false;
@@ -921,7 +930,7 @@ fn swim_back(
     let Some(spot) = dry_spot(game, position) else {
         return false;
     };
-    let input = model::steer(position, nav::center(spot), p.yaw);
+    let input = steer(position, nav::center(spot), p.yaw);
     *forward = input.forward;
     *strafe = input.strafe;
     // Swimming up and out: jump held keeps the player at the surface and over the edge.
@@ -983,7 +992,7 @@ fn edge_drive(
     let Some((edge, shore)) = edge_goal(game, target, position) else {
         return false;
     };
-    let input = model::steer(position, edge, p.yaw);
+    let input = steer(position, edge, p.yaw);
     *forward = input.forward;
     *strafe = input.strafe;
     *jump = false;
@@ -991,12 +1000,39 @@ fn edge_drive(
     *sneak = nav::distance(position, nav::center(shore)) < 1.6;
     true
 }
+/// The keys toward `target`, with the head turned toward it as the walker does.
+fn steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> nav::Input {
+    navigation::look_toward(position, target);
+    model::steer(position, target, yaw)
+}
 fn aim(game: &mut Game<'_>, point: [f64; 3]) {
+    note_aim();
     if let Some(eye) = game.eye_position() {
         let [x, y, z] = [point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]];
         game.yaw = (-x).atan2(z).to_degrees() as f32;
         game.pitch = (-y).atan2(x.hypot(z)).to_degrees() as f32;
     }
+}
+/// Whether a block is being aimed at for a click (a door, a chest, a crop to feed): the walker
+/// then leaves the head alone.
+pub(super) fn aiming() -> bool {
+    state(|s| {
+        s.interact.is_some()
+            || s.use_item.is_some()
+            || s.external.as_ref().is_some_and(|e| e.active)
+    })
+}
+/// When a block was last aimed at by a task (placing, opening, using).
+static LAST_AIM: Mutex<Option<Instant>> = Mutex::new(None);
+/// Whether a task aimed at a block a moment ago (the camera moved, but not by the mouse).
+pub(super) fn aimed_recently() -> bool {
+    LAST_AIM
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(400))
+}
+fn note_aim() {
+    *LAST_AIM.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
 }
 /// Asks for one use click on the container at `pos`: the next tick aims at it and clicks.
 pub(super) fn open_container(pos: nav::Pos) {
@@ -1019,6 +1055,22 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     let pos = state(|s| s.interact)?;
     if !game.native_playing() {
         return Some(false);
+    }
+    // The head turns to the block over a few ticks first, as a person's does; the exact aim at
+    // its middle and sides follows once it points at it.
+    if let Some(eye) = game.eye_position() {
+        let middle = [
+            f64::from(pos[0]) + 0.5,
+            f64::from(pos[1]) + 0.5,
+            f64::from(pos[2]) + 0.5,
+        ];
+        let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
+        if nav::angle_between(game.yaw, yaw).abs() > 6.0 || (game.pitch - pitch).abs() > 6.0 {
+            note_aim();
+            game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);
+            return None;
+        }
     }
     // The middle first, then the top and the four sides: a chest behind a bed of crops has a
     // clear line only to some of them.
@@ -1056,6 +1108,10 @@ pub(super) fn use_item_on(item: &str, pos: nav::Pos) {
         s.interact = None;
         s.interact_miss = 0;
     });
+}
+/// Whether a `use_item_on` is still under way (the item going to the hand, or the aim).
+pub(super) fn use_busy() -> bool {
+    state(|s| s.use_item.is_some())
 }
 /// The outcome of the last `use_item_on`, once, or `None` while it is still under way.
 pub(super) fn use_result() -> Option<bool> {
@@ -1243,6 +1299,21 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     if !free {
         stop(model::Stop::Blocked);
         return false;
+    }
+    // The head comes round to the block over a few ticks, as a person's does; the exact aim at
+    // a face of its neighbour follows once it points there (a few degrees off at most).
+    if let Some(eye) = game.eye_position() {
+        let middle = nav::center(placement.target);
+        let middle = [middle[0], middle[1] + 0.5, middle[2]];
+        let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
+        if nav::angle_between(game.yaw, yaw).abs() > 12.0 || (game.pitch - pitch).abs() > 12.0 {
+            note_aim();
+            game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);
+            let turned = [game.yaw, game.pitch];
+            state(|s| s.aim = Some(turned));
+            return false;
+        }
     }
     let mut why = "support";
     for delta in [

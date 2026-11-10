@@ -86,6 +86,7 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
         model::Hotkey::Stop => {
             // The player ended it: it does not come back after a reconnect.
             crate::game::claim_borders_resume::forget();
+            crate::game::claim_borders_resume::forget_build(game);
             reset();
             Ok(false)
         }
@@ -94,6 +95,15 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
+    use crate::game::claim_borders_schematic_view as preview;
+    // Schematics: Start builds the selected preview of this world as it stands (moved and
+    // turned with the editor keys); with none, the file and place chosen in the menu.
+    if running
+        && crate::game::claim_borders_menu_view::schematic_mode()
+        && let Some((file, origin, rotation)) = preview::build_target(game)
+    {
+        return crate::game::claim_borders_workshop_view::load(game, file, origin, rotation, true);
+    }
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
         Action::Navigate { goal, running } => start(game, goal, running),
         Action::LoadSchematic {
@@ -101,9 +111,18 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
             origin,
             rotation,
             running,
-        } => crate::game::claim_borders_workshop_view::load(
-            game, filename, origin, rotation, running,
-        ),
+        } => {
+            // The preview is a hologram in the world, kept until it is removed; building
+            // starts from it.
+            preview::preview(game, filename.clone(), origin, rotation);
+            if running {
+                crate::game::claim_borders_workshop_view::load(
+                    game, filename, origin, rotation, true,
+                )
+            } else {
+                Ok(())
+            }
+        }
         _ => Ok(()),
     }
 }
@@ -207,6 +226,10 @@ struct Query {
     start: model::Pos,
     goal: model::Pos,
     radius: u8,
+    /// The longest drop the route may step off (`navigation::drop_limit`).
+    drop: i32,
+    /// The goal is far off or at another height: the wide search (`navigation::WIDE`).
+    wide: bool,
     chunks: HashMap<(i32, i32), Arc<Chunk>>,
     resources: Arc<Resources>,
 }
@@ -269,9 +292,15 @@ impl Worker {
                                     .is_some_and(|(ore, _)| mining::matches(*ore, &f.name)),
                                 falling: mining::falling(&f.name),
                                 breakable: f.hardness >= 0.0 && !f.block_entity,
+                                soft: mining::clearable(&f.name),
+                                water: (f.fluid_level > 0 || f.waterlogged)
+                                    && !f.name.contains("lava"),
                             }
                         })
                     };
+                    // Every planner on this thread goes by the request's drop limit.
+                    model::set_drop_limit(query.drop);
+                    model::set_reach(if query.wide { model::WIDE } else { model::NEAR });
                     // The player may stand on an edge or in the air: plan from the nearest place
                     // that can be stood on (the answer keeps the real start for its own check).
                     let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
@@ -309,10 +338,11 @@ impl Worker {
                     } else {
                         (
                             None,
-                            model::search_near(
+                            model::search_near_drop(
                                 start,
                                 query.goal,
                                 query.radius,
+                                query.drop,
                                 |at| read(at).cell,
                                 canceled,
                             ),
@@ -508,6 +538,8 @@ fn mining_block(game: &Game<'_>, ore: u8, at: model::Pos) -> mining::Block {
         },
         falling: mining::falling(&f.name),
         breakable: f.hardness >= 0.0 && !f.block_entity,
+        soft: mining::clearable(&f.name),
+        water: (f.fluid_level > 0 || f.waterlogged) && !f.name.contains("lava"),
     }
 }
 /// The stack in slot `slot`: 0..9 the hotbar, 9..36 the main inventory.
@@ -663,23 +695,110 @@ struct Legs {
     attempt: usize,
     /// Legs left to walk.
     budget: u32,
+    /// Points of a remembered route still to pass, in order (`navigation::route_via`).
+    via: Vec<model::Pos>,
+    /// Where the legs so far ended, to see the walk going back and forth.
+    ends: Vec<model::Pos>,
 }
 static LEGS: Mutex<Option<Legs>> = Mutex::new(None);
-/// A standable cell near `near` (columns within two blocks, heights from six above to eight
-/// below the player), for the end of a leg.
-fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32) -> Option<model::Pos> {
+/// Routes walked to the end, kept per world: a later walk between the same places follows the
+/// one it starts near instead of searching again (a second floor whose way down is far off is
+/// found once). The cells of the walk under way are gathered as it goes.
+struct Routes {
+    scope: String,
+    list: Vec<Vec<model::Pos>>,
+    trail: Vec<model::Pos>,
+    trail_goal: Option<model::Pos>,
+}
+static ROUTES: Mutex<Routes> = Mutex::new(Routes {
+    scope: String::new(),
+    list: Vec::new(),
+    trail: Vec::new(),
+    trail_goal: None,
+});
+/// The remembered route that serves a walk from `from` to `goal`, as the points to pass.
+fn remembered_via(game: &Game<'_>, from: model::Pos, goal: model::Pos) -> Vec<model::Pos> {
+    let routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    if scope(game).as_deref() != Some(routes.scope.as_str()) {
+        return Vec::new();
+    }
+    routes
+        .list
+        .iter()
+        .filter_map(|r| model::route_via(r, from, goal, 8))
+        .min_by_key(Vec::len)
+        .unwrap_or_default()
+}
+/// Starts gathering the cells of a walk to `goal` (a new walk drops the old trail).
+fn begin_trail(game: &Game<'_>, from: model::Pos, goal: model::Pos) {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    let here = scope(game).unwrap_or_default();
+    if routes.scope != here {
+        routes.scope = here;
+        routes.list.clear();
+    }
+    routes.trail = vec![from];
+    routes.trail_goal = Some(goal);
+}
+/// Adds where the walker stands to the trail, every two blocks.
+fn extend_trail(at: model::Pos) {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    if routes.trail_goal.is_none() || routes.trail.len() >= 4000 {
+        return;
+    }
+    let far = routes.trail.last().is_none_or(|last| {
+        (last[0] - at[0]).abs().max((last[2] - at[2]).abs()) >= 2 || (last[1] - at[1]).abs() >= 2
+    });
+    if far {
+        routes.trail.push(at);
+    }
+}
+/// The walk arrived: its trail is kept as a route (long ones only, replacing one between the
+/// same two places, at most 32 per world).
+fn keep_trail() {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(goal) = routes.trail_goal.take() else {
+        return;
+    };
+    let mut trail = std::mem::take(&mut routes.trail);
+    trail.push(goal);
+    let (Some(&a), Some(&b)) = (trail.first(), trail.last()) else {
+        return;
+    };
+    let length = (a[0] - b[0]).abs() + (a[2] - b[2]).abs() + (a[1] - b[1]).abs();
+    if trail.len() < 6 || length < 16 {
+        return;
+    }
+    let near = |p: model::Pos, q: model::Pos| {
+        (p[0] - q[0]).abs().max((p[2] - q[2]).abs()) <= 4 && (p[1] - q[1]).abs() <= 2
+    };
+    routes.list.retain(|r| {
+        let (Some(&x), Some(&y)) = (r.first(), r.last()) else {
+            return false;
+        };
+        !((near(x, a) && near(y, b)) || (near(x, b) && near(y, a)))
+    });
+    routes.list.push(trail);
+    if routes.list.len() > 32 {
+        routes.list.remove(0);
+    }
+}
+/// A standable cell near `near` (columns within two blocks, heights from sixteen below to
+/// eight above the player), for the end of a leg. Of the places to stand in a column (the
+/// ground, a roof, the top of a tree) the one nearest to the height the walk is heading for is
+/// taken, so that a walk back to a farm ends at the farm's level, not on a roof above it.
+fn leg_cell(game: &Game<'_>, near: [f64; 3], from_y: i32, want_y: i32) -> Option<model::Pos> {
     let column = model::block(near);
     let mut best: Option<(i32, model::Pos)> = None;
     for dz in -2..=2_i32 {
         for dx in -2..=2_i32 {
-            for y in (from_y - 8..=from_y + 6).rev() {
+            for y in from_y - 16..=from_y + 8 {
                 let at = [column[0] + dx, y, column[2] + dz];
                 if model::standable(at, &mut |p| live_cell(game, p)) {
-                    let d = dx * dx + dz * dz + (y - from_y).abs();
+                    let d = dx * dx + dz * dz + 3 * (y - want_y).abs();
                     if best.is_none_or(|(b, _)| d < b) {
                         best = Some((d, at));
                     }
-                    break;
                 }
             }
         }
@@ -700,9 +819,13 @@ fn leg_point(
         return Some((goal, true, first));
     }
     let from_y = from[1].floor() as i32;
+    // The height to aim for at the end of this leg: on the way from here to the goal's.
+    let span = (g[0] - from[0]).hypot(g[2] - from[2]).max(1.0);
     (first..model::LEG_TRIES).find_map(|attempt| {
         let near = model::leg_target(from, g, attempt)?;
-        leg_cell(game, near, from_y).map(|at| (at, false, attempt))
+        let part = ((near[0] - from[0]).hypot(near[2] - from[2]) / span).min(1.0);
+        let want_y = from_y + (f64::from(goal[1] - from_y) * part).round() as i32;
+        leg_cell(game, near, from_y, want_y).map(|at| (at, false, attempt))
     })
 }
 pub(super) fn workshop_walk(
@@ -712,9 +835,16 @@ pub(super) fn workshop_walk(
     level: bool,
 ) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+    let here = model::block(from);
     let g = model::center(goal);
     let distance = (g[0] - from[0]).hypot(g[2] - from[2]);
-    let (point, last, attempt) = leg_point(game, from, goal, 0).unwrap_or((goal, true, 0));
+    begin_trail(game, here, goal);
+    // A way walked before between here and there is followed point by point.
+    let via = remembered_via(game, here, goal);
+    let (point, last, attempt) = match via.first() {
+        Some(first) => (*first, false, 0),
+        None => leg_point(game, from, goal, 0).unwrap_or((goal, true, 0)),
+    };
     *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = (!last).then_some(Legs {
         goal,
         flat,
@@ -722,35 +852,70 @@ pub(super) fn workshop_walk(
         last: false,
         attempt,
         budget: (distance / 8.0).ceil() as u32 + 40,
+        via,
+        ends: vec![point],
     });
     walk_to(game, point, flat, level)
 }
-/// Every tick: when a leg of a far walk has arrived, or has no way, the next one starts.
+/// Every tick: the trail of the walk grows, and when a leg of a far walk has arrived, or has no
+/// way, the next one starts: the next point of a remembered route, or a new leg that does not
+/// lead back to where the walk just came from.
 pub(super) fn leg_frame(game: &Game<'_>) {
-    let Some((goal, flat, level, attempt, budget)) = LEGS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .filter(|l| !l.last)
-        .map(|l| (l.goal, l.flat, l.level, l.attempt, l.budget))
-    else {
-        return;
-    };
-    let first = match state(|s| s.nav.status) {
-        // Arrived: on to the next leg, straight at the goal again.
-        model::Status::Arrived => 0,
-        // No way to that end: another end of the same leg.
-        model::Status::NoPath | model::Status::Stuck => attempt + 1,
-        _ => return,
-    };
+    let (running, status) = state(|s| (s.nav.running, s.nav.status));
     let Some(p) = game.native_player() else {
         return;
     };
     let from = [p.x, p.y, p.z];
-    let next = if budget == 0 {
+    if running {
+        extend_trail(model::block(from));
+    }
+    let Some((goal, flat, level, attempt, budget, via, ends)) = LEGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|l| !l.last)
+        .map(|l| {
+            (
+                l.goal,
+                l.flat,
+                l.level,
+                l.attempt,
+                l.budget,
+                l.via.clone(),
+                l.ends.clone(),
+            )
+        })
+    else {
+        return;
+    };
+    let arrived = match status {
+        model::Status::Arrived => true,
+        model::Status::NoPath | model::Status::Stuck => false,
+        _ => return,
+    };
+    let mut via = via;
+    if !via.is_empty() {
+        if arrived {
+            via.remove(0);
+        } else {
+            // The remembered way is blocked now (a door shut for good, a block placed): plan.
+            via.clear();
+        }
+    }
+    let next = if let Some(point) = via.first() {
+        Some((*point, false, 0))
+    } else if budget == 0 {
         None
     } else {
-        leg_point(game, from, goal, first)
+        // Arrived: on to the next leg, straight at the goal again; no way: another end of the
+        // same leg. An end that leads back to where the walk came from is skipped.
+        let mut first = if arrived { 0 } else { attempt + 1 };
+        loop {
+            match leg_point(game, from, goal, first) {
+                Some((point, false, used)) if model::ping_pong(&ends, point) => first = used + 1,
+                other => break other,
+            }
+        }
     };
     let Some((point, last, used)) = next else {
         // Out of ends to try or of legs: the walk is over (the status says there is no way).
@@ -760,7 +925,12 @@ pub(super) fn leg_frame(game: &Game<'_>) {
     if let Some(l) = LEGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         l.last = last;
         l.attempt = used;
-        l.budget = budget - u32::from(first == 0);
+        l.budget = budget - u32::from(arrived);
+        l.via = via;
+        l.ends.push(point);
+        if l.ends.len() > 8 {
+            l.ends.remove(0);
+        }
     }
     if walk_to(game, point, flat, level).is_err() {
         *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -787,7 +957,11 @@ pub(super) fn workshop_walk_result() -> Option<bool> {
         // A leg arrived or found no way, but the goal is farther: the next one starts on the
         // next tick (`leg_frame` clears the walk when there is nothing left to try).
         model::Status::Arrived | model::Status::NoPath | model::Status::Stuck if more => None,
-        model::Status::Arrived => Some(true),
+        model::Status::Arrived => {
+            // There: the way it took is remembered for the next walk between these places.
+            keep_trail();
+            Some(true)
+        }
         model::Status::NoPath | model::Status::Stuck | model::Status::Paused => {
             *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Some(false)
@@ -1277,13 +1451,22 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 p.flying
                     || p.fall_flying
                     || p.is_passenger
-                    || p.fluids.was_touching_water
                     || p.is_in_lava()
                     || p.health.health() <= 0.0
             })
         {
             pause_state(s);
             return physical;
+        }
+        // Under water the miner swims for breath first, and swims up to the block before a hit.
+        if *SURFACING.lock().unwrap_or_else(|e| e.into_inner()) {
+            return false;
+        }
+        if let (Some(target), Some(eye)) = (job.target, game.eye_position()) {
+            let middle = model::center(target);
+            if model::distance(eye, [middle[0], middle[1] + 0.5, middle[2]]) > 4.4 {
+                return false;
+            }
         }
         // A screen is open: no hit is made until it is closed, and the job waits for that.
         if !game.native_playing() {
@@ -1336,9 +1519,16 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             f64::from(target[1]) + 0.5,
             f64::from(target[2]) + 0.5,
         ];
-        let [dx, dy, dz] = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
-        game.yaw = (-dx).atan2(dz).to_degrees() as f32;
-        game.pitch = (-dy).atan2(dx.hypot(dz)).to_degrees() as f32;
+        // The head comes round to the block as a person's does, not in one jump; the swing
+        // starts once it points at it.
+        let (yaw, pitch) = (model::yaw_to(eye, center), model::pitch_to(eye, center));
+        if model::angle_between(game.yaw, yaw).abs() > 4.0 || (game.pitch - pitch).abs() > 4.0 {
+            game.yaw = model::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = model::turn_toward(game.pitch, pitch, 24.0);
+            return false;
+        }
+        game.yaw = yaw;
+        game.pitch = pitch;
         let hit = if game.entity_targeted() {
             None
         } else {
@@ -1468,6 +1658,132 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     game.selected = food.slot;
     true
 }
+/// Ticks of water breathing left (Water Breathing or Conduit Power; endless counts as a lot).
+pub(super) fn breathing_ticks(game: &Game<'_>) -> i32 {
+    ["water_breathing", "conduit_power"]
+        .iter()
+        .filter_map(|id| game.potions.effects.get(id))
+        .map(|e| if e.duration < 0 { i32::MAX } else { e.duration })
+        .max()
+        .unwrap_or(0)
+}
+/// A potion of Water Breathing in the inventory (normal or long).
+fn breathing_potion(game: &Game<'_>) -> Option<usize> {
+    (0..36).find(|slot| {
+        slot_stack(game, *slot).is_some_and(|st| {
+            &*st.item == "minecraft:potion"
+                && matches!(
+                    st.potion(),
+                    Some("minecraft:water_breathing" | "minecraft:long_water_breathing")
+                )
+        })
+    })
+}
+/// Breathing is about to run out (or is not there) in the water during a task.
+const BREATH_RENEW: i32 = 200;
+/// A potion being drunk: the slot to go back to, the potion's slot, since when, and whether it
+/// is in hand already.
+struct Drink {
+    original: usize,
+    slot: usize,
+    since: Instant,
+    armed: bool,
+}
+static DRINK: Mutex<Option<Drink>> = Mutex::new(None);
+/// In the water during a task, with Water Breathing missing or about to end: a potion of it
+/// from the inventory is drunk (into the hand, use held until the effect is there), so the bot
+/// need not swim up for air. True while it holds the button.
+fn auto_drink(game: &mut Game<'_>) -> bool {
+    let mut drink = DRINK.lock().unwrap_or_else(|e| e.into_inner());
+    if drink.is_none() {
+        merge_bottles(game);
+    }
+    if let Some(d) = drink.as_mut() {
+        if breathing_ticks(game) > BREATH_RENEW * 2
+            || d.since.elapsed() > Duration::from_millis(4000)
+            || !game.native_playing()
+        {
+            game.selected = d.original;
+            *drink = None;
+            return false;
+        }
+        if !d.armed {
+            d.armed = game.selected == d.slot;
+            game.selected = d.slot;
+            return true;
+        }
+        let physical = game.right;
+        state(|s| s.use_restore = Some(physical));
+        game.right = true;
+        return true;
+    }
+    let wet = game
+        .player
+        .as_ref()
+        .is_some_and(|b| b.fluids.was_touching_water || b.fluids.was_eye_in_water);
+    if !wet || !task_running() || breathing_ticks(game) >= BREATH_RENEW {
+        return false;
+    }
+    let Some(slot) = breathing_potion(game) else {
+        return false;
+    };
+    if slot >= 9 {
+        static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(1000)) {
+            let spare = (0..9)
+                .filter(|h| *h != game.selected)
+                .find(|h| game.stack_in(*h).is_none())
+                .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+            if let Some(spare) = spare {
+                *last = Some(Instant::now());
+                game.remote_menu_ops(&[(
+                    Some(slot),
+                    spare as i32,
+                    horizon_client::menu::Input::Swap,
+                )]);
+            }
+        }
+        return false;
+    }
+    *drink = Some(Drink {
+        original: game.selected,
+        slot,
+        since: Instant::now(),
+        armed: false,
+    });
+    game.selected = slot;
+    true
+}
+/// A drunk potion leaves a glass bottle in its slot, one per slot: while a task runs they are
+/// put together into one stack (pick one up, put it on another, anything left goes back), a
+/// pair a second, so they do not fill the inventory.
+fn merge_bottles(game: &mut Game<'_>) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    if !task_running() || !game.native_playing() {
+        return;
+    }
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+        return;
+    }
+    let bottles: Vec<usize> = (0..36)
+        .filter(|slot| {
+            slot_stack(game, *slot)
+                .is_some_and(|st| &*st.item == "minecraft:glass_bottle" && st.count < 64)
+        })
+        .collect();
+    let [from, onto, ..] = bottles[..] else {
+        return;
+    };
+    *last = Some(Instant::now());
+    use horizon_client::menu::Input;
+    game.remote_menu_ops(&[
+        (Some(from), 0, Input::Pickup),
+        (Some(onto), 0, Input::Pickup),
+        (Some(from), 0, Input::Pickup),
+    ]);
+}
 /// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
 /// fits the block under the crosshair is selected (the held one stays if it fits).
 pub(super) fn auto_tool(game: &mut Game<'_>) {
@@ -1495,6 +1811,11 @@ pub(super) fn auto_tool(game: &mut Game<'_>) {
 /// The mining job while a trip to the storage walks: a walk starts the navigator over, which
 /// would drop the job, so it waits here and is put back when the trip is over.
 static HAUL_JOB: Mutex<Option<mining::Job>> = Mutex::new(None);
+/// Puts the right tool for the block at `at` in hand; true once it is there (or none is
+/// needed), false while a swap is on its way.
+pub(super) fn tool_for(game: &mut Game<'_>, at: model::Pos) -> bool {
+    !matches!(ensure_tool(game, Some(at)), Tool::Wait)
+}
 pub(super) fn haul_stash() {
     state(|s| {
         if let Some(job) = s.mining.take() {
@@ -1548,13 +1869,18 @@ pub(super) fn press_for_click(game: &mut Game<'_>, right: bool) {
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     leg_frame(game);
+    face(game);
+    crate::game::claim_borders_schematic_view::keys(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
-    if auto_eat(game) {
+    if auto_eat(game) || auto_drink(game) {
         return;
     }
     let physical = game.left;
-    let attack = mining_attack(game, physical);
+    let attack = match pillar_frame(game) {
+        Some(attack) => attack,
+        None => mining_attack(game, physical),
+    };
     if attack != physical {
         state(|s| s.attack_restore = Some(physical));
         game.left = attack;
@@ -1636,8 +1962,15 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         model::block([player.x, player.y, player.z])[0].div_euclid(16),
         model::block([player.x, player.y, player.z])[2].div_euclid(16),
     );
-    let chunks = (-2..=2)
-        .flat_map(|z| (-2..=2).map(move |x| (center.0 + x, center.1 + z)))
+    let start = model::standing_block(
+        [player.x, player.y, player.z],
+        &game.native_block(model::block([player.x, player.y, player.z])),
+    );
+    let wide = model::wide_needed(start, goal);
+    // The chunks the search may read: six around for the wide one (96 blocks), two otherwise.
+    let span = if wide { 6 } else { 2 };
+    let chunks = (-span..=span)
+        .flat_map(|z| (-span..=span).map(move |x| (center.0 + x, center.1 + z)))
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
         .collect();
     let hints = s
@@ -1675,12 +2008,16 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
             .filter(|j| j.phase == mining::Phase::Searching)
             .map(|j| (j.ore, j.excluded.clone())),
         token: s.token,
-        start: model::standing_block(
-            [player.x, player.y, player.z],
-            &game.native_block(model::block([player.x, player.y, player.z])),
-        ),
+        start,
         goal,
+        wide,
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
+        // A long drop (when nothing else leads down) costs a few health points: the shared
+        // rule weighs health and the fall protection worn. Eating gets the points back.
+        drop: model::drop_limit(
+            game.player.as_ref().map_or(0.0, |p| p.health.health()),
+            fall_protection(game),
+        ),
         chunks,
         resources: game.res.clone(),
     };
@@ -1697,7 +2034,23 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     s.nav.status = model::Status::Planning;
     Ok(())
 }
+/// The "own block" mining target's blocks, from the settings, when none are set yet (after a
+/// restart of the game).
+pub(super) fn load_custom_blocks(game: &Game<'_>) {
+    if mining::custom().is_empty()
+        && let Some(saved) = game.native_setting(claims::SETTINGS_ID, "mining_custom")
+    {
+        mining::set_custom(
+            saved
+                .split(',')
+                .filter(|b| !b.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+}
 pub(super) fn start(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), String> {
+    load_custom_blocks(game);
     let result = start_task(game, goal_request, running);
     if result.is_ok() {
         crate::game::claim_borders_resume::note_start(game, goal_request, running);
@@ -1890,6 +2243,15 @@ pub(super) fn tick(game: &Game<'_>) {
                 if answer.token == s.token && s.pending {
                     s.pending = false;
                     s.mine_stats = answer.stats;
+                    // Nothing in reach: a tall trunk overhead is climbed to on a column (and a
+                    // column climbed is taken down once nothing more is in reach from its top).
+                    if answer.target.is_none()
+                        && let Some(job) = s.mining.as_ref().filter(|j| {
+                            j.active && j.phase == mining::Phase::Searching && j.ore != u8::MAX
+                        })
+                    {
+                        pillar_consider(game, job.ore, position);
+                    }
                     // Blocks of the kind are around but none can be mined yet: say why.
                     s.mine_note = answer
                         .stats
@@ -2528,6 +2890,392 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         model::Cell::Air,
     )
 }
+/// A column the miner builds under itself to reach a block high over it (the top of a tall
+/// tree once its trunk is cut from below), and takes down again afterwards: jump, put a block
+/// where the feet were, land on it, until the block is in reach; then dig the column away from
+/// the top, one block under the feet at a time, back to the ground.
+struct Pillar {
+    column: [i32; 2],
+    /// The height to stand at: `mining::PILLAR_BELOW` under the block overhead.
+    goal: i32,
+    /// The blocks put down so far, bottom first (only these are dug on the way down).
+    placed: Vec<model::Pos>,
+    /// Up while climbing, false while taking the column down.
+    up: bool,
+    /// A block being put down, since when.
+    placing: Option<(model::Pos, Instant)>,
+    tries: u8,
+    item: String,
+    since: Instant,
+    /// At the top: the miner works from here as from the ground (walking and mining free).
+    top: bool,
+}
+static PILLAR: Mutex<Option<Pillar>> = Mutex::new(None);
+/// The block to build the column from: earth or stone first, then any plain building block,
+/// the kind being mined included (what is put down is dug again with the same tool).
+fn pillar_item(game: &Game<'_>, _ore: u8) -> Option<(String, u32)> {
+    let items = crate::game::claim_borders_construction_view::building_items(game, false);
+    let count = |name: &str| -> u32 {
+        (0..36)
+            .filter_map(|slot| slot_stack(game, slot))
+            .filter(|st| &*st.item == name)
+            .map(|st| st.count)
+            .sum()
+    };
+    let rank = |name: &str| {
+        let n = name.strip_prefix("minecraft:").unwrap_or(name);
+        if matches!(
+            n,
+            "dirt" | "coarse_dirt" | "netherrack" | "cobblestone" | "cobbled_deepslate"
+        ) {
+            0
+        } else {
+            1
+        }
+    };
+    items
+        .into_iter()
+        .min_by_key(|name| (rank(name), std::cmp::Reverse(count(name))))
+        .map(|name| {
+            let n = count(&name);
+            (name, n)
+        })
+}
+/// After a search found nothing to mine: a block of the kind high overhead (a tall trunk) is
+/// climbed to on a column of blocks, if there are blocks enough to build it; a column already
+/// climbed is taken down once nothing more is in reach from its top.
+fn pillar_consider(game: &Game<'_>, ore: u8, position: [f64; 3]) {
+    let feet = model::standing_block(position, &game.native_block(model::block(position)));
+    let mut pillar = PILLAR.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = pillar.as_mut() {
+        if p.up && p.placing.is_none() && feet[1] >= p.goal {
+            // At the top and nothing more to mine from here: take the column down.
+            p.up = false;
+            p.since = Instant::now();
+        }
+        return;
+    }
+    let Some(log) = mining::overhead(feet, |at| mining_block(game, ore, at)) else {
+        return;
+    };
+    let goal = log[1] - mining::PILLAR_BELOW;
+    let needed = (goal - feet[1]).max(0) as u32;
+    let Some((item, have)) = pillar_item(game, ore) else {
+        return;
+    };
+    if needed == 0 || have < needed {
+        return;
+    }
+    *pillar = Some(Pillar {
+        column: [feet[0], feet[2]],
+        goal,
+        placed: Vec::new(),
+        up: true,
+        placing: None,
+        tries: 0,
+        item,
+        since: Instant::now(),
+        top: false,
+    });
+}
+/// While a column is in use: the keys to hold (no walking; jump on the way up when no block is
+/// being put down). `None` when there is no column.
+fn pillar_controls() -> Option<bool> {
+    PILLAR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|p| !(p.up && p.top))
+        .map(|p| p.up && p.placing.is_none())
+}
+/// Drives the column each tick. Returns the attack button to hold while it is in use (held
+/// on the way down, to dig the block under the feet), `None` when there is no column.
+fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
+    let mut slot = PILLAR.lock().unwrap_or_else(|e| e.into_inner());
+    let p = slot.as_mut()?;
+    let active = state(|s| s.mining.as_ref().is_some_and(|j| j.active));
+    let player = game.native_player();
+    let grounded = game.player.as_ref().is_some_and(|b| b.ground.on_ground);
+    let (Some(body), true) = (player, active) else {
+        // The job stopped or paused: the column stays, nothing is driven.
+        *slot = None;
+        return None;
+    };
+    if p.since.elapsed() > Duration::from_secs(120) || p.tries >= 6 {
+        *slot = None;
+        return None;
+    }
+    let position = [body.x, body.y, body.z];
+    let feet = model::standing_block(position, &game.native_block(model::block(position)));
+    if p.up {
+        if let Some((at, when)) = p.placing {
+            match crate::game::claim_borders_construction_view::external_result() {
+                Some(Ok(_)) => {
+                    p.placed.push(at);
+                    p.placing = None;
+                }
+                Some(Err(_)) => {
+                    p.tries += 1;
+                    p.placing = None;
+                }
+                None if when.elapsed() > Duration::from_secs(2) => {
+                    p.tries += 1;
+                    p.placing = None;
+                }
+                None => {}
+            }
+            return Some(false);
+        }
+        if feet[1] >= p.goal {
+            // Up there: mining goes on from the top; `pillar_consider` turns it round.
+            p.top = true;
+            return None;
+        }
+        // In the air over the cell the feet left: put the block there.
+        let base = p.placed.last().map_or(feet[1], |b| b[1] + 1);
+        let at = [p.column[0], base, p.column[1]];
+        if !grounded
+            && body.y >= f64::from(base) + 1.0
+            && live_cell(game, at) == model::Cell::Air
+            && !crate::game::claim_borders_construction_view::placement_pending()
+        {
+            let Ok(state) = crate::game::claim_borders_schematic::BlockState::parse(&p.item) else {
+                *slot = None;
+                return None;
+            };
+            let request = crate::game::claim_borders_schematic::PlacementRequest {
+                target: at,
+                item: p.item.clone(),
+                state: state.clone(),
+                allowed: std::collections::BTreeMap::from([(at, state)]),
+            };
+            if crate::game::claim_borders_construction_view::place_external(game, request).is_ok() {
+                p.placing = Some((at, Instant::now()));
+            } else {
+                p.tries += 1;
+            }
+        }
+        return Some(false);
+    }
+    // Down: dig the placed block under the feet, looking straight down; done on the ground.
+    let below = [feet[0], feet[1] - 1, feet[2]];
+    if !p.placed.contains(&below) || live_cell(game, below) != model::Cell::Solid {
+        if live_cell(game, below) != model::Cell::Solid {
+            p.placed.retain(|b| *b != below);
+        }
+        if p.placed.is_empty() || !p.placed.iter().any(|b| b[1] < feet[1]) {
+            *slot = None;
+            return None;
+        }
+        return Some(false);
+    }
+    game.pitch = model::turn_toward(game.pitch, 90.0, 24.0);
+    // The right tool for the block under the feet (a shovel for earth, a pickaxe for stone).
+    drop(slot);
+    match ensure_tool(game, Some(below)) {
+        Tool::Wait => return Some(false),
+        Tool::Ready | Tool::Missing => {}
+    }
+    Some(game.pitch > 80.0 && grounded)
+}
+/// Swimming up for air: set when the air runs low under water, cleared when it is full again.
+static SURFACING: Mutex<bool> = Mutex::new(false);
+/// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
+/// route, turned to a little each tick by `face` (the head moves as a person's does).
+static FACE: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
+/// The last tick the walker was really walking, and how many ticks it has coasted since.
+static COAST: Mutex<Option<(Instant, u8)>> = Mutex::new(None);
+/// How far the head turns in one tick while walking, at most.
+const TURN_STEP: f32 = 22.0;
+/// Turns the head toward where the walk goes, a little each tick, with the small sway of a
+/// person's view; nothing while a block is being aimed at (a door, a chest, mining) or when the
+/// wish is stale.
+fn face(game: &mut Game<'_>) {
+    use crate::game::claim_borders_construction_view as placement;
+    let mut look = LOOK.lock().unwrap_or_else(|e| e.into_inner());
+    let now = (game.yaw, game.pitch);
+    let moved = |a: (f32, f32), b: (f32, f32)| {
+        model::angle_between(a.0, b.0).abs() > 0.5 || (a.1 - b.1).abs() > 0.5
+    };
+    // The camera is not where it was left and nothing else aimed it: the mouse moved. The
+    // camera is the player's for a while; the task goes on.
+    let aimed = placement::aimed_recently() || state(|s| s.mine_aim.is_some());
+    if let Some(set) = look.set.take()
+        && moved(set, now)
+        && !aimed
+    {
+        look.mouse_until = Some(Instant::now() + MOUSE_LEND);
+    }
+    if let Some(until) = look.mouse_until {
+        if moved(look.seen, now) {
+            look.mouse_until = Some(Instant::now() + MOUSE_LEND);
+        } else if Instant::now() >= until {
+            look.mouse_until = None;
+        }
+        look.seen = now;
+        if look.mouse_until.is_some() {
+            return;
+        }
+    }
+    look.seen = now;
+    let wish = *FACE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((yaw, pitch, since)) = wish else {
+        return;
+    };
+    if since.elapsed() > Duration::from_millis(250)
+        || placement::aiming()
+        || placement::aimed_recently()
+        || !human_look_enabled(game)
+    {
+        return;
+    }
+    let t = since.elapsed().as_secs_f32() + START.get_or_init(Instant::now).elapsed().as_secs_f32();
+    let sway_yaw = 1.2 * (t * 1.7).sin();
+    let sway_pitch = 0.8 * (t * 1.1).sin();
+    game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
+    game.pitch = model::turn_toward(game.pitch, pitch + sway_pitch, TURN_STEP * 0.6);
+    look.set = Some((game.yaw, game.pitch));
+}
+/// The human look's own bookkeeping: where it left the camera, until when the mouse has it,
+/// and where the camera was last seen.
+struct Look {
+    set: Option<(f32, f32)>,
+    mouse_until: Option<Instant>,
+    seen: (f32, f32),
+}
+static LOOK: Mutex<Look> = Mutex::new(Look {
+    set: None,
+    mouse_until: None,
+    seen: (0.0, 0.0),
+});
+/// How long the camera stays the player's after the mouse last moved.
+const MOUSE_LEND: Duration = Duration::from_secs(3);
+/// "Human look" is on unless the player switched it off (Experiments → Helpers).
+pub(super) fn human_look_enabled(game: &Game<'_>) -> bool {
+    game.native_setting(claims::SETTINGS_ID, "human_look")
+        .as_deref()
+        != Some("false")
+}
+/// Any task moving on its own (tunnel, bridge, drain, swimming back) asks the head to turn
+/// toward the point it heads for, as the walker does.
+pub(super) fn look_toward(position: [f64; 3], point: [f64; 3]) {
+    let eye = [position[0], position[1] + 1.62, position[2]];
+    let ahead = [point[0], point[1] + 0.9, point[2]];
+    if (ahead[0] - eye[0]).hypot(ahead[2] - eye[2]) < 0.3 {
+        return;
+    }
+    let yaw = model::yaw_to(eye, ahead);
+    let pitch = model::pitch_to(eye, ahead).clamp(-10.0, 35.0);
+    *FACE.lock().unwrap_or_else(|e| e.into_inner()) = Some((yaw, pitch, Instant::now()));
+}
+static START: OnceLock<Instant> = OnceLock::new();
+/// Enchantment protection against falls from the armour worn (`navigation::fall_protection`).
+fn fall_protection(game: &Game<'_>) -> u32 {
+    let levels: Vec<(u32, u32)> = game
+        .armor
+        .iter()
+        .flatten()
+        .map(|piece| {
+            (
+                piece.enchantment_level("minecraft:feather_falling"),
+                piece.enchantment_level("minecraft:protection"),
+            )
+        })
+        .collect();
+    model::fall_protection(&levels)
+}
+/// Doors and gates on the way: the one being opened (with when it was last clicked and how many
+/// times), and those opened by the walker, to be closed again behind it.
+struct Doors {
+    opening: Option<(model::Pos, Instant, u8)>,
+    opened: Vec<model::Pos>,
+}
+static DOORS: Mutex<Doors> = Mutex::new(Doors {
+    opening: None,
+    opened: Vec::new(),
+});
+/// Whether the door or gate at `at` is one a hand opens, and closed.
+fn closed_door(game: &Game<'_>, at: model::Pos) -> bool {
+    model::openable(&game.native_block(at))
+        && game.native_block_property(at, "open").as_deref() == Some("false")
+}
+/// Opens the closed door or gate on the next steps of the route once it is within reach, and
+/// closes behind the walker the ones it opened. True while the walker should wait for a door
+/// to open (the click is asked of the placement driver, which aims and presses use).
+fn door_step(game: &Game<'_>, path: &[model::Pos], next: usize, position: [f64; 3]) -> bool {
+    let placement = crate::game::claim_borders_construction_view::open_container;
+    let ahead: Vec<model::Pos> = path.iter().skip(next).take(3).copied().collect();
+    let mut doors = DOORS.lock().unwrap_or_else(|e| e.into_inner());
+    // Close the ones left behind: out of the doorway and not on the next steps.
+    if doors.opening.is_none()
+        && let Some(i) = doors.opened.iter().position(|d| {
+            let away = model::distance(model::center(*d), position);
+            away > 6.0
+                || (away >= 1.8
+                    && !ahead
+                        .iter()
+                        .any(|a| a[0] == d[0] && a[2] == d[2] && (a[1] - d[1]).abs() <= 1))
+        })
+    {
+        let door = doors.opened.remove(i);
+        let away = model::distance(model::center(door), position);
+        if away <= 4.0
+            && model::openable(&game.native_block(door))
+            && game.native_block_property(door, "open").as_deref() == Some("true")
+        {
+            placement(door);
+        }
+    }
+    let wanted = ahead.iter().enumerate().find_map(|(k, n)| {
+        // A step straight up or down (a ladder) passes through the cell itself.
+        let vertical = (next + k)
+            .checked_sub(1)
+            .and_then(|i| path.get(i))
+            .is_some_and(|prev| prev[0] == n[0] && prev[2] == n[2]);
+        (0..=1).map(|y| [n[0], n[1] + y, n[2]]).find(|at| {
+            closed_door(game, *at)
+                && (!model::hand_trapdoor(&game.native_block(*at))
+                    // A trapdoor shut on the floor is walked over; one at head height, shut at
+                    // the top of its cell, or in the way of a climb is opened.
+                    || at[1] > n[1]
+                    || vertical
+                    || game.native_block_property(*at, "half").as_deref() == Some("top"))
+        })
+    });
+    let Some(door) = wanted else {
+        if let Some((at, _, _)) = doors.opening.take()
+            && !doors.opened.contains(&at)
+        {
+            // It opened: remember it, to close it behind.
+            doors.opened.push(at);
+            doors.opened.truncate(4);
+        }
+        return false;
+    };
+    let reach = (model::center(door)[0] - position[0]).hypot(model::center(door)[2] - position[2]);
+    if reach > 2.6 {
+        return false;
+    }
+    match doors.opening {
+        Some((at, when, tries)) if at == door => {
+            if when.elapsed() >= Duration::from_millis(600) {
+                if tries >= 5 {
+                    // It will not open (locked by a plugin, out of reach): let the stall logic
+                    // plan another way.
+                    doors.opening = None;
+                    return false;
+                }
+                placement(door);
+                doors.opening = Some((door, Instant::now(), tries + 1));
+            }
+        }
+        _ => {
+            placement(door);
+            doors.opening = Some((door, Instant::now(), 1));
+        }
+    }
+    true
+}
 /// The direction (horizontal, unit) away from another body (a player, a mob) that touches the
 /// walker, if one does: within a body's width and a head's height of it.
 fn body_in_the_way(game: &Game<'_>, position: [f64; 3]) -> Option<[f64; 2]> {
@@ -2572,6 +3320,99 @@ pub(super) fn movement(
         pause();
         return;
     };
+    // In the water, whatever the task: stay at the surface (jump held) and swim to the nearest
+    // dry ground, looking where it goes; the task goes on from there. Nobody drowns.
+    if (body.swimming || body.fluids.was_touching_water)
+        && !body.is_in_lava()
+        && !body.flying
+        && task_running()
+        && let Some(p) = game.native_player()
+    {
+        let position = [p.x, p.y, p.z];
+        *sneak = false;
+        // Out of breath: straight up to the surface, and wait there until the air is full.
+        {
+            let mut surfacing = SURFACING.lock().unwrap_or_else(|e| e.into_inner());
+            let under = body.fluids.was_eye_in_water;
+            // Water Breathing (or a potion of it to drink) means no need to go up at all.
+            let breathing = breathing_ticks(game) > 0;
+            if under && body.air < mining::AIR_LOW && !breathing && breathing_potion(game).is_none()
+            {
+                *surfacing = true;
+            }
+            if *surfacing && (body.air >= mining::AIR_FULL || breathing) {
+                *surfacing = false;
+            }
+            if *surfacing {
+                *jump = true;
+                *forward = 0.0;
+                *strafe = 0.0;
+                return;
+            }
+        }
+        // Mining under water: swim to the block (up with jump, down with sneak), hold still once
+        // it is in reach; the miner aims and breaks it.
+        let below = state(|s| {
+            // A route of the start alone (swum to): it has arrived.
+            if s.nav.running && s.nav.path.len() <= 1 {
+                let _ = s.nav.input(position, p.yaw, false);
+            }
+            s.mining
+                .as_ref()
+                .filter(|j| j.active)
+                .and_then(|j| j.target.map(|t| (t, j.ore)))
+        })
+        .filter(|(target, ore)| mining::underwater(*target, |at| mining_block(game, *ore, at)));
+        if let Some((target, ore)) = below {
+            let eye = [position[0], position[1] + 1.62, position[2]];
+            let middle = model::center(target);
+            let middle = [middle[0], middle[1] + 0.5, middle[2]];
+            *jump = false;
+            *forward = 0.0;
+            *strafe = 0.0;
+            if model::distance(eye, middle) > 3.6 {
+                // The nearest water cell beside the block is where to swim.
+                let goal = [
+                    [0, 1, 0],
+                    [1, 0, 0],
+                    [-1, 0, 0],
+                    [0, 0, 1],
+                    [0, 0, -1],
+                    [0, -1, 0],
+                ]
+                .into_iter()
+                .map(|d| [target[0] + d[0], target[1] + d[1], target[2] + d[2]])
+                .filter(|at| mining_block(game, ore, *at).water)
+                .min_by(|a, b| {
+                    model::distance(model::center(*a), position)
+                        .total_cmp(&model::distance(model::center(*b), position))
+                })
+                .map_or(middle, model::center);
+                let yaw = model::yaw_to(eye, goal);
+                let pitch = model::pitch_to(eye, goal);
+                *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some((yaw, pitch.clamp(-60.0, 60.0), Instant::now()));
+                let input = model::human_steer(position, goal, p.yaw);
+                *forward = input.forward;
+                *strafe = input.strafe;
+                if goal[1] > position[1] + 0.3 {
+                    *jump = true;
+                } else if goal[1] < position[1] - 0.3 {
+                    *sneak = true;
+                }
+            }
+            return;
+        }
+        *jump = true;
+        if let Some(spot) = crate::game::claim_borders_construction_view::dry_spot(game, position) {
+            let target = model::center(spot);
+            look_toward(position, target);
+            let input = model::human_steer(position, target, p.yaw);
+            *forward = input.forward;
+            *strafe = input.strafe;
+        }
+        return;
+    }
     if body.flying
         || body.fall_flying
         || body.swimming
@@ -2588,6 +3429,19 @@ pub(super) fn movement(
         return;
     };
     let position = [p.x, p.y, p.z];
+    // A column being built under the miner (or taken down): stand still, jump to climb.
+    if let Some(climb) = pillar_controls() {
+        if (*forward != 0.0 || *strafe != 0.0 || *sneak) && !input_grace() {
+            *PILLAR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            pause();
+            return;
+        }
+        *forward = 0.0;
+        *strafe = 0.0;
+        *sneak = false;
+        *jump = climb && body.ground.on_ground;
+        return;
+    }
     state(|s| {
         if !s.nav.running {
             return;
@@ -2599,7 +3453,62 @@ pub(super) fn movement(
             pause_state(s);
             return;
         }
+        s.nav.climbing = live_cell(game, model::block(position)) == model::Cell::Climb;
+        s.nav.human = true;
         let mut input = s.nav.input(position, p.yaw, body.ground.on_ground);
+        // Look where the walk goes: a few blocks ahead, a little down, as a person walks.
+        if let Some(look) = s.nav.look_point(position) {
+            let eye = [position[0], position[1] + 1.62, position[2]];
+            let ahead = [look[0], look[1] + 0.9, look[2]];
+            let flat = (ahead[0] - eye[0]).hypot(ahead[2] - eye[2]);
+            let yaw = if flat > 0.3 {
+                model::yaw_to(eye, ahead)
+            } else {
+                p.yaw
+            };
+            let pitch = model::pitch_to(eye, ahead).clamp(-10.0, 35.0);
+            *FACE.lock().unwrap_or_else(|e| e.into_inner()) = Some((yaw, pitch, Instant::now()));
+        }
+        // Between two plans (a leg ends, the route is planned again) a person keeps walking for
+        // a moment instead of freezing: on firm ground, straight on, only onto a cell that can
+        // be walked to, for half a second at most.
+        {
+            let mut coast = COAST.lock().unwrap_or_else(|e| e.into_inner());
+            if s.nav.status == model::Status::Walking && input.forward > 0.0 {
+                *coast = Some((Instant::now(), 0));
+            } else if matches!(
+                s.nav.status,
+                model::Status::Waiting | model::Status::Planning
+            ) && body.ground.on_ground
+                && let Some((when, ticks)) = coast.as_mut()
+                && when.elapsed() < Duration::from_millis(600)
+                && *ticks < 10
+            {
+                let yaw = f64::from(p.yaw).to_radians();
+                let here =
+                    model::standing_block(position, &game.native_block(model::block(position)));
+                let step = [(-yaw.sin()).round() as i32, (yaw.cos()).round() as i32];
+                let ahead = [here[0] + step[0], here[1], here[2] + step[1]];
+                if (step[0] != 0 || step[1] != 0)
+                    && model::traversable(here, ahead, &mut |at| live_cell(game, at))
+                    && live_cell(game, ahead) == model::Cell::Air
+                {
+                    *ticks += 1;
+                    input = model::Input {
+                        forward: 1.0,
+                        strafe: 0.0,
+                        jump: false,
+                    };
+                }
+            }
+        }
+        // A closed door or gate on the next steps: open it first, standing still meanwhile.
+        if s.nav.status == model::Status::Walking
+            && door_step(game, &s.nav.path, s.nav.next, position)
+        {
+            s.nav.yielded();
+            input = model::Input::default();
+        }
         if s.nav.status == model::Status::Stuck {
             cancel_pending(s);
             s.nav.blocked(position);
