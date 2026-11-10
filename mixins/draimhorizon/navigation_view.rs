@@ -207,8 +207,10 @@ struct Query {
     start: model::Pos,
     goal: model::Pos,
     radius: u8,
-    /// The longest drop the route may step off (`navigation::FAR_DROP` with health to spare).
+    /// The longest drop the route may step off (`navigation::drop_limit`).
     drop: i32,
+    /// The goal is far off or at another height: the wide search (`navigation::WIDE`).
+    wide: bool,
     chunks: HashMap<(i32, i32), Arc<Chunk>>,
     resources: Arc<Resources>,
 }
@@ -276,6 +278,7 @@ impl Worker {
                     };
                     // Every planner on this thread goes by the request's drop limit.
                     model::set_drop_limit(query.drop);
+                    model::set_reach(if query.wide { model::WIDE } else { model::NEAR });
                     // The player may stand on an edge or in the air: plan from the nearest place
                     // that can be stood on (the answer keeps the real start for its own check).
                     let start = model::nearest_standable(query.start, &mut |at| read(at).cell)
@@ -668,8 +671,94 @@ struct Legs {
     attempt: usize,
     /// Legs left to walk.
     budget: u32,
+    /// Points of a remembered route still to pass, in order (`navigation::route_via`).
+    via: Vec<model::Pos>,
+    /// Where the legs so far ended, to see the walk going back and forth.
+    ends: Vec<model::Pos>,
 }
 static LEGS: Mutex<Option<Legs>> = Mutex::new(None);
+/// Routes walked to the end, kept per world: a later walk between the same places follows the
+/// one it starts near instead of searching again (a second floor whose way down is far off is
+/// found once). The cells of the walk under way are gathered as it goes.
+struct Routes {
+    scope: String,
+    list: Vec<Vec<model::Pos>>,
+    trail: Vec<model::Pos>,
+    trail_goal: Option<model::Pos>,
+}
+static ROUTES: Mutex<Routes> = Mutex::new(Routes {
+    scope: String::new(),
+    list: Vec::new(),
+    trail: Vec::new(),
+    trail_goal: None,
+});
+/// The remembered route that serves a walk from `from` to `goal`, as the points to pass.
+fn remembered_via(game: &Game<'_>, from: model::Pos, goal: model::Pos) -> Vec<model::Pos> {
+    let routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    if scope(game).as_deref() != Some(routes.scope.as_str()) {
+        return Vec::new();
+    }
+    routes
+        .list
+        .iter()
+        .filter_map(|r| model::route_via(r, from, goal, 8))
+        .min_by_key(Vec::len)
+        .unwrap_or_default()
+}
+/// Starts gathering the cells of a walk to `goal` (a new walk drops the old trail).
+fn begin_trail(game: &Game<'_>, from: model::Pos, goal: model::Pos) {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    let here = scope(game).unwrap_or_default();
+    if routes.scope != here {
+        routes.scope = here;
+        routes.list.clear();
+    }
+    routes.trail = vec![from];
+    routes.trail_goal = Some(goal);
+}
+/// Adds where the walker stands to the trail, every two blocks.
+fn extend_trail(at: model::Pos) {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    if routes.trail_goal.is_none() || routes.trail.len() >= 4000 {
+        return;
+    }
+    let far = routes.trail.last().is_none_or(|last| {
+        (last[0] - at[0]).abs().max((last[2] - at[2]).abs()) >= 2 || (last[1] - at[1]).abs() >= 2
+    });
+    if far {
+        routes.trail.push(at);
+    }
+}
+/// The walk arrived: its trail is kept as a route (long ones only, replacing one between the
+/// same two places, at most 32 per world).
+fn keep_trail() {
+    let mut routes = ROUTES.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(goal) = routes.trail_goal.take() else {
+        return;
+    };
+    let mut trail = std::mem::take(&mut routes.trail);
+    trail.push(goal);
+    let (Some(&a), Some(&b)) = (trail.first(), trail.last()) else {
+        return;
+    };
+    let length = (a[0] - b[0]).abs() + (a[2] - b[2]).abs() + (a[1] - b[1]).abs();
+    if trail.len() < 6 || length < 16 {
+        return;
+    }
+    let near = |p: model::Pos, q: model::Pos| {
+        (p[0] - q[0]).abs().max((p[2] - q[2]).abs()) <= 4 && (p[1] - q[1]).abs() <= 2
+    };
+    routes.list.retain(|r| {
+        let (Some(&x), Some(&y)) = (r.first(), r.last()) else {
+            return false;
+        };
+        !((near(x, a) && near(y, b)) || (near(x, b) && near(y, a)))
+    });
+    routes.list.push(trail);
+    if routes.list.len() > 32 {
+        routes.list.remove(0);
+    }
+}
 /// A standable cell near `near` (columns within two blocks, heights from sixteen below to
 /// eight above the player), for the end of a leg. Of the places to stand in a column (the
 /// ground, a roof, the top of a tree) the one nearest to the height the walk is heading for is
@@ -722,9 +811,16 @@ pub(super) fn workshop_walk(
     level: bool,
 ) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+    let here = model::block(from);
     let g = model::center(goal);
     let distance = (g[0] - from[0]).hypot(g[2] - from[2]);
-    let (point, last, attempt) = leg_point(game, from, goal, 0).unwrap_or((goal, true, 0));
+    begin_trail(game, here, goal);
+    // A way walked before between here and there is followed point by point.
+    let via = remembered_via(game, here, goal);
+    let (point, last, attempt) = match via.first() {
+        Some(first) => (*first, false, 0),
+        None => leg_point(game, from, goal, 0).unwrap_or((goal, true, 0)),
+    };
     *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = (!last).then_some(Legs {
         goal,
         flat,
@@ -732,35 +828,70 @@ pub(super) fn workshop_walk(
         last: false,
         attempt,
         budget: (distance / 8.0).ceil() as u32 + 40,
+        via,
+        ends: vec![point],
     });
     walk_to(game, point, flat, level)
 }
-/// Every tick: when a leg of a far walk has arrived, or has no way, the next one starts.
+/// Every tick: the trail of the walk grows, and when a leg of a far walk has arrived, or has no
+/// way, the next one starts: the next point of a remembered route, or a new leg that does not
+/// lead back to where the walk just came from.
 pub(super) fn leg_frame(game: &Game<'_>) {
-    let Some((goal, flat, level, attempt, budget)) = LEGS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .filter(|l| !l.last)
-        .map(|l| (l.goal, l.flat, l.level, l.attempt, l.budget))
-    else {
-        return;
-    };
-    let first = match state(|s| s.nav.status) {
-        // Arrived: on to the next leg, straight at the goal again.
-        model::Status::Arrived => 0,
-        // No way to that end: another end of the same leg.
-        model::Status::NoPath | model::Status::Stuck => attempt + 1,
-        _ => return,
-    };
+    let (running, status) = state(|s| (s.nav.running, s.nav.status));
     let Some(p) = game.native_player() else {
         return;
     };
     let from = [p.x, p.y, p.z];
-    let next = if budget == 0 {
+    if running {
+        extend_trail(model::block(from));
+    }
+    let Some((goal, flat, level, attempt, budget, via, ends)) = LEGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|l| !l.last)
+        .map(|l| {
+            (
+                l.goal,
+                l.flat,
+                l.level,
+                l.attempt,
+                l.budget,
+                l.via.clone(),
+                l.ends.clone(),
+            )
+        })
+    else {
+        return;
+    };
+    let arrived = match status {
+        model::Status::Arrived => true,
+        model::Status::NoPath | model::Status::Stuck => false,
+        _ => return,
+    };
+    let mut via = via;
+    if !via.is_empty() {
+        if arrived {
+            via.remove(0);
+        } else {
+            // The remembered way is blocked now (a door shut for good, a block placed): plan.
+            via.clear();
+        }
+    }
+    let next = if let Some(point) = via.first() {
+        Some((*point, false, 0))
+    } else if budget == 0 {
         None
     } else {
-        leg_point(game, from, goal, first)
+        // Arrived: on to the next leg, straight at the goal again; no way: another end of the
+        // same leg. An end that leads back to where the walk came from is skipped.
+        let mut first = if arrived { 0 } else { attempt + 1 };
+        loop {
+            match leg_point(game, from, goal, first) {
+                Some((point, false, used)) if model::ping_pong(&ends, point) => first = used + 1,
+                other => break other,
+            }
+        }
     };
     let Some((point, last, used)) = next else {
         // Out of ends to try or of legs: the walk is over (the status says there is no way).
@@ -770,7 +901,12 @@ pub(super) fn leg_frame(game: &Game<'_>) {
     if let Some(l) = LEGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         l.last = last;
         l.attempt = used;
-        l.budget = budget - u32::from(first == 0);
+        l.budget = budget - u32::from(arrived);
+        l.via = via;
+        l.ends.push(point);
+        if l.ends.len() > 8 {
+            l.ends.remove(0);
+        }
     }
     if walk_to(game, point, flat, level).is_err() {
         *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -797,7 +933,11 @@ pub(super) fn workshop_walk_result() -> Option<bool> {
         // A leg arrived or found no way, but the goal is farther: the next one starts on the
         // next tick (`leg_frame` clears the walk when there is nothing left to try).
         model::Status::Arrived | model::Status::NoPath | model::Status::Stuck if more => None,
-        model::Status::Arrived => Some(true),
+        model::Status::Arrived => {
+            // There: the way it took is remembered for the next walk between these places.
+            keep_trail();
+            Some(true)
+        }
         model::Status::NoPath | model::Status::Stuck | model::Status::Paused => {
             *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Some(false)
@@ -1646,8 +1786,15 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         model::block([player.x, player.y, player.z])[0].div_euclid(16),
         model::block([player.x, player.y, player.z])[2].div_euclid(16),
     );
-    let chunks = (-2..=2)
-        .flat_map(|z| (-2..=2).map(move |x| (center.0 + x, center.1 + z)))
+    let start = model::standing_block(
+        [player.x, player.y, player.z],
+        &game.native_block(model::block([player.x, player.y, player.z])),
+    );
+    let wide = model::wide_needed(start, goal);
+    // The chunks the search may read: six around for the wide one (96 blocks), two otherwise.
+    let span = if wide { 6 } else { 2 };
+    let chunks = (-span..=span)
+        .flat_map(|z| (-span..=span).map(move |x| (center.0 + x, center.1 + z)))
         .filter_map(|at| game.world.chunks.get(&at).map(|c| (at, c.clone())))
         .collect();
     let hints = s
@@ -1685,11 +1832,9 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
             .filter(|j| j.phase == mining::Phase::Searching)
             .map(|j| (j.ore, j.excluded.clone())),
         token: s.token,
-        start: model::standing_block(
-            [player.x, player.y, player.z],
-            &game.native_block(model::block([player.x, player.y, player.z])),
-        ),
+        start,
         goal,
+        wide,
         radius: if s.nav.follow.is_some() { 1 } else { 0 },
         // A long drop (when nothing else leads down) costs a few health points: the shared
         // rule weighs health and the fall protection worn. Eating gets the points back.

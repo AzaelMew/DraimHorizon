@@ -84,6 +84,82 @@ pub enum Goal {
 }
 pub const RADIUS: i32 = 32;
 const MAX_NODES: usize = 8192;
+/// How far a walking search looks: around the start, with a node and a time budget. Near is the
+/// everyday search; wide is for a goal far off or at another height (a farm under a second
+/// floor whose only way down is a slope forty blocks away), run on the planner thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reach {
+    pub radius: i32,
+    pub nodes: usize,
+    pub millis: u64,
+}
+pub const NEAR: Reach = Reach {
+    radius: RADIUS,
+    nodes: MAX_NODES,
+    millis: 80,
+};
+pub const WIDE: Reach = Reach {
+    radius: 96,
+    nodes: 150_000,
+    millis: 700,
+};
+/// Whether a walk from `start` to `goal` needs the wide search: far off, or at another height.
+pub fn wide_needed(start: Pos, goal: Pos) -> bool {
+    (start[0] - goal[0]).abs().max((start[2] - goal[2]).abs()) > 24
+        || (start[1] - goal[1]).abs() > 3
+}
+thread_local! {
+    static REACH: std::cell::Cell<Reach> = const { std::cell::Cell::new(NEAR) };
+}
+/// Sets how far the walking searches on this thread look (the planner thread sets it from each
+/// request).
+pub fn set_reach(reach: Reach) {
+    REACH.with(|r| r.set(reach));
+}
+fn current_reach() -> Reach {
+    REACH.with(|r| r.get())
+}
+/// Remembered routes: a walk that arrived is kept as the cells it went through, and a later
+/// walk to either end, starting near the route, follows it instead of searching again. The
+/// returned points are every `every`-th cell from the one nearest to `from` toward the end near
+/// `goal`, that end included; `None` when the route does not serve this walk.
+pub fn route_via(points: &[Pos], from: Pos, goal: Pos, every: usize) -> Option<Vec<Pos>> {
+    let near = |a: Pos, b: Pos, h: i32, v: i32| {
+        (a[0] - b[0]).abs().max((a[2] - b[2]).abs()) <= h && (a[1] - b[1]).abs() <= v
+    };
+    let (first, last) = (*points.first()?, *points.last()?);
+    let forward: Vec<Pos> = if near(last, goal, 4, 2) {
+        points.to_vec()
+    } else if near(first, goal, 4, 2) {
+        points.iter().rev().copied().collect()
+    } else {
+        return None;
+    };
+    let start = forward
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| near(**p, from, 5, 1))
+        .min_by_key(|(_, p)| (p[0] - from[0]).abs() + (p[2] - from[2]).abs())?
+        .0;
+    let end = forward.len() - 1;
+    if start >= end {
+        return None;
+    }
+    let mut via: Vec<Pos> = (start + every..end)
+        .step_by(every.max(1))
+        .map(|i| forward[i])
+        .collect();
+    via.push(forward[end]);
+    Some(via)
+}
+/// Whether a far walk goes back and forth: the next leg ends where the leg before the last one
+/// ended (within four blocks), so the walk would turn round again.
+pub fn ping_pong(ends: &[Pos], next: Pos) -> bool {
+    let near = |a: Pos, b: Pos| {
+        (a[0] - b[0]).abs().max((a[2] - b[2]).abs()) <= 4 && (a[1] - b[1]).abs() <= 2
+    };
+    ends.len() >= 2 && near(ends[ends.len() - 2], next) && !near(ends[ends.len() - 1], next)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cell {
@@ -310,7 +386,7 @@ pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
 }
 
 /// How far a leg of a far walk goes, and the shorter reach tried when the long one has no way.
-pub const LEG_REACH: [f64; 2] = [24.0, 14.0];
+pub const LEG_REACH: [f64; 2] = [72.0, 36.0];
 /// How many directions a leg is tried in: straight at the goal, then turned to either side.
 const LEG_TURNS: [f64; 7] = [0.0, 35.0, -35.0, 70.0, -70.0, 110.0, -110.0];
 /// How many different ends of a leg there are to try.
@@ -704,6 +780,7 @@ pub fn search_near_drop(
     if !standable(start, &mut cell) {
         return None;
     }
+    let reach = current_reach();
     let began = Instant::now();
     let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
     let mut costs = HashMap::from([(start, 0)]);
@@ -725,14 +802,14 @@ pub fn search_near_drop(
             break;
         }
         expanded += 1;
-        if expanded >= MAX_NODES || began.elapsed() > Duration::from_millis(80) {
+        if expanded >= reach.nodes || began.elapsed() > Duration::from_millis(reach.millis) {
             break;
         }
         for ([dx, dy, dz], base) in MOVES {
             let next = [at[0] + dx, at[1] + dy, at[2] + dz];
             if dy < -max_drop
-                || (next[0] - start[0]).abs() > RADIUS
-                || (next[2] - start[2]).abs() > RADIUS
+                || (next[0] - start[0]).abs() > reach.radius
+                || (next[2] - start[2]).abs() > reach.radius
                 || (next[1] - start[1]).abs() > 16
                 || !traversable(at, next, &mut cell)
             {
@@ -762,7 +839,7 @@ pub fn search_near_drop(
     let mut nodes = vec![best];
     while let Some(parent) = parents.get(nodes.last().unwrap()) {
         nodes.push(*parent);
-        if nodes.len() > MAX_NODES {
+        if nodes.len() > reach.nodes {
             return None;
         }
     }
@@ -1286,15 +1363,15 @@ mod tests {
     fn a_leg_tries_the_straight_line_then_turns_aside_then_goes_shorter() {
         let (from, goal) = ([0.0, 64.0, 0.0], [800.0, 64.0, 0.0]);
         let straight = leg_target(from, goal, 0).unwrap();
-        assert!((straight[0] - 24.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
+        assert!((straight[0] - 72.0).abs() < 1e-9 && straight[2].abs() < 1e-9);
         // Turned 35 degrees to either side, at the same reach.
         let left = leg_target(from, goal, 1).unwrap();
         let right = leg_target(from, goal, 2).unwrap();
         assert!(left[2] > 1.0 && right[2] < -1.0);
-        assert!((nav_len(left) - 24.0).abs() < 1e-9 && (nav_len(right) - 24.0).abs() < 1e-9);
+        assert!((nav_len(left) - 72.0).abs() < 1e-9 && (nav_len(right) - 72.0).abs() < 1e-9);
         // The shorter reach comes after all the turns at the long one.
         let shorter = leg_target(from, goal, 7).unwrap();
-        assert!((shorter[0] - 14.0).abs() < 1e-9);
+        assert!((shorter[0] - 36.0).abs() < 1e-9);
         assert!(leg_target(from, goal, LEG_TRIES).is_none());
         // Standing on the goal there is no direction.
         assert!(leg_target(goal, goal, 0).is_none());
@@ -1477,6 +1554,44 @@ mod tests {
                 .windows(2)
                 .all(|w| w[1][1] - w[0][1] >= -MAX_DROP)
         );
+    }
+    #[test]
+    fn a_second_floor_reaches_the_ground_by_a_far_slope_with_the_wide_search() {
+        // A floor ten blocks up over the whole area; its only way down is a ramp at x = 40..50.
+        let world = |p: Pos| {
+            let ramp = (40..=50).contains(&p[0]) && p[2] == 0 && p[1] < 10 - (p[0] - 40);
+            if p[1] < 0 || (p[1] == 9 && p[0] <= 40) || ramp {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let (start, goal) = ([0, 10, 0], [0, 0, 3]);
+        assert!(wide_needed(start, goal));
+        set_reach(NEAR);
+        assert!(search(start, goal, world, || false).is_none_or(|p| !p.complete));
+        set_reach(WIDE);
+        let path = search(start, goal, world, || false).unwrap();
+        set_reach(NEAR);
+        assert!(path.complete);
+        assert!(path.nodes.iter().any(|p| p[0] >= 40));
+    }
+    #[test]
+    fn remembered_routes_are_followed_both_ways_and_ping_pong_is_seen() {
+        let route: Vec<Pos> = (0..=40).map(|x| [x, 64 - x / 10, 0]).collect();
+        // From near the start to the far end: every tenth cell, the end last.
+        let via = route_via(&route, [1, 64, 1], [40, 60, 0], 10).unwrap();
+        assert_eq!(via.last(), Some(&[40, 60, 0]));
+        assert_eq!(via[0], [11, 63, 0]);
+        // The other way round, from the far end back to the start.
+        let back = route_via(&route, [40, 60, 0], [0, 64, 0], 10).unwrap();
+        assert_eq!(back.last(), Some(&[0, 64, 0]));
+        // Not for a walk that starts far from it or goes elsewhere.
+        assert!(route_via(&route, [20, 80, 30], [40, 60, 0], 10).is_none());
+        assert!(route_via(&route, [1, 64, 1], [90, 64, 90], 10).is_none());
+        let ends = vec![[0, 70, 0], [30, 70, 0]];
+        assert!(ping_pong(&ends, [2, 70, 1]));
+        assert!(!ping_pong(&ends, [60, 70, 0]));
     }
     #[test]
     fn the_drop_limit_follows_health_and_fall_protection() {
