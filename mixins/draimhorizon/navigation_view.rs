@@ -1640,6 +1640,100 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     game.selected = food.slot;
     true
 }
+/// Ticks of water breathing left (Water Breathing or Conduit Power; endless counts as a lot).
+pub(super) fn breathing_ticks(game: &Game<'_>) -> i32 {
+    ["water_breathing", "conduit_power"]
+        .iter()
+        .filter_map(|id| game.potions.effects.get(id))
+        .map(|e| if e.duration < 0 { i32::MAX } else { e.duration })
+        .max()
+        .unwrap_or(0)
+}
+/// A potion of Water Breathing in the inventory (normal or long).
+fn breathing_potion(game: &Game<'_>) -> Option<usize> {
+    (0..36).find(|slot| {
+        slot_stack(game, *slot).is_some_and(|st| {
+            &*st.item == "minecraft:potion"
+                && matches!(
+                    st.potion(),
+                    Some("minecraft:water_breathing" | "minecraft:long_water_breathing")
+                )
+        })
+    })
+}
+/// Breathing is about to run out (or is not there) in the water during a task.
+const BREATH_RENEW: i32 = 200;
+/// A potion being drunk: the slot to go back to, the potion's slot, since when, and whether it
+/// is in hand already.
+struct Drink {
+    original: usize,
+    slot: usize,
+    since: Instant,
+    armed: bool,
+}
+static DRINK: Mutex<Option<Drink>> = Mutex::new(None);
+/// In the water during a task, with Water Breathing missing or about to end: a potion of it
+/// from the inventory is drunk (into the hand, use held until the effect is there), so the bot
+/// need not swim up for air. True while it holds the button.
+fn auto_drink(game: &mut Game<'_>) -> bool {
+    let mut drink = DRINK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(d) = drink.as_mut() {
+        if breathing_ticks(game) > BREATH_RENEW * 2
+            || d.since.elapsed() > Duration::from_millis(4000)
+            || !game.native_playing()
+        {
+            game.selected = d.original;
+            *drink = None;
+            return false;
+        }
+        if !d.armed {
+            d.armed = game.selected == d.slot;
+            game.selected = d.slot;
+            return true;
+        }
+        let physical = game.right;
+        state(|s| s.use_restore = Some(physical));
+        game.right = true;
+        return true;
+    }
+    let wet = game
+        .player
+        .as_ref()
+        .is_some_and(|b| b.fluids.was_touching_water || b.fluids.was_eye_in_water);
+    if !wet || !task_running() || breathing_ticks(game) >= BREATH_RENEW {
+        return false;
+    }
+    let Some(slot) = breathing_potion(game) else {
+        return false;
+    };
+    if slot >= 9 {
+        static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
+        let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_millis(1000)) {
+            let spare = (0..9)
+                .filter(|h| *h != game.selected)
+                .find(|h| game.stack_in(*h).is_none())
+                .or_else(|| (0..9).rev().find(|h| *h != game.selected));
+            if let Some(spare) = spare {
+                *last = Some(Instant::now());
+                game.remote_menu_ops(&[(
+                    Some(slot),
+                    spare as i32,
+                    horizon_client::menu::Input::Swap,
+                )]);
+            }
+        }
+        return false;
+    }
+    *drink = Some(Drink {
+        original: game.selected,
+        slot,
+        since: Instant::now(),
+        armed: false,
+    });
+    game.selected = slot;
+    true
+}
 /// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
 /// fits the block under the crosshair is selected (the held one stays if it fits).
 pub(super) fn auto_tool(game: &mut Game<'_>) {
@@ -1728,7 +1822,7 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     face(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
-    if auto_eat(game) {
+    if auto_eat(game) || auto_drink(game) {
         return;
     }
     let physical = game.left;
@@ -3189,10 +3283,13 @@ pub(super) fn movement(
         {
             let mut surfacing = SURFACING.lock().unwrap_or_else(|e| e.into_inner());
             let under = body.fluids.was_eye_in_water;
-            if under && body.air < mining::AIR_LOW {
+            // Water Breathing (or a potion of it to drink) means no need to go up at all.
+            let breathing = breathing_ticks(game) > 0;
+            if under && body.air < mining::AIR_LOW && !breathing && breathing_potion(game).is_none()
+            {
                 *surfacing = true;
             }
-            if *surfacing && body.air >= mining::AIR_FULL {
+            if *surfacing && (body.air >= mining::AIR_FULL || breathing) {
                 *surfacing = false;
             }
             if *surfacing {
