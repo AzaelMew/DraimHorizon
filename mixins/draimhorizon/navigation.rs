@@ -1633,9 +1633,7 @@ mod tests {
     fn gaps_are_jumped_with_a_run_and_partial_blocks_count_as_reached() {
         // A three-block gap (x = 1..=3) in the ground; the landing at x = 4.
         let gap = |p: Pos| {
-            if p[1] < 0 && !(1..=3).contains(&p[0]) {
-                Cell::Solid
-            } else if p[1] < -20 {
+            if (p[1] < 0 && !(1..=3).contains(&p[0])) || p[1] < -20 {
                 Cell::Solid
             } else {
                 Cell::Air
