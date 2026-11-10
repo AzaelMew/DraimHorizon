@@ -922,6 +922,9 @@ pub struct Navigator {
     /// The body is in a ladder or vines (set by the caller each tick): a node above is reached
     /// by climbing (the jump key), one below by letting go.
     pub climbing: bool,
+    /// Walk as a person does: the caller turns the head toward `look_point`, and a target
+    /// behind is turned to first instead of being walked to backwards or sideways.
+    pub human: bool,
     pub follow: Option<Follow>,
     pub status: Status,
     pub goal: Option<Pos>,
@@ -939,6 +942,26 @@ pub struct Input {
     pub forward: f32,
     pub strafe: f32,
     pub jump: bool,
+}
+/// The yaw (degrees, the game's convention) that faces from `from` toward `to`.
+pub fn yaw_to(from: [f64; 3], to: [f64; 3]) -> f32 {
+    (-(to[0] - from[0])).atan2(to[2] - from[2]).to_degrees() as f32
+}
+/// The pitch (degrees, down positive) that looks from the eye at `eye` toward `to`.
+pub fn pitch_to(eye: [f64; 3], to: [f64; 3]) -> f32 {
+    let (dx, dy, dz) = (to[0] - eye[0], to[1] - eye[1], to[2] - eye[2]);
+    (-dy).atan2(dx.hypot(dz)).to_degrees() as f32
+}
+/// The signed smallest turn from `from` to `to`, in degrees (-180..180).
+pub fn angle_between(from: f32, to: f32) -> f32 {
+    (to - from + 540.0).rem_euclid(360.0) - 180.0
+}
+/// One tick of a head turn as a person makes it: fast while far off, easing in as it comes
+/// round (a share of what is left, at least a little, at most `max_step`).
+pub fn turn_toward(current: f32, wanted: f32, max_step: f32) -> f32 {
+    let left = angle_between(current, wanted);
+    let step = (left * 0.4).abs().clamp(left.abs().min(1.5), max_step);
+    current + step.copysign(left)
 }
 pub fn block(position: [f64; 3]) -> Pos {
     position.map(|x| x.floor() as i32)
@@ -1005,6 +1028,25 @@ impl Navigator {
         self.progress = None;
         self.stalled = 0;
         self.status = Status::Waiting;
+    }
+    /// Where a person walking this route would look: a few blocks ahead along it (the next
+    /// nodes within reach of the eye), so corners are taken in a curve and the head does not
+    /// jerk at every cell. `None` when not walking.
+    pub fn look_point(&self, position: [f64; 3]) -> Option<[f64; 3]> {
+        if !self.running || self.status != Status::Walking {
+            return None;
+        }
+        let mut point = center(*self.path.get(self.next)?);
+        for node in self.path.iter().skip(self.next + 1).take(4) {
+            let c = center(*node);
+            if (c[0] - position[0]).hypot(c[2] - position[2]) > 3.0
+                || (c[1] - position[1]).abs() > 1.5
+            {
+                break;
+            }
+            point = c;
+        }
+        Some(point)
     }
     /// How many ticks in a row the walker has made no progress.
     pub fn stalled(&self) -> u16 {
@@ -1097,6 +1139,11 @@ impl Navigator {
         let forward = -dx * yaw.sin() + dz * yaw.cos();
         let left = dx * yaw.cos() + dz * yaw.sin();
         let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
+        if self.human && grounded && matches!(sector.rem_euclid(8), 3..=5) {
+            // The way on is behind: turn round first (the caller turns the head), do not walk
+            // backwards.
+            return Input::default();
+        }
         let (forward, strafe) = match sector.rem_euclid(8) {
             0 => (1., 0.),
             1 => (1., 1.),
@@ -1554,6 +1601,35 @@ mod tests {
                 .windows(2)
                 .all(|w| w[1][1] - w[0][1] >= -MAX_DROP)
         );
+    }
+    #[test]
+    fn a_human_walker_looks_ahead_turns_smoothly_and_never_walks_backwards() {
+        // Facing south (yaw 0) is +z; east (+x) is yaw -90.
+        assert!((yaw_to([0.0; 3], [0.0, 0.0, 5.0])).abs() < 1e-4);
+        assert!((yaw_to([0.0; 3], [5.0, 0.0, 0.0]) + 90.0).abs() < 1e-4);
+        assert!((angle_between(170.0, -170.0) - 20.0).abs() < 1e-4);
+        // A turn eases in: big steps first, never past the target, at most the limit.
+        let mut yaw = 0.0;
+        let mut steps = Vec::new();
+        for _ in 0..30 {
+            let next = turn_toward(yaw, 120.0, 25.0);
+            steps.push(next - yaw);
+            yaw = next;
+        }
+        assert!((yaw - 120.0).abs() < 1e-3);
+        assert!(steps[0] <= 25.0 + 1e-4 && steps[0] > steps[8]);
+        // The look point is a few blocks ahead on a straight route.
+        let path = search([0, 0, 0], [10, 0, 0], flat, || false).unwrap();
+        let mut n = Navigator::default();
+        n.begin([10, 0, 0], true);
+        n.human = true;
+        n.accept(Some(path));
+        let look = n.look_point([0.5, 0.0, 0.5]).unwrap();
+        assert!(look[0] >= 2.5);
+        // Facing away from the route (yaw 90 looks toward -x): stand and turn, no backwards.
+        assert_eq!(n.input([0.5, 0.0, 0.5], 90.0, true), Input::default());
+        // Facing along it: forward.
+        assert_eq!(n.input([0.5, 0.0, 0.5], -90.0, true).forward, 1.0);
     }
     #[test]
     fn a_second_floor_reaches_the_ground_by_a_far_slope_with_the_wide_search() {

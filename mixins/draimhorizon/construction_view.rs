@@ -998,6 +998,11 @@ fn aim(game: &mut Game<'_>, point: [f64; 3]) {
         game.pitch = (-y).atan2(x.hypot(z)).to_degrees() as f32;
     }
 }
+/// Whether a block is being aimed at for a click (a door, a chest, a crop to feed): the walker
+/// then leaves the head alone.
+pub(super) fn aiming() -> bool {
+    state(|s| s.interact.is_some() || s.use_item.is_some())
+}
 /// Asks for one use click on the container at `pos`: the next tick aims at it and clicks.
 pub(super) fn open_container(pos: nav::Pos) {
     state(|s| {
@@ -1019,6 +1024,21 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     let pos = state(|s| s.interact)?;
     if !game.native_playing() {
         return Some(false);
+    }
+    // The head turns to the block over a few ticks first, as a person's does; the exact aim at
+    // its middle and sides follows once it points at it.
+    if let Some(eye) = game.eye_position() {
+        let middle = [
+            f64::from(pos[0]) + 0.5,
+            f64::from(pos[1]) + 0.5,
+            f64::from(pos[2]) + 0.5,
+        ];
+        let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));
+        if nav::angle_between(game.yaw, yaw).abs() > 6.0 || (game.pitch - pitch).abs() > 6.0 {
+            game.yaw = nav::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = nav::turn_toward(game.pitch, pitch, 24.0);
+            return None;
+        }
     }
     // The middle first, then the top and the four sides: a chest behind a bed of crops has a
     // clear line only to some of them.

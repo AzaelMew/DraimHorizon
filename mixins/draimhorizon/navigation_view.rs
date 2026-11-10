@@ -1486,9 +1486,16 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             f64::from(target[1]) + 0.5,
             f64::from(target[2]) + 0.5,
         ];
-        let [dx, dy, dz] = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
-        game.yaw = (-dx).atan2(dz).to_degrees() as f32;
-        game.pitch = (-dy).atan2(dx.hypot(dz)).to_degrees() as f32;
+        // The head comes round to the block as a person's does, not in one jump; the swing
+        // starts once it points at it.
+        let (yaw, pitch) = (model::yaw_to(eye, center), model::pitch_to(eye, center));
+        if model::angle_between(game.yaw, yaw).abs() > 4.0 || (game.pitch - pitch).abs() > 4.0 {
+            game.yaw = model::turn_toward(game.yaw, yaw, 30.0);
+            game.pitch = model::turn_toward(game.pitch, pitch, 24.0);
+            return false;
+        }
+        game.yaw = yaw;
+        game.pitch = pitch;
         let hit = if game.entity_targeted() {
             None
         } else {
@@ -1698,6 +1705,7 @@ pub(super) fn press_for_click(game: &mut Game<'_>, right: bool) {
 pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     crate::game::claim_borders_helpers::tick(game);
     leg_frame(game);
+    face(game);
     crate::game::claim_borders_haul_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
     if auto_eat(game) {
@@ -2689,6 +2697,34 @@ fn live_cell(game: &Game<'_>, at: model::Pos) -> model::Cell {
         model::Cell::Air,
     )
 }
+/// Where the walker wants to look (yaw, pitch) and since when: set by the movement hook from the
+/// route, turned to a little each tick by `face` (the head moves as a person's does).
+static FACE: Mutex<Option<(f32, f32, Instant)>> = Mutex::new(None);
+/// The last tick the walker was really walking, and how many ticks it has coasted since.
+static COAST: Mutex<Option<(Instant, u8)>> = Mutex::new(None);
+/// How far the head turns in one tick while walking, at most.
+const TURN_STEP: f32 = 22.0;
+/// Turns the head toward where the walk goes, a little each tick, with the small sway of a
+/// person's view; nothing while a block is being aimed at (a door, a chest, mining) or when the
+/// wish is stale.
+fn face(game: &mut Game<'_>) {
+    let wish = *FACE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((yaw, pitch, since)) = wish else {
+        return;
+    };
+    if since.elapsed() > Duration::from_millis(250)
+        || crate::game::claim_borders_construction_view::aiming()
+        || !state(|s| s.nav.running && s.nav.status == model::Status::Walking)
+    {
+        return;
+    }
+    let t = since.elapsed().as_secs_f32() + START.get_or_init(Instant::now).elapsed().as_secs_f32();
+    let sway_yaw = 1.2 * (t * 1.7).sin();
+    let sway_pitch = 0.8 * (t * 1.1).sin();
+    game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
+    game.pitch = model::turn_toward(game.pitch, pitch + sway_pitch, TURN_STEP * 0.6);
+}
+static START: OnceLock<Instant> = OnceLock::new();
 /// Enchantment protection against falls from the armour worn (`navigation::fall_protection`).
 fn fall_protection(game: &Game<'_>) -> u32 {
     let levels: Vec<(u32, u32)> = game
@@ -2868,7 +2904,54 @@ pub(super) fn movement(
             return;
         }
         s.nav.climbing = live_cell(game, model::block(position)) == model::Cell::Climb;
+        s.nav.human = true;
         let mut input = s.nav.input(position, p.yaw, body.ground.on_ground);
+        // Look where the walk goes: a few blocks ahead, a little down, as a person walks.
+        if let Some(look) = s.nav.look_point(position) {
+            let eye = [position[0], position[1] + 1.62, position[2]];
+            let ahead = [look[0], look[1] + 0.9, look[2]];
+            let flat = (ahead[0] - eye[0]).hypot(ahead[2] - eye[2]);
+            let yaw = if flat > 0.3 {
+                model::yaw_to(eye, ahead)
+            } else {
+                p.yaw
+            };
+            let pitch = model::pitch_to(eye, ahead).clamp(-10.0, 35.0);
+            *FACE.lock().unwrap_or_else(|e| e.into_inner()) = Some((yaw, pitch, Instant::now()));
+        }
+        // Between two plans (a leg ends, the route is planned again) a person keeps walking for
+        // a moment instead of freezing: on firm ground, straight on, only onto a cell that can
+        // be walked to, for half a second at most.
+        {
+            let mut coast = COAST.lock().unwrap_or_else(|e| e.into_inner());
+            if s.nav.status == model::Status::Walking && input.forward > 0.0 {
+                *coast = Some((Instant::now(), 0));
+            } else if matches!(
+                s.nav.status,
+                model::Status::Waiting | model::Status::Planning
+            ) && body.ground.on_ground
+                && let Some((when, ticks)) = coast.as_mut()
+                && when.elapsed() < Duration::from_millis(600)
+                && *ticks < 10
+            {
+                let yaw = f64::from(p.yaw).to_radians();
+                let here =
+                    model::standing_block(position, &game.native_block(model::block(position)));
+                let step = [(-yaw.sin()).round() as i32, (yaw.cos()).round() as i32];
+                let ahead = [here[0] + step[0], here[1], here[2] + step[1]];
+                if (step[0] != 0 || step[1] != 0)
+                    && model::traversable(here, ahead, &mut |at| live_cell(game, at))
+                    && live_cell(game, ahead) == model::Cell::Air
+                {
+                    *ticks += 1;
+                    input = model::Input {
+                        forward: 1.0,
+                        strafe: 0.0,
+                        jump: false,
+                    };
+                }
+            }
+        }
         // A closed door or gate on the next steps: open it first, standing still meanwhile.
         if s.nav.status == model::Status::Walking
             && door_step(game, &s.nav.path, s.nav.next, position)
