@@ -13,6 +13,7 @@ This is one unreleased update. The earlier local-only 0.40.x/0.41.0 test labels 
 - Translation languages is a centred card with My messages / Chat messages pairs and all languages visible at once.
 - The auction is a catalogue of every lot, loaded in the background when it opens; one pager, search and sort across all lots, and `/ah buy <number>` purchases behind a confirmation that can be switched off (Ask before buying at the auction). Market screens keep one pager across server pages. Windows are compact by default with an optional large size.
 - Single player no longer sends automatic `/claims` and `/bal`, which raised Horizon's unknown-command prompt.
+- The explored map stays sharp and relief-shaded when zoomed out: wide views use per-region overviews (2/4/8 blocks per texel) instead of one colour per chunk. They are built in the background, centre first, and the saved map format is unchanged.
 - Boolean settings use switches; numeric values have units and read-only value cells; corner choices use names. Chat original-message badges follow the selected UI language. Russian remains the default, with English counterparts.
 - Saved settings, archives, maps, waypoints and server-authoritative gameplay behavior are preserved. Local delivery replaces the installed bundle after checks, without restarting the game or publishing a release.
 
