@@ -773,14 +773,20 @@ pub(super) fn movement(
     {
         return false;
     }
-    if game.player.as_ref().is_none_or(|p| {
-        !p.ground.on_ground
-            || p.flying
-            || p.fall_flying
-            || p.is_passenger
-            || p.is_in_lava()
-            || p.health.health() <= 0.0
-    }) {
+    // In the air for a moment (a shove from a hit, a step off an edge, a glide): the job waits
+    // for the ground, it is not paused. Only being dead, riding or lava pause it.
+    if game
+        .player
+        .as_ref()
+        .is_some_and(|p| !p.ground.on_ground || p.fall_flying)
+    {
+        return false;
+    }
+    if game
+        .player
+        .as_ref()
+        .is_none_or(|p| p.flying || p.is_passenger || p.is_in_lava() || p.health.health() <= 0.0)
+    {
         pause();
         navigation::pause();
         return false;

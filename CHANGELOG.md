@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.6
+
+- Flight routing on elytra: a glide is flown toward the landing (the first point of the route below, or the goal while the route is planned again), turning aside from walls and blocks in the way (six blocks of open air ahead are looked for at the body's height and the block below, in turns up to all the way round), circling over the landing while still high to lose height, holding a descent that ends at the landing on the way, and levelling out low over it so that it touches down softly. The pitch follows the look quickly while gliding. Gliding never pauses a task any more (it did as soon as the route had no point at hand, and after landing far off the line).
+- Damage, a shove or a moment in the air pause nothing: being knocked off the route (even forty blocks) or landing off the line plans again from where the walker is (only a jump of more than 64 blocks, a teleport, pauses); tunnel and bridge wait for the ground instead of pausing when knocked into the air or gliding; mining waits in the air instead of pausing.
+
 ## 0.39.5
 
 - Mining under water: the route is planned from the water too (the planner waited for the feet to touch the ground, which never happens while swimming, so nothing was ever planned), a route answer from a moment ago is not a reason to pause there, and a mining job does not swim off to the shore while it looks for the next block; it swims to the block and mines it.

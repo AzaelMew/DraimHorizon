@@ -1462,15 +1462,20 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             || !in_world(game)
             || scope(game).as_deref() != Some(s.scope.as_str())
             || game.player.as_ref().is_none_or(|p| {
-                p.flying
-                    || p.fall_flying
-                    || p.is_passenger
-                    || p.is_in_lava()
-                    || p.health.health() <= 0.0
+                p.flying || p.is_passenger || p.is_in_lava() || p.health.health() <= 0.0
             })
         {
             pause_state(s);
             return physical;
+        }
+        // In the air (a glide, a shove from a hit): wait, no hit, no pause.
+        if game
+            .player
+            .as_ref()
+            .is_some_and(|p| p.fall_flying || !p.ground.on_ground && !p.fluids.was_touching_water)
+            && live_cell(game, model::block([player.x, player.y, player.z])) != model::Cell::Climb
+        {
+            return false;
         }
         // Under water the miner swims for breath first, and swims up to the block before a hit.
         if *SURFACING.lock().unwrap_or_else(|e| e.into_inner()) {
@@ -2332,7 +2337,7 @@ pub(super) fn tick(game: &Game<'_>) {
                         .player
                         .as_ref()
                         .is_some_and(|p| p.fluids.was_touching_water || p.swimming);
-                    if off > 8.0 {
+                    if off > 64.0 {
                         // Far from where the route was asked for (a teleport): a pause.
                         s.nav.running = false;
                         s.nav.status = model::Status::Paused;
@@ -3144,6 +3149,25 @@ fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
     }
     Some(game.pitch > 80.0 && grounded)
 }
+/// Set while gliding: the head is turned faster then (the flight follows the look).
+static GLIDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether a glide heading `yaw` has six blocks of open air ahead, at the body's height and the
+/// block below it.
+fn glide_clear(game: &Game<'_>, position: [f64; 3], yaw: f32) -> bool {
+    let (sin, cos) = f64::from(yaw).to_radians().sin_cos();
+    (1..=6).all(|step| {
+        let d = f64::from(step);
+        let x = position[0] - sin * d;
+        let z = position[2] + cos * d;
+        (-1..=1).all(|dy| {
+            let at = model::block([x, position[1] + f64::from(dy), z]);
+            matches!(
+                live_cell(game, at),
+                model::Cell::Air | model::Cell::Climb | model::Cell::Water | model::Cell::Unknown
+            )
+        })
+    })
+}
 /// Every other tick while falling with elytra: a fresh jump press spreads them.
 static ELYTRA_TAP: Mutex<bool> = Mutex::new(false);
 /// Elytra worn, with durability to spare.
@@ -3250,7 +3274,13 @@ fn face(game: &mut Game<'_>) {
     let sway_yaw = 1.2 * (t * 1.7).sin();
     game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
     // The pitch follows slowly (a few degrees a tick): no nodding.
-    game.pitch = model::turn_toward(game.pitch, pitch, 3.0);
+    // Gliding: the flight follows the look, so the pitch answers quickly too.
+    let gliding = game.player.as_ref().is_some_and(|b| b.fall_flying)
+        && GLIDING.load(std::sync::atomic::Ordering::Relaxed);
+    if !game.player.as_ref().is_some_and(|b| b.fall_flying) {
+        GLIDING.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    game.pitch = model::turn_toward(game.pitch, pitch, if gliding { 12.0 } else { 3.0 });
     look.set = Some((game.yaw, game.pitch));
 }
 /// The human look's own bookkeeping: where it left the camera, until when the mouse has it,
@@ -3655,31 +3685,28 @@ pub(super) fn movement(
         && let Some(p) = game.native_player()
     {
         let position = [p.x, p.y, p.z];
-        let next = state(|s| {
+        // Where to come down: the first point of the route below (the landing of the drop), or
+        // the goal when the route is being planned again.
+        let landing = state(|s| {
             s.nav
                 .path
-                .get(s.nav.next.min(s.nav.path.len().saturating_sub(1)))
+                .iter()
+                .skip(s.nav.next)
+                .find(|n| f64::from(n[1]) < position[1] - 1.0)
+                .or_else(|| s.nav.path.last())
                 .copied()
+                .or(s.nav.goal)
         });
-        if let Some(next) = next {
+        if let Some(next) = landing {
             let goal = model::center(next);
             if body.fall_flying {
-                let eye = [position[0], position[1] + 1.62, position[2]];
-                let above = position[1] - goal[1];
-                let across = (goal[0] - position[0]).hypot(goal[2] - position[2]);
-                // Straight over the landing and still high: circle round it to lose height
-                // instead of diving; low over it: level out (a shallow glide lands softly).
-                let mut yaw = model::yaw_to(eye, goal);
-                if across < 4.0 && above > 6.0 {
-                    yaw += 90.0;
-                }
-                let pitch = if above < 5.0 {
-                    -5.0
-                } else {
-                    model::pitch_to(eye, goal).clamp(12.0, 35.0)
-                };
+                // Flight routing: toward the landing, round what is in the way, circling to
+                // lose height, levelling out low over it.
+                let open = |yaw: f32| glide_clear(game, position, yaw);
+                let (yaw, pitch) = model::glide(position, goal, open);
                 *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some((yaw, pitch, Instant::now()));
+                GLIDING.store(true, std::sync::atomic::Ordering::Relaxed);
                 *forward = 0.0;
                 *strafe = 0.0;
                 *jump = false;
@@ -3692,8 +3719,14 @@ pub(super) fn movement(
             }
         }
     }
+    if body.fall_flying {
+        // Gliding with no route at hand: no keys (the look steers), never a pause; the route is
+        // planned again once landed.
+        *forward = 0.0;
+        *strafe = 0.0;
+        return;
+    }
     if body.flying
-        || body.fall_flying
         || body.swimming
         || body.fluids.was_touching_water
         || body.is_in_lava()

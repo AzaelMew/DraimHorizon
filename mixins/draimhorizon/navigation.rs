@@ -1114,6 +1114,39 @@ pub fn human_steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> Input {
         sprint: false,
     }
 }
+/// How a glide on elytra is flown, tick by tick: the yaw and pitch to hold. Toward the landing,
+/// turned aside from what is in the way (`clear` says whether a heading is open for a few blocks
+/// ahead); high over the landing it circles to lose height instead of diving; on the way it
+/// holds a descent that brings it down at the landing; low over it, it levels out so as to touch
+/// down softly (a slow descent takes no fall damage).
+pub fn glide(position: [f64; 3], landing: [f64; 3], clear: impl Fn(f32) -> bool) -> (f32, f32) {
+    let above = position[1] - landing[1];
+    let across = (landing[0] - position[0]).hypot(landing[2] - position[2]);
+    let toward = yaw_to(position, landing);
+    // High and close: circle round the landing.
+    let wanted = if across < 4.0 && above > 6.0 {
+        toward + 90.0
+    } else {
+        toward
+    };
+    let yaw = [
+        0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 135.0, -135.0, 180.0,
+    ]
+    .into_iter()
+    .map(|turn| wanted + turn)
+    .find(|y| clear(*y))
+    .unwrap_or(wanted);
+    let pitch = if above < 5.0 {
+        // Level out for the touch-down.
+        -5.0
+    } else if across < 4.0 {
+        20.0
+    } else {
+        // The slope that ends at the landing, a little steeper than needed, kept gentle.
+        ((above / across).atan().to_degrees() as f32 + 5.0).clamp(8.0, 35.0)
+    };
+    (yaw, pitch)
+}
 /// The yaw (degrees, the game's convention) that faces from `from` toward `to`.
 pub fn yaw_to(from: [f64; 3], to: [f64; 3]) -> f32 {
     (-(to[0] - from[0])).atan2(to[2] - from[2]).to_degrees() as f32
@@ -1278,7 +1311,9 @@ impl Navigator {
         if off > 2.6 {
             // Shoved off the route (a player walking into the walker): plan again from where
             // it stands. Only a long way off (a teleport) is a pause.
-            if off > 8.0 {
+            // Only a jump far away (a teleport, a portal) is a pause: a shove from a hit, a
+            // glide that landed off the line or a fall are planned again from where it is.
+            if off > 64.0 {
                 self.pause();
             } else {
                 self.replan();
@@ -1617,6 +1652,12 @@ mod tests {
         let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
         n.accept(Some(path));
         let _ = n.input([2.5, 0., 40.5], 0., true);
+        // Forty blocks off (a long glide, a hard shove) is planned again, not paused.
+        assert_eq!(n.status, Status::Waiting);
+        let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
+        n.begin([6, 0, 0], true);
+        n.accept(Some(path));
+        let _ = n.input([2.5, 0., 200.5], 0., true);
         assert_eq!(n.status, Status::Paused);
         // Giving way to someone in the path clears the stall: it is not being stuck.
         let path = search([0, 0, 0], [6, 0, 0], flat, || false).unwrap();
@@ -2031,6 +2072,24 @@ mod tests {
             }
         };
         assert!(!standable([1, 0, 0], &mut { lava }));
+    }
+    #[test]
+    fn a_glide_heads_for_the_landing_turns_from_walls_circles_and_levels_out() {
+        let open = |_: f32| true;
+        // Far off and high: straight at it, a moderate descent.
+        let (yaw, pitch) = glide([0.0, 60.0, 0.0], [0.0, 40.0, 60.0], open);
+        assert!(yaw.abs() < 1e-3, "{yaw}");
+        assert!((8.0..=35.0).contains(&pitch));
+        // A wall straight ahead: turned aside.
+        let (yaw, _) = glide([0.0, 60.0, 0.0], [0.0, 40.0, 60.0], |y: f32| y.abs() > 10.0);
+        assert!((yaw - 30.0).abs() < 1e-3);
+        // High right over the landing: circling (a quarter off), not diving.
+        let (yaw, pitch) = glide([0.0, 60.0, 0.0], [0.0, 30.0, 1.0], open);
+        assert!((angle_between(0.0, yaw) - 90.0).abs() < 1e-3);
+        assert!(pitch <= 20.0);
+        // Low over it: level.
+        let (_, pitch) = glide([0.0, 43.0, 0.0], [0.0, 40.0, 10.0], open);
+        assert!(pitch < 0.0);
     }
     #[test]
     fn a_fence_gate_in_a_fenced_tunnel_is_the_way_through() {
