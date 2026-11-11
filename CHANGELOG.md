@@ -1,5 +1,9 @@
 # История версий
 
+## 0.39.13
+
+- The full map (M) opens on the selection made last: explored terrain or the Seed Map, and the world chosen in each (overworld, Nether, End). It used to open on explored terrain in the player's world every time. The choice is kept in the settings, so it holds after a restart too. A world other than the player's is shown at the player's place carried over to it (a Nether block for eight overworld ones; the middle of the End). Opening the map on a point (from a waypoint) still shows that point.
+
 ## 0.39.12
 
 - Optional **J → Settings → General → Protect glow berry vines** prevents initial and held punches from breaking either cave-vine section, with or without berries. Sneak to deliberately break them; right-click harvesting and entity attacks are unchanged. Off by default; saved in the legacy settings namespace. English and Russian controls are included.

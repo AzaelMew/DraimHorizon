@@ -733,8 +733,83 @@ pub fn paint_aspect(
         }
     }
 }
+/// What the full map shows when M opens: the mode chosen last (explored terrain or the seed
+/// map) and the world chosen last in each (an index of `seed_map::DIMENSIONS`; none yet: the
+/// player's own).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    pub seed: bool,
+    pub explored: Option<usize>,
+    pub seed_world: Option<usize>,
+}
+impl Selection {
+    pub fn encode(self) -> String {
+        let world = |w: Option<usize>| w.map_or("-".to_owned(), |i| i.to_string());
+        format!(
+            "{}\t{}\t{}",
+            if self.seed { "seed" } else { "explored" },
+            world(self.explored),
+            world(self.seed_world)
+        )
+    }
+    /// A kept selection; anything that does not read is the default (explored terrain, the
+    /// player's world).
+    pub fn decode(text: &str) -> Self {
+        let mut parts = text.split('\t');
+        let seed = parts.next() == Some("seed");
+        let world = |p: Option<&str>| p.and_then(|v| v.parse::<usize>().ok()).filter(|i| *i < 3);
+        Self {
+            seed,
+            explored: world(parts.next()),
+            seed_world: world(parts.next()),
+        }
+    }
+}
+/// Where a point of one world lies in another (indices of `seed_map::DIMENSIONS`): the Nether is
+/// eight times smaller than the overworld; the End has nothing to do with either (its middle).
+pub fn point_in(from: usize, to: usize, x: f64, z: f64) -> [f64; 2] {
+    match (from, to) {
+        (a, b) if a == b => [x, z],
+        (0, 1) => [x / 8.0, z / 8.0],
+        (1, 0) => [x * 8.0, z * 8.0],
+        _ => [0.0, 0.0],
+    }
+}
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_map_selection_is_kept_and_read_back() {
+        use super::Selection;
+        let all = Selection {
+            seed: true,
+            explored: Some(1),
+            seed_world: Some(2),
+        };
+        assert_eq!(Selection::decode(&all.encode()), all);
+        let none = Selection::default();
+        assert_eq!(Selection::decode(&none.encode()), none);
+        assert_eq!(Selection::decode(""), none);
+        assert_eq!(
+            Selection::decode("seed\t7\tx"),
+            Selection { seed: true, ..none }
+        );
+        assert_eq!(
+            Selection::decode("explored\t2"),
+            Selection {
+                explored: Some(2),
+                ..none
+            }
+        );
+    }
+    #[test]
+    fn a_point_is_carried_between_worlds() {
+        use super::point_in;
+        assert_eq!(point_in(0, 0, 100.0, -40.0), [100.0, -40.0]);
+        assert_eq!(point_in(0, 1, 800.0, -80.0), [100.0, -10.0]);
+        assert_eq!(point_in(1, 0, 100.0, -10.0), [800.0, -80.0]);
+        assert_eq!(point_in(0, 2, 800.0, -80.0), [0.0, 0.0]);
+        assert_eq!(point_in(2, 1, 5.0, 5.0), [0.0, 0.0]);
+    }
     #[test]
     fn live_claim_labels_follow_the_selected_language() {
         let mut cell = Cell {

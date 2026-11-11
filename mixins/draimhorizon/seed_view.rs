@@ -96,7 +96,8 @@ pub(super) fn reset() {
         s.search_focus = false;
     });
 }
-/// Opening M always prepares the seed atlas in the background, with explored terrain selected.
+/// Opening M prepares the seed atlas in the background for the player's world; the map view then
+/// selects the world and mode chosen last (`select_world`, `show`).
 pub(super) fn open(source: &map::Snapshot, _focus: &Option<(String, i32, i32)>) {
     state(|s| {
         s.poi_click = None;
@@ -125,6 +126,23 @@ pub(super) fn open(source: &map::Snapshot, _focus: &Option<(String, i32, i32)>) 
             .iter()
             .position(|d| *d == source.dimension)
             .unwrap_or(0);
+    });
+}
+/// Selects a world (an index of `DIMENSIONS`) as the one shown, keeping the view prepared for it.
+pub(super) fn select_world(world: usize) {
+    state(|s| {
+        if world < model::DIMENSIONS.len() {
+            s.selected = world;
+            s.preferences.dimension = world;
+            // A biome searched for in another world does not apply here (as a World click).
+            if s.preferences
+                .biome
+                .as_ref()
+                .is_some_and(|b| model::biome_dimension(b) != world)
+            {
+                s.preferences.biome = None;
+            }
+        }
     });
 }
 pub(super) fn show() {
@@ -988,6 +1006,7 @@ fn act(game: &Game<'_>, control: Control) {
     });
     match control {
         Control::Explored => state(|s| {
+            terrain::remember(game, |k| k.seed = false);
             s.active = false;
             s.drag = None;
             s.search_focus = false;
@@ -1011,6 +1030,7 @@ fn act(game: &Game<'_>, control: Control) {
             state(|s| s.views[s.selected].zoom_at([64.0, 64.0], 128.0, factor))
         }
         Control::World(i) => state(|s| {
+            terrain::remember(game, |k| k.seed_world = Some(i));
             s.selected = i;
             s.preferences.dimension = i;
             if s.preferences

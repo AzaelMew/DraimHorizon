@@ -685,7 +685,7 @@ pub(super) fn open_map(game: &mut Game<'_>) {
     }
     open_menu(game);
     let source = map_snapshot(game);
-    crate::game::claim_borders_map_view::open(source, None, false);
+    crate::game::claim_borders_map_view::open(game, source, None, false);
 }
 
 pub(super) fn tick(game: &mut Game<'_>) {
@@ -2054,12 +2054,12 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::OpenMap => {
             let source = map_snapshot(game);
-            crate::game::claim_borders_map_view::open(source, None, true);
+            crate::game::claim_borders_map_view::open(game, source, None, true);
             Ok(Vec::new())
         }
         Action::FocusClaim { dimension, x, z } => {
             let source = map_snapshot(game);
-            crate::game::claim_borders_map_view::open(source, Some((dimension, x, z)), true);
+            crate::game::claim_borders_map_view::open(game, source, Some((dimension, x, z)), true);
             Ok(Vec::new())
         }
         Action::SetMap(preferences) => {
