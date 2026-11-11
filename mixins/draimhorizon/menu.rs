@@ -133,6 +133,10 @@ pub struct ViewModel {
     pub shulker_peek: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// Who may pat this player, and whether a pat shows a notification.
+    pub pat_policy: super::claim_borders_patting::Policy,
+    pub pat_notify: bool,
+    pub protect_glow_berries: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
     pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
@@ -267,6 +271,9 @@ pub enum SchematicEdit {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetPatPolicy(super::claim_borders_patting::Policy),
+    SetPatNotify(bool),
+    SetProtectGlowBerries(bool),
     SetHelper(Helper, bool),
     /// The auto-clicker's button: true for the right one.
     SetAutoClickButton(bool),
@@ -409,6 +416,11 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
+            Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
+            Self::SetProtectGlowBerries(on) => {
+                f.debug_tuple("SetProtectGlowBerries").field(on).finish()
+            }
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
             }
@@ -682,6 +694,11 @@ pub enum Control {
     AutoClickRate,
     /// Switches the contents preview in shulker box tooltips.
     ToggleShulkerPeek,
+    /// Cycles who may pat this player.
+    PatPolicy,
+    /// Switches the notification of a received pat.
+    PatNotify,
+    ProtectGlowBerries,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -793,8 +810,7 @@ pub enum Control {
     ChatSection(ChatSection),
     ExperimentalAllowed,
     ExperimentalSource,
-    ExperimentalNext,
-    ExperimentalOre,
+    ExperimentalOreToggle(u8),
     ChatAdjust(ChatOption, i8),
     ChatPlacement,
     ChatCompactMessages,
@@ -2320,8 +2336,6 @@ impl Menu {
         }
         let mut inner = match section {
             0 => {
-                let detailed = height >= 300.0;
-                let step = if detailed { 52.0 } else { 24.0 };
                 let rows = [
                     (
                         self.language
@@ -2362,7 +2376,52 @@ impl Menu {
                             "Show the items inside a shulker in its tooltip",
                         ),
                     ),
+                    (
+                        localized!(
+                            self.language,
+                            "Кто может гладить: {}",
+                            "Who can pat you: {}",
+                            model.pat_policy.label(self.language)
+                        ),
+                        Control::PatPolicy,
+                        model.pat_policy != super::claim_borders_patting::Policy::Off,
+                        self.language.text(
+                            "Анимация у игроков с DraimHorizon через relay",
+                            "Animation from DraimHorizon players over the relay",
+                        ),
+                    ),
+                    (
+                        localized!(
+                            self.language,
+                            "Уведомление о поглаживании: {}",
+                            "Pat notification: {}",
+                            self.on(model.pat_notify)
+                        ),
+                        Control::PatNotify,
+                        model.pat_notify,
+                        self.language.text(
+                            "Строка над хотбаром, когда вас погладили",
+                            "A line above the hotbar when someone pats you",
+                        ),
+                    ),
+                    (
+                        localized!(
+                            self.language,
+                            "Защита светящихся ягод: {}",
+                            "Protect glow berry vines: {}",
+                            self.on(model.protect_glow_berries)
+                        ),
+                        Control::ProtectGlowBerries,
+                        model.protect_glow_berries,
+                        self.language.text(
+                            "Не ломать пещерные лианы; приседайте для обхода",
+                            "Prevent breaking cave vines; sneak to bypass. Harvesting is unchanged",
+                        ),
+                    ),
                 ];
+                // Hints show under the switches when every row and its hint fit.
+                let detailed = height >= 54.0 + rows.len() as f32 * 52.0;
+                let step = if detailed { 52.0 } else { 24.0 };
                 let mut v = Vec::new();
                 for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
                     let y = 54.0 + index as f32 * step;
@@ -3980,7 +4039,6 @@ impl Menu {
             return self.helpers_layout(model, x, w, height, out);
         }
         let p = model.experimental;
-        let selected = usize::from(p.selected);
         for (index, (label, control, on)) in [
             (
                 localized!(
@@ -4011,33 +4069,6 @@ impl Menu {
                 Control::ExperimentalSource,
                 p.prediction,
             ),
-            (
-                localized!(
-                    self.language,
-                    "Тип руды: {} →",
-                    "Ore type: {} →",
-                    self.language.text(
-                        experimental::ORES[selected].label,
-                        experimental::ORES[selected].label_en
-                    )
-                ),
-                Control::ExperimentalNext,
-                false,
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Показывать этот тип: {}",
-                    "Show this type: {}",
-                    if p.includes(selected) {
-                        self.language.text("да", "yes")
-                    } else {
-                        self.language.text("нет", "no")
-                    }
-                ),
-                Control::ExperimentalOre,
-                p.includes(selected),
-            ),
         ]
         .into_iter()
         .enumerate()
@@ -4049,6 +4080,21 @@ impl Menu {
                 label,
                 Some(control),
                 on,
+            ));
+        }
+        // One icon tile per ore, toggled like the seed map filters; the name is the tooltip.
+        let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+        let top = 82.0 + 2.0 * step;
+        let count = experimental::ORES.len();
+        let tile = ((w + 2.0) / count as f32 - 2.0)
+            .min(height - 52.0 - top)
+            .clamp(16.0, 26.0);
+        for (kind, ore) in experimental::ORES.iter().enumerate() {
+            out.push(widget(
+                [x + kind as f32 * (tile + 2.0), top, tile, tile],
+                self.language.text(ore.label, ore.label_en),
+                Some(Control::ExperimentalOreToggle(kind as u8)),
+                p.includes(kind),
             ));
         }
 
@@ -4761,6 +4807,11 @@ impl Menu {
                 super::claim_borders_autoclick::next_rate(model.click_rate),
             )),
             Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
+            Control::PatPolicy => Some(Action::SetPatPolicy(model.pat_policy.next())),
+            Control::PatNotify => Some(Action::SetPatNotify(!model.pat_notify)),
+            Control::ProtectGlowBerries => {
+                Some(Action::SetProtectGlowBerries(!model.protect_glow_berries))
+            }
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -5313,16 +5364,16 @@ impl Menu {
 
             Control::ExperimentalAllowed
             | Control::ExperimentalSource
-            | Control::ExperimentalNext
-            | Control::ExperimentalOre => {
+            | Control::ExperimentalOreToggle(_) => {
                 let mut p = model.experimental;
                 match control {
                     Control::ExperimentalAllowed => p.allowed = !p.allowed,
                     Control::ExperimentalSource => p.prediction = !p.prediction,
-                    Control::ExperimentalNext => {
-                        p.selected = (p.selected + 1) % experimental::ORES.len() as u8
+                    Control::ExperimentalOreToggle(kind)
+                        if usize::from(kind) < experimental::ORES.len() =>
+                    {
+                        p.ores ^= 1 << kind;
                     }
-                    Control::ExperimentalOre => p.ores ^= 1 << p.selected,
                     _ => {}
                 }
                 Some(Action::SetExperimental(p.normalized()))
@@ -6387,6 +6438,9 @@ mod tests {
                                     Control::Appearance,
                                     Control::ToggleReconnect,
                                     Control::ToggleShulkerPeek,
+                                    Control::PatPolicy,
+                                    Control::PatNotify,
+                                    Control::ProtectGlowBerries,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;
@@ -6419,6 +6473,21 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn glow_berry_protection_switches_both_ways_and_defaults_off() {
+        let mut menu = Menu::default();
+        let mut model = ViewModel::default();
+        assert!(!model.protect_glow_berries);
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::ProtectGlowBerries),
+            Some(Action::SetProtectGlowBerries(true))
+        ));
+        model.protect_glow_berries = true;
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::ProtectGlowBerries),
+            Some(Action::SetProtectGlowBerries(false))
+        ));
     }
     #[test]
     fn toggle_captions_have_matching_russian_and_english_controls() {
@@ -6978,20 +7047,52 @@ mod tests {
                         Some(
                             Control::ExperimentalAllowed
                                 | Control::ExperimentalSource
-                                | Control::ExperimentalNext
-                                | Control::ExperimentalOre
+                                | Control::ExperimentalOreToggle(_)
                         )
                     )
                 })
                 .collect();
-            assert_eq!(controls.len(), 4);
-            for pair in controls.windows(2) {
-                assert!(pair[0].rect[1] + pair[0].rect[3] <= pair[1].rect[1]);
+            assert_eq!(controls.len(), 2 + experimental::ORES.len());
+            for (i, a) in controls.iter().enumerate() {
+                for b in &controls[i + 1..] {
+                    assert!(
+                        a.rect[1] + a.rect[3] <= b.rect[1] || a.rect[0] + a.rect[2] <= b.rect[0],
+                        "{:?} overlaps {:?}",
+                        a.rect,
+                        b.rect
+                    );
+                }
             }
             let hint = rows.iter().find(|r| r.text.starts_with("O —")).unwrap();
-            let last = controls.last().unwrap();
-            assert!(last.rect[1] + last.rect[3] <= hint.rect[1]);
+            for tile in controls.iter().skip(2) {
+                assert!(tile.rect[2] >= 16.0 && tile.rect[0] + tile.rect[2] <= 360.0);
+                assert!(tile.rect[1] + tile.rect[3] <= hint.rect[1]);
+            }
         }
+    }
+
+    #[test]
+    fn ore_tiles_toggle_their_own_bit_and_ignore_unknown_ores() {
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            ..Menu::default()
+        };
+        let model = ViewModel::default();
+        let before = model.experimental.ores;
+        for kind in 0..experimental::ORES.len() as u8 {
+            let Some(Action::SetExperimental(p)) =
+                menu.activate(&model, 360.0, Control::ExperimentalOreToggle(kind))
+            else {
+                panic!("tile {kind} produced no preference change");
+            };
+            assert_eq!(p.ores, before ^ (1 << kind));
+        }
+        let Some(Action::SetExperimental(p)) =
+            menu.activate(&model, 360.0, Control::ExperimentalOreToggle(200))
+        else {
+            panic!("unknown tile should leave preferences as they are");
+        };
+        assert_eq!(p.ores, before);
     }
 
     #[test]

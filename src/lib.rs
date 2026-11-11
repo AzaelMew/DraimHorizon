@@ -1,9 +1,13 @@
+#[path = "../mixins/draimhorizon/block_protection.rs"]
+pub mod block_protection;
 #[path = "../mixins/draimhorizon/runtime.rs"]
 pub mod claims;
 #[path = "../mixins/draimhorizon/overlay.rs"]
 pub mod overlay;
 #[path = "../mixins/draimhorizon/party.rs"]
 pub mod party;
+#[path = "../mixins/draimhorizon/pat_arms.rs"]
+pub mod pat_arms;
 #[path = "../mixins/draimhorizon/waypoints.rs"]
 pub mod waypoints;
 pub use waypoints as claim_borders_waypoints;
@@ -135,3 +139,7 @@ pub use chat_archive as claim_borders_chat_archive;
 
 #[path = "../mixins/draimhorizon/reconnect.rs"]
 pub mod reconnect;
+
+#[path = "../mixins/draimhorizon/patting.rs"]
+pub mod patting;
+pub use patting as claim_borders_patting;

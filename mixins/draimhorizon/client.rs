@@ -56,6 +56,16 @@ pub(super) fn native_mod(language: Language) -> NativeMod {
                 "key.keyboard.j".into(),
             ],
             [
+                "pat".into(),
+                language
+                    .text(
+                        "DraimHorizons: погладить игрока",
+                        "DraimHorizons: pat player",
+                    )
+                    .into(),
+                crate::game::claim_borders_patting::DEFAULT_KEY.into(),
+            ],
+            [
                 "autoclick".into(),
                 language
                     .text("DraimHorizons: авто-клик", "DraimHorizons: auto click")
@@ -1533,6 +1543,12 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 crate::game::claim_borders_mining::custom()
             },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            pat_policy: crate::game::claim_borders_pat_view::policy(game),
+            pat_notify: crate::game::claim_borders_pat_view::notify(game),
+            protect_glow_berries: game
+                .native_setting(claims::SETTINGS_ID, "protect_glow_berries")
+                .as_deref()
+                == Some("true"),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")
                 .as_deref()
@@ -1732,6 +1748,26 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 helper.key(),
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetPatPolicy(policy) => {
+            game.native_set_setting(claims::SETTINGS_ID, "pat_policy", policy.key());
+            Ok(Vec::new())
+        }
+        Action::SetPatNotify(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "pat_notify",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetProtectGlowBerries(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "protect_glow_berries",
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())
@@ -2371,6 +2407,16 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
         }
         return None;
     }
+    if body.starts_with(crate::game::claim_borders_patting::PREFIX) {
+        let trust = pat_trust(&peer, tab);
+        if let Some((_, name)) = tab
+            .iter()
+            .find(|(uuid, name)| *uuid == peer.uuid && name.eq_ignore_ascii_case(&peer.name))
+        {
+            crate::game::claim_borders_pat_view::receive(peer.uuid, name.clone(), body, trust);
+        }
+        return None;
+    }
     let kind = frame_kind(&body)?;
     state(|c| {
         let time = now(c);
@@ -2561,6 +2607,43 @@ pub(super) fn claim_peers(game: &mut Game<'_>) -> Vec<websocket::Peer> {
         }
     })
 }
+/// How far a relay sender of a pat event can be trusted: pinned friend, stranger or neither.
+fn pat_trust(
+    peer: &websocket::Peer,
+    tab: &[(u128, String)],
+) -> crate::game::claim_borders_patting::Trust {
+    let listed = tab
+        .iter()
+        .any(|(uuid, name)| *uuid == peer.uuid && name.eq_ignore_ascii_case(&peer.name));
+    state(|c| {
+        let unique = c.peers.iter().filter(|p| p.uuid == peer.uuid).count() == 1;
+        let pinned = c.pins.as_ref().and_then(|p| p.get(&c.scope, peer.uuid));
+        let friend = c
+            .party
+            .as_ref()
+            .is_some_and(|p| p.friends().iter().any(|f| f.uuid == peer.uuid));
+        crate::game::claim_borders_patting::trust(friend, pinned, &peer.code, listed, unique)
+    })
+}
+
+/// The relay identity a pat for `uuid` goes to, when that player runs a compatible client.
+pub(super) fn pat_destination(game: &mut Game<'_>, uuid: u128) -> Option<String> {
+    let tab = cached_online(game);
+    let peer = state(|c| {
+        if !c.connected || uuid == c.own {
+            return None;
+        }
+        c.peers.iter().find(|p| p.uuid == uuid).cloned()
+    })?;
+    (pat_trust(&peer, &tab) != crate::game::claim_borders_patting::Trust::Untrusted)
+        .then_some(peer.code)
+}
+
+/// The server's player list (UUID, name), cached for a second.
+pub(super) fn online_players(game: &mut Game<'_>) -> Vec<(u128, String)> {
+    cached_online(game)
+}
+
 pub(super) fn claim_identity() -> String {
     state(|c| c.own_code.clone())
 }

@@ -1,5 +1,17 @@
 # История версий
 
+## 0.39.12
+
+- Optional **J → Settings → General → Protect glow berry vines** prevents initial and held punches from breaking either cave-vine section, with or without berries. Sneak to deliberately break them; right-click harvesting and entity attacks are unchanged. Off by default; saved in the legacy settings namespace. English and Russian controls are included.
+
+- Patting fixes: releasing the Pat key in chat or while unfocused no longer consumes the next press. Local and remote third-person poses use model join identities as well as server entity ids, so a valid remote player with entity id 0 animates independently of the local model.
+- Experiments → Ores: ten directly toggled ore icon tiles replace the ore type selector and visibility checkbox; saved ore choices are unchanged.
+- Seed map: structure and biome filter labels are centred and wrap at spaces onto up to three rows; the bottom hint wraps in narrow windows. Regression tests cover label wrapping and English/Russian chip sizing.
+- Patting: aim at another player within 3 blocks (its hit box, no block in between) and press the new **Pat** key (**K** by default, rebindable under Options → Mods → Settings) for two gentle pats over 0.8 seconds, with a 1-second cooldown. The hand comes down on top of the other player's head. One press is one gesture; holding the key repeats nothing. The first-person hand (empty or holding an item, mirrored for a left main hand) and the player's own third-person model raise the arm; nothing is attacked, used, mined or placed and no chat is sent. It does nothing while a screen, chat or dialog is open, while dead or spectating, or while an item is in use. Aiming at no player in reach shows "No player in reach" above the hotbar.
+- The pat reaches the other player only over the existing end-to-end encrypted relay, as a new `[DHT1]` message (schema 1: target UUID, event id, send time, dimension). Older clients ignore it, so friendship, telemetry and claim sharing keep working with them. The sender is the authenticated relay identity matched to the server's player list, never a name in the message; a pat for someone else, from another dimension, more than 30 seconds off the recipient's clock, a repeated event id, a patter not loaded within 6 blocks, or more than one pat per sender in 0.7 s (eight from everyone in 4 s) is dropped. Accepted pats raise the patter's arm on the recipient's screen (at most eight at once) and show "*name* patted you" above the hotbar. Pats in flight are forgotten on a change of server, account or dimension.
+- **J → Settings → General**: **Who can pat you** — friends only (default; the friend's pinned relay identity must match), everyone (still needs a relay identity that matches the player list and is the only one for that UUID) or nobody — and **Pat notification** (on by default). Both are saved in the mod's settings, in Russian and English.
+- Tests: key edges, cooldown, two-pat timing, bounded poses, expiry, independent remote arms, consent per policy, spoofed or ambiguous identities, wrong target, self, replay, clock window, burst limits, dimension and distance, malformed and newer-schema bodies, bounded inbox and stale-world events.
+
 ## 0.39.11
 
 - Farm plots: the player marks a field by hand and it is kept. Stand on one corner and type `/farm pos1`, on the opposite corner (higher or lower is fine) `/farm pos2`; the corners and the box between them are drawn in yellow. `/farm save [name]` keeps it as a plot of this world (server and dimension), `/farm clear` drops the marks, `/farm list` lists the plots in chat. Only these subcommands are the mod's; any other `/farm` command still goes to the server.
@@ -7,6 +19,7 @@
 - The farm works every enabled plot of the world it is in, wherever the player stands when it starts, so after a reconnect it finds its field again (it used to take the player's position at that moment as the middle of the field, and worked the wrong place or nothing). Each plot is shared between the selected crops like the square field, every level between the two corners counts (plus a block above and below), turning plots on or off applies while the farm runs, walking back goes to a place to stand in the middle of the nearest plot, and drops and the composter are looked for by the plots. Without enabled plots the farm works the square around the start as before. A plot has a side of at most 64 and at most 12 levels; the enabled plots of a world together at most 16 384 cells (the farm reads them twice a second on the game thread).
 - The farm has no harvest limit any more: the Limit control is gone and the farm works until it is stopped.
 - Schematic previews are kept per world across restarts again: they were keyed by a value that counted up at every resource reload and started again with the game. Previews kept the old way are read under the new key.
+
 
 ## 0.39.10
 
