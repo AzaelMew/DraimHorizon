@@ -1,5 +1,11 @@
 # История версий
 
+## 0.39.11
+
+- Experiments → Ores: the ore type picker is now a row of ten icon tiles, one per ore (diamond, ancient debris, emerald, gold ingot, iron ingot, copper ingot, redstone dust, lapis lazuli, coal, quartz), toggled directly like the seed map filters; hover for the name. This replaces the "Ore type →" and "Show this type" pair. Saved ore choices are unchanged.
+- Seed map: structure and biome filter labels are centred under their icons and broken at spaces onto up to three rows instead of being cut off (chips are 51 px tall). The bottom info and hint lines are centred, and the hint wraps to two rows in narrow windows.
+- Tests: label wrapping, and every structure label in English and Russian fitting its chip at 1080p and 1440p (GUI scales 2 to 4) and at the smallest windows.
+
 ## 0.39.10
 
 - Route planning is several times faster. Each search keeps the cells it reads in a box around the start, so a cell is read from the world once instead of by every move that passes it (the planner tried 98 moves from each cell, each looking at a dozen cells), and its tables use a fast hasher for block positions. On generated hilly terrain with trees, ponds and walls (`cargo run --release --example route_bench`): a 25-block walk 2.2 ms to 0.5 ms, an 80-block one 11 ms to 5.5 ms, a 140-block one 65 ms to 14 ms, and a goal that cannot be reached (which uses the whole search) 950 ms to about 160-250 ms; the whole set 1089 ms to under 200 ms, with 20 to 80 times fewer reads. On equal estimates the deeper cell is tried first.

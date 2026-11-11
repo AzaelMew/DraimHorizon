@@ -493,18 +493,71 @@ pub fn filter_rect(size: [f32; 2]) -> [f32; 4] {
         [size[0] - w - 8.0, top, w, (size[1] - top - 40.0).max(40.0)]
     }
 }
+/// Filter chip height: an icon and up to [`CHIP_LINES`] centred label rows.
+pub const CHIP_HEIGHT: f32 = 51.0;
+pub const CHIP_PITCH: f32 = CHIP_HEIGHT + 2.0;
+pub const CHIP_LINES: usize = 3;
+pub const LINE_HEIGHT: f32 = 9.0;
 pub fn filter_rows(size: [f32; 2]) -> usize {
-    ((filter_rect(size)[3] - 118.0) / 46.0).max(1.0) as usize
+    ((filter_rect(size)[3] - 118.0) / CHIP_PITCH).max(1.0) as usize
 }
 pub fn filter_chip_rect(size: [f32; 2], n: usize) -> [f32; 4] {
     let r = filter_rect(size);
     let w = (r[2] - 20.0) / 4.0;
     [
         r[0] + 8.0 + (n % 4) as f32 * (w + 1.0),
-        r[1] + 86.0 + (n / 4) as f32 * 46.0,
+        r[1] + 86.0 + (n / 4) as f32 * CHIP_PITCH,
         w,
-        43.0,
+        CHIP_HEIGHT,
     ]
+}
+/// Breaks `text` into at most `max_lines` rows no wider than `width`, only at spaces.
+/// A word wider than a row, or text that does not fit in the last row, ends in "…".
+pub fn wrap_words(
+    text: &str,
+    width: f32,
+    max_lines: usize,
+    measure: &dyn Fn(&str) -> f32,
+) -> Vec<String> {
+    let clip = |line: &str| {
+        if measure(line) <= width {
+            return line.to_owned();
+        }
+        let mut out = String::new();
+        for c in line.chars() {
+            out.push(c);
+            if measure(&format!("{out}…")) > width {
+                out.pop();
+                break;
+            }
+        }
+        out.push('…');
+        out
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let mut rest = text.split_whitespace().peekable();
+    while let Some(word) = rest.next() {
+        let mut line = word.to_owned();
+        while let Some(next) = rest.peek() {
+            let joined = format!("{line} {next}");
+            if measure(&joined) > width {
+                break;
+            }
+            line = joined;
+            rest.next();
+        }
+        if lines.len() + 1 == max_lines {
+            // Last row: whatever remains is shown clipped.
+            for next in rest.by_ref() {
+                line.push(' ');
+                line.push_str(next);
+            }
+            lines.push(clip(&line));
+            return lines;
+        }
+        lines.push(clip(&line));
+    }
+    lines
 }
 pub fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[1] >= r[1] && p[0] < r[0] + r[2] && p[1] < r[1] + r[3]
@@ -895,6 +948,60 @@ mod tests {
                     let r = filter_chip_rect(size, n);
                     assert!(r[0] >= popup[0] && r[0] + r[2] <= popup[0] + popup[2]);
                     assert!(r[1] + r[3] <= popup[1] + popup[3] - 28.0);
+                }
+            }
+        }
+    }
+    /// Minecraft's default font: 5 px glyphs plus 1 px spacing, with the narrow exceptions.
+    fn pixels(text: &str) -> f32 {
+        text.chars()
+            .map(|c| match c {
+                'i' | '!' | '.' | ',' | ':' | ';' | '|' | '\'' | '·' | '…' => 2.0,
+                'l' => 3.0,
+                't' | 'I' | '[' | ']' | ' ' => 4.0,
+                'f' | 'k' | '<' | '>' | '(' | ')' | '{' | '}' | '*' | '"' | '×' => 5.0,
+                _ => 6.0,
+            })
+            .sum()
+    }
+    #[test]
+    fn wrapping_breaks_at_spaces_and_keeps_every_word() {
+        let lines = wrap_words("Pillager Outpost", 70.0, 3, &pixels);
+        assert_eq!(lines, ["Pillager", "Outpost"]);
+        let lines = wrap_words("End City · ship with elytra", 64.0, 3, &pixels);
+        assert!(lines.len() <= 3 && lines.iter().all(|l| pixels(l) <= 64.0));
+        assert_eq!(lines.join(" "), "End City · ship with elytra");
+        assert_eq!(wrap_words("Nether", 64.0, 3, &pixels), ["Nether"]);
+        assert!(wrap_words("", 64.0, 3, &pixels).is_empty());
+        // A word wider than the row and a text longer than the rows are marked, not overdrawn.
+        let lines = wrap_words("Supercalifragilistic word", 40.0, 3, &pixels);
+        assert!(lines[0].ends_with('…') && pixels(&lines[0]) <= 40.0);
+        let lines = wrap_words("aaa bbb ccc ddd eee", 20.0, 2, &pixels);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].ends_with('…') && lines.iter().all(|l| pixels(l) <= 20.0));
+    }
+    #[test]
+    fn every_structure_label_fits_its_chip_in_both_languages() {
+        // 1080p and 1440p at GUI scales 2 to 4, plus the smallest windows.
+        for size in [
+            [960.0, 540.0],
+            [1280.0, 720.0],
+            [640.0, 360.0],
+            [853.0, 480.0],
+            [480.0, 270.0],
+            [426.0, 240.0],
+            [320.0, 240.0],
+        ] {
+            let width = filter_chip_rect(size, 0)[2] - 4.0;
+            for language in [Language::Russian, Language::English] {
+                for def in STRUCTURES.iter() {
+                    let label = def.label_in(language);
+                    let lines = wrap_words(label, width, CHIP_LINES, &pixels);
+                    assert!(
+                        lines.iter().all(|l| !l.contains('…') && pixels(l) <= width),
+                        "{label:?} does not fit {width}px at {size:?}: {lines:?}"
+                    );
+                    assert_eq!(lines.join(" "), label);
                 }
             }
         }
