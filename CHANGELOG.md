@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.7
+
+- README rewritten to cover every feature, grouped into World, Chat and people, Items and trading, Baritone, and Helpers and interface. The target Nightly is now given as `fdc87ae` (it said `2ebf00a`).
+- New plain illustration cards: the shared route planner (slabs, doors, ladders, gap jumps, drops, elytra, swimming), mining (trees, pillars, under water), the farm (crop quadrants, harvest/seed/bone meal chests, composter), tunnel, bridge and drain, schematics (hologram and preview editor keys) and the helpers. The trading card now shows the auction catalogue and the purchase confirmation.
+
 ## 0.39.6
 
 - Flight routing on elytra: a glide is flown toward the landing (the first point of the route below, or the goal while the route is planned again), turning aside from walls and blocks in the way (six blocks of open air ahead are looked for at the body's height and the block below, in turns up to all the way round), circling over the landing while still high to lose height, holding a descent that ends at the landing on the way, and levelling out low over it so that it touches down softly. The pitch follows the look quickly while gliding. Gliding never pauses a task any more (it did as soon as the route had no point at hand, and after landing far off the line).
