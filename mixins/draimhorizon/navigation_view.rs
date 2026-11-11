@@ -498,6 +498,18 @@ pub(super) fn scope(game: &Game<'_>) -> Option<String> {
         )
     })
 }
+/// The world the player is in, for what is kept across sessions (farm plots, schematic
+/// previews): the server (or the save in single player) and the dimension. Unlike `scope`, no
+/// account and no resource generation (which counts up at every resource reload and starts again
+/// with the game), so it is the same after a reconnect and after a restart.
+pub(super) fn world_key(game: &Game<'_>) -> Option<String> {
+    let p = game.native_player()?;
+    Some(if let Some(remote) = game.remote.as_ref() {
+        format!("{}#{}", remote.session.address, p.dimension)
+    } else {
+        format!("{}#{}", game.world_root.to_string_lossy(), p.dimension)
+    })
+}
 fn allowed(game: &Game<'_>) -> bool {
     game.native_on(claims::ID)
         && game

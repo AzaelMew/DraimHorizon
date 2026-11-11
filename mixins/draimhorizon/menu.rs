@@ -149,6 +149,8 @@ pub struct ViewModel {
     pub mining_custom: Vec<String>,
     /// The schematic previews placed in this world: (index, label, shown, selected).
     pub schematic_places: Vec<(usize, String, bool, bool)>,
+    /// The marked farm plots of this world: index, label (name and size), farmed, shown.
+    pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -291,6 +293,12 @@ pub enum Action {
     SchematicPlaceShow(usize),
     /// Forgets a placed schematic preview.
     SchematicPlaceRemove(usize),
+    /// Turns the farm on a marked plot on or off.
+    FarmPlotFarm(usize),
+    /// Shows or hides a marked plot.
+    FarmPlotShow(usize),
+    /// Forgets a marked plot.
+    FarmPlotRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
     LoadSchematic {
@@ -397,6 +405,9 @@ impl std::fmt::Debug for Action {
             Self::SchematicPlaceRemove(i) => {
                 f.debug_tuple("SchematicPlaceRemove").field(i).finish()
             }
+            Self::FarmPlotFarm(i) => f.debug_tuple("FarmPlotFarm").field(i).finish(),
+            Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
+            Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -678,8 +689,11 @@ pub enum Control {
     /// An icon tile that picks the crop to farm.
     FarmCropPick(super::claim_borders_farming::Crop),
     FarmRadius,
-    FarmLimit,
     FarmReplant,
+    /// Turns the farm on a marked plot on or off, shows or hides it, forgets it.
+    FarmPlotFarm(usize),
+    FarmPlotShow(usize),
+    FarmPlotRemove(usize),
     DrainRadius,
     SchematicFile,
     SchematicRefresh,
@@ -702,6 +716,8 @@ pub enum Control {
     SchematicPreviewHere,
     /// Pages through the schematics folder on the tab.
     SchematicCatalogPage(i8),
+    /// Pages through the marked farm plots.
+    FarmPlotPage(i8),
     /// A placed schematic preview: select it, show or hide it, forget it.
     SchematicPlace(usize),
     SchematicPlaceShow(usize),
@@ -835,7 +851,6 @@ pub struct Menu {
     /// Selected crops, one bit each (`Crop::bit`).
     pub farm_crops: u8,
     pub farm_radius: u8,
-    pub farm_limit: u16,
     pub farm_replant: bool,
     pub farm_bonemeal: bool,
     pub farm_autosell: bool,
@@ -867,6 +882,7 @@ pub struct Menu {
     pub schematic_choices_page: usize,
     /// The page of the schematics folder shown on the tab.
     pub schematic_catalog_page: usize,
+    pub farm_plot_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     pub helper_page: usize,
@@ -906,7 +922,6 @@ impl Default for Menu {
         Self {
             farm_crops: super::claim_borders_farming::Crop::Wheat.bit(),
             farm_radius: 6,
-            farm_limit: 16,
             farm_replant: true,
             farm_bonemeal: true,
             farm_autosell: false,
@@ -927,6 +942,7 @@ impl Default for Menu {
             schematic_choices: false,
             schematic_choices_page: 0,
             schematic_catalog_page: 0,
+            farm_plot_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
             mining_targets: 1,
@@ -1069,7 +1085,6 @@ impl Menu {
     pub fn keep_baritone(&mut self, from: &Menu) {
         self.farm_crops = from.farm_crops;
         self.farm_radius = from.farm_radius;
-        self.farm_limit = from.farm_limit;
         self.farm_replant = from.farm_replant;
         self.farm_bonemeal = from.farm_bonemeal;
         self.farm_autosell = from.farm_autosell;
@@ -1197,7 +1212,8 @@ impl Menu {
                 goal: Goal::Farm(super::claim_borders_farming::Config {
                     crops: self.farm_crops,
                     radius: self.farm_radius,
-                    limit: self.farm_limit,
+                    // No limit: the farm works until it is stopped.
+                    limit: 0,
                     replant: self.farm_replant,
                     bonemeal: self.farm_bonemeal,
                     autosell: self.farm_autosell,
@@ -1760,6 +1776,105 @@ impl Menu {
                 [right + half - button, py, button, row - 2.0],
                 self.language.text("Удал.", "Del."),
                 Some(Control::SchematicPlaceRemove(*index)),
+                false,
+            ));
+        }
+    }
+    /// The Farm tab's marked plots of this world: how to mark one, then a line each with
+    /// buttons to farm it or not, show or hide it, forget it.
+    fn farm_plot_list(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        top: f32,
+        limit: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        let row = 15.0;
+        if top + 12.0 > limit {
+            return;
+        }
+        out.push(widget(
+            [x, top, w, 11.0],
+            if model.farm_plots.is_empty() {
+                self.language.text(
+                    "Участков нет: /farm pos1, /farm pos2, /farm save (без них — радиус вокруг)",
+                    "No plots: /farm pos1, /farm pos2, /farm save (without any, the radius around)",
+                )
+            } else {
+                self.language.text(
+                    "Участки (/farm pos1, /farm pos2, /farm save):",
+                    "Plots (/farm pos1, /farm pos2, /farm save):",
+                )
+            },
+            None,
+            false,
+        ));
+        let y = top + 13.0;
+        let rows = ((limit - y) / row).floor().max(0.0) as usize;
+        if rows == 0 {
+            return;
+        }
+        // One page of plots, the pager on the last line when there are more.
+        let pager = model.farm_plots.len() > rows && rows >= 2;
+        let per_page = if pager { rows - 1 } else { rows };
+        let pages = model.farm_plots.len().div_ceil(per_page).max(1);
+        let page = self.farm_plot_page.min(pages - 1);
+        if pager {
+            let py = y + per_page as f32 * row;
+            out.push(widget(
+                [x, py, w / 2.0 - 2.0, row - 2.0],
+                format!("← {}/{}", page + 1, pages),
+                Some(Control::FarmPlotPage(-1)),
+                false,
+            ));
+            out.push(widget(
+                [x + w / 2.0 + 2.0, py, w / 2.0 - 2.0, row - 2.0],
+                format!("{}/{} →", page + 1, pages),
+                Some(Control::FarmPlotPage(1)),
+                false,
+            ));
+        }
+        let button = 52.0_f32.min(w * 0.16);
+        for (i, (index, label, farmed, shown)) in model
+            .farm_plots
+            .iter()
+            .skip(page * per_page)
+            .take(per_page)
+            .enumerate()
+        {
+            let py = y + i as f32 * row;
+            out.push(widget(
+                [x, py, w - 3.0 * (button + 3.0), row - 2.0],
+                label.clone(),
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x + w - 3.0 * button - 6.0, py, button, row - 2.0],
+                if *farmed {
+                    self.language.text("Ферма: вкл", "Farm: on")
+                } else {
+                    self.language.text("Ферма: выкл", "Farm: off")
+                },
+                Some(Control::FarmPlotFarm(*index)),
+                *farmed,
+            ));
+            out.push(widget(
+                [x + w - 2.0 * button - 3.0, py, button, row - 2.0],
+                if *shown {
+                    self.language.text("Скрыть", "Hide")
+                } else {
+                    self.language.text("Показ.", "Show")
+                },
+                Some(Control::FarmPlotShow(*index)),
+                *shown,
+            ));
+            out.push(widget(
+                [x + w - button, py, button, row - 2.0],
+                self.language.text("Удал.", "Del."),
+                Some(Control::FarmPlotRemove(*index)),
                 false,
             ));
         }
@@ -3299,15 +3414,6 @@ impl Menu {
                         (
                             localized!(
                                 self.language,
-                                "Лимит: {} (0 = ∞)",
-                                "Limit: {} (0 = ∞)",
-                                self.farm_limit
-                            ),
-                            Control::FarmLimit,
-                        ),
-                        (
-                            localized!(
-                                self.language,
                                 "Пересадка: {}",
                                 "Replant: {}",
                                 if self.farm_replant {
@@ -3499,9 +3605,18 @@ impl Menu {
                     ];
                     let top = 100.0 + below + count.div_ceil(2) as f32 * step + 2.0;
                     let half = (w - 4.0) / 2.0;
+                    let mut next = top;
+                    // The plots come first: room for the header and up to three of them (with
+                    // the pager when there are more) is kept before the coordinate lines.
+                    let plots = model.farm_plots.len();
+                    let keep = if plots == 0 {
+                        0.0
+                    } else {
+                        15.0 + 15.0 * plots.min(3) as f32 + if plots > 3 { 15.0 } else { 0.0 }
+                    };
                     for (i, entry) in entries.into_iter().enumerate() {
                         let y = top + (i / 2) as f32 * 12.0;
-                        if y + 11.0 > height - 50.0 {
+                        if y + 11.0 > height - 50.0 - keep {
                             break;
                         }
                         out.push(widget(
@@ -3510,7 +3625,9 @@ impl Menu {
                             None,
                             false,
                         ));
+                        next = y + 12.0;
                     }
+                    self.farm_plot_list(model, x, w, next + 2.0, height - 50.0, &mut out);
                 }
             } else if matches!(
                 self.baritone_mode,
@@ -4612,15 +4729,6 @@ impl Menu {
                 };
                 None
             }
-            Control::FarmLimit => {
-                self.farm_limit = match self.farm_limit {
-                    0 => 16,
-                    16 => 32,
-                    32 => 64,
-                    _ => 0,
-                };
-                None
-            }
             Control::FarmReplant => {
                 self.farm_replant = !self.farm_replant;
                 None
@@ -4741,6 +4849,11 @@ impl Menu {
                     rotation: self.schematic_rotation,
                 })
             }
+            Control::FarmPlotPage(direction) => {
+                self.farm_plot_page =
+                    (self.farm_plot_page as isize + direction as isize).max(0) as usize;
+                None
+            }
             Control::SchematicCatalogPage(direction) => {
                 self.schematic_catalog_page =
                     (self.schematic_catalog_page as isize + direction as isize).max(0) as usize;
@@ -4749,6 +4862,9 @@ impl Menu {
             Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),
             Control::SchematicPlaceShow(i) => Some(Action::SchematicPlaceShow(i)),
             Control::SchematicPlaceRemove(i) => Some(Action::SchematicPlaceRemove(i)),
+            Control::FarmPlotFarm(i) => Some(Action::FarmPlotFarm(i)),
+            Control::FarmPlotShow(i) => Some(Action::FarmPlotShow(i)),
+            Control::FarmPlotRemove(i) => Some(Action::FarmPlotRemove(i)),
             Control::MiningCustom => {
                 // Picking a block selects the target too.
                 self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;
@@ -8239,7 +8355,9 @@ mod tests {
                                     | Control::FarmAutoSell
                                     | Control::FarmLevels
                                     | Control::FarmRadius
-                                    | Control::FarmLimit
+                                    | Control::FarmPlotFarm(_)
+                                    | Control::FarmPlotShow(_)
+                                    | Control::FarmPlotRemove(_)
                                     | Control::FarmReplant
                                     | Control::DrainRadius
                                     | Control::DrainPattern

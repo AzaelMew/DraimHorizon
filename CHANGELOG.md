@@ -1,5 +1,13 @@
 # История версий
 
+## 0.39.11
+
+- Farm plots: the player marks a field by hand and it is kept. Stand on one corner and type `/farm pos1`, on the opposite corner (higher or lower is fine) `/farm pos2`; the corners and the box between them are drawn in yellow. `/farm save [name]` keeps it as a plot of this world (server and dimension), `/farm clear` drops the marks, `/farm list` lists the plots in chat. Only these subcommands are the mod's; any other `/farm` command still goes to the server.
+- The Farm tab lists the plots of the world with **Farm: on/off**, **Show/Hide** and **Del.** (paged when they do not fit); shown plots are outlined in the world, green when farmed, grey when not.
+- The farm works every enabled plot of the world it is in, wherever the player stands when it starts, so after a reconnect it finds its field again (it used to take the player's position at that moment as the middle of the field, and worked the wrong place or nothing). Each plot is shared between the selected crops like the square field, every level between the two corners counts (plus a block above and below), turning plots on or off applies while the farm runs, walking back goes to a place to stand in the middle of the nearest plot, and drops and the composter are looked for by the plots. Without enabled plots the farm works the square around the start as before. A plot has a side of at most 64 and at most 12 levels; the enabled plots of a world together at most 16 384 cells (the farm reads them twice a second on the game thread).
+- The farm has no harvest limit any more: the Limit control is gone and the farm works until it is stopped.
+- Schematic previews are kept per world across restarts again: they were keyed by a value that counted up at every resource reload and started again with the game. Previews kept the old way are read under the new key.
+
 ## 0.39.10
 
 - Route planning is several times faster. Each search keeps the cells it reads in a box around the start, so a cell is read from the world once instead of by every move that passes it (the planner tried 98 moves from each cell, each looking at a dozen cells), and its tables use a fast hasher for block positions. On generated hilly terrain with trees, ponds and walls (`cargo run --release --example route_bench`): a 25-block walk 2.2 ms to 0.5 ms, an 80-block one 11 ms to 5.5 ms, a 140-block one 65 ms to 14 ms, and a goal that cannot be reached (which uses the whole search) 950 ms to about 160-250 ms; the whole set 1089 ms to under 200 ms, with 20 to 80 times fewer reads. On equal estimates the deeper cell is tried first.

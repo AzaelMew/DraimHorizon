@@ -57,6 +57,29 @@ pub fn decode(text: &str) -> Vec<Placement> {
         .take(MAX)
         .collect()
 }
+/// A world kept by an older version, `server#account#dimension#generation` (or
+/// `save#dimension#generation` in single player), as it is kept now: `server#dimension`
+/// (`save#dimension`). The generation counted up with every resource reload, so previews kept
+/// under it were not found again after a restart. A world already kept the new way is unchanged.
+pub fn stable_world(scope: &str) -> String {
+    let parts: Vec<&str> = scope.rsplitn(4, '#').collect();
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    match parts[..] {
+        // generation, dimension, account (32 hex digits), server
+        [generation, dimension, account, server]
+            if numeric(generation)
+                && account.len() == 32
+                && account.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            format!("{server}#{dimension}")
+        }
+        [generation, dimension, ..] if numeric(generation) && parts.len() >= 3 => {
+            let save = scope.rsplitn(3, '#').nth(2).unwrap_or_default();
+            format!("{save}#{dimension}")
+        }
+        _ => scope.to_owned(),
+    }
+}
 /// Where a block of the file (relative to its origin) stands for a preview, turned as the
 /// builder turns it (`Blueprint::transformed`).
 pub fn place(relative: Pos, origin: Pos, rotation: u8) -> Pos {
@@ -114,6 +137,26 @@ pub fn nudge(origin: Pos, yaw: f32, forward: i32, right: i32, up: i32) -> Pos {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn worlds_kept_by_older_versions_read_as_now() {
+        let account = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            stable_world(&format!(
+                "play.example:25565#{account}#minecraft:overworld#7"
+            )),
+            "play.example:25565#minecraft:overworld"
+        );
+        assert_eq!(
+            stable_world("/home/me/saves/My#World#minecraft:the_nether#3"),
+            "/home/me/saves/My#World#minecraft:the_nether"
+        );
+        for now in [
+            "play.example:25565#minecraft:overworld",
+            "/home/me/saves/World#minecraft:overworld",
+        ] {
+            assert_eq!(stable_world(now), now);
+        }
+    }
     #[test]
     fn unplace_finds_the_files_block_for_every_turn() {
         let origin = [100, 64, -20];

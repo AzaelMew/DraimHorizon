@@ -522,3 +522,127 @@ fn claims_next_reaches_every_claim_at_each_size() {
         }
     }
 }
+
+#[test]
+fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
+    for language in [Language::Russian, Language::English] {
+        let model = ViewModel {
+            language,
+            experiments_accepted: true,
+            navigation_status: "No task running · press the start key".into(),
+            farm_storage: [Some([120, 64, -350]), None, None],
+            farm_plots: (0..8)
+                .map(|i| {
+                    (
+                        i * 2,
+                        format!("Field {i} · 24×16 · 100 64 -300"),
+                        i % 2 == 0,
+                        i % 3 != 0,
+                    )
+                })
+                .collect(),
+            ..ViewModel::default()
+        };
+        for size in [
+            [240.0, 216.0],
+            [320.0, 240.0],
+            [400.0, 280.0],
+            [536.0, 260.0],
+            [640.0, 360.0],
+            [800.0, 500.0],
+            [1280.0, 720.0],
+        ] {
+            let mut menu = Menu::default();
+            menu.language = language;
+            menu.tab = Tab::Experimental;
+            menu.experimental_section = ExperimentalSection::Baritone;
+            menu.baritone_mode = BaritoneMode::Farm;
+            let widgets = menu.layout(&model, size[0], size[1]);
+            let plot = |c: Option<Control>| {
+                matches!(
+                    c,
+                    Some(
+                        Control::FarmPlotFarm(_)
+                            | Control::FarmPlotShow(_)
+                            | Control::FarmPlotRemove(_)
+                            | Control::FarmPlotPage(_)
+                    )
+                )
+            };
+            for (i, w) in widgets.iter().enumerate() {
+                if !plot(w.control) {
+                    continue;
+                }
+                let r = w.rect;
+                assert!(
+                    r[0] >= 0.0 && r[1] >= 0.0 && r[0] + r[2] <= size[0] && r[1] + r[3] <= size[1]
+                );
+                for (j, other) in widgets.iter().enumerate() {
+                    if i != j && !other.text.is_empty() {
+                        assert!(
+                            separate(r, other.rect),
+                            "{:?} {:?} overlaps {:?} {:?} at {size:?} {language:?}",
+                            w.control,
+                            w.text,
+                            other.control,
+                            other.text
+                        );
+                    }
+                }
+            }
+            // Every plot can be reached, paging when they do not fit, and its buttons act on
+            // it.
+            let mut seen = BTreeSet::new();
+            for _ in 0..8 {
+                let widgets = menu.layout(&model, size[0], size[1]);
+                seen.extend(widgets.iter().filter_map(|w| match w.control {
+                    Some(Control::FarmPlotFarm(i)) => Some(i),
+                    _ => None,
+                }));
+                if widgets
+                    .iter()
+                    .any(|w| w.control == Some(Control::FarmPlotPage(1)))
+                {
+                    click(&mut menu, &model, size, Control::FarmPlotPage(1));
+                } else {
+                    break;
+                }
+            }
+            // From a 640×360 screen (1280×720 at GUI scale 2) up, every plot is reachable.
+            if size[1] >= 360.0 {
+                assert_eq!(seen.len(), 8, "{size:?} {language:?}: {seen:?}");
+            }
+            if let Some(&index) = seen.iter().next() {
+                let mut menu = Menu::default();
+                menu.language = language;
+                menu.tab = Tab::Experimental;
+                menu.experimental_section = ExperimentalSection::Baritone;
+                menu.baritone_mode = BaritoneMode::Farm;
+                for (control, action) in [
+                    (Control::FarmPlotFarm(index), Action::FarmPlotFarm(index)),
+                    (Control::FarmPlotShow(index), Action::FarmPlotShow(index)),
+                    (
+                        Control::FarmPlotRemove(index),
+                        Action::FarmPlotRemove(index),
+                    ),
+                ] {
+                    assert_eq!(click(&mut menu, &model, size, control), Some(action));
+                }
+            }
+        }
+        // Without plots: how to mark one, and no limit control any more.
+        let empty = ViewModel {
+            language,
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu::default();
+        menu.language = language;
+        menu.tab = Tab::Experimental;
+        menu.experimental_section = ExperimentalSection::Baritone;
+        menu.baritone_mode = BaritoneMode::Farm;
+        let widgets = menu.layout(&empty, 800.0, 500.0);
+        assert!(widgets.iter().any(|w| w.text.contains("/farm pos1")));
+        assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
+    }
+}

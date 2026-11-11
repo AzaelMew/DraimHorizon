@@ -48,14 +48,19 @@ fn with_places<T>(game: &Game<'_>, f: impl FnOnce(&mut Places) -> T) -> T {
             .native_setting(claims::SETTINGS_ID, SETTING)
             .map(|s| places::decode(&s))
             .unwrap_or_default();
+        // Previews kept by an older version under a world key that changed every session.
+        for preview in &mut p.list {
+            preview.scope = places::stable_world(&preview.scope);
+        }
     }
     f(&mut p)
 }
 fn save(game: &Game<'_>, p: &Places) {
     game.native_set_setting(claims::SETTINGS_ID, SETTING, &places::encode(&p.list));
 }
+/// The world a preview belongs to: kept across reconnects and restarts.
 fn here(game: &Game<'_>) -> Option<String> {
-    walk::scope(game)
+    walk::world_key(game)
 }
 /// The selected preview of this world.
 pub(super) fn active(game: &Game<'_>) -> Option<places::Placement> {

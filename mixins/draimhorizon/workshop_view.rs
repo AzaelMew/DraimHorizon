@@ -1,10 +1,10 @@
 // Farm and schematic jobs share the normal movement, attack and placement drivers.
 use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_construction_view as placement,
-    claim_borders_draining as drain, claim_borders_farm_storage as store,
-    claim_borders_farming as farm, claim_borders_navigation as nav,
-    claim_borders_navigation_view as driver, claim_borders_schematic as schema,
-    claim_borders_schematic_files as files,
+    claim_borders_draining as drain, claim_borders_farm_plots as plots,
+    claim_borders_farm_storage as store, claim_borders_farming as farm,
+    claim_borders_navigation as nav, claim_borders_navigation_view as driver,
+    claim_borders_schematic as schema, claim_borders_schematic_files as files,
 };
 use horizon_client::gizmos::Gizmos;
 use std::{
@@ -32,7 +32,11 @@ fn reason(error: schema::PlaceError) -> &'static str {
 enum Task {
     Farm {
         config: farm::Config,
-        origin: nav::Pos,
+        /// The fields worked: the enabled plots the player marked in this world, or the square
+        /// around the start when there are none.
+        areas: Vec<plots::Bounds>,
+        /// The areas are the marked plots (looked up again as the player turns them on or off).
+        marked: bool,
         harvested: u16,
     },
     Drain {
@@ -371,10 +375,25 @@ pub(super) fn start_farm(
         return Err("Invalid farming bounds".into());
     }
     let p = game.native_player().ok_or("Join a world first")?;
-    let origin = nav::standing_block(
-        [p.x, p.y, p.z],
-        &game.native_block(nav::block([p.x, p.y, p.z])),
-    );
+    // The marked plots of this world, wherever the player stands (after a reconnect too);
+    // without any, the square around the player.
+    let marked = crate::game::claim_borders_farm_plots_view::enabled(game);
+    let (areas, marked) = if marked.is_empty() {
+        let origin = nav::standing_block(
+            [p.x, p.y, p.z],
+            &game.native_block(nav::block([p.x, p.y, p.z])),
+        );
+        (
+            vec![plots::Bounds::around(
+                origin,
+                i32::from(config.radius),
+                config.reach_y(),
+            )],
+            false,
+        )
+    } else {
+        (marked, true)
+    };
     driver::clear_construction_driver();
     placement::reset();
     state(|s| {
@@ -382,7 +401,8 @@ pub(super) fn start_farm(
         s.scope = scope;
         s.task = Some(Task::Farm {
             config,
-            origin,
+            areas,
+            marked,
             harvested: 0,
         });
         s.preview = preview;
@@ -589,11 +609,49 @@ fn composter_near(game: &Game<'_>, origin: nav::Pos, radius: i32) -> Option<nav:
 }
 /// The composter the current farm uses, for the menu.
 pub(super) fn farm_composter(game: &Game<'_>) -> Option<nav::Pos> {
-    let (origin, radius) = state(|s| match &s.task {
-        Some(Task::Farm { origin, config, .. }) => Some((*origin, i32::from(config.radius))),
+    let areas = state(|s| match &s.task {
+        Some(Task::Farm { areas, .. }) => Some(areas.clone()),
         _ => None,
     })?;
-    composter_near(game, origin, radius)
+    farm_composter_in(game, &areas)
+}
+/// The area of the farm the player is in, or the nearest one.
+fn nearest_area(game: &Game<'_>, areas: &[plots::Bounds]) -> Option<plots::Bounds> {
+    let p = game.native_player()?;
+    let here = [p.x, p.y, p.z];
+    areas.iter().copied().min_by(|a, b| {
+        let d = |x: &plots::Bounds| {
+            if x.near(here, 0.0, 2.0) {
+                0.0
+            } else {
+                nav::distance(nav::center(x.center()), here)
+            }
+        };
+        d(a).total_cmp(&d(b))
+    })
+}
+/// Where to walk to reach a field: a place to stand in its middle column (on a terraced plot
+/// the middle level may be inside a step), the middle cell when none is found (not loaded yet).
+fn area_home(game: &Game<'_>, area: plots::Bounds) -> nav::Pos {
+    let middle = area.center();
+    let open = |at: nav::Pos| {
+        let name = game.native_block(at);
+        // Crops are walked through as the planner walks them.
+        name == "minecraft:air" || nav::passable(&name) || farm::Crop::named(&name).is_some()
+    };
+    (area.lo[1]..=area.hi[1])
+        .map(|y| [middle[0], y, middle[2]])
+        .find(|at| {
+            let below = [at[0], at[1] - 1, at[2]];
+            open(*at) && open([at[0], at[1] + 1, at[2]]) && !open(below)
+        })
+        .unwrap_or(middle)
+}
+/// The composter by the area of the farm the player is at.
+fn farm_composter_in(game: &Game<'_>, areas: &[plots::Bounds]) -> Option<nav::Pos> {
+    let area = nearest_area(game, areas)?;
+    let (rx, rz) = area.half();
+    composter_near(game, area.center(), rx.max(rz))
 }
 /// A crafting table close to the player (eight blocks around, three up and down), the nearest.
 fn table_near(game: &Game<'_>) -> Option<nav::Pos> {
@@ -644,7 +702,7 @@ fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
 }
 /// Why a trip to a container is due now, if it is, and which container.
 fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
-    let Some(Task::Farm { config, origin, .. }) = &s.task else {
+    let Some(Task::Farm { config, areas, .. }) = &s.task else {
         return None;
     };
     if Instant::now() < s.store_after {
@@ -684,7 +742,7 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
         return Some((Purpose::Meal, chest));
     }
     let composter = if config.bonemeal {
-        composter_near(game, *origin, i32::from(config.radius))
+        farm_composter_in(game, areas)
     } else {
         None
     };
@@ -1569,10 +1627,8 @@ fn desired(game: &Game<'_>, wanted: &schema::BlockState) -> Result<String, Strin
 /// that has not been picked up and waits for the pickup, giving up on an item that cannot be
 /// reached or taken. True while it is busy with one (the job waits).
 fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius, reach_y) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => {
-            (*origin, i32::from(config.radius), config.reach_y())
-        }
+    let areas = match &s.task {
+        Some(Task::Farm { areas, .. }) => areas.clone(),
         _ => return false,
     };
     let Some(p) = game.native_player() else {
@@ -1585,18 +1641,15 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
     let spots: Vec<nav::Pos> = storages(game)
         .into_iter()
         .flatten()
-        .chain(composter_near(game, origin, radius))
+        .chain(farm_composter_in(game, &areas))
         .collect();
     let near = |d: &horizon_client::entities::ItemEntity| {
         let a = at(d);
         let by_spot = spots
             .iter()
             .any(|p| nav::distance(nav::center(*p), a) <= 4.0);
-        by_spot
-            || ((a[0] - f64::from(origin[0])).abs() <= f64::from(radius + 3)
-                && (a[2] - f64::from(origin[2])).abs() <= f64::from(radius + 3)
-                // Only what lies at the field's level: a drop on a roof would lead the walker up.
-                && (a[1] - f64::from(origin[1])).abs() <= f64::from(reach_y + 1))
+        // Only what lies at the field's levels: a drop on a roof would lead the walker up.
+        by_spot || areas.iter().any(|f| f.near(a, 3.0, 1.0))
     };
     let nearest = game
         .dropped
@@ -1666,22 +1719,17 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
 /// are not loaded (from a distance the field reads as empty, and the job would wait for crops
 /// that are not there). True while it is walking there.
 fn home_step(game: &Game<'_>, s: &mut State) -> bool {
-    let (origin, radius, height) = match &s.task {
-        Some(Task::Farm { origin, config, .. }) => (
-            *origin,
-            f64::from(config.radius),
-            f64::from(config.reach_y() + 2),
-        ),
+    let areas = match &s.task {
+        Some(Task::Farm { areas, .. }) => areas.clone(),
         _ => return false,
     };
-    let Some(p) = game.native_player() else {
+    let (Some(p), Some(area)) = (game.native_player(), nearest_area(game, &areas)) else {
         return false;
     };
+    let origin = area_home(game, area);
     // Near in height too: a walker on a roof or a tree over the field is not at the beds (from
     // there no crop can be reached, and the scan would only find unreachable ones).
-    let near = (p.x - (f64::from(origin[0]) + 0.5)).hypot(p.z - (f64::from(origin[2]) + 0.5))
-        <= radius + 6.0
-        && (p.y - f64::from(origin[1])).abs() <= height;
+    let near = area.near([p.x, p.y, p.z], 6.0, 2.0);
     let loaded = game
         .world
         .chunks
@@ -2329,20 +2377,32 @@ pub(super) fn tick(game: &Game<'_>) {
             match s.task.as_mut().unwrap() {
                 Task::Farm {
                     config,
-                    origin,
-                    harvested,
+                    areas,
+                    marked,
+                    ..
                 } => {
-                    if config.limit > 0 && *harvested >= config.limit {
-                        s.phase = Phase::Done;
-                        s.active = false;
-                        s.message = text("Готово", "Done").into();
-                        return;
-                    }
+                    // No limit: the farm works until it is stopped.
                     if s.last.elapsed() < Duration::from_millis(500) {
                         return;
                     }
                     s.last = Instant::now();
-                    let r = i32::from(config.radius);
+                    // Marked plots: the ones turned on now (the player may change them while
+                    // the farm runs).
+                    if *marked {
+                        *areas = crate::game::claim_borders_farm_plots_view::enabled(game);
+                        if areas.is_empty() {
+                            idle(
+                                s,
+                                text(
+                                    "нет включённых участков в этом мире",
+                                    "no enabled plots in this world",
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                    let areas = areas.clone();
+                    let mut seen = std::collections::HashSet::new();
                     let mut targets = Vec::new();
                     // Planted crops that have not ripened yet: bone meal goes on these.
                     let mut growing_at: Vec<(nav::Pos, farm::Crop)> = Vec::new();
@@ -2357,8 +2417,14 @@ pub(super) fn tick(game: &Game<'_>) {
                     let have: Vec<farm::Crop> =
                         crops.iter().copied().filter(|c| seed(game, *c)).collect();
                     let plan = *config;
-                    let sow_at = |x: i32, z: i32| {
-                        let zone = plan.zone_crop(x, z).filter(|_| plan.replant)?;
+                    let sow_at = |area: &plots::Bounds, x: i32, z: i32| {
+                        let zone = plan
+                            .zone_crop_in(
+                                [area.lo[0], area.lo[2]],
+                                [area.hi[0], area.hi[2]],
+                                [x, z],
+                            )
+                            .filter(|_| plan.replant)?;
                         if have.contains(&zone) {
                             Some(zone)
                         } else if source_empty(zone as usize) {
@@ -2367,73 +2433,79 @@ pub(super) fn tick(game: &Game<'_>) {
                             None
                         }
                     };
-                    for z in -r..=r {
-                        for x in -r..=r {
-                            // Beds at other heights count too: a block of unevenness on a flat
-                            // field, the chosen number of levels on a terraced one.
-                            let reach_y = plan.reach_y();
-                            for dy in -reach_y..=reach_y {
-                                let at = [origin[0] + x, origin[1] + dy, origin[2] + z];
-                                let below = [at[0], at[1] - 1, at[2]];
-                                let soil = game.native_block(below);
-                                if soil != "minecraft:farmland" {
-                                    // Farmland of this field trampled to dirt (a jump, a
-                                    // fall, a mob): tilled again when a hoe is at hand.
-                                    // Also one trampled before the job began: plain dirt in
-                                    // a bed, next to farmland on two sides or more.
-                                    let in_bed = || {
-                                        [[1, 0], [-1, 0], [0, 1], [0, -1]]
-                                            .iter()
-                                            .filter(|[dx, dz]| {
-                                                game.native_block([
-                                                    below[0] + dx,
-                                                    below[1],
-                                                    below[2] + dz,
-                                                ]) == "minecraft:farmland"
-                                            })
-                                            .count()
-                                            >= 2
-                                    };
-                                    if soil == "minecraft:dirt"
-                                        && game.native_block(at) == "minecraft:air"
-                                        && (s.field.contains(&below) || in_bed())
-                                    {
-                                        trampled.push(below);
+                    for area in &areas {
+                        for z in area.lo[2]..=area.hi[2] {
+                            for x in area.lo[0]..=area.hi[0] {
+                                // Beds at other heights count too: a block of unevenness on a flat
+                                // field, the chosen number of levels on a terraced one, every level
+                                // of a marked plot.
+                                for y in area.lo[1]..=area.hi[1] {
+                                    let at = [x, y, z];
+                                    // Overlapping plots: a cell is looked at once.
+                                    if areas.len() > 1 && !seen.insert(at) {
+                                        continue;
                                     }
-                                    continue;
-                                }
-                                if s.field.len() < 8192 {
-                                    s.field.insert(below);
-                                }
-                                let name = game.native_block(at);
-                                let ripe = crops.iter().copied().find(|c| {
-                                    name == c.block()
-                                        && c.mature(
-                                            game.native_block_property(at, "age").as_deref(),
-                                        )
-                                });
-                                let mature = ripe.is_some();
-                                if ripe.is_none()
-                                    && let Some(c) =
-                                        crops.iter().copied().find(|c| name == c.block())
-                                {
-                                    growing_at.push((at, c));
-                                }
-                                // A crop only survives where the light is 9 or more (sky or
-                                // block light): in a cave the server refuses the seed.
-                                let light = i32::from(game.world.light(at[0], at[1], at[2]));
-                                let lit = (light >> 4).max(light & 15) >= 9;
-                                let sow = sow_at(x, z);
-                                let empty = config.replant && name == "minecraft:air";
-                                if empty && !lit {
-                                    dark += 1;
-                                }
-                                if empty && lit && sow.is_none() {
-                                    unplanted = true;
-                                }
-                                let empty = empty && lit && sow.is_some();
-                                if mature || empty {
-                                    targets.push((at, empty, ripe.or(sow)));
+                                    let below = [at[0], at[1] - 1, at[2]];
+                                    let soil = game.native_block(below);
+                                    if soil != "minecraft:farmland" {
+                                        // Farmland of this field trampled to dirt (a jump, a
+                                        // fall, a mob): tilled again when a hoe is at hand.
+                                        // Also one trampled before the job began: plain dirt in
+                                        // a bed, next to farmland on two sides or more.
+                                        let in_bed = || {
+                                            [[1, 0], [-1, 0], [0, 1], [0, -1]]
+                                                .iter()
+                                                .filter(|[dx, dz]| {
+                                                    game.native_block([
+                                                        below[0] + dx,
+                                                        below[1],
+                                                        below[2] + dz,
+                                                    ]) == "minecraft:farmland"
+                                                })
+                                                .count()
+                                                >= 2
+                                        };
+                                        if soil == "minecraft:dirt"
+                                            && game.native_block(at) == "minecraft:air"
+                                            && (s.field.contains(&below) || in_bed())
+                                        {
+                                            trampled.push(below);
+                                        }
+                                        continue;
+                                    }
+                                    if s.field.len() < 8192 {
+                                        s.field.insert(below);
+                                    }
+                                    let name = game.native_block(at);
+                                    let ripe = crops.iter().copied().find(|c| {
+                                        name == c.block()
+                                            && c.mature(
+                                                game.native_block_property(at, "age").as_deref(),
+                                            )
+                                    });
+                                    let mature = ripe.is_some();
+                                    if ripe.is_none()
+                                        && let Some(c) =
+                                            crops.iter().copied().find(|c| name == c.block())
+                                    {
+                                        growing_at.push((at, c));
+                                    }
+                                    // A crop only survives where the light is 9 or more (sky or
+                                    // block light): in a cave the server refuses the seed.
+                                    let light = i32::from(game.world.light(at[0], at[1], at[2]));
+                                    let lit = (light >> 4).max(light & 15) >= 9;
+                                    let sow = sow_at(area, x, z);
+                                    let empty = config.replant && name == "minecraft:air";
+                                    if empty && !lit {
+                                        dark += 1;
+                                    }
+                                    if empty && lit && sow.is_none() {
+                                        unplanted = true;
+                                    }
+                                    let empty = empty && lit && sow.is_some();
+                                    if mature || empty {
+                                        targets.push((at, empty, ripe.or(sow)));
+                                    }
                                 }
                             }
                         }
@@ -2950,17 +3022,9 @@ pub(super) fn tick(game: &Game<'_>) {
 pub(super) fn snapshot() -> Option<(String, bool)> {
     state(|s| {
         let label = match s.task.as_ref() {
-            Some(Task::Farm {
-                harvested, config, ..
-            }) => format!(
-                "{}: {harvested}/{}",
-                text("Ферма", "Farm"),
-                if config.limit == 0 {
-                    "∞".into()
-                } else {
-                    config.limit.to_string()
-                }
-            ),
+            Some(Task::Farm { harvested, .. }) => {
+                format!("{}: {harvested}", text("Ферма", "Farm"))
+            }
             Some(Task::Drain { filled, .. }) => {
                 format!("{}: {filled}", text("Осушение", "Drain"))
             }
@@ -3016,14 +3080,27 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
         };
         // The working area is an outline on the ground (the two corner cubes drawn before
         // looked like stray holograms); the block being worked on is the one cube.
-        let mut area = None;
+        // Each field as its outline: (x0, x1, z0, z1, y) with x1 and z1 past the last cell.
+        let mut outlines: Vec<(i32, i32, i32, i32, i32)> = Vec::new();
         let blocks = match &s.task {
-            Some(Task::Farm { origin, config, .. }) => {
-                area = Some((*origin, i32::from(config.radius)));
+            Some(Task::Farm { areas, .. }) => {
+                // The middle level of each field (the crop level of a flat one).
+                outlines.extend(
+                    areas
+                        .iter()
+                        .map(|a| (a.lo[0], a.hi[0] + 1, a.lo[2], a.hi[2] + 1, a.center()[1])),
+                );
                 s.target.into_iter().collect()
             }
             Some(Task::Drain { origin, config, .. }) => {
-                area = Some((*origin, i32::from(config.radius)));
+                let r = i32::from(config.radius);
+                outlines.push((
+                    origin[0] - r,
+                    origin[0] + r + 1,
+                    origin[2] - r,
+                    origin[2] + r + 1,
+                    origin[1],
+                ));
                 s.target.into_iter().collect()
             }
             Some(Task::Build { document, cursor }) => document
@@ -3035,10 +3112,9 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
                 .collect(),
             None => Vec::new(),
         };
-        if let Some((origin, r)) = area {
-            let (x0, x1) = (f64::from(origin[0] - r), f64::from(origin[0] + r + 1));
-            let (z0, z1) = (f64::from(origin[2] - r), f64::from(origin[2] + r + 1));
-            let y = f64::from(origin[1]) + 0.05;
+        for (x0, x1, z0, z1, y) in outlines {
+            let (x0, x1, z0, z1) = (f64::from(x0), f64::from(x1), f64::from(z0), f64::from(z1));
+            let y = f64::from(y) + 0.05;
             for (a, b) in [
                 ([x0, y, z0], [x1, y, z0]),
                 ([x1, y, z0], [x1, y, z1]),
@@ -3048,37 +3124,45 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
                 g.line(a, b, 0xff88ccaa, 1.5);
             }
         }
-        if let Some(Task::Farm { origin, config, .. }) = &s.task {
-            let r = i32::from(config.radius);
-            let y = f64::from(origin[1]) + 0.05;
-            // Where one crop's part of the field meets the next: the zones sown apart.
-            let mut cuts_x = Vec::new();
-            let mut cuts_z = Vec::new();
-            for d in -r + 1..=r {
-                if config.zone_crop(d - 1, -r) != config.zone_crop(d, -r) {
-                    cuts_x.push(origin[0] + d);
+        if let Some(Task::Farm { areas, config, .. }) = &s.task {
+            for area in areas {
+                let (lo, hi) = ([area.lo[0], area.lo[2]], [area.hi[0], area.hi[2]]);
+                let y = f64::from(area.center()[1]) + 0.05;
+                // Where one crop's part of the field meets the next: the zones sown apart.
+                let mut cuts_x = Vec::new();
+                let mut cuts_z = Vec::new();
+                for x in lo[0] + 1..=hi[0] {
+                    if config.zone_crop_in(lo, hi, [x - 1, lo[1]])
+                        != config.zone_crop_in(lo, hi, [x, lo[1]])
+                    {
+                        cuts_x.push(x);
+                    }
                 }
-                if config.zone_crop(-r, d - 1) != config.zone_crop(-r, d) {
-                    cuts_z.push(origin[2] + d);
+                for z in lo[1] + 1..=hi[1] {
+                    if config.zone_crop_in(lo, hi, [lo[0], z - 1])
+                        != config.zone_crop_in(lo, hi, [lo[0], z])
+                    {
+                        cuts_z.push(z);
+                    }
                 }
-            }
-            let (x0, x1) = (f64::from(origin[0] - r), f64::from(origin[0] + r + 1));
-            let (z0, z1) = (f64::from(origin[2] - r), f64::from(origin[2] + r + 1));
-            for x in cuts_x {
-                g.line(
-                    [f64::from(x), y, z0],
-                    [f64::from(x), y, z1],
-                    0x9988ccaa,
-                    1.0,
-                );
-            }
-            for z in cuts_z {
-                g.line(
-                    [x0, y, f64::from(z)],
-                    [x1, y, f64::from(z)],
-                    0x9988ccaa,
-                    1.0,
-                );
+                let (x0, x1) = (f64::from(lo[0]), f64::from(hi[0] + 1));
+                let (z0, z1) = (f64::from(lo[1]), f64::from(hi[1] + 1));
+                for x in cuts_x {
+                    g.line(
+                        [f64::from(x), y, z0],
+                        [f64::from(x), y, z1],
+                        0x9988ccaa,
+                        1.0,
+                    );
+                }
+                for z in cuts_z {
+                    g.line(
+                        [x0, y, f64::from(z)],
+                        [x1, y, f64::from(z)],
+                        0x9988ccaa,
+                        1.0,
+                    );
+                }
             }
             // What the farm is bound to, each in its colour (the menu lists the same with the
             // coordinates): harvest orange, seeds green, bone meal white, the composter brown,
@@ -3088,7 +3172,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
                 (harvest, 0xffffa040_u32),
                 (seeds, 0xff60e060),
                 (meal, 0xfff0f0f0),
-                (composter_near(game, *origin, r), 0xffb07840),
+                (farm_composter_in(game, areas), 0xffb07840),
                 (safe_point(game), 0xff60a0ff),
             ];
             for (at, color) in marks {

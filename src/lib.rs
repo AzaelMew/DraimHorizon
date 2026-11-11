@@ -28,6 +28,9 @@ pub use schematic as claim_borders_schematic;
 #[path = "../mixins/draimhorizon/farming.rs"]
 pub mod farming;
 pub use farming as claim_borders_farming;
+#[path = "../mixins/draimhorizon/farm_plots.rs"]
+pub mod farm_plots;
+pub use farm_plots as claim_borders_farm_plots;
 #[path = "../mixins/draimhorizon/draining.rs"]
 pub mod draining;
 pub use draining as claim_borders_draining;
