@@ -11,7 +11,7 @@
 ## 0.39.8
 
 - Schematic previews show real blocks: every block still to be placed is drawn where it goes as a translucent ghost of that very block (its own model and texture, turned the way the preview is turned, so stairs, logs and doors face the right way; chests, signs and other block entities included) instead of a blue square, and a block standing there wrongly as a red box. Ghosts are drawn in a pass of their own after the world, hidden behind terrain, only their near faces, and without the faces between two ghost cubes.
-- Ghosts are built within 64 blocks of the player, one 16x16x16 section at a time, nearest first, within 3 ms per tick; a section is rebuilt only when its blocks change (one placed, a chunk loaded) or the preview is moved, turned, shown or hidden. The world's depth is kept for the pass only while there are ghosts. Hidden with F1.
+- Ghosts are built within 64 blocks of the player, one 16x16x16 section at a time, nearest first, within 3 ms per tick; a section is rebuilt only when its blocks change (one placed, a chunk loaded) or the preview is moved, turned, shown or hidden. The world's depth is kept for the pass only while there are ghosts. Hidden with F1 and while the mod is switched off.
 - The ghost rendering follows Horizonmatica by keksi2k (MIT License); its license is in `notices/LICENSE-horizonmatica`.
 
 ## 0.39.7
