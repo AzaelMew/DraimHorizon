@@ -5,9 +5,17 @@ use crate::game::{
 };
 use horizon_client::first_person::Hand;
 use winit::keyboard::KeyCode;
-/// Cancel both initial and held mining without suppressing entity attacks or use.
+/// Cancel initial/held mining and harvesting before either hand sends a use packet.
 pub(crate) fn protect_vines(game: &Game<'_>, button: i32, swing: &mut bool, canceled: &mut bool) {
-    if *canceled || button != 0 || !game.native_on(claims::ID) || game.entity_targeted() {
+    if *canceled || !matches!(button, 0 | 1) || !game.native_on(claims::ID) {
+        return;
+    }
+    // Use and attack resolve entity targets differently; preserve the normal path for each.
+    if if button == 1 {
+        game.remote_use_targets_entity()
+    } else {
+        game.entity_targeted()
+    } {
         return;
     }
     let Some(hit) = game.pick() else {
@@ -19,6 +27,7 @@ pub(crate) fn protect_vines(game: &Game<'_>, button: i32, swing: &mut bool, canc
             .as_deref()
             == Some("true"),
         game.native_sneaking(),
+        button,
         &game.res.facts().get(state).name,
     ) {
         *swing = false;
