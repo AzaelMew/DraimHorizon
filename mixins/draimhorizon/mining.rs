@@ -431,6 +431,12 @@ pub fn plan_with_stats(
     // A target under water is swum to, not walked to: the nearest one that is safe to mine is
     // kept in case nothing on dry land can be reached.
     let mut swim: Option<nav::Pos> = None;
+    // The first places to stand are searched for one by one (the nearest block is usually in
+    // reach, and one short search finds the way at once). After two places out of reach, every
+    // place the player can walk to is found in one go and the rest are looked up in it: a whole
+    // failed search for each one out of reach used to take planning up to its time limit.
+    let mut misses = 0;
+    let mut reach: Option<Option<nav::Explored>> = None;
     for (_, target) in candidates {
         let (mut safe, mut stand) = (false, false);
         for [x, z] in [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0]] {
@@ -457,9 +463,18 @@ pub fn plan_with_stats(
                     continue;
                 }
                 stand = true;
-                if let Some(path) = nav::search(start, at, |p| block(p).cell, &canceled)
-                    && path.complete
-                {
+                if misses < 2 {
+                    if let Some(path) = nav::search(start, at, |p| block(p).cell, &canceled)
+                        && path.complete
+                    {
+                        return Some((target, path));
+                    }
+                    misses += 1;
+                    continue;
+                }
+                let explored =
+                    reach.get_or_insert_with(|| nav::explore(start, |p| block(p).cell, &canceled));
+                if let Some(path) = explored.as_ref().and_then(|e| e.path_to(at)) {
                     return Some((target, path));
                 }
             }

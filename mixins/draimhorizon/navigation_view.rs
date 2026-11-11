@@ -259,17 +259,30 @@ impl Worker {
                 horizon_threads::idle_current();
                 while let Ok(query) = requests.recv() {
                     let canceled = || worker_generation.load(Ordering::Relaxed) != query.token;
-                    let mut table = HashMap::new();
+                    // Block states to what the planners need of them (a fast hasher: this runs
+                    // for every block read), and the chunk read last (reads come in runs).
+                    let mut table: HashMap<
+                        u32,
+                        mining::Block,
+                        std::hash::BuildHasherDefault<model::PosHasher>,
+                    > = HashMap::default();
+                    let mut last: Option<((i32, i32), Option<&Arc<Chunk>>)> = None;
                     let mut read = |at: model::Pos| {
                         if query.level
                             && !(query.start[1] - 1..=query.start[1] + 1).contains(&at[1])
                         {
                             return mining::Block::default();
                         }
-                        let Some(chunk) = query
-                            .chunks
-                            .get(&(at[0].div_euclid(16), at[2].div_euclid(16)))
-                        else {
+                        let key = (at[0].div_euclid(16), at[2].div_euclid(16));
+                        let chunk = match last {
+                            Some((k, chunk)) if k == key => chunk,
+                            _ => {
+                                let chunk = query.chunks.get(&key);
+                                last = Some((key, chunk));
+                                chunk
+                            }
+                        };
+                        let Some(chunk) = chunk else {
                             return mining::Block::default();
                         };
                         if at[1] < chunk.min_y() || at[1] >= chunk.max_y() {
@@ -661,7 +674,9 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
         return Tool::Ready;
     }
     let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
-    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(600)) {
+    // One inventory swap every five ticks: enough for the server to answer each, without the
+    // job standing still for most of a second at every change of tool.
+    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(250)) {
         return Tool::Wait;
     }
     let spare = (0..9)
@@ -2058,14 +2073,25 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     };
     // The walker's own check of each step on this thread goes by the same drop limit.
     model::set_drop_limit(query.drop);
-    s.worker.as_ref().unwrap().tx.try_send(query).map_err(|_| {
-        language()
-            .text(
-                "Планировщик занят; повторите запрос",
-                "Planner busy; try again",
-            )
-            .to_owned()
-    })?;
+    match s.worker.as_ref().unwrap().tx.try_send(query) {
+        Ok(()) => {}
+        // The planner still holds a query that was cancelled a moment ago: a running task asks
+        // again on a following tick (as it waits) instead of pausing; a preview, which nothing
+        // asks again for, says so.
+        Err(mpsc::TrySendError::Full(_)) if s.nav.running => {
+            s.last_query = Instant::now();
+            s.nav.status = model::Status::Waiting;
+            return Ok(());
+        }
+        Err(_) => {
+            return Err(language()
+                .text(
+                    "Планировщик занят; повторите запрос",
+                    "Planner busy; try again",
+                )
+                .to_owned());
+        }
+    }
     s.pending = true;
     s.last_query = Instant::now();
     s.nav.status = model::Status::Planning;
@@ -2467,7 +2493,7 @@ pub(super) fn tick(game: &Game<'_>) {
                         && (matches!(
                             s.nav.status,
                             model::Status::Holding | model::Status::TargetMissing
-                        ) || (changed && s.last_query.elapsed() >= Duration::from_millis(500)))
+                        ) || (changed && s.last_query.elapsed() >= Duration::from_millis(250)))
                     {
                         s.nav.goal = Some(goal);
                         s.nav.replan();
@@ -2509,7 +2535,11 @@ pub(super) fn tick(game: &Game<'_>) {
         }
         if s.nav.running
             && s.nav.status == model::Status::Waiting
-            && s.last_query.elapsed() > Duration::from_millis(350)
+            // Plans take milliseconds now (a few tens at most): the next one is asked for two
+            // ticks later, not after a third of a second standing still. A retry after a failed
+            // plan keeps the old pace (the chunks it needs may still be arriving).
+            && s.last_query.elapsed()
+                > Duration::from_millis(if s.nav.recovering() { 350 } else { 100 })
             && request(game, s).is_err()
         {
             pause_state(s);

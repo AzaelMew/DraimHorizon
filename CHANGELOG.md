@@ -1,5 +1,13 @@
 # История версий
 
+## 0.39.10
+
+- Route planning is several times faster. Each search keeps the cells it reads in a box around the start, so a cell is read from the world once instead of by every move that passes it (the planner tried 98 moves from each cell, each looking at a dozen cells), and its tables use a fast hasher for block positions. On generated hilly terrain with trees, ponds and walls (`cargo run --release --example route_bench`): a 25-block walk 2.2 ms to 0.5 ms, an 80-block one 11 ms to 5.5 ms, a 140-block one 65 ms to 14 ms, and a goal that cannot be reached (which uses the whole search) 950 ms to about 160-250 ms; the whole set 1089 ms to under 200 ms, with 20 to 80 times fewer reads. On equal estimates the deeper cell is tried first.
+- The miner finds its next block faster when the nearest ones are out of reach: after two places to stand that cannot be walked to, every place in reach is found in one search and the rest are looked up in it, instead of a whole failed search for each (six walled-in blocks: 12.8 ms to 2 ms; up to the 900 ms limit before on real ground).
+- The planner thread reads blocks faster: the chunk read last is kept, and block states are looked up with the fast hasher.
+- Tasks wait less: the next route is asked for 100 ms after the last one (it was 350 ms, standing still between legs; a retry after a failed plan keeps 350 ms, so the bounded retries still give the world time to load), a followed player who moved is re-planned for after 250 ms (500 ms), and a tool swap is allowed every 250 ms (600 ms, at every change between pickaxe and shovel in a tunnel). A planner still holding a cancelled query is asked again on a following tick instead of pausing the task with "Planner busy".
+- Tests: the cell cache answers as the world does inside and outside its box (each cell inside read once); exploring reaches exactly the places a search reaches, by walkable steps.
+
 ## 0.39.9
 
 - Human look no longer gets in Baritone's way. A walker with the human look stood still at corners until it counted as stuck: its head already looked round the corner along the way ahead while the cell it had to finish lay a little behind it, and it waited to turn round for a turn that never came. Finishing a step now walks the last bit in any direction; turning round first is kept for a way on that really lies behind.
