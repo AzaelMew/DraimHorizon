@@ -1527,6 +1527,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
             farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
+            farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
             mining_custom: {
                 crate::game::claim_borders_navigation_view::load_custom_blocks(game);
                 crate::game::claim_borders_mining::custom()
@@ -1787,6 +1788,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SchematicPlaceRemove(i) => {
             crate::game::claim_borders_schematic_view::remove(game, i);
+            Ok(Vec::new())
+        }
+        Action::FarmPlotFarm(i) => {
+            crate::game::claim_borders_farm_plots_view::toggle_farm(game, i)?;
+            Ok(Vec::new())
+        }
+        Action::FarmPlotShow(i) => {
+            crate::game::claim_borders_farm_plots_view::toggle_visible(game, i);
+            Ok(Vec::new())
+        }
+        Action::FarmPlotRemove(i) => {
+            crate::game::claim_borders_farm_plots_view::remove(game, i);
             Ok(Vec::new())
         }
         Action::MiningCustom => {

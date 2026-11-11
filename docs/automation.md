@@ -54,7 +54,11 @@ Stand on a block next to the water, not in it. If the next cell is out of reach 
 
 ## Farm
 
-Choose **Wheat**, **Carrots**, **Potatoes** or **Beetroot**, a radius (3, 6, 9 or 12), a harvest limit (16, 32, 64 or 0 for continuous operation), and **Replant**. Stand at crop height beside prepared farmland. **Preview** marks the area without acting; **Start** closes the menu and works within the square centered on that starting position, at that fixed height.
+Choose **Wheat**, **Carrots**, **Potatoes** or **Beetroot**, a radius (3, 6, 9 or 12) and **Replant**. The farm has no harvest limit: it works until it is stopped.
+
+**Plots.** Mark your fields once and the farm finds them again after a reconnect or a restart, wherever you stand when it starts. Stand on one corner of a field and type `/farm pos1`, on the opposite corner `/farm pos2` (it may be higher or lower), and the box between them is drawn in yellow; `/farm save [name]` keeps it as a plot of this world (server and dimension), `/farm clear` drops the marks and `/farm list` lists the plots. The Farm tab lists the plots of the world with **Farm: on/off**, **Show/Hide** and **Del.**; shown plots are outlined in the world, green when farmed, grey when not. The farm works every enabled plot of the world (each shared between the selected crops as above, and every level between the two corners plus one block above and below); the changes apply while it runs. Without enabled plots it works the square around the starting position as before. A plot has a side of at most 64 blocks and at most 12 levels, and the enabled plots of a world together at most 16 384 cells (width × depth × levels). Other `/farm` commands still go to the server.
+
+**Preview** marks the area without acting; **Start** closes the menu and starts working.
 
 Only fully grown crops of the selected kind are harvested. The limit counts server-confirmed harvested plants, not drops. With Replant enabled, keep the matching seeds/carrots/potatoes in the inventory before harvesting; empty farmland in the area is planted too. Leave a free inventory slot. Item pickup uses normal Minecraft behavior. When no targets are ready, the farm waits for growth. The harvest is not carried around until the inventory is full, nor taken away after every crop: it goes to the containers when the field is idle, when two slots or fewer are free, when twelve stacks have gathered, or when three or more have waited four minutes. One stack of each seed stays at hand for sowing.
 

@@ -102,16 +102,24 @@ impl Config {
     /// between the selected crops: one crop has it all, two take a half each (west and east),
     /// three a third each (strips from west to east), four a quarter each (the four corners of
     /// the square). Cells outside the field go to the nearest part.
+    #[cfg(test)]
     pub fn zone_crop(self, dx: i32, dz: i32) -> Option<Crop> {
-        let crops: Vec<Crop> = self.selected().collect();
         let r = i32::from(self.radius);
-        let width = 2 * r + 1;
-        let part = |d: i32, parts: i32| ((d.clamp(-r, r) + r) * parts / width) as usize;
+        self.zone_crop_in([-r, -r], [r, r], [dx, dz])
+    }
+    /// `zone_crop` for any rectangle of a field (a plot the player marked), corners `lo` and
+    /// `hi` (x, z) included: halves, strips or corners of that rectangle.
+    pub fn zone_crop_in(self, lo: [i32; 2], hi: [i32; 2], at: [i32; 2]) -> Option<Crop> {
+        let crops: Vec<Crop> = self.selected().collect();
+        let part = |i: usize, parts: i32| {
+            let width = (hi[i] - lo[i] + 1).max(1);
+            ((at[i].clamp(lo[i], hi[i]) - lo[i]) * parts / width) as usize
+        };
         let index = match crops.len() {
             0 => return None,
             1 => 0,
-            4 => part(dz, 2) * 2 + part(dx, 2),
-            n => part(dx, n as i32),
+            4 => part(1, 2) * 2 + part(0, 2),
+            n => part(0, n as i32),
         };
         crops.get(index).copied()
     }
@@ -172,6 +180,35 @@ mod tests {
         // One crop: everywhere.
         assert_eq!(count(config(Crop::Carrots.bit()))[1], 169);
         assert_eq!(config(0).zone_crop(0, 0), None);
+    }
+    #[test]
+    fn a_marked_rectangle_is_shared_like_the_square() {
+        let config = Config {
+            crops: Crop::MASK,
+            radius: 6,
+            limit: 0,
+            replant: true,
+            bonemeal: false,
+            autosell: false,
+            levels: 0,
+        };
+        // The square around a start and the same square as a rectangle agree everywhere.
+        for dz in -6..=6 {
+            for dx in -6..=6 {
+                assert_eq!(
+                    config.zone_crop(dx, dz),
+                    config.zone_crop_in([100 - 6, 50 - 6], [100 + 6, 50 + 6], [100 + dx, 50 + dz])
+                );
+            }
+        }
+        // A long rectangle: its four corners.
+        let (lo, hi) = ([0, 0], [19, 5]);
+        assert_eq!(config.zone_crop_in(lo, hi, [0, 0]), Some(Crop::Wheat));
+        assert_eq!(config.zone_crop_in(lo, hi, [19, 0]), Some(Crop::Carrots));
+        assert_eq!(config.zone_crop_in(lo, hi, [0, 5]), Some(Crop::Potatoes));
+        assert_eq!(config.zone_crop_in(lo, hi, [19, 5]), Some(Crop::Beetroot));
+        // A single row or column does not divide by zero.
+        assert!(config.zone_crop_in([3, 3], [3, 3], [3, 3]).is_some());
     }
     #[test]
     fn several_crops_can_be_selected_but_not_none() {
