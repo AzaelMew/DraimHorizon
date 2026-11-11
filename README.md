@@ -4,12 +4,17 @@
 
 [Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md) · [Navigation](docs/navigation.md) · [Tunnels and bridges](docs/construction.md) · [Farming and schematics](docs/automation.md)
 
-**Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is the official Horizon Nightly `2ebf00a` for Java 26.3.
+**Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is the official Horizon Nightly `fdc87ae` for Java 26.3. Press **J** in game for the mod menu.
 
-**Upgrading to 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
+**Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
+
+## World
 
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
 ![Seed Map instructions](docs/showcase/seed-map.svg)
+
+## Chat and people
+
 ![Chat features and original-language badges](docs/showcase/chat.svg)
 
 Real in-game chat examples, with normal and compact spacing. Sample player text keeps its original language.
@@ -19,10 +24,27 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 
 ![Translation directions and DeepL setup](docs/showcase/translation.svg)
 ![Friends, Important players and waypoints](docs/showcase/friends.svg)
-![Trading and economy tools](docs/showcase/trading.svg)
+
+## Items and trading
+
+![Auction catalogue with search and purchase confirmation](docs/showcase/trading.svg)
 ![Inventory search, sorting and click-through](docs/showcase/inventory.svg)
+
+## Baritone
+
+Every Baritone job shares one route planner. A task waits instead of stopping when it has nothing to do, keeps running when you take damage, and resumes after a restart when Auto Resume is on.
+
+![Shared route planner: slabs, doors, ladders, gap jumps, drops, elytra and swimming](docs/showcase/navigation.svg)
+![Mining trees, ores and blocks under water](docs/showcase/mining.svg)
+![Farm field split into crop quadrants with harvest, seed and bone meal chests](docs/showcase/farm.svg)
+![Tunnel, bridge and drain jobs](docs/showcase/construction.svg)
+![Schematic hologram and preview editor keys](docs/showcase/schematics.svg)
+
+## Helpers and interface
+
+![Auto Eat, Auto Totem, Auto Fill, Auto Tools, Auto Click, Auto Resume, Human Look and shulker peek](docs/showcase/helpers.svg)
 ![Zoom, interface customization and opt-in features](docs/showcase/customize.svg)
 
 **Shared DeepL** — Add `RELAY_DEEPL_API_KEY` to the private relay's server environment. Friends configure its address and access token under **J → Settings → Network**. [Operator instructions](relay/README.md#общий-резервный-перевод-deepl)
 
-**Compatibility** — Friends' telemetry requires the relay and both clients to use the mod. Seed Map predicts generation and can differ from modified or previously generated terrain. Player-supplied text remains unchanged by interface localization.
+**Compatibility** — Friends' telemetry requires the relay and both clients to use the mod. Seed Map predicts generation and can differ from modified or previously generated terrain. Baritone acts only through normal client input; the server stays the authority and can refuse any action. Player-supplied text remains unchanged by interface localization.

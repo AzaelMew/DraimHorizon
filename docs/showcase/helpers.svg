@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="380" viewBox="0 0 1120 380" role="img" aria-labelledby="t">
+<title id="t">Small things done for you.</title>
+<style>
+text{font-family:system-ui,'Segoe UI',Arial,sans-serif;fill:#eaf0ff}
+.k{font-size:15px;font-weight:700;letter-spacing:1.5px;fill:#a6b7dc}
+.t{font-size:32px;font-weight:750}
+.s{font-size:18px;fill:#c3d0ea}
+.l{font-size:14px;fill:#d5e3fa;font-weight:600}
+.m{font-family:Consolas,'DejaVu Sans Mono',monospace;font-size:14px;fill:#cfe0ff}
+.key{font-family:Consolas,'DejaVu Sans Mono',monospace;font-size:13px;font-weight:700;fill:#16172b}
+</style>
+<rect width="1120" height="380" rx="22" fill="#121b30"/>
+<path d="M25 30V350" stroke="#a99bff" stroke-width="3"/>
+<text x="52" y="52" class="k">J → EXPERIMENTS → HELPERS</text>
+<text x="52" y="96" class="t">Small things done for you.</text>
+<circle cx="60" cy="134" r="3.5" fill="#a99bff"/><text x="76" y="140" class="s">Each helper is a separate switch.</text>
+<circle cx="60" cy="172" r="3.5" fill="#a99bff"/><text x="76" y="178" class="s">Off by default, except Resume and Look.</text>
+<circle cx="60" cy="210" r="3.5" fill="#a99bff"/><text x="76" y="216" class="s">Moving the mouse takes the camera back.</text>
+<circle cx="60" cy="248" r="3.5" fill="#a99bff"/><text x="76" y="254" class="s">Tasks keep running meanwhile.</text>
+<g transform="translate(560 28)"><rect width="532" height="324" rx="16" fill="#1a2540" stroke="#3a4a6c"/><rect x="24" y="24" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="24" y="36" width="4" height="38" rx="2" fill="#9de2bd"/><text x="42" y="51" class="l">Auto Eat</text><text x="42" y="72" class="m">eats when hungry</text><rect x="276" y="24" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="276" y="36" width="4" height="38" rx="2" fill="#9de2bd"/><text x="294" y="51" class="l">Auto Totem</text><text x="294" y="72" class="m">totem to the off hand</text><rect x="24" y="98" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="24" y="110" width="4" height="38" rx="2" fill="#9de2bd"/><text x="42" y="125" class="l">Auto Fill</text><text x="42" y="146" class="m">refills an empty slot</text><rect x="276" y="98" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="276" y="110" width="4" height="38" rx="2" fill="#9de2bd"/><text x="294" y="125" class="l">Auto Tools</text><text x="294" y="146" class="m">right tool for the block</text><rect x="24" y="172" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="24" y="184" width="4" height="38" rx="2" fill="#9de2bd"/><text x="42" y="199" class="l">Auto Click</text><text x="42" y="220" class="m">left or right, 1–20 / s</text><rect x="276" y="172" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="276" y="184" width="4" height="38" rx="2" fill="#9de2bd"/><text x="294" y="199" class="l">Auto Resume</text><text x="294" y="220" class="m">resumes after restart</text><rect x="24" y="246" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="24" y="258" width="4" height="38" rx="2" fill="#9de2bd"/><text x="42" y="273" class="l">Human Look</text><text x="42" y="294" class="m">looks where it walks</text><rect x="276" y="246" width="236" height="62" rx="10" fill="#10182b" stroke="#34415f"/><rect x="276" y="258" width="4" height="38" rx="2" fill="#9de2bd"/><text x="294" y="273" class="l">Shulker peek</text><text x="294" y="294" class="m">contents in the tooltip</text></g>
+</svg>
