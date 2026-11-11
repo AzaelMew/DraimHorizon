@@ -47,7 +47,16 @@ def main():
     lite=nbt({'Version':(3,7),'MinecraftDataVersion':(3,3955),'Regions':(10,{'Test 🌱':(10,region)})})
     cross={'Size':(10,vec(32,1,1)),'Position':(10,vec(0,0,0)),'BlockStatePalette':(9,(10,[state('minecraft:air')]+[state('minecraft:stone',test=str(i)) for i in range(4)])),'BlockStates':(12,packed([i%5 for i in range(32)],3))}
     cross=nbt({'Version':(3,7),'Regions':(10,{'cross':(10,cross)})})
-    for name,data in [('sponge-v2.nbt',v2),('sponge-v3.nbt',v3),('litematic-v7-negative.nbt',lite),('litematic-cross-word.nbt',cross)]: (folder/name).write_bytes(data)
+    # A build past the earlier limits (128 to a side, 32 768 blocks): 140 x 4 x 140, the two lower
+    # layers filled (39 200 blocks), stone and a log column at one corner.
+    size=(140,4,140); n=size[0]*size[1]*size[2]
+    ids=[0]*n
+    for i in range(n):
+        x=i%size[0]; z=(i//size[0])%size[2]; y=i//(size[0]*size[2])
+        if y<2: ids[i]=2 if (x,z)==(0,0) else 1
+    large={'Size':(10,vec(*size)),'Position':(10,vec(0,0,0)),'BlockStatePalette':(9,(10,[state('minecraft:air'),state('minecraft:stone'),state('minecraft:oak_log',axis='y')])),'BlockStates':(12,packed(ids,2))}
+    large=nbt({'Version':(3,7),'MinecraftDataVersion':(3,4189),'Regions':(10,{'large':(10,large)})})
+    for name,data in [('sponge-v2.nbt',v2),('sponge-v3.nbt',v3),('litematic-v7-negative.nbt',lite),('litematic-cross-word.nbt',cross),('litematic-large.nbt',large)]: (folder/name).write_bytes(data)
     examples=ROOT/'examples/schematics';examples.mkdir(parents=True,exist_ok=True)
     (examples/'demo.schem').write_bytes(gzip.compress(v3,mtime=0))
     (examples/'demo.litematic').write_bytes(gzip.compress(lite,mtime=0))

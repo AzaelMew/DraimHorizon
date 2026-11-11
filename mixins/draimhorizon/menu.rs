@@ -153,6 +153,8 @@ pub struct ViewModel {
     pub mining_custom: Vec<String>,
     /// The schematic previews placed in this world: (index, label, shown, selected).
     pub schematic_places: Vec<(usize, String, bool, bool)>,
+    /// Friends' shared previews of this world: label (file, friend, place) and shown here.
+    pub schematic_friend_places: Vec<(String, bool)>,
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
@@ -300,6 +302,8 @@ pub enum Action {
     SchematicPlaceShow(usize),
     /// Forgets a placed schematic preview.
     SchematicPlaceRemove(usize),
+    /// Shows or hides a friend's shared preview on this screen.
+    SchematicFriendShow(usize),
     /// Turns the farm on a marked plot on or off.
     FarmPlotFarm(usize),
     /// Shows or hides a marked plot.
@@ -412,6 +416,7 @@ impl std::fmt::Debug for Action {
             Self::SchematicPlaceRemove(i) => {
                 f.debug_tuple("SchematicPlaceRemove").field(i).finish()
             }
+            Self::SchematicFriendShow(i) => f.debug_tuple("SchematicFriendShow").field(i).finish(),
             Self::FarmPlotFarm(i) => f.debug_tuple("FarmPlotFarm").field(i).finish(),
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
@@ -733,12 +738,15 @@ pub enum Control {
     SchematicPreviewHere,
     /// Pages through the schematics folder on the tab.
     SchematicCatalogPage(i8),
+    /// Pages through the previews of this world (own and friends').
+    SchematicPlacePage(i8),
     /// Pages through the marked farm plots.
     FarmPlotPage(i8),
     /// A placed schematic preview: select it, show or hide it, forget it.
     SchematicPlace(usize),
     SchematicPlaceShow(usize),
     SchematicPlaceRemove(usize),
+    SchematicFriendShow(usize),
     MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
@@ -898,6 +906,7 @@ pub struct Menu {
     pub schematic_choices_page: usize,
     /// The page of the schematics folder shown on the tab.
     pub schematic_catalog_page: usize,
+    pub schematic_place_page: usize,
     pub farm_plot_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
@@ -958,6 +967,7 @@ impl Default for Menu {
             schematic_choices: false,
             schematic_choices_page: 0,
             schematic_catalog_page: 0,
+            schematic_place_page: 0,
             farm_plot_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Navigation,
@@ -1711,7 +1721,7 @@ impl Menu {
             ));
             out.push(widget(
                 [right, y, half, 11.0],
-                if model.schematic_places.is_empty() {
+                if model.schematic_places.is_empty() && model.schematic_friend_places.is_empty() {
                     self.language
                         .text("Предпоказов в мире нет", "No previews in this world")
                 } else {
@@ -1766,34 +1776,73 @@ impl Menu {
                 false,
             ));
         }
-        // Previews of this world.
+        // Previews of this world: the player's own, then friends' (show or hide only), a page at
+        // a time with the pager on the last line when they do not fit.
         let button = 44.0_f32.min(half * 0.24);
-        for (i, (index, label, shown, selected)) in
-            model.schematic_places.iter().take(rows).enumerate()
-        {
-            let py = y + i as f32 * row;
+        let own = model.schematic_places.len();
+        let total = own + model.schematic_friend_places.len();
+        let pager = total > rows && rows >= 2;
+        let per_page = if pager { rows - 1 } else { rows };
+        let pages = total.div_ceil(per_page.max(1)).max(1);
+        let page = self.schematic_place_page.min(pages - 1);
+        if pager {
+            let py = y + per_page as f32 * row;
             out.push(widget(
-                [right, py, half - 2.0 * (button + 3.0), row - 2.0],
-                label.clone(),
-                Some(Control::SchematicPlace(*index)),
-                *selected,
-            ));
-            out.push(widget(
-                [right + half - 2.0 * button - 3.0, py, button, row - 2.0],
-                if *shown {
-                    self.language.text("Скрыть", "Hide")
-                } else {
-                    self.language.text("Показ.", "Show")
-                },
-                Some(Control::SchematicPlaceShow(*index)),
-                *shown,
-            ));
-            out.push(widget(
-                [right + half - button, py, button, row - 2.0],
-                self.language.text("Удал.", "Del."),
-                Some(Control::SchematicPlaceRemove(*index)),
+                [right, py, half / 2.0 - 2.0, row - 2.0],
+                format!("← {}/{}", page + 1, pages),
+                Some(Control::SchematicPlacePage(-1)),
                 false,
             ));
+            out.push(widget(
+                [right + half / 2.0 + 2.0, py, half / 2.0 - 2.0, row - 2.0],
+                format!("{}/{} →", page + 1, pages),
+                Some(Control::SchematicPlacePage(1)),
+                false,
+            ));
+        }
+        for (slot, entry) in (page * per_page..total).take(per_page).enumerate() {
+            let py = y + slot as f32 * row;
+            if let Some((index, label, shown, selected)) = model.schematic_places.get(entry) {
+                out.push(widget(
+                    [right, py, half - 2.0 * (button + 3.0), row - 2.0],
+                    label.clone(),
+                    Some(Control::SchematicPlace(*index)),
+                    *selected,
+                ));
+                out.push(widget(
+                    [right + half - 2.0 * button - 3.0, py, button, row - 2.0],
+                    if *shown {
+                        self.language.text("Скрыть", "Hide")
+                    } else {
+                        self.language.text("Показ.", "Show")
+                    },
+                    Some(Control::SchematicPlaceShow(*index)),
+                    *shown,
+                ));
+                out.push(widget(
+                    [right + half - button, py, button, row - 2.0],
+                    self.language.text("Удал.", "Del."),
+                    Some(Control::SchematicPlaceRemove(*index)),
+                    false,
+                ));
+            } else if let Some((label, shown)) = model.schematic_friend_places.get(entry - own) {
+                out.push(widget(
+                    [right, py, half - button - 3.0, row - 2.0],
+                    label.clone(),
+                    None,
+                    false,
+                ));
+                out.push(widget(
+                    [right + half - button, py, button, row - 2.0],
+                    if *shown {
+                        self.language.text("Скрыть", "Hide")
+                    } else {
+                        self.language.text("Показ.", "Show")
+                    },
+                    Some(Control::SchematicFriendShow(entry - own)),
+                    *shown,
+                ));
+            }
         }
     }
     /// The Farm tab's marked plots of this world: how to mark one, then a line each with
@@ -4905,6 +4954,11 @@ impl Menu {
                     (self.farm_plot_page as isize + direction as isize).max(0) as usize;
                 None
             }
+            Control::SchematicPlacePage(direction) => {
+                self.schematic_place_page =
+                    (self.schematic_place_page as isize + direction as isize).max(0) as usize;
+                None
+            }
             Control::SchematicCatalogPage(direction) => {
                 self.schematic_catalog_page =
                     (self.schematic_catalog_page as isize + direction as isize).max(0) as usize;
@@ -4913,6 +4967,7 @@ impl Menu {
             Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),
             Control::SchematicPlaceShow(i) => Some(Action::SchematicPlaceShow(i)),
             Control::SchematicPlaceRemove(i) => Some(Action::SchematicPlaceRemove(i)),
+            Control::SchematicFriendShow(i) => Some(Action::SchematicFriendShow(i)),
             Control::FarmPlotFarm(i) => Some(Action::FarmPlotFarm(i)),
             Control::FarmPlotShow(i) => Some(Action::FarmPlotShow(i)),
             Control::FarmPlotRemove(i) => Some(Action::FarmPlotRemove(i)),

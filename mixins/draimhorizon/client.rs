@@ -388,6 +388,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     crate::game::claim_borders_claim_memory::frame(game);
     crate::game::claim_borders_claim_observations_view::frame(game);
     crate::game::claim_borders_seed_found_view::frame(game);
+    crate::game::claim_borders_schematic_share_view::frame(game);
     service_menu(game);
     crate::game::claim_borders_waypoint_view::frame(game);
     crate::game::claim_borders_inventory_search_view::frame(game);
@@ -1539,6 +1540,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
+            schematic_friend_places: crate::game::claim_borders_schematic_share_view::rows(game),
             mining_custom: {
                 crate::game::claim_borders_navigation_view::load_custom_blocks(game);
                 crate::game::claim_borders_mining::custom()
@@ -1680,6 +1682,9 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
     use menu::Action;
     match action {
         Action::RefreshSchematics => {
+            // Files that could not be read are read again (the player may have replaced them).
+            crate::game::claim_borders_schematic_view::forget_failed();
+            crate::game::claim_borders_schematic_share_view::forget_files();
             crate::game::claim_borders_workshop_view::refresh(game)?;
             Ok(Vec::new())
         }
@@ -1825,6 +1830,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::SchematicPlaceRemove(i) => {
             crate::game::claim_borders_schematic_view::remove(game, i);
+            Ok(Vec::new())
+        }
+        Action::SchematicFriendShow(i) => {
+            crate::game::claim_borders_schematic_share_view::toggle(game, i);
             Ok(Vec::new())
         }
         Action::FarmPlotFarm(i) => {
@@ -2408,6 +2417,18 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
         }
         return None;
     }
+    // Shared schematic previews: only from a friend (its pinned identity, its only session).
+    if body.starts_with(crate::game::claim_borders_schematic_share::PREFIX) {
+        let friend = state(|c| {
+            c.peers.iter().filter(|p| p.uuid == peer.uuid).count() == 1
+                && c.pins.as_ref().and_then(|p| p.get(&c.scope, peer.uuid))
+                    == Some(peer.code.as_str())
+        });
+        if friend {
+            crate::game::claim_borders_schematic_share_view::receive(&peer, &body);
+        }
+        return None;
+    }
     // Found POIs of the seed map: only from a friend (its pinned identity, its only session).
     if body.starts_with(crate::game::claim_borders_seed_poi::PREFIX) {
         let friend = state(|c| {
@@ -2534,6 +2555,7 @@ fn poll_network(game: &mut Game<'_>) {
                 crate::game::claim_borders_claim_memory::network_reset();
                 crate::game::claim_borders_claim_observations_view::network_reset();
                 crate::game::claim_borders_seed_found_view::network_reset();
+                crate::game::claim_borders_schematic_share_view::network_reset();
                 state(|c| {
                     c.connected = true;
                     c.own_code = code;
