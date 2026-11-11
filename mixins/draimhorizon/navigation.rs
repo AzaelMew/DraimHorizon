@@ -852,6 +852,85 @@ pub fn search_near(
 ) -> Option<Path> {
     search_near_drop(start, goal, radius, current_drop_limit(), cell, canceled)
 }
+/// A fast hasher for block positions (the multiply-rotate of FxHash): the search keeps a few
+/// hundred thousand of them, and the standard hasher was a good part of its time.
+#[derive(Default, Clone, Copy)]
+pub struct PosHasher(u64);
+impl std::hash::Hasher for PosHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.write_u64(u64::from(*b));
+        }
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    fn write_i32(&mut self, v: i32) {
+        self.write_u64(u64::from(v as u32));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+pub type PosMap<V> = HashMap<Pos, V, std::hash::BuildHasherDefault<PosHasher>>;
+/// The cells a search looks at, each read from the world once: a box around the start, filled
+/// as the search goes (a cell is read again and again, by every move that passes it); anything
+/// outside the box is read directly.
+pub struct CellCache<F: FnMut(Pos) -> Cell> {
+    lo: Pos,
+    size: [i32; 3],
+    data: Vec<u8>,
+    read: F,
+}
+const CELLS: [Cell; 8] = [
+    Cell::Unknown,
+    Cell::Air,
+    Cell::Solid,
+    Cell::Blocked,
+    Cell::Hazard,
+    Cell::Door,
+    Cell::Climb,
+    Cell::Water,
+];
+impl<F: FnMut(Pos) -> Cell> CellCache<F> {
+    /// The box from `lo` to `hi` (inclusive); a box too large to keep is not kept.
+    pub fn new(lo: Pos, hi: Pos, read: F) -> Self {
+        let size = [0, 1, 2].map(|i| (hi[i] - lo[i] + 1).max(0));
+        let volume = size.iter().map(|v| *v as usize).product::<usize>();
+        let (size, data) = if volume <= 24_000_000 {
+            (size, vec![u8::MAX; volume])
+        } else {
+            ([0; 3], Vec::new())
+        };
+        Self {
+            lo,
+            size,
+            data,
+            read,
+        }
+    }
+    pub fn get(&mut self, at: Pos) -> Cell {
+        let l = [at[0] - self.lo[0], at[1] - self.lo[1], at[2] - self.lo[2]];
+        if (0..3).any(|i| l[i] < 0 || l[i] >= self.size[i]) {
+            return (self.read)(at);
+        }
+        let i = ((l[1] * self.size[2] + l[2]) * self.size[0] + l[0]) as usize;
+        match self.data[i] {
+            u8::MAX => {
+                let cell = (self.read)(at);
+                self.data[i] = CELLS.iter().position(|c| *c == cell).unwrap_or(0) as u8;
+                cell
+            }
+            v => CELLS[usize::from(v)],
+        }
+    }
+}
 /// `search_near`, stepping off drops of up to `max_drop` blocks (beyond `MAX_DROP` only when it
 /// saves a long way: each block more costs as much as four steps).
 pub fn search_near_drop(
@@ -868,15 +947,113 @@ pub fn search_near_drop(
         dx * dx + dz * dz <= i64::from(radius).pow(2)
             && (at[1] - goal[1]).abs() <= i32::from(radius > 0)
     };
-    // In the water the walk starts from where the body swims (it climbs out on the first step).
-    if !standable(start, &mut cell) && cell(start) != Cell::Water {
-        return None;
-    }
-    let reach = current_reach();
     // How far up or down the search goes: sixteen blocks around a goal on the same level; for a
     // goal farther up or down (a cave far below, a tower) the whole height between the two and
     // more, with no fixed limit (the world's height bounds it).
     let vertical = ((goal[1] - start[1]).abs() + 16).max(16);
+    let explored = explore_with(
+        start,
+        max_drop,
+        current_reach(),
+        vertical,
+        |at| heuristic(at, goal),
+        reached,
+        &mut cell,
+        &canceled,
+    )?;
+    if canceled() || (explored.best == start && !reached(start)) {
+        return None;
+    }
+    let complete = reached(explored.best);
+    let mut path = explored.path_to(explored.best)?;
+    path.complete = complete;
+    Some(path)
+}
+/// What a search went through: the cost of the best way found to each cell and the cell it came
+/// from, and the cell it ended at (the goal, or the nearest to it it got).
+pub struct Explored {
+    pub costs: PosMap<i32>,
+    parents: PosMap<Pos>,
+    pub best: Pos,
+    limit: usize,
+}
+impl Explored {
+    /// The way from the start to `at`, when the search got there.
+    pub fn path_to(&self, at: Pos) -> Option<Path> {
+        self.costs.get(&at)?;
+        let mut nodes = vec![at];
+        while let Some(parent) = self.parents.get(nodes.last()?) {
+            nodes.push(*parent);
+            if nodes.len() > self.limit {
+                return None;
+            }
+        }
+        nodes.reverse();
+        Some(Path {
+            nodes,
+            complete: true,
+        })
+    }
+}
+/// Every place that can be walked to from `start` within the near reach (the cheapest way to
+/// each), for a caller that has many places to choose from: one search instead of one for each.
+pub fn explore(
+    start: Pos,
+    mut cell: impl FnMut(Pos) -> Cell,
+    canceled: impl Fn() -> bool,
+) -> Option<Explored> {
+    let reach = Reach {
+        radius: RADIUS,
+        nodes: 60_000,
+        millis: 300,
+    };
+    explore_with(
+        start,
+        current_drop_limit(),
+        reach,
+        // A miner's places to stand lie up to twelve blocks up or down, and five more under a
+        // trunk.
+        24,
+        |_| 0,
+        |_| false,
+        &mut cell,
+        &canceled,
+    )
+}
+/// The bounded A* shared by the searches (`estimate` 0 makes it a plain cheapest-first
+/// exploration). None when `start` is no place to start from.
+#[allow(clippy::too_many_arguments)]
+fn explore_with(
+    start: Pos,
+    max_drop: i32,
+    reach: Reach,
+    vertical: i32,
+    estimate: impl Fn(Pos) -> i32,
+    reached: impl Fn(Pos) -> bool,
+    cell: &mut impl FnMut(Pos) -> Cell,
+    canceled: &impl Fn() -> bool,
+) -> Option<Explored> {
+    // In the water the walk starts from where the body swims (it climbs out on the first step).
+    if !standable(start, cell) && cell(start) != Cell::Water {
+        return None;
+    }
+    // Every cell read once (moves reach four blocks out, drops twelve down, a body two up).
+    let margin = 6;
+    let below = vertical.max(max_drop.min(FAR_DROP)) + margin;
+    let mut cache = CellCache::new(
+        [
+            start[0] - reach.radius - margin,
+            start[1] - below,
+            start[2] - reach.radius - margin,
+        ],
+        [
+            start[0] + reach.radius + margin,
+            start[1] + vertical + margin,
+            start[2] + reach.radius + margin,
+        ],
+        cell,
+    );
+    let mut cell = |at: Pos| cache.get(at);
     // Long drops cost as much as a long way round; glided ones (elytra) much less.
     let drop_cost = if max_drop > FAR_DROP {
         6
@@ -884,19 +1061,22 @@ pub fn search_near_drop(
         FAR_DROP_COST
     };
     let began = Instant::now();
-    let mut open = BinaryHeap::from([Reverse((heuristic(start, goal), 0, start))]);
-    let mut costs = HashMap::from([(start, 0)]);
-    let mut parents = HashMap::new();
+    // Ties go to the deeper cell (the larger cost so far): straight at the goal, fewer cells.
+    let mut open = BinaryHeap::from([Reverse((estimate(start), 0, start))]);
+    let mut costs = PosMap::default();
+    costs.insert(start, 0);
+    let mut parents = PosMap::default();
     let mut best = start;
     let mut expanded = 0;
-    while let Some(Reverse((_, cost, at))) = open.pop() {
+    while let Some(Reverse((_, depth, at))) = open.pop() {
+        let cost = -depth;
         if canceled() {
             return None;
         }
         if cost != costs[&at] {
             continue;
         }
-        if heuristic(at, goal) < heuristic(best, goal) {
+        if estimate(at) < estimate(best) {
             best = at;
         }
         if reached(at) {
@@ -907,6 +1087,13 @@ pub fn search_near_drop(
         if expanded >= reach.nodes || began.elapsed() > Duration::from_millis(reach.millis) {
             break;
         }
+        let mut push = |next: Pos, next_cost: i32| {
+            if costs.get(&next).is_none_or(|old| next_cost < *old) {
+                costs.insert(next, next_cost);
+                parents.insert(next, at);
+                open.push(Reverse((next_cost + estimate(next), -next_cost, next)));
+            }
+        };
         for ([dx, dy, dz], base) in MOVES {
             let next = [at[0] + dx, at[1] + dy, at[2] + dz];
             if dy < -max_drop
@@ -925,15 +1112,7 @@ pub fn search_near_drop(
                 + if dy > 0 { 4 } else { dy.abs() * 2 }
                 + if door { 10 } else { 0 }
                 + (-dy - MAX_DROP).max(0) * drop_cost;
-            if costs.get(&next).is_none_or(|old| next_cost < *old) {
-                costs.insert(next, next_cost);
-                parents.insert(next, at);
-                open.push(Reverse((
-                    next_cost + heuristic(next, goal),
-                    next_cost,
-                    next,
-                )));
-            }
+            push(next, next_cost);
         }
         // With elytra: off an edge to wherever the ground is, however far down (glided).
         if max_drop > FAR_DROP {
@@ -963,33 +1142,15 @@ pub fn search_near_drop(
                     continue;
                 };
                 let fall = at[1] - next[1];
-                let next_cost = cost + 10 + fall * 2 + (fall - MAX_DROP) * drop_cost;
-                if costs.get(&next).is_none_or(|old| next_cost < *old) {
-                    costs.insert(next, next_cost);
-                    parents.insert(next, at);
-                    open.push(Reverse((
-                        next_cost + heuristic(next, goal),
-                        next_cost,
-                        next,
-                    )));
-                }
+                push(next, cost + 10 + fall * 2 + (fall - MAX_DROP) * drop_cost);
             }
         }
     }
-    if canceled() || (best == start && !reached(start)) {
-        return None;
-    }
-    let mut nodes = vec![best];
-    while let Some(parent) = parents.get(nodes.last().unwrap()) {
-        nodes.push(*parent);
-        if nodes.len() > reach.nodes {
-            return None;
-        }
-    }
-    nodes.reverse();
-    Some(Path {
-        nodes,
-        complete: reached(best),
+    Some(Explored {
+        costs,
+        parents,
+        best,
+        limit: reach.nodes,
     })
 }
 
@@ -1261,6 +1422,11 @@ impl Navigator {
             point = c;
         }
         Some(point)
+    }
+    /// Whether the walker is retrying after a failed plan at this spot (the budget of
+    /// `blocked`): such retries keep a slower pace, the world may still be loading.
+    pub fn recovering(&self) -> bool {
+        self.recoveries > 0
     }
     /// How many ticks in a row the walker has made no progress.
     pub fn stalled(&self) -> u16 {
@@ -2153,6 +2319,81 @@ mod tests {
                 assert!(near < 30, "zigzag human={human} yaw={yaw0}: circled {near}");
             }
         }
+    }
+    #[test]
+    fn the_cell_cache_answers_as_the_world_does_inside_and_outside_its_box() {
+        let world = |p: Pos| match (p[0] + 3 * p[1] + 7 * p[2]).rem_euclid(9) {
+            0 => Cell::Solid,
+            1 => Cell::Water,
+            2 => Cell::Hazard,
+            3 => Cell::Door,
+            4 => Cell::Climb,
+            5 => Cell::Blocked,
+            6 => Cell::Unknown,
+            _ => Cell::Air,
+        };
+        let mut reads = 0;
+        let mut cache = CellCache::new([-4, -4, -4], [4, 4, 4], |p| {
+            reads += 1;
+            world(p)
+        });
+        for _ in 0..2 {
+            for x in -6..=6 {
+                for y in -6..=6 {
+                    for z in -6..=6 {
+                        assert_eq!(cache.get([x, y, z]), world([x, y, z]));
+                    }
+                }
+            }
+        }
+        // Inside the box each cell was read once; outside, every time.
+        let inside = 9 * 9 * 9;
+        let outside = 13 * 13 * 13 - inside;
+        drop(cache);
+        assert_eq!(reads, inside + 2 * outside);
+    }
+    #[test]
+    fn exploring_reaches_exactly_the_places_a_search_reaches() {
+        // Uneven ground with walls: the cost of the way to each place agrees.
+        let world = |p: Pos| {
+            let ground = ((p[0] * 7 + p[2] * 3).rem_euclid(5) == 0) as i32;
+            let wall = p[0] == 4 && (-6..=5).contains(&p[2]) && p[1] <= 2;
+            if p[1] < ground || wall {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let start = [0, 0, 0];
+        let start = if standable(start, &mut { world }) {
+            start
+        } else {
+            [0, 1, 0]
+        };
+        let explored = explore(start, world, || false).unwrap();
+        let mut compared = 0;
+        for x in -10..=10 {
+            for z in -10..=10 {
+                for y in -1..=2 {
+                    let goal = [x, y, z];
+                    if !standable(goal, &mut { world }) {
+                        continue;
+                    }
+                    let searched = search(start, goal, world, || false).is_some_and(|p| p.complete);
+                    let found = explored.path_to(goal);
+                    assert_eq!(found.is_some(), searched, "{goal:?}");
+                    if let Some(found) = found {
+                        assert_eq!(found.nodes.first(), Some(&start));
+                        assert_eq!(found.nodes.last(), Some(&goal));
+                        for w in found.nodes.windows(2) {
+                            assert!(traversable(w[0], w[1], &mut { world }), "{w:?}");
+                        }
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared >= 200, "{compared}");
     }
     #[test]
     fn a_human_walker_looks_ahead_turns_smoothly_and_never_walks_backwards() {
