@@ -4,6 +4,8 @@ pub mod claims;
 pub mod overlay;
 #[path = "../mixins/draimhorizon/party.rs"]
 pub mod party;
+#[path = "../mixins/draimhorizon/pat_arms.rs"]
+pub mod pat_arms;
 #[path = "../mixins/draimhorizon/waypoints.rs"]
 pub mod waypoints;
 pub use waypoints as claim_borders_waypoints;

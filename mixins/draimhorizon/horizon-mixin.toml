@@ -1181,6 +1181,13 @@ name = "claim_borders_pat_pose"
 source = "pat_pose.rs"
 visibility = "pub"
 
+[[module]]
+id = "pat-arms"
+file = "crates/horizon-client/src/mobs/anim.rs"
+name = "claim_borders_pat_arms"
+source = "pat_arms.rs"
+visibility = "pub"
+
 [[injection]]
 id = "pat-hand"
 kind = "HEAD"

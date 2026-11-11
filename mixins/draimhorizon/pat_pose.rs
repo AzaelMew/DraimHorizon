@@ -5,17 +5,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The patting arm of one player model.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Arm {
-    pub entity: u32,
-    /// `None`: the model's own main arm.
-    pub left: Option<bool>,
-    /// 0 keeps the vanilla pose, 1 replaces the arm's rotation.
-    pub weight: f32,
-    /// Right-arm x, y, z rotation in radians; y and z are mirrored for a left arm.
-    pub rotation: [f32; 3],
-}
+pub use crate::mobs::anim::claim_borders_pat_arms::{Arm, Model};
 
 const MAX: usize = 16;
 static ANY: AtomicBool = AtomicBool::new(false);
@@ -42,7 +32,13 @@ pub fn apply(m: &crate::mobs::Mob, p: &mut crate::mobs::anim::Poses) {
     let Ok(arms) = ARMS.try_lock() else {
         return;
     };
-    let Some(arm) = arms.iter().find(|a| a.entity == m.id).copied() else {
+    let Some(arm) = crate::mobs::anim::claim_borders_pat_arms::select(
+        &arms,
+        Model {
+            entity: m.id,
+            join: m.join.get(),
+        },
+    ) else {
         return;
     };
     drop(arms);

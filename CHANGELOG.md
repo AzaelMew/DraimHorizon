@@ -2,6 +2,7 @@
 
 ## 0.39.12
 
+- Patting fixes: releasing the Pat key in chat or while unfocused no longer consumes the next press. Local and remote third-person poses use model join identities as well as server entity ids, so a valid remote player with entity id 0 animates independently of the local model.
 - Experiments → Ores: ten directly toggled ore icon tiles replace the ore type selector and visibility checkbox; saved ore choices are unchanged.
 - Seed map: structure and biome filter labels are centred and wrap at spaces onto up to three rows; the bottom hint wraps in narrow windows. Regression tests cover label wrapping and English/Russian chip sizing.
 - Patting: aim at another player within 3 blocks (its hit box, no block in between) and press the new **Pat** key (**K** by default, rebindable under Options → Mods → Settings) for two gentle pats over 0.8 seconds, with a 1-second cooldown. The hand comes down on top of the other player's head. One press is one gesture; holding the key repeats nothing. The first-person hand (empty or holding an item, mirrored for a left main hand) and the player's own third-person model raise the arm; nothing is attacked, used, mined or placed and no chat is sent. It does nothing while a screen, chat or dialog is open, while dead or spectating, or while an item is in use. Aiming at no player in reach shows "No player in reach" above the hotbar.

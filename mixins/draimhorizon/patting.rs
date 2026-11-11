@@ -99,17 +99,10 @@ pub fn trust(friend: bool, pinned: Option<&str>, code: &str, listed: bool, uniqu
     }
 }
 
-/// A held key repeats `pressed`; only its first press counts.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KeyEdge {
-    held: bool,
-}
-impl KeyEdge {
-    pub fn update(&mut self, pressed: bool) -> bool {
-        let first = pressed && !self.held;
-        self.held = pressed;
-        first
-    }
+/// `native_key_event` already removes repeats. Do not latch releases here: chat
+/// and focus changes can consume them before they reach the native key hook.
+pub fn key_pressed(pressed: bool, c: &Conditions) -> bool {
+    pressed && can_pat(c)
 }
 
 /// The animation at one moment: how far the arm is raised (0..1) and how far a tap brings the
@@ -565,13 +558,30 @@ mod tests {
     }
 
     #[test]
-    fn a_held_key_pats_once_per_press() {
-        let mut key = KeyEdge::default();
-        assert!(key.update(true));
-        assert!(!key.update(true), "a repeat of the held key");
-        assert!(!key.update(true));
-        assert!(!key.update(false));
-        assert!(key.update(true), "a new press");
+    fn a_release_consumed_by_chat_or_focus_loss_does_not_swallow_the_next_press() {
+        let playing = Conditions {
+            enabled: true,
+            playing: true,
+            connected: true,
+            alive: true,
+            ..Conditions::default()
+        };
+        let mut patter = Patter::default();
+        // native_key_event filters repeats. Chat/focus loss can consume the release,
+        // so two consecutive events delivered here can both be real presses.
+        for now in [0, COOLDOWN_MS, 2 * COOLDOWN_MS] {
+            assert!(key_pressed(true, &playing) && patter.try_start(now));
+            let chat = Conditions {
+                playing: false,
+                ..playing
+            };
+            assert!(!key_pressed(true, &chat));
+        }
+        assert!(
+            !key_pressed(false, &playing),
+            "a release never starts a pat"
+        );
+        assert!(!patter.try_start(2 * COOLDOWN_MS + 1));
     }
 
     #[test]

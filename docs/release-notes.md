@@ -6,6 +6,8 @@ Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2c
 - Players running this version (only friends, by default) see your arm move and an optional "*name* patted you" line. The pat travels only over the encrypted relay; players without the mod see nothing.
 - **J → Settings → General**: who can pat you (friends only by default, everyone or nobody) and the pat notification.
 - Older DraimHorizon versions ignore pats; friendship and sharing keep working with them.
+- Pat input no longer waits for a release event that chat or a focus change can consume; the next real press works normally, and the client's repeat filtering still prevents held-key repetition.
+- Local and remote third-person arm poses stay independent even when a remote player's server entity id is 0.
 - Experiments → Ores: one icon tile per ore (redstone dust, iron ingot, ancient debris and so on), toggled directly like the seed map filters.
 - Seed map: filter labels are centred and wrapped at spaces instead of cut off; the bottom hint wraps in narrow windows. Label regression tests cover English and Russian at 1080p and 1440p sizes.
 - Builds on 0.39.11, preserving farm plots and schematic preview persistence.

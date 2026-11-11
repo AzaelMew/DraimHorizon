@@ -14,7 +14,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 struct State {
     started: Instant,
-    key: pat::KeyEdge,
     patter: pat::Patter,
     receiver: pat::Receiver,
     inbox: pat::Inbox,
@@ -29,7 +28,6 @@ impl Default for State {
     fn default() -> Self {
         Self {
             started: Instant::now(),
-            key: pat::KeyEdge::default(),
             patter: pat::Patter::default(),
             receiver: pat::Receiver::default(),
             inbox: pat::Inbox::default(),
@@ -81,7 +79,7 @@ pub(super) fn notify(game: &Game<'_>) -> bool {
 fn conditions(game: &Game<'_>) -> pat::Conditions {
     pat::Conditions {
         enabled: game.native_on(claims::ID) && game.native_window(),
-        playing: game.native_playing(),
+        playing: game.native_playing() && game.focused,
         connected: game.remote.is_some(),
         alive: game
             .player
@@ -126,7 +124,7 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
     if key != game.native_mod_key(claims::ID, "pat", pat::DEFAULT_KEY) {
         return;
     }
-    if !state(|s| s.key.update(pressed)) || !pat::can_pat(&conditions(game)) {
+    if !pat::key_pressed(pressed, &conditions(game)) {
         return;
     }
     let Some(target) = aimed_player(game) else {
@@ -172,10 +170,13 @@ pub(super) fn receive(sender: u128, name: String, body: String, trust: pat::Trus
     });
 }
 
-fn arm(entity: u32, left: Option<bool>, p: pat::Pose) -> pose::Arm {
+fn arm(model: &horizon_client::mobs::Mob, left: Option<bool>, p: pat::Pose) -> pose::Arm {
     let a = pat::arm_pose(p);
     pose::Arm {
-        entity,
+        model: pose::Model {
+            entity: model.id,
+            join: model.join.get(),
+        },
         left,
         weight: a.weight,
         rotation: a.rotation,
@@ -239,12 +240,15 @@ pub(super) fn frame(game: &mut Game<'_>) {
     });
     let mut arms = Vec::with_capacity(remote.len() + 1);
     if let (Some(p), Some(model)) = (local, game.player_model.as_ref()) {
-        arms.push(arm(model.id, Some(game.settings.main_hand_left), p));
+        arms.push(arm(model, Some(game.settings.main_hand_left), p));
     }
     if let Some(r) = &game.remote {
         for (uuid, p) in remote {
-            if let Some(id) = r.player_entity(uuid) {
-                arms.push(arm(id, None, p));
+            if let Some(model) = r
+                .player_entity(uuid)
+                .and_then(|id| game.mob_index.get(&game.mobs, id))
+            {
+                arms.push(arm(model, None, p));
             }
         }
     }
