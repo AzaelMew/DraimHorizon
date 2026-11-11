@@ -1,5 +1,9 @@
 # История версий
 
+## 0.39.13
+
+- **Protect glow berry vines** now also blocks right-click berry harvesting, including held use and either hand. Sneak bypasses both harvesting and breaking protection. The existing saved toggle is reused; entity interactions and other blocks remain unchanged. Updated English and Russian hints.
+
 ## 0.39.12
 
 - Optional **J → Settings → General → Protect glow berry vines** prevents initial and held punches from breaking either cave-vine section, with or without berries. Sneak to deliberately break them; right-click harvesting and entity attacks are unchanged. Off by default; saved in the legacy settings namespace. English and Russian controls are included.
