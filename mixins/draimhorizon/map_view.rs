@@ -146,8 +146,39 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
         s.source = Some(source);
     });
 }
-pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, return_menu: bool) {
+/// Where the full map's mode and worlds chosen last are kept.
+const SELECTION: &str = "map_selection";
+pub(super) fn selection(game: &Game<'_>) -> model::Selection {
+    game.native_setting(claims::SETTINGS_ID, SELECTION)
+        .map(|v| model::Selection::decode(&v))
+        .unwrap_or_default()
+}
+/// Keeps a change of the mode or a world, so that M opens on it next time.
+pub(super) fn remember(game: &Game<'_>, change: impl FnOnce(&mut model::Selection)) {
+    let mut selection = selection(game);
+    change(&mut selection);
+    game.native_set_setting(claims::SETTINGS_ID, SELECTION, &selection.encode());
+}
+/// Opens the full map on the mode and world chosen last (explored terrain in the player's world
+/// the first time); a focus (a point to look at) opens explored terrain there.
+pub(super) fn open(
+    game: &Game<'_>,
+    source: model::Snapshot,
+    focus: Option<(String, i32, i32)>,
+    return_menu: bool,
+) {
+    use crate::game::claim_borders_seed_map::DIMENSIONS;
+    let kept = selection(game);
     crate::game::claim_borders_seed_view::open(&source, &focus);
+    let own = DIMENSIONS.iter().position(|d| *d == source.dimension);
+    if focus.is_none() {
+        if let Some(world) = kept.seed_world {
+            crate::game::claim_borders_seed_view::select_world(world);
+        }
+        if kept.seed {
+            crate::game::claim_borders_seed_view::show();
+        }
+    }
     state(|s| {
         s.dimension = source.dimension.clone();
         s.view = model::View {
@@ -155,6 +186,16 @@ pub(super) fn open(source: model::Snapshot, focus: Option<(String, i32, i32)>, r
             blocks_per_pixel: 2.0,
         };
         s.follow = focus.is_none();
+        // Another world chosen last: shown at the player's place carried over to it (a Nether
+        // block for eight overworld ones), not followed.
+        if focus.is_none()
+            && let (Some(world), Some(own)) = (kept.explored, own)
+            && world != own
+        {
+            s.dimension = DIMENSIONS[world].into();
+            s.view.center = model::point_in(own, world, source.player[0], source.player[2]);
+            s.follow = false;
+        }
         if let Some((dimension, x, z)) = focus {
             s.dimension = dimension;
             s.view.center = [f64::from(x) + 8.0, f64::from(z) + 8.0];
@@ -793,8 +834,12 @@ pub(super) fn map_frame(
 }
 fn operate(game: &Game<'_>, button: Button) {
     if matches!(button, Button::Seed) {
+        remember(game, |k| k.seed = true);
         crate::game::claim_borders_seed_view::show();
         return;
+    }
+    if let Button::Dimension(i) = button {
+        remember(game, |k| k.explored = Some(i));
     }
     if matches!(button, Button::Layer) {
         let mut p = settings(game);

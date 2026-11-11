@@ -1,10 +1,9 @@
-**DraimHorizon 0.39.13 - Protect glow berry harvesting**
+**DraimHorizon 0.39.14 - The map remembers its selection**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- **J → Settings → General → Protect glow berry vines** now prevents both accidental breaking and right-click berry harvesting on either cave-vine section.
-- Protection applies to held clicks and either hand. Sneak while clicking to deliberately harvest or break a vine.
-- Reuses the existing saved setting (off by default); entity interactions and other blocks remain unchanged. Disabling the mod disables protection.
-- Updated English and Russian setting hints.
+- M opens on the mode (Explored or Seed Map) and the world chosen last, across restarts too.
+- Another world than the player's is shown at the player's place carried over to it.
+- Builds on 0.39.13 (glow berry harvest protection).
 
-Verification: workspace regression tests and native-client compilation are checked separately from in-game behavior; this change has not been tested in game.
+Native client compiled against the pinned Nightly. Not verified in game.
