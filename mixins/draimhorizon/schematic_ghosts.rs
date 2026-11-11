@@ -298,7 +298,12 @@ fn build(game: &Game<'_>, shown: &[Shown], anchor: [i32; 3], k: [i32; 3]) -> Vec
 pub(super) fn tick(game: &Game<'_>) {
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let state = guard.get_or_insert_with(State::default);
-    let list = if game.title.is_some() || game.ui.hide_gui {
+    // Nothing while the mod is switched off (as the rest of its drawing), on the title screen
+    // or with the interface hidden (F1).
+    let list = if !game.native_on(crate::game::claim_borders::ID)
+        || game.title.is_some()
+        || game.ui.hide_gui
+    {
         Vec::new()
     } else {
         view::shown(game)
