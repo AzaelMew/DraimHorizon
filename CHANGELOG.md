@@ -1,5 +1,13 @@
 # История версий
 
+## 0.39.9
+
+- Human look no longer gets in Baritone's way. A walker with the human look stood still at corners until it counted as stuck: its head already looked round the corner along the way ahead while the cell it had to finish lay a little behind it, and it waited to turn round for a turn that never came. Finishing a step now walks the last bit in any direction; turning round first is kept for a way on that really lies behind.
+- The player moving the mouse is now read from the game's own look input (mouse or controller) instead of guessed from the camera having moved. A turn made by a task (the human look, opening a door, the storage trip, the pillar, a glide) is never taken for the mouse, so mining and placing (tunnel, bridge, drain, farm, schematics) no longer pause after such a turn. Moving the mouse hands the camera to the player for three seconds in every task: mining, placing, opening and the storage trip wait to aim and go on afterwards (placing keeps its time limits held back meanwhile); nothing is paused for it.
+- With the human look switched off (or the mouse holding the camera) gliding on elytra is still steered (it is flown by the look), and swimming to a block or along the route under water goes every way instead of waiting for the head to come round.
+- Lava: a place to stand diagonally next to lava (or another hazard) is no longer taken; a corner of lava was as easy to slip into as its side.
+- New scenario tests from the test checklist: lava walked round, a three-block drop taken straight off, levels 32 blocks up and down found, a goal 120 blocks away round a long wall found in one search, iron doors not opened, and a tick-by-tick walking simulation (open field, round a wall, a one-wide zigzag corridor) that arrives without circling with and without the human look.
+
 ## 0.39.8
 
 - Schematic previews show real blocks: every block still to be placed is drawn where it goes as a translucent ghost of that very block (its own model and texture, turned the way the preview is turned, so stairs, logs and doors face the right way; chests, signs and other block entities included) instead of a blue square, and a block standing there wrongly as a red box. Ghosts are drawn in a pass of their own after the world, hidden behind terrain, only their near faces, and without the faces between two ghost cubes.

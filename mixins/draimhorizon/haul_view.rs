@@ -421,8 +421,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     end(game, false, 60);
                     return;
                 }
-                // Turn to the box as a person would, then hold the attack with the right tool.
-                if let Some(eye) = game.eye_position() {
+                // Turn to the box as a person would, then hold the attack with the right tool
+                // (not while the player has the camera).
+                if !walk::mouse_has_camera()
+                    && let Some(eye) = game.eye_position()
+                {
                     let middle = nav::center(t.chest);
                     let middle = [middle[0], middle[1] + 0.5, middle[2]];
                     let (yaw, pitch) = (nav::yaw_to(eye, middle), nav::pitch_to(eye, middle));

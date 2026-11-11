@@ -1064,7 +1064,7 @@ pub(super) fn cancel_container() {
 /// the ray really meets it. `None` when nothing was requested.
 fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     let pos = state(|s| s.interact)?;
-    if !game.native_playing() {
+    if !game.native_playing() || navigation::mouse_has_camera() {
         return Some(false);
     }
     // The head turns to the block over a few ticks first, as a person's does; the exact aim at
@@ -1260,7 +1260,7 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
             })
         }
     });
-    let Some((job, placement, last_aim, external)) = data else {
+    let Some((job, placement, _, external)) = data else {
         return false;
     };
     if !navigation::in_world(game) {
@@ -1272,11 +1272,16 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
     if !game.native_playing() {
         return false;
     }
-    if let Some([yaw, pitch]) = last_aim
-        && (((game.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0).abs() > 0.5
-            || (game.pitch - pitch).abs() > 0.5)
-    {
-        pause();
+    // The player moved the mouse: the camera is theirs for a moment. The placement waits (its
+    // time limits held back) and aims again afterwards; it is never paused for a turn of the
+    // camera, which another task (the human look, a door, the storage) may have made.
+    if navigation::mouse_has_camera() {
+        state(|s| {
+            let now = s.started.elapsed().as_millis() as u64;
+            if let Some(p) = s.placement.as_mut() {
+                p.started_ms = now;
+            }
+        });
         return false;
     }
     if placement.sequence.is_some() {
