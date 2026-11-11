@@ -133,6 +133,9 @@ pub struct ViewModel {
     pub shulker_peek: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// Who may pat this player, and whether a pat shows a notification.
+    pub pat_policy: super::claim_borders_patting::Policy,
+    pub pat_notify: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
     pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
@@ -267,6 +270,8 @@ pub enum SchematicEdit {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetPatPolicy(super::claim_borders_patting::Policy),
+    SetPatNotify(bool),
     SetHelper(Helper, bool),
     /// The auto-clicker's button: true for the right one.
     SetAutoClickButton(bool),
@@ -409,6 +414,8 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
+            Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
             }
@@ -682,6 +689,10 @@ pub enum Control {
     AutoClickRate,
     /// Switches the contents preview in shulker box tooltips.
     ToggleShulkerPeek,
+    /// Cycles who may pat this player.
+    PatPolicy,
+    /// Switches the notification of a received pat.
+    PatNotify,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -2320,8 +2331,6 @@ impl Menu {
         }
         let mut inner = match section {
             0 => {
-                let detailed = height >= 300.0;
-                let step = if detailed { 52.0 } else { 24.0 };
                 let rows = [
                     (
                         self.language
@@ -2362,7 +2371,38 @@ impl Menu {
                             "Show the items inside a shulker in its tooltip",
                         ),
                     ),
+                    (
+                        localized!(
+                            self.language,
+                            "Кто может гладить: {}",
+                            "Who can pat you: {}",
+                            model.pat_policy.label(self.language)
+                        ),
+                        Control::PatPolicy,
+                        model.pat_policy != super::claim_borders_patting::Policy::Off,
+                        self.language.text(
+                            "Анимация у игроков с DraimHorizon через relay",
+                            "Animation from DraimHorizon players over the relay",
+                        ),
+                    ),
+                    (
+                        localized!(
+                            self.language,
+                            "Уведомление о поглаживании: {}",
+                            "Pat notification: {}",
+                            self.on(model.pat_notify)
+                        ),
+                        Control::PatNotify,
+                        model.pat_notify,
+                        self.language.text(
+                            "Строка над хотбаром, когда вас погладили",
+                            "A line above the hotbar when someone pats you",
+                        ),
+                    ),
                 ];
+                // Hints show under the switches when every row and its hint fit.
+                let detailed = height >= 54.0 + rows.len() as f32 * 52.0;
+                let step = if detailed { 52.0 } else { 24.0 };
                 let mut v = Vec::new();
                 for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
                     let y = 54.0 + index as f32 * step;
@@ -4761,6 +4801,8 @@ impl Menu {
                 super::claim_borders_autoclick::next_rate(model.click_rate),
             )),
             Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
+            Control::PatPolicy => Some(Action::SetPatPolicy(model.pat_policy.next())),
+            Control::PatNotify => Some(Action::SetPatNotify(!model.pat_notify)),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -6387,6 +6429,8 @@ mod tests {
                                     Control::Appearance,
                                     Control::ToggleReconnect,
                                     Control::ToggleShulkerPeek,
+                                    Control::PatPolicy,
+                                    Control::PatNotify,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;

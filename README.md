@@ -25,6 +25,8 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 ![Translation directions and DeepL setup](docs/showcase/translation.svg)
 ![Friends, Important players and waypoints](docs/showcase/friends.svg)
 
+**Patting** — Aim at a player within 3 blocks and press **K** (rebindable under Options → Mods → Settings) for two gentle pats. Your own arm moves at once. A player running DraimHorizon on the same relay sees your arm move too, plus an optional "*name* patted you" line. **J → Settings → General** sets who may pat you (friends only by default, everyone or nobody) and turns that line on or off. Patting is cosmetic only: it sends no attack, item use or chat. Players without the mod see nothing.
+
 ## Items and trading
 
 ![Auction catalogue with search and purchase confirmation](docs/showcase/trading.svg)

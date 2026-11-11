@@ -18,4 +18,5 @@ fn claim_borders_menu_frame(game: &mut crate::game::Game<'_>) {
         game.native_set_setting(crate::game::claim_borders::SETTINGS_ID, "seed_keys_v1", "1");
     }
     crate::game::claim_borders_client::frame(game);
+    crate::game::claim_borders_pat_view::frame(game);
 }

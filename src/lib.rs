@@ -135,3 +135,7 @@ pub use chat_archive as claim_borders_chat_archive;
 
 #[path = "../mixins/draimhorizon/reconnect.rs"]
 pub mod reconnect;
+
+#[path = "../mixins/draimhorizon/patting.rs"]
+pub mod patting;
+pub use patting as claim_borders_patting;

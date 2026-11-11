@@ -4,6 +4,7 @@ fn claim_borders_menu_open(game: &mut crate::game::Game<'_>, key: &str, pressed:
         return;
     }
     crate::game::claim_borders_ore_view::key(game, key, pressed);
+    crate::game::claim_borders_pat_view::key(game, key, pressed);
     if pressed
         && game.native_playing()
         && game.native_on(claim_borders::ID)

@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.11"
+version = "0.39.12"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -1159,4 +1159,52 @@ helper = "look_hook.rs"
 bindings = [
   { name = "x", ty = "f64", value = "x" },
   { name = "y", ty = "f64", value = "y" },
+]
+
+# Patting: the pure rules, the game adapter, the first-person hand and the third-person arm.
+[[module]]
+id = "patting"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_patting"
+source = "patting.rs"
+
+[[module]]
+id = "pat-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_pat_view"
+source = "pat_view.rs"
+
+[[module]]
+id = "pat-pose"
+file = "crates/horizon-client/src/mobs/anim.rs"
+name = "claim_borders_pat_pose"
+source = "pat_pose.rs"
+visibility = "pub"
+
+[[injection]]
+id = "pat-hand"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_render_hand_pose"
+helper = "pat_hand_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
+  { name = "x", ty = "&mut f32", value = "&mut *x" },
+  { name = "y", ty = "&mut f32", value = "&mut *y" },
+  { name = "z", ty = "&mut f32", value = "&mut *z" },
+  { name = "pitch", ty = "&mut f32", value = "&mut *pitch" },
+  { name = "yaw", ty = "&mut f32", value = "&mut *yaw" },
+  { name = "roll", ty = "&mut f32", value = "&mut *roll" },
+  { name = "scale", ty = "&mut f32", value = "&mut *scale" },
+]
+
+[[injection]]
+id = "pat-arm"
+kind = "RETURN"
+target = "horizon_client_lib::mobs::anim::setup"
+helper = "pat_pose_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "m", ty = "&crate::mobs::Mob", value = "m" },
+  { name = "p", ty = "&mut crate::mobs::anim::Poses", value = "&mut *p" },
 ]
