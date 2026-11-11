@@ -2414,8 +2414,8 @@ impl Menu {
                         Control::ProtectGlowBerries,
                         model.protect_glow_berries,
                         self.language.text(
-                            "Не ломать пещерные лианы; приседайте для обхода",
-                            "Prevent breaking cave vines; sneak to bypass. Harvesting is unchanged",
+                            "Не ломать лианы и не собирать ягоды; приседайте для обхода",
+                            "Prevent breaking vines and harvesting berries; sneak to bypass",
                         ),
                     ),
                 ];
