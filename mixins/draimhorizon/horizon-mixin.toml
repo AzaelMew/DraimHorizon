@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.7"
+version = "0.39.8"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -54,6 +54,12 @@ id = "schematic-places"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_schematic_places"
 source = "schematic_places.rs"
+
+[[module]]
+id = "schematic-ghosts"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_ghosts"
+source = "schematic_ghosts.rs"
 
 [[module]]
 id = "schematic-view"
@@ -1103,4 +1109,30 @@ bindings = [
   { name = "background", ty = "&mut u32", value = "&mut *background" },
   { name = "border_top", ty = "&mut u32", value = "&mut *border_top" },
   { name = "border_bottom", ty = "&mut u32", value = "&mut *border_bottom" },
+]
+
+# Schematic ghosts: translucent block models drawn in a pass of their own after the world.
+[[module]]
+id = "ghost-render"
+file = "crates/horizon-client-render/src/gfx/native_render.rs"
+name = "claim_borders_ghosts"
+source = "ghost_render.rs"
+visibility = "pub"
+
+[[injection]]
+id = "ghost-world-drawn"
+kind = "HEAD"
+target = "horizon_client_render::gfx::native_render::native_world_drawn"
+helper = "ghost_drawn_hook.rs"
+bindings = [
+  { name = "world", ty = "&mut crate::gfx::native_render::WorldDrawn<'_>", value = "&mut *world" },
+]
+
+[[injection]]
+id = "ghost-render-needs"
+kind = "HEAD"
+target = "horizon_client_render::gfx::native_render::native_render_needs"
+helper = "ghost_needs_hook.rs"
+bindings = [
+  { name = "needs", ty = "&mut crate::gfx::native_render::RenderNeeds", value = "&mut *needs" },
 ]

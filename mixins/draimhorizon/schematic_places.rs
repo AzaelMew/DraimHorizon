@@ -70,6 +70,19 @@ pub fn place(relative: Pos, origin: Pos, rotation: u8) -> Pos {
         at[2].saturating_add(origin[2]),
     ]
 }
+/// The block of the file (relative to its origin) that stands at `world` for a preview: the
+/// inverse of `place`.
+pub fn unplace(world: Pos, origin: Pos, rotation: u8) -> Pos {
+    let mut at = [
+        world[0].wrapping_sub(origin[0]),
+        world[1].wrapping_sub(origin[1]),
+        world[2].wrapping_sub(origin[2]),
+    ];
+    for _ in 0..rotation % 4 {
+        at = [at[2], at[1], -at[0]];
+    }
+    at
+}
 /// The corners of a preview: the box of the file's blocks, placed.
 pub fn bounds(min: Pos, max: Pos, origin: Pos, rotation: u8) -> (Pos, Pos) {
     let a = place(min, origin, rotation);
@@ -101,6 +114,16 @@ pub fn nudge(origin: Pos, yaw: f32, forward: i32, right: i32, up: i32) -> Pos {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unplace_finds_the_files_block_for_every_turn() {
+        let origin = [100, 64, -20];
+        for rotation in 0..4 {
+            for rel in [[0, 0, 0], [3, 1, -2], [-5, 7, 9]] {
+                let world = place(rel, origin, rotation);
+                assert_eq!(unplace(world, origin, rotation), rel, "turn {rotation}");
+            }
+        }
+    }
     #[test]
     fn previews_are_kept_and_read_back() {
         let list = vec![

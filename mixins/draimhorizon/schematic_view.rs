@@ -23,11 +23,13 @@ static PLACES: Mutex<Places> = Mutex::new(Places {
     list: Vec::new(),
     active: None,
 });
-/// A file read for its preview: its blocks relative to its origin, and their box.
-struct Shape {
-    blocks: Vec<(places::Pos, String)>,
-    min: places::Pos,
-    max: places::Pos,
+/// A file read for its preview: its blocks relative to its origin (an index into its distinct
+/// states), and their box.
+pub(super) struct Shape {
+    pub(super) cells: HashMap<places::Pos, u32>,
+    pub(super) states: Vec<crate::game::claim_borders_schematic::BlockState>,
+    pub(super) min: places::Pos,
+    pub(super) max: places::Pos,
 }
 enum Loading {
     Pending(Receiver<Result<files::Response, String>>),
@@ -176,25 +178,35 @@ fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
     if let Loading::Pending(rx) = entry {
         match rx.try_recv() {
             Ok(Ok(files::Response::Loaded(blueprint))) => {
-                let blocks: Vec<(places::Pos, String)> = blueprint
-                    .blocks
-                    .into_iter()
-                    .filter(|(_, s)| !s.name.ends_with(":air") && !s.name.ends_with("cave_air"))
-                    .map(|(at, s)| (at, s.name))
-                    .collect();
+                let mut cells = HashMap::new();
+                let mut states = Vec::new();
+                let mut index = std::collections::BTreeMap::new();
                 let mut min = [i32::MAX; 3];
                 let mut max = [i32::MIN; 3];
-                for (at, _) in &blocks {
+                for (at, state) in blueprint.blocks {
+                    if state.air() {
+                        continue;
+                    }
                     for i in 0..3 {
                         min[i] = min[i].min(at[i]);
                         max[i] = max[i].max(at[i]);
                     }
+                    let i = *index.entry(state.clone()).or_insert_with(|| {
+                        states.push(state);
+                        states.len() as u32 - 1
+                    });
+                    cells.insert(at, i);
                 }
-                if blocks.is_empty() {
+                if cells.is_empty() {
                     min = [0; 3];
                     max = [0; 3];
                 }
-                *entry = Loading::Ready(Arc::new(Shape { blocks, min, max }));
+                *entry = Loading::Ready(Arc::new(Shape {
+                    cells,
+                    states,
+                    min,
+                    max,
+                }));
             }
             Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => *entry = Loading::Failed,
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -205,17 +217,12 @@ fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
         _ => None,
     }
 }
-/// Draws the shown previews of this world: the box, and near the player each block still to be
-/// placed (blue) or standing there wrongly (red); what is built is not drawn.
-pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
-    if game.title.is_some() || game.ui.hide_gui {
-        return;
-    }
-    let (Some(scope), Some(p)) = (here(game), game.native_player()) else {
-        return;
+/// The shown previews of this world whose files are read, the selected one marked.
+pub(super) fn shown(game: &Game<'_>) -> Vec<(places::Placement, Arc<Shape>, bool)> {
+    let Some(scope) = here(game) else {
+        return Vec::new();
     };
-    let me = [p.x, p.y, p.z];
-    let shown: Vec<(places::Placement, bool)> = with_places(game, |pl| {
+    let list: Vec<(places::Placement, bool)> = with_places(game, |pl| {
         pl.list
             .iter()
             .enumerate()
@@ -223,11 +230,18 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
             .map(|(i, x)| (x.clone(), pl.active == Some(i)))
             .collect()
     });
-    let mut budget = 2000;
-    for (pl, selected) in shown {
-        let Some(shape) = shape(game, &pl.file) else {
-            continue;
-        };
+    list.into_iter()
+        .filter_map(|(pl, selected)| shape(game, &pl.file).map(|s| (pl, s, selected)))
+        .collect()
+}
+/// Draws the box of each shown preview of this world; the blocks themselves are ghosts
+/// (`schematic_ghosts`): what is still to be placed as its own translucent model, what stands
+/// there wrongly in red.
+pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
+    if game.title.is_some() || game.ui.hide_gui {
+        return;
+    }
+    for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);
         g.cuboid(
             lo.map(f64::from),
@@ -235,26 +249,6 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
             if selected { 0xffffd060 } else { 0xaa88aacc },
             if selected { 2.0 } else { 1.0 },
         );
-        for (rel, name) in &shape.blocks {
-            if budget == 0 {
-                break;
-            }
-            let at = places::place(*rel, pl.origin, pl.rotation);
-            if nav::distance(nav::center(at), me) > 40.0 {
-                continue;
-            }
-            let live = game.native_block(at);
-            if &live == name {
-                continue;
-            }
-            let empty = matches!(live.as_str(), "minecraft:air" | "minecraft:cave_air")
-                || crate::game::claim_borders_navigation::passable(&live);
-            let color = if empty { 0xcc55ccff } else { 0xccff5555 };
-            let min = at.map(|v| f64::from(v) + 0.08);
-            let max = at.map(|v| f64::from(v) + 0.92);
-            g.cuboid(min, max, color, 1.0);
-            budget -= 1;
-        }
     }
 }
 /// The editor's keys: (id, default key, Russian name, English name).

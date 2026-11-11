@@ -38,7 +38,7 @@ Every Baritone job shares one route planner. A task waits instead of stopping wh
 ![Mining trees, ores and blocks under water](docs/showcase/mining.svg)
 ![Farm field split into crop quadrants with harvest, seed and bone meal chests](docs/showcase/farm.svg)
 ![Tunnel, bridge and drain jobs](docs/showcase/construction.svg)
-![Schematic hologram and preview editor keys](docs/showcase/schematics.svg)
+![Schematic ghost blocks and preview editor keys](docs/showcase/schematics.svg)
 
 ## Helpers and interface
 
