@@ -861,8 +861,15 @@ impl std::hash::Hasher for PosHasher {
         self.0
     }
     fn write(&mut self, bytes: &[u8]) {
-        for b in bytes {
-            self.write_u64(u64::from(*b));
+        // A position comes as one write of its twelve bytes: taken eight at a time.
+        let (words, rest) = bytes.as_chunks::<8>();
+        for word in words {
+            self.write_u64(u64::from_le_bytes(*word));
+        }
+        if !rest.is_empty() {
+            let mut word = [0; 8];
+            word[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(word));
         }
     }
     fn write_u64(&mut self, v: u64) {

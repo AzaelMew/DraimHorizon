@@ -2075,14 +2075,15 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
     model::set_drop_limit(query.drop);
     match s.worker.as_ref().unwrap().tx.try_send(query) {
         Ok(()) => {}
-        // The planner still holds a query that was cancelled a moment ago: ask again on a
-        // following tick instead of pausing the task.
-        Err(mpsc::TrySendError::Full(_)) => {
+        // The planner still holds a query that was cancelled a moment ago: a running task asks
+        // again on a following tick (as it waits) instead of pausing; a preview, which nothing
+        // asks again for, says so.
+        Err(mpsc::TrySendError::Full(_)) if s.nav.running => {
             s.last_query = Instant::now();
             s.nav.status = model::Status::Waiting;
             return Ok(());
         }
-        Err(mpsc::TrySendError::Disconnected(_)) => {
+        Err(_) => {
             return Err(language()
                 .text(
                     "Планировщик занят; повторите запрос",
