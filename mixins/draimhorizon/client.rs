@@ -1545,6 +1545,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             pat_policy: crate::game::claim_borders_pat_view::policy(game),
             pat_notify: crate::game::claim_borders_pat_view::notify(game),
+            protect_glow_berries: game
+                .native_setting(claims::SETTINGS_ID, "protect_glow_berries")
+                .as_deref()
+                == Some("true"),
             click_right: game
                 .native_setting(claims::SETTINGS_ID, "auto_click_button")
                 .as_deref()
@@ -1756,6 +1760,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 "pat_notify",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetProtectGlowBerries(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "protect_glow_berries",
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())

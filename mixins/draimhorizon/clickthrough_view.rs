@@ -5,6 +5,26 @@ use crate::game::{
 };
 use horizon_client::first_person::Hand;
 use winit::keyboard::KeyCode;
+/// Cancel both initial and held mining without suppressing entity attacks or use.
+pub(crate) fn protect_vines(game: &Game<'_>, button: i32, swing: &mut bool, canceled: &mut bool) {
+    if *canceled || button != 0 || !game.native_on(claims::ID) || game.entity_targeted() {
+        return;
+    }
+    let Some(hit) = game.pick() else {
+        return;
+    };
+    let state = game.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
+    if crate::game::claim_borders_block_protection::cancel(
+        game.native_setting(claims::SETTINGS_ID, "protect_glow_berries")
+            .as_deref()
+            == Some("true"),
+        game.native_sneaking(),
+        &game.res.facts().get(state).name,
+    ) {
+        *swing = false;
+        *canceled = true;
+    }
+}
 fn container(game: &Game<'_>, pos: [i32; 3]) -> bool {
     let name = &game
         .res

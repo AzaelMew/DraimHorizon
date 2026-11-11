@@ -2,6 +2,8 @@
 
 ## 0.39.12
 
+- Optional **J → Settings → General → Protect glow berry vines** prevents initial and held punches from breaking either cave-vine section, with or without berries. Sneak to deliberately break them; right-click harvesting and entity attacks are unchanged. Off by default; saved in the legacy settings namespace. English and Russian controls are included.
+
 - Patting fixes: releasing the Pat key in chat or while unfocused no longer consumes the next press. Local and remote third-person poses use model join identities as well as server entity ids, so a valid remote player with entity id 0 animates independently of the local model.
 - Experiments → Ores: ten directly toggled ore icon tiles replace the ore type selector and visibility checkbox; saved ore choices are unchanged.
 - Seed map: structure and biome filter labels are centred and wrap at spaces onto up to three rows; the bottom hint wraps in narrow windows. Regression tests cover label wrapping and English/Russian chip sizing.

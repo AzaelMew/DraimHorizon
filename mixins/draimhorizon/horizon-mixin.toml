@@ -815,6 +815,12 @@ source = "inventory_preferences.rs"
 [[module]]
 id = "clickthrough-model"
 file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_block_protection"
+source = "block_protection.rs"
+
+[[module]]
+id = "clickthrough-ray-model"
+file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_clickthrough"
 source = "clickthrough.rs"
 

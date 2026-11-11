@@ -2,6 +2,8 @@
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
+- **J → Settings → General → Protect glow berry vines** (off by default): prevents accidental left-click and held-click breaking of both cave-vine sections, whether or not berries are present. Sneak + punch bypasses protection. Right-click berry harvesting and entity attacks are unchanged. The switch is saved and available in English and Russian.
+
 - New **Pat** key (**K**, rebindable): aim at a player within 3 blocks for two gentle pats. Purely cosmetic: no attack, item use or chat.
 - Players running this version (only friends, by default) see your arm move and an optional "*name* patted you" line. The pat travels only over the encrypted relay; players without the mod see nothing.
 - **J → Settings → General**: who can pat you (friends only by default, everyone or nobody) and the pat notification.

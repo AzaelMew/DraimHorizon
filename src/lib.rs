@@ -1,3 +1,5 @@
+#[path = "../mixins/draimhorizon/block_protection.rs"]
+pub mod block_protection;
 #[path = "../mixins/draimhorizon/runtime.rs"]
 pub mod claims;
 #[path = "../mixins/draimhorizon/overlay.rs"]

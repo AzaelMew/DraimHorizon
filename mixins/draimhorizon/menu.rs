@@ -136,6 +136,7 @@ pub struct ViewModel {
     /// Who may pat this player, and whether a pat shows a notification.
     pub pat_policy: super::claim_borders_patting::Policy,
     pub pat_notify: bool,
+    pub protect_glow_berries: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
     pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
@@ -272,6 +273,7 @@ pub enum Action {
     SetAutoEat(bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
+    SetProtectGlowBerries(bool),
     SetHelper(Helper, bool),
     /// The auto-clicker's button: true for the right one.
     SetAutoClickButton(bool),
@@ -416,6 +418,9 @@ impl std::fmt::Debug for Action {
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
+            Self::SetProtectGlowBerries(on) => {
+                f.debug_tuple("SetProtectGlowBerries").field(on).finish()
+            }
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
             }
@@ -693,6 +698,7 @@ pub enum Control {
     PatPolicy,
     /// Switches the notification of a received pat.
     PatNotify,
+    ProtectGlowBerries,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -2396,6 +2402,20 @@ impl Menu {
                         self.language.text(
                             "Строка над хотбаром, когда вас погладили",
                             "A line above the hotbar when someone pats you",
+                        ),
+                    ),
+                    (
+                        localized!(
+                            self.language,
+                            "Защита светящихся ягод: {}",
+                            "Protect glow berry vines: {}",
+                            self.on(model.protect_glow_berries)
+                        ),
+                        Control::ProtectGlowBerries,
+                        model.protect_glow_berries,
+                        self.language.text(
+                            "Не ломать пещерные лианы; приседайте для обхода",
+                            "Prevent breaking cave vines; sneak to bypass. Harvesting is unchanged",
                         ),
                     ),
                 ];
@@ -4789,6 +4809,9 @@ impl Menu {
             Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
             Control::PatPolicy => Some(Action::SetPatPolicy(model.pat_policy.next())),
             Control::PatNotify => Some(Action::SetPatNotify(!model.pat_notify)),
+            Control::ProtectGlowBerries => {
+                Some(Action::SetProtectGlowBerries(!model.protect_glow_berries))
+            }
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -6417,6 +6440,7 @@ mod tests {
                                     Control::ToggleShulkerPeek,
                                     Control::PatPolicy,
                                     Control::PatNotify,
+                                    Control::ProtectGlowBerries,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;
@@ -6449,6 +6473,21 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn glow_berry_protection_switches_both_ways_and_defaults_off() {
+        let mut menu = Menu::default();
+        let mut model = ViewModel::default();
+        assert!(!model.protect_glow_berries);
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::ProtectGlowBerries),
+            Some(Action::SetProtectGlowBerries(true))
+        ));
+        model.protect_glow_berries = true;
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::ProtectGlowBerries),
+            Some(Action::SetProtectGlowBerries(false))
+        ));
     }
     #[test]
     fn toggle_captions_have_matching_russian_and_english_controls() {
