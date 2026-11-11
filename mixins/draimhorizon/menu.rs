@@ -6873,6 +6873,30 @@ mod tests {
     }
 
     #[test]
+    fn ore_tiles_toggle_their_own_bit_and_ignore_unknown_ores() {
+        let mut menu = Menu {
+            tab: Tab::Experimental,
+            ..Menu::default()
+        };
+        let model = ViewModel::default();
+        let before = model.experimental.ores;
+        for kind in 0..experimental::ORES.len() as u8 {
+            let Some(Action::SetExperimental(p)) =
+                menu.activate(&model, 360.0, Control::ExperimentalOreToggle(kind))
+            else {
+                panic!("tile {kind} produced no preference change");
+            };
+            assert_eq!(p.ores, before ^ (1 << kind));
+        }
+        let Some(Action::SetExperimental(p)) =
+            menu.activate(&model, 360.0, Control::ExperimentalOreToggle(200))
+        else {
+            panic!("unknown tile should leave preferences as they are");
+        };
+        assert_eq!(p.ores, before);
+    }
+
+    #[test]
     fn experimental_tabs_preserve_ore_preferences_without_starting_automation() {
         let model = ViewModel::default();
         for language in [Language::Russian, Language::English] {
