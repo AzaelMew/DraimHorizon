@@ -1,14 +1,18 @@
 # История версий
 
-## 0.39.14
+## 0.39.15
 
 - Seed Map found marks are shared with friends. A structure marked as looted (or unmarked) on the Seed Map now shows the same way on every friend's Seed Map, and hovering it says who marked it ("Found by Alex"). Marks are sent over the existing end-to-end encrypted relay as a new `[DHF1]` frame (up to six structures a frame, well under 1 KiB) to every friend online (one frame a second, so a relay with a message quota is not exceeded), again when they change and when a friend comes online; they are accepted only from friends (the friend's pinned relay identity and its only session, in the server's player list) and only for the same seed. The friend's name comes from the relay, never from the frame, and friends' marks are not passed on to others.
 - The newer setting of a structure wins, so a mark and a later unmark by different friends end the same everywhere; an unmark is kept (as not found) so it reaches friends too, and redelivered older frames change nothing. Times from a friend more than five minutes ahead of this clock are refused, and a frame is checked whole before any of it is taken.
 - Found marks are loaded when the world is joined (not only when the Seed Map opens), so friends' marks arrive while the map is closed; friends' changes are saved within three seconds and on leaving the world. The file gains the state, time and author of each mark (schema 2); existing files (schema 1) are read as the player's own marks.
 
-## 0.39.13
+## 0.39.14
 
 - The full map (M) opens on the selection made last: explored terrain or the Seed Map, and the world chosen in each (overworld, Nether, End). It used to open on explored terrain in the player's world every time. The choice is kept in the settings, so it holds after a restart too. A world other than the player's is shown at the player's place carried over to it (a Nether block for eight overworld ones; the middle of the End). Opening the map on a point (from a waypoint) still shows that point.
+
+## 0.39.13
+
+- **Protect glow berry vines** now also blocks right-click berry harvesting, including held use and either hand. Sneak bypasses both harvesting and breaking protection. The existing saved toggle is reused; entity interactions and other blocks remain unchanged. Updated English and Russian hints.
 
 ## 0.39.12
 
