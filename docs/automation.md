@@ -1,6 +1,6 @@
 # Farming and schematic building
 
-Open **J → Experiments → Baritone** and accept the experimental warning. These are native Rust features, not the Java Baritone library. Manual movement, attack/use, camera adjustments during interaction, or opening a screen pauses the relevant action. Use **Resume** after correcting a problem; **Stop** clears the job. Jobs are session-only and reset when the server, account or dimension changes.
+Open **J → Experiments → Baritone** and accept the experimental warning. These are native Rust features, not the Java Baritone library. Manual movement, attack/use or opening a screen pauses the relevant action. Moving the camera does not: it hands the camera to you for three seconds while the action waits, then the action aims again and goes on. Use **Resume** after correcting a problem; **Stop** clears the job. Jobs are session-only and reset when the server, account or dimension changes.
 
 ## Global automation keys
 

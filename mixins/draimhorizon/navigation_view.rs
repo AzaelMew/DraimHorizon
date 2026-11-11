@@ -1318,8 +1318,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                     s.nav.replan();
                 }
             }
-            if job.wait.is_some() {
-                // Waiting for a tool or a free slot is not a timeout.
+            if job.wait.is_some() || mouse_has_camera() {
+                // Waiting for a tool or a free slot, or for the player to let go of the camera,
+                // is not a timeout.
                 job.started_ms = now;
             } else if now.saturating_sub(job.started_ms) > 30_000 {
                 // This block does not break: leave it and look for another.
@@ -3489,6 +3490,10 @@ fn door_step(
         return false;
     }
     match doors.opening {
+        Some((at, _, tries)) if at == door && mouse_has_camera() => {
+            // The player has the camera: no click is aimed, so none is counted as tried.
+            doors.opening = Some((door, Instant::now(), tries));
+        }
         Some((at, when, tries)) if at == door => {
             if when.elapsed() >= Duration::from_millis(600) {
                 if tries >= 5 {

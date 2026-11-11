@@ -23,7 +23,7 @@ Automatic slot selection is restored afterwards if the player has not chosen ano
 
 ## Pause and reset
 
-Movement, jump, sneak, attack/use, opening a screen or moving the camera during placement pauses construction. **Resume** preserves completed distance and waits for in-flight confirmations. After moving away from the passage, start a new task instead of resuming from a distant position. **Stop** cancels the task. Reconnecting or changing worlds/accounts clears it.
+Movement, jump, sneak, attack/use or opening a screen during placement pauses construction. Moving the camera hands it to you for three seconds: placement waits, with its time limits held back, and goes on. **Resume** preserves completed distance and waits for in-flight confirmations. After moving away from the passage, start a new task instead of resuming from a distant position. **Stop** cancels the task. Reconnecting or changing worlds/accounts clears it.
 
 The first implementation uses full blocks and a straight level passage. It does not build arbitrary schematics, stairs, towers, farms or fluid-clearing structures. Item pickup remains the ordinary game's behavior.
 

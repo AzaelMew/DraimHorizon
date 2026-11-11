@@ -417,6 +417,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         Step::Break => {
             if game.native_block(t.chest).contains("shulker_box") {
+                // The player holding the camera holds the time limit back too.
+                if walk::mouse_has_camera() {
+                    t.since = Instant::now();
+                }
                 if t.since.elapsed() > Duration::from_secs(15) {
                     end(game, false, 60);
                     return;
