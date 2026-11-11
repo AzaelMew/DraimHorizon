@@ -157,6 +157,8 @@ pub(super) fn command(game: &mut Game<'_>, message: &str) -> bool {
     {
         return false;
     }
+    // Kept in the chat history like any sent line (the arrow keys bring it back).
+    game.ui.chat.add_recent(message);
     let reply = run(game, &sub, &words.collect::<Vec<_>>().join(" "));
     game.native_chat(&format!("[DraimHorizon] {reply}"));
     true
