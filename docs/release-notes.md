@@ -1,7 +1,9 @@
-**DraimHorizon 0.39.7 - README for every feature**
+**DraimHorizon 0.39.8 - Schematic ghost blocks**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- README describes every feature in short sections, with new plain illustrations for routing, mining, farming, tunnels and bridges, schematics, helpers and the auction.
-- The README names the current Nightly `fdc87ae`.
-- No code changes; builds on 0.39.6.
+- Schematic previews draw each missing block as a translucent ghost of the real block, facing the way it is to be placed; wrong blocks stay red.
+- Ghosts hide behind terrain, are built near the player section by section within a per-tick budget and rebuild only what changed.
+- Ghost rendering follows Horizonmatica by keksi2k (MIT License).
+
+Native client compiled against the pinned Nightly. Not verified in game.
