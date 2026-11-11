@@ -1318,8 +1318,9 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                     s.nav.replan();
                 }
             }
-            if job.wait.is_some() {
-                // Waiting for a tool or a free slot is not a timeout.
+            if job.wait.is_some() || mouse_has_camera() {
+                // Waiting for a tool or a free slot, or for the player to let go of the camera,
+                // is not a timeout.
                 job.started_ms = now;
             } else if now.saturating_sub(job.started_ms) > 30_000 {
                 // This block does not break: leave it and look for another.
@@ -1515,11 +1516,9 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             return false;
         }
         job.wait = None;
-        if let Some([yaw, pitch]) = s.mine_aim
-            && (((game.yaw - yaw + 180.0).rem_euclid(360.0) - 180.0).abs() > 0.5
-                || (game.pitch - pitch).abs() > 0.5)
-        {
-            pause_state(s);
+        // The player moved the mouse: the camera is theirs for a moment; the miner waits and
+        // aims again from wherever it is left (a turn by another task is not the mouse).
+        if mouse_has_camera() {
             return physical;
         }
         let position = [player.x, player.y, player.z];
@@ -3140,6 +3139,9 @@ fn pillar_frame(game: &mut Game<'_>) -> Option<bool> {
         }
         return Some(false);
     }
+    if mouse_has_camera() {
+        return Some(false);
+    }
     game.pitch = model::turn_toward(game.pitch, 90.0, 24.0);
     // The right tool for the block under the feet (a shovel for earth, a pickaxe for stone).
     drop(slot);
@@ -3224,88 +3226,77 @@ const TURN_STEP: f32 = 22.0;
 /// wish is stale.
 fn face(game: &mut Game<'_>) {
     use crate::game::claim_borders_construction_view as placement;
-    let mut look = LOOK.lock().unwrap_or_else(|e| e.into_inner());
-    let now = (game.yaw, game.pitch);
-    let moved = |a: (f32, f32), b: (f32, f32)| {
-        model::angle_between(a.0, b.0).abs() > 0.5 || (a.1 - b.1).abs() > 0.5
-    };
-    // The camera is not where it was left and nothing else aimed it: the mouse moved. The
-    // camera is the player's for a while; the task goes on.
-    let aimed = placement::aimed_recently() || state(|s| s.mine_aim.is_some());
-    if let Some(set) = look.set.take()
-        && moved(set, now)
-        && !aimed
-    {
-        look.mouse_until = Some(Instant::now() + MOUSE_LEND);
+    let flying = game.player.as_ref().is_some_and(|b| b.fall_flying);
+    if !flying {
+        GLIDING.store(false, std::sync::atomic::Ordering::Relaxed);
     }
-    if let Some(until) = look.mouse_until {
-        if moved(look.seen, now) {
-            look.mouse_until = Some(Instant::now() + MOUSE_LEND);
-        } else if Instant::now() >= until {
-            look.mouse_until = None;
-        }
-        look.seen = now;
-        if look.mouse_until.is_some() {
-            return;
-        }
+    let gliding = flying && GLIDING.load(std::sync::atomic::Ordering::Relaxed);
+    // The player moved the mouse a moment ago: the camera is theirs, the task goes on.
+    if mouse_has_camera() {
+        return;
     }
-    look.seen = now;
     let wish = *FACE.lock().unwrap_or_else(|e| e.into_inner());
     let Some((yaw, pitch, since)) = wish else {
         return;
     };
-    // The miner aims at its block itself: the walk's look must not turn the head then (the
-    // miner takes a turn it did not make for the player's mouse, and pauses).
+    // The miner aims at its block itself: the walk's look must not turn the head then.
     let mining_at_block = state(|s| {
         s.mine_aim.is_some()
             || s.mining
                 .as_ref()
                 .is_some_and(|j| j.active && j.phase != mining::Phase::Approaching)
     });
+    // A glide is steered by the look, so it turns the head with the human look off too.
     if since.elapsed() > Duration::from_millis(250)
         || placement::aiming()
         || placement::aimed_recently()
         || mining_at_block
-        || !human_look_enabled(game)
+        || (!gliding && !human_look_enabled(game))
     {
+        return;
+    }
+    if gliding {
+        game.yaw = model::turn_toward(game.yaw, yaw, TURN_STEP);
+        game.pitch = model::turn_toward(game.pitch, pitch, 12.0);
         return;
     }
     let t = since.elapsed().as_secs_f32() + START.get_or_init(Instant::now).elapsed().as_secs_f32();
     let sway_yaw = 1.2 * (t * 1.7).sin();
     game.yaw = model::turn_toward(game.yaw, yaw + sway_yaw, TURN_STEP);
     // The pitch follows slowly (a few degrees a tick): no nodding.
-    // Gliding: the flight follows the look, so the pitch answers quickly too.
-    let gliding = game.player.as_ref().is_some_and(|b| b.fall_flying)
-        && GLIDING.load(std::sync::atomic::Ordering::Relaxed);
-    if !game.player.as_ref().is_some_and(|b| b.fall_flying) {
-        GLIDING.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-    game.pitch = model::turn_toward(game.pitch, pitch, if gliding { 12.0 } else { 3.0 });
-    look.set = Some((game.yaw, game.pitch));
+    game.pitch = model::turn_toward(game.pitch, pitch, 3.0);
 }
-/// The human look's own bookkeeping: where it left the camera, until when the mouse has it,
-/// and where the camera was last seen.
-struct Look {
-    set: Option<(f32, f32)>,
-    mouse_until: Option<Instant>,
-    seen: (f32, f32),
-}
-static LOOK: Mutex<Look> = Mutex::new(Look {
-    set: None,
-    mouse_until: None,
-    seen: (0.0, 0.0),
-});
+/// When the player last turned the camera themselves (mouse or controller), from the game's
+/// own look input: a turn made by a task is never taken for one.
+static PLAYER_LOOK: Mutex<Option<Instant>> = Mutex::new(None);
 /// How long the camera stays the player's after the mouse last moved.
 const MOUSE_LEND: Duration = Duration::from_secs(3);
+/// The look hook: the player turned the camera.
+pub(super) fn player_looked() {
+    *PLAYER_LOOK.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+}
+/// Whether the player moved the mouse within the last three seconds: every task leaves the
+/// camera alone then (it waits to aim, it never pauses for it) and walks with the keys only.
+pub(super) fn mouse_has_camera() -> bool {
+    PLAYER_LOOK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| t.elapsed() < MOUSE_LEND)
+}
 /// Whether the walker's look turns the head now: the switch is on and the mouse does not have
 /// the camera.
 fn look_active(game: &Game<'_>) -> bool {
-    human_look_enabled(game)
-        && LOOK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .mouse_until
-            .is_none()
+    human_look_enabled(game) && !mouse_has_camera()
+}
+/// The keys toward `target` for swimming: with the head turning, only ahead and to the sides
+/// (the head comes round first); with it still (the switch off, the mouse has the camera), every
+/// way, or the swimmer would wait for a turn that never comes.
+fn swim_steer(game: &Game<'_>, position: [f64; 3], target: [f64; 3], yaw: f32) -> model::Input {
+    if look_active(game) {
+        model::human_steer(position, target, yaw)
+    } else {
+        crate::game::claim_borders_construction::steer(position, target, yaw)
+    }
 }
 /// "Human look" is on unless the player switched it off (Experiments → Helpers).
 pub(super) fn human_look_enabled(game: &Game<'_>) -> bool {
@@ -3499,6 +3490,10 @@ fn door_step(
         return false;
     }
     match doors.opening {
+        Some((at, _, tries)) if at == door && mouse_has_camera() => {
+            // The player has the camera: no click is aimed, so none is counted as tried.
+            doors.opening = Some((door, Instant::now(), tries));
+        }
         Some((at, when, tries)) if at == door => {
             if when.elapsed() >= Duration::from_millis(600) {
                 if tries >= 5 {
@@ -3634,7 +3629,7 @@ pub(super) fn movement(
                 let pitch = model::pitch_to(eye, goal);
                 *FACE.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some((yaw, pitch.clamp(-60.0, 60.0), Instant::now()));
-                let input = model::human_steer(position, goal, p.yaw);
+                let input = swim_steer(game, position, goal, p.yaw);
                 *forward = input.forward;
                 *strafe = input.strafe;
                 if goal[1] > position[1] + 0.3 {
@@ -3669,7 +3664,7 @@ pub(super) fn movement(
         {
             let target = model::center(spot);
             look_toward(position, target);
-            let input = model::human_steer(position, target, p.yaw);
+            let input = swim_steer(game, position, target, p.yaw);
             *forward = input.forward;
             *strafe = input.strafe;
         }

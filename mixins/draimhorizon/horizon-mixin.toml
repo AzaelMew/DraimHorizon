@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.8"
+version = "0.39.9"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -1135,4 +1135,16 @@ target = "horizon_client_render::gfx::native_render::native_render_needs"
 helper = "ghost_needs_hook.rs"
 bindings = [
   { name = "needs", ty = "&mut crate::gfx::native_render::RenderNeeds", value = "&mut *needs" },
+]
+
+# The player's own look (mouse or controller): tasks hand the camera over for a moment instead of
+# taking any turn of the camera for one.
+[[injection]]
+id = "player-look"
+kind = "HEAD"
+target = "horizon_client::game::pointer_capture::Game<'_>::look_turn"
+helper = "look_hook.rs"
+bindings = [
+  { name = "x", ty = "f64", value = "x" },
+  { name = "y", ty = "f64", value = "y" },
 ]

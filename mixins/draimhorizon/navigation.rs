@@ -389,16 +389,26 @@ pub fn passable(name: &str) -> bool {
 }
 
 /// Whether the body can be at `at`: it fits there (air, a plant, a door, a ladder, with room
-/// for the head) and is held up, by a floor or by the ladder it is in, with no hazard beside.
+/// for the head) and is held up, by a floor or by the ladder it is in, with no hazard beside,
+/// diagonally either (a corner of lava is slipped into as easily as its side).
 pub fn standable(at: Pos, cell: &mut impl FnMut(Pos) -> Cell) -> bool {
     let feet = cell(at);
     open(feet)
         && open(cell([at[0], at[1] + 1, at[2]]))
         && (feet == Cell::Climb
             || matches!(cell([at[0], at[1] - 1, at[2]]), Cell::Solid | Cell::Climb))
-        && [[1, 0], [-1, 0], [0, 1], [0, -1]]
-            .into_iter()
-            .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
+        && [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+            [1, 1],
+            [1, -1],
+            [-1, 1],
+            [-1, -1],
+        ]
+        .into_iter()
+        .all(|[x, z]| (-1..=1).all(|y| cell([at[0] + x, at[1] + y, at[2] + z]) != Cell::Hazard))
 }
 
 /// How far a leg of a far walk goes, and the shorter reach tried when the long one has no way.
@@ -1361,9 +1371,16 @@ impl Navigator {
             let e = center(*end);
             (e[0] - position[0]).hypot(e[2] - position[2])
         });
-        if self.human && grounded && to_end > 1.5 && matches!(sector.rem_euclid(8), 3..=5) {
-            // The way on is behind: turn round first (the caller turns the head), do not walk
-            // backwards.
+        // The way on is behind: turn round first (the caller turns the head), do not walk
+        // backwards. Not for the last bit of a step: at a corner the head already looks round
+        // it, along the way ahead, and the cell to finish lies a little behind; waiting for a
+        // turn that never comes stood the walker there until it counted as stuck.
+        if self.human
+            && grounded
+            && to_end > 1.5
+            && dx.hypot(dz) > 0.9
+            && matches!(sector.rem_euclid(8), 3..=5)
+        {
             return Input::default();
         }
         let (forward, strafe) = match sector.rem_euclid(8) {
@@ -1910,6 +1927,232 @@ mod tests {
                 .windows(2)
                 .all(|w| w[1][1] - w[0][1] >= -MAX_DROP)
         );
+    }
+    #[test]
+    fn checklist_lava_is_walked_round_never_beside() {
+        // A lava pool across the way (x 3..=5, z -2..=2); the floor goes on all round it.
+        let lava = |p: Pos| (3..=5).contains(&p[0]) && (-2..=2).contains(&p[2]);
+        let cell = |p: Pos| {
+            if p[1] == 0 && lava(p) {
+                Cell::Hazard
+            } else {
+                flat(p)
+            }
+        };
+        let path = search([0, 0, 0], [8, 0, 0], cell, || false).unwrap();
+        assert!(path.complete);
+        for n in &path.nodes {
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    assert!(!lava([n[0] + dx, 0, n[2] + dz]), "{n:?} stands by the lava");
+                }
+            }
+        }
+    }
+    #[test]
+    fn checklist_a_three_block_drop_is_taken_straight_off() {
+        // A ledge three blocks over the ground; stairs down twenty blocks aside.
+        let cell = |p: Pos| {
+            let ledge = p[0] <= 2 && p[1] < 3;
+            let stairs = p[2] == 20 && p[0] >= 3 && p[1] < 3 - (p[0] - 2);
+            if p[1] < 0 || ledge || stairs {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let path = search_near_drop([0, 3, 0], [6, 0, 0], 0, MAX_DROP, cell, || false).unwrap();
+        assert!(path.complete);
+        assert!(
+            path.nodes.iter().all(|n| n[2].abs() <= 2),
+            "{:?}",
+            path.nodes
+        );
+        assert!(path.nodes.windows(2).any(|w| w[1][1] - w[0][1] == -3));
+    }
+    #[test]
+    fn checklist_far_levels_up_and_down_are_found() {
+        set_reach(WIDE);
+        // A long stair up 32 blocks (one block per step) to a tower top, and back down.
+        let stair = |p: Pos| {
+            let top = p[0].clamp(0, 32);
+            if p[1] < top && p[2].abs() <= 1 || p[1] < 0 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        let up = search([-2, 0, 0], [36, 32, 0], stair, || false).unwrap();
+        assert!(up.complete, "up: {:?}", up.nodes.last());
+        let down = search([36, 32, 0], [-2, 0, 0], stair, || false).unwrap();
+        assert!(down.complete, "down: {:?}", down.nodes.last());
+        set_reach(NEAR);
+    }
+    #[test]
+    fn checklist_a_far_goal_round_a_long_wall_is_found_in_one_search() {
+        set_reach(WIDE);
+        // A wall three high from z -60 to 60 between the walker and a goal 120 blocks away.
+        let cell = |p: Pos| {
+            if p[0] == 60 && (-60..=60).contains(&p[2]) && (0..3).contains(&p[1]) {
+                Cell::Solid
+            } else {
+                flat(p)
+            }
+        };
+        let start = Instant::now();
+        let path = search([0, 0, 0], [120, 0, 0], cell, || false).unwrap();
+        set_reach(NEAR);
+        assert!(path.complete, "{:?}", path.nodes.last());
+        assert!(start.elapsed() < Duration::from_secs(20));
+    }
+    #[test]
+    fn checklist_iron_doors_are_not_opened() {
+        assert!(!openable("minecraft:iron_door"));
+        assert!(!openable("minecraft:iron_trapdoor"));
+        assert!(openable("minecraft:oak_door"));
+        assert!(openable("minecraft:spruce_fence_gate"));
+        assert!(openable("minecraft:birch_trapdoor"));
+        assert_ne!(classify("minecraft:iron_door", false, false), Cell::Door);
+    }
+    /// Walks a route tick by tick: the keys move the body as the game does (no momentum), and
+    /// with `human` the head turns toward the look point as the human look turns it; without it
+    /// the head stays where it is. Returns the ticks taken to arrive (None: never) and the
+    /// ticks spent within a block of the end before arriving.
+    fn simulate(
+        world: impl Fn(Pos) -> Cell + Copy,
+        start: Pos,
+        goal: Pos,
+        yaw0: f32,
+        human: bool,
+    ) -> (Option<u32>, u32) {
+        let path = search(start, goal, world, || false).unwrap();
+        assert!(path.complete);
+        let mut n = Navigator::default();
+        n.begin(goal, true);
+        n.human = human;
+        n.accept(Some(path));
+        let mut position = center(start);
+        let mut yaw = yaw0;
+        let mut near = 0;
+        for tick in 0..2000 {
+            if human && let Some(look) = n.look_point(position) {
+                let flat = (look[0] - position[0]).hypot(look[2] - position[2]);
+                if flat > 0.3 {
+                    yaw = turn_toward(yaw, yaw_to(position, look), 22.0);
+                }
+            }
+            let input = n.input(position, yaw, true);
+            if n.status == Status::Arrived {
+                return (Some(tick), near);
+            }
+            if !n.running {
+                return (None, near);
+            }
+            let r = f64::from(yaw).to_radians();
+            let (f, l) = (f64::from(input.forward), f64::from(input.strafe));
+            let length = f.hypot(l).max(1.0);
+            let speed = 0.216 / length;
+            let dx = (f * -r.sin() + l * r.cos()) * speed;
+            let dz = (f * r.cos() + l * r.sin()) * speed;
+            let next = [position[0] + dx, position[1], position[2] + dz];
+            // Walls stop the body (each axis on its own, as the game slides along them).
+            if open(world(block([next[0], position[1], position[2]]))) {
+                position[0] = next[0];
+            }
+            if open(world(block([position[0], position[1], next[2]]))) {
+                position[2] = next[2];
+            }
+            let end = center(goal);
+            if (end[0] - position[0]).hypot(end[2] - position[2]) < 1.0 {
+                near += 1;
+            }
+        }
+        (None, near)
+    }
+    #[test]
+    fn checklist_walking_arrives_without_circling_with_and_without_the_human_look() {
+        // A wall between the walker and a goal just behind it: the way goes round its end.
+        let wall = |p: Pos| {
+            if p[2] == 2 && (-10..=3).contains(&p[0]) && (0..3).contains(&p[1]) {
+                Cell::Solid
+            } else {
+                flat(p)
+            }
+        };
+        let open_field = flat;
+        for human in [true, false] {
+            for yaw0 in [0.0, 90.0, 180.0, -90.0] {
+                for (name, start, goal) in [
+                    ("behind", [0, 0, 0], [0, 0, -6]),
+                    ("diagonal", [0, 0, 0], [7, 0, 5]),
+                ] {
+                    let (ticks, near) = simulate(open_field, start, goal, yaw0, human);
+                    assert!(
+                        ticks.is_some(),
+                        "{name} human={human} yaw={yaw0}: never arrived"
+                    );
+                    assert!(
+                        near < 30,
+                        "{name} human={human} yaw={yaw0}: circled {near} ticks"
+                    );
+                }
+                let (ticks, near) = simulate(wall, [0, 0, 0], [0, 0, 4], yaw0, human);
+                assert!(
+                    ticks.is_some(),
+                    "wall human={human} yaw={yaw0}: never arrived"
+                );
+                assert!(
+                    near < 30,
+                    "wall human={human} yaw={yaw0}: circled {near} ticks"
+                );
+            }
+        }
+    }
+    #[test]
+    fn checklist_a_narrow_zigzag_corridor_is_walked_with_and_without_the_human_look() {
+        // A one-wide corridor: east 6, north 4, west 6, north 4, east 6 (walls everywhere else).
+        let corridor: Vec<Pos> = {
+            let mut c = Vec::new();
+            let mut at = [0, 0, 0];
+            c.push(at);
+            for (dx, dz, n) in [(1, 0, 6), (0, 1, 4), (-1, 0, 6), (0, 1, 4), (1, 0, 6)] {
+                for _ in 0..n {
+                    at = [at[0] + dx, 0, at[2] + dz];
+                    c.push(at);
+                }
+            }
+            c
+        };
+        let goal = *corridor.last().unwrap();
+        let world = move |p: Pos| {
+            if p[1] < 0 {
+                Cell::Solid
+            } else if p[1] <= 1 && corridor_has(p) {
+                Cell::Air
+            } else if p[1] <= 2 {
+                Cell::Solid
+            } else {
+                Cell::Air
+            }
+        };
+        fn corridor_has(p: Pos) -> bool {
+            let (x, z) = (p[0], p[2]);
+            (z == 0 && (0..=6).contains(&x))
+                || (x == 6 && (0..=4).contains(&z))
+                || (z == 4 && (0..=6).contains(&x))
+                || (x == 0 && (4..=8).contains(&z))
+                || (z == 8 && (0..=6).contains(&x))
+        }
+        for human in [true, false] {
+            for yaw0 in [0.0, 180.0, -90.0] {
+                let (ticks, near) = simulate(world, [0, 0, 0], goal, yaw0, human);
+                assert!(
+                    ticks.is_some(),
+                    "zigzag human={human} yaw={yaw0}: never arrived"
+                );
+                assert!(near < 30, "zigzag human={human} yaw={yaw0}: circled {near}");
+            }
+        }
     }
     #[test]
     fn a_human_walker_looks_ahead_turns_smoothly_and_never_walks_backwards() {
