@@ -139,6 +139,33 @@ pub(super) fn show() {
 fn text(game: &Game<'_>, batch: &mut HudBatch, value: &str, pos: [f32; 2], width: f32, color: u32) {
     terrain::label(game, batch, value, pos, width, color);
 }
+/// Centred text of at most `max_lines` rows, broken at spaces to fit `width`.
+fn centered(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    value: &str,
+    center: f32,
+    top: f32,
+    width: f32,
+    max_lines: usize,
+    color: u32,
+) -> usize {
+    let lines = model::wrap_words(value, width, max_lines, &|t| game.native_text_width(t));
+    for (n, line) in lines.iter().enumerate() {
+        ui::text(
+            game,
+            batch,
+            line,
+            [
+                (center - game.native_text_width(line) * 0.5).round(),
+                top + n as f32 * model::LINE_HEIGHT,
+            ],
+            color,
+            false,
+        );
+    }
+    lines.len()
+}
 fn save(game: &Game<'_>, s: &State) {
     game.native_set_setting(claims::SETTINGS_ID, "seed_map", &s.preferences.encode());
 }
@@ -371,14 +398,16 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
                 game,
                 batch,
                 "minecraft:grass_block",
-                [c[0] + c[2] / 2.0 - 8.0, c[1] + 4.0],
+                [c[0] + c[2] / 2.0 - 8.0, c[1] + 3.0],
             );
-            text(
+            centered(
                 game,
                 batch,
                 &title,
-                [c[0] + 3.0, c[1] + 27.0],
-                c[2] - 6.0,
+                c[0] + c[2] / 2.0,
+                c[1] + 21.0,
+                c[2] - 4.0,
+                model::CHIP_LINES,
                 model::biome_color(&id),
             );
             if model::contains(c, mouse) {
@@ -415,13 +444,15 @@ fn filters(game: &Game<'_>, batch: &mut HudBatch, s: &State, mouse: [f32; 2]) {
             let def = &model::STRUCTURES[i];
             let on = s.preferences.shows(def.id);
             ui::button_base(game, batch, c, def.label_in(lang), on, mouse);
-            item_icon(game, batch, def.item, [c[0] + c[2] / 2.0 - 8.0, c[1] + 4.0]);
-            text(
+            item_icon(game, batch, def.item, [c[0] + c[2] / 2.0 - 8.0, c[1] + 3.0]);
+            centered(
                 game,
                 batch,
                 def.label_in(lang),
-                [c[0] + 3.0, c[1] + 27.0],
-                c[2] - 6.0,
+                c[0] + c[2] / 2.0,
+                c[1] + 21.0,
+                c[2] - 4.0,
+                model::CHIP_LINES,
                 if on { def.color } else { 0x687887 },
             );
             if model::contains(c, mouse) {
@@ -844,25 +875,58 @@ pub(super) fn render(
                 )
             );
         }
-        text(
-            game,
-            batch,
-            &info,
-            [8.0, s.size[1] - 25.0],
-            s.size[0] - 16.0,
-            0xb9cbd6,
+        let hint = language().text(
+            "2×ЛКМ по метке: удалить · POI: найдено · тянуть: двигать · колесо: масштаб · 2×ПКМ: метка · F: фильтры",
+            "2×LMB waypoint: delete · Click POI: found · drag: pan · wheel: zoom · 2×RMB: waypoint · F: filters",
         );
-        text(
-            game,
-            batch,
-            language().text(
-                "2×ЛКМ по метке: удалить · POI: найдено · тянуть: двигать · колесо: масштаб · 2×ПКМ: метка · F: фильтры",
-                "2×LMB waypoint: delete · Click POI: found · drag: pan · wheel: zoom · 2×RMB: waypoint · F: filters",
-            ),
-            [8.0, s.size[1] - 12.0],
-            s.size[0] - 16.0,
-            0x758d9f,
-        );
+        let room = s.size[0] - 16.0;
+        let rows = model::wrap_words(hint, room, 2, &|t| game.native_text_width(t)).len();
+        let middle = s.size[0] * 0.5;
+        let info = ui::clip(game, &info, room);
+        if rows > 1 {
+            // Two hint rows need the info line one row higher.
+            centered(
+                game,
+                batch,
+                &info,
+                middle,
+                s.size[1] - 30.0,
+                room,
+                1,
+                0xb9cbd6,
+            );
+            centered(
+                game,
+                batch,
+                hint,
+                middle,
+                s.size[1] - 20.0,
+                room,
+                2,
+                0x758d9f,
+            );
+        } else {
+            centered(
+                game,
+                batch,
+                &info,
+                middle,
+                s.size[1] - 25.0,
+                room,
+                1,
+                0xb9cbd6,
+            );
+            centered(
+                game,
+                batch,
+                hint,
+                middle,
+                s.size[1] - 12.0,
+                room,
+                1,
+                0x758d9f,
+            );
+        }
         if s.filters {
             filters(game, batch, s, screen.mouse);
         }

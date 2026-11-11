@@ -1,4 +1,4 @@
-**DraimHorizon 0.39.12 - Patting**
+**DraimHorizon 0.39.12 - Patting, ore picker and seed map labels**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
@@ -6,5 +6,8 @@ Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2c
 - Players running this version (only friends, by default) see your arm move and an optional "*name* patted you" line. The pat travels only over the encrypted relay; players without the mod see nothing.
 - **J → Settings → General**: who can pat you (friends only by default, everyone or nobody) and the pat notification.
 - Older DraimHorizon versions ignore pats; friendship and sharing keep working with them.
+- Experiments → Ores: one icon tile per ore (redstone dust, iron ingot, ancient debris and so on), toggled directly like the seed map filters.
+- Seed map: filter labels are centred and wrapped at spaces instead of cut off; the bottom hint wraps in narrow windows. Label regression tests cover English and Russian at 1080p and 1440p sizes.
+- Builds on 0.39.11, preserving farm plots and schematic preview persistence.
 
-Verified on two clients on a private lab server with a local relay: first- and third-person animation, the remote arm, RU and EN notifications and settings, consent policies, range, walls, cooldown, a stopped relay, a 0.39.11 peer, a dimension change and the mod switched off.
+Before combining these changes, patting was verified on two clients on a private lab server with a local relay: first- and third-person animation, the remote arm, RU and EN notifications and settings, consent policies, range, walls, cooldown, a stopped relay, a 0.39.11 peer, a dimension change and the mod switched off. The combined build has not been verified in game.
