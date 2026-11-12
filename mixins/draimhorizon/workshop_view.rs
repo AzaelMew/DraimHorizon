@@ -934,6 +934,14 @@ fn end_store_for(game: &mut Game<'_>, failure: Option<&str>, cooldown: u64) {
     }
     placement::cancel_container();
     state(|s| {
+        // A trip for seeds that failed (no way to the container, it would not open) counts as
+        // finding none: the farm stops asking for them for a while instead of trying again and
+        // again, and harvests and sows what it has meanwhile.
+        if failure.is_some()
+            && let Some(Purpose::Seeds(crop)) = s.store.as_ref().map(|t| t.purpose)
+        {
+            mark_source(crop as usize, true);
+        }
         s.store = None;
         s.target = None;
         s.phase = Phase::Ready;
@@ -1361,9 +1369,16 @@ fn grow_click(game: &Game<'_>, s: &mut State, target: nav::Pos, crop: farm::Crop
     s.grow_at = Instant::now();
     s.phase = Phase::Growing;
 }
+/// Soil a hoe turns into farmland in one click.
+fn tillable(block: &str) -> bool {
+    matches!(
+        block,
+        "minecraft:dirt" | "minecraft:grass_block" | "minecraft:dirt_path"
+    )
+}
 /// Uses the hoe on the trampled soil at `target`; the `Tilling` phase looks at the result.
 fn till_click(game: &Game<'_>, s: &mut State, target: nav::Pos) {
-    let Some(hoe) = hoe(game).filter(|_| game.native_block(target) == "minecraft:dirt") else {
+    let Some(hoe) = hoe(game).filter(|_| tillable(&game.native_block(target))) else {
         // No hoe any more, or it is farmland (or something else) already.
         s.till = false;
         s.target = None;
@@ -2382,7 +2397,9 @@ pub(super) fn tick(game: &Game<'_>) {
                     ..
                 } => {
                     // No limit: the farm works until it is stopped.
-                    if s.last.elapsed() < Duration::from_millis(500) {
+                    // The field is looked at again a fifth of a second after the last look: the
+                    // next crop is chosen right after one is done (it waited up to half a second).
+                    if s.last.elapsed() < Duration::from_millis(200) {
                         return;
                     }
                     s.last = Instant::now();
@@ -2401,6 +2418,10 @@ pub(super) fn tick(game: &Game<'_>) {
                             return;
                         }
                     }
+                    // Every cell of a plot the player marked is field: plain soil in it is tilled
+                    // (a new plot has no farmland yet to go by). The square around the start
+                    // tills only soil that was farmland or lies in a bed, not the paths beside.
+                    let plot_field = *marked;
                     let areas = areas.clone();
                     let mut seen = std::collections::HashSet::new();
                     let mut targets = Vec::new();
@@ -2411,9 +2432,10 @@ pub(super) fn tick(game: &Game<'_>) {
                     let mut trampled: Vec<nav::Pos> = Vec::new();
                     let crops: Vec<_> = config.selected().collect();
                     // What is sown where: the field is shared between the selected crops (a
-                    // quarter each for four), each part gets its own crop. Without seeds for a
-                    // part they are fetched; only when its container has none either does
-                    // another crop with seeds at hand stand in until the next harvest.
+                    // quarter each for four), each part gets its own crop and only its own.
+                    // Without seeds for a part they are fetched; with none in the container
+                    // either the part waits for them (another crop no longer stands in: the
+                    // field ended up sown with whatever seeds were at hand, not by its parts).
                     let have: Vec<farm::Crop> =
                         crops.iter().copied().filter(|c| seed(game, *c)).collect();
                     let plan = *config;
@@ -2425,13 +2447,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 [x, z],
                             )
                             .filter(|_| plan.replant)?;
-                        if have.contains(&zone) {
-                            Some(zone)
-                        } else if source_empty(zone as usize) {
-                            have.first().copied()
-                        } else {
-                            None
-                        }
+                        have.contains(&zone).then_some(zone)
                     };
                     for area in &areas {
                         for z in area.lo[2]..=area.hi[2] {
@@ -2465,9 +2481,11 @@ pub(super) fn tick(game: &Game<'_>) {
                                                 .count()
                                                 >= 2
                                         };
-                                        if soil == "minecraft:dirt"
+                                        if tillable(&soil)
                                             && game.native_block(at) == "minecraft:air"
-                                            && (s.field.contains(&below) || in_bed())
+                                            && (plot_field
+                                                || (soil == "minecraft:dirt"
+                                                    && (s.field.contains(&below) || in_bed())))
                                         {
                                             trampled.push(below);
                                         }

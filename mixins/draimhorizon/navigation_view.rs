@@ -1066,7 +1066,8 @@ pub(super) fn clear_construction_driver() {
     });
 }
 pub(super) fn construction_dig(game: &Game<'_>, target: model::Pos) -> Result<(), ()> {
-    if !mining_tool(game, Some(target)) || !free_slot(game) {
+    // A full inventory does not stop a route's dig: the block's drop just stays on the ground.
+    if !mining_tool(game, Some(target)) {
         return Err(());
     }
     let Some(p) = game.native_player() else {
@@ -1285,8 +1286,10 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     // on from where the trip began. Nothing else is done while a trip runs.
     if crate::game::claim_borders_haul_view::active()
         // No free slot at all also counts: drops of other kinds (sticks, saplings) could not be
-        // picked up, and the miner went back and forth trying.
-        || ((!room_for_mining(game, job.ore) || !free_slot(game))
+        // picked up, and the miner went back and forth trying. Not for a route's dig of one
+        // block: no trip to the storage in the middle of a route.
+        || (job.ore != u8::MAX
+            && (!room_for_mining(game, job.ore) || !free_slot(game))
             && crate::game::claim_borders_haul_view::begin(game, job.ore))
     {
         job.wait = Some(mining::Wait::Storage);
@@ -1356,7 +1359,26 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
             }
         }
         mining::Phase::Confirming => {
-            if now.saturating_sub(job.started_ms) > 5_000 {
+            let waited = now.saturating_sub(job.started_ms);
+            // The block has stayed gone for 0.7 s: the server would have put it back by now if
+            // it refused, so it is taken as broken without waiting for the answer (which came
+            // late on a busy server, and the miner stood for five seconds).
+            let gone = job
+                .target
+                .is_some_and(|t| !mining_block(game, job.ore, t).ore);
+            if gone && waited >= 700 {
+                let before = job.confirmed;
+                job.broken();
+                if job.confirmed > before {
+                    assist_reset_budget();
+                }
+                *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                if !job.active {
+                    s.nav.running = false;
+                } else if job.phase == mining::Phase::Searching {
+                    s.nav.replan();
+                }
+            } else if waited > 2_500 {
                 // No answer from the server: count it as a refusal (tried again, then left).
                 job.refuse();
                 job.started_ms = now;
@@ -1536,7 +1558,9 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 }
             }
         }
-        if !room_for_mining(game, job.ore) {
+        // A route's dig of one block goes on with a full inventory (its drop stays on the
+        // ground); it waited for room for good, standing still.
+        if job.ore != u8::MAX && !room_for_mining(game, job.ore) {
             job.wait = Some(mining::Wait::Inventory);
             return false;
         }
@@ -2802,7 +2826,9 @@ fn assist_step(game: &Game<'_>, a: &mut Assist) -> Flow {
     };
     let position = [p.x, p.y, p.z];
     let now = a.started.elapsed().as_millis() as u64;
-    if now > 300_000 || now.saturating_sub(a.stage_ms) > 45_000 {
+    // A step that makes no progress for 20 seconds (a block that does not break, a walk that
+    // does not get there) is planned again; it used to stand for 45 seconds first.
+    if now > 300_000 || now.saturating_sub(a.stage_ms) > 20_000 {
         return Flow::Failed;
     }
     match &mut a.stage {
@@ -3757,6 +3783,12 @@ pub(super) fn movement(
                 let mut tap = ELYTRA_TAP.lock().unwrap_or_else(|e| e.into_inner());
                 *tap = !*tap;
                 *jump = *tap;
+                // Falling to spread the elytra: nothing else this tick. Going on, the walker took
+                // this jump press for the player's own and paused the task in mid-air.
+                *forward = 0.0;
+                *strafe = 0.0;
+                *sneak = false;
+                return;
             }
         }
     }
