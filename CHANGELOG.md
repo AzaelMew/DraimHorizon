@@ -1,5 +1,13 @@
 # История версий
 
+## 0.39.22
+
+- The Schematics tab is laid out anew, in two columns. On the left the schematics folder is a list (the mouse wheel scrolls it a row at a time, a click chooses a file) with **Refresh** and **Open folder** buttons above it; the drop-down file button is gone. On the right is everything for the preview: XYZ and turn, Place preview and Build, the move buttons, Turn, To me, View, Show/Hide, Delete, Materials, layers, and the previews of this world. **Materials** (it was "Materials → clipboard") copies the blocks the schematic needs to the clipboard, and says so in its tooltip. Open folder and Materials carry the official Lucide `folder-open` and `clipboard-list` icons.
+- Schematics in single player: the file list was read only by Refresh, and moving between a server and a single-player world dropped it, so the tab said the folder was empty. It is now read again every few seconds while the menu is open, in any world.
+- The preview panel on the screen says how many blocks the file has and, within 64 blocks, how many are still to place and how many stand wrongly. A file that already matches the world draws no ghosts at all, and the panel now says so instead of showing an empty box.
+- Preview layers, each player's own choice: all layers, one layer, or every layer up to one (to look inside a build). It applies to every preview the player sees, friends' too, and is kept in their settings; the chosen layer is outlined in the box and named on the panel.
+- The import limits in the guide match the reader (256 blocks to a side, 262 144 blocks).
+
 ## 0.39.21
 
 - A farm bot no longer stands in front of an open chest for good. A chest window that opened after the trip had given up on the click (on a slow server it can open seconds later) was left open with nothing to drive it, and the farm waited behind it for hours. Such a window is now used for the trip if one is under way; a container window open with no trip behind it is closed after six seconds while the farm runs, and a trip that keeps a window open for 40 seconds ends and is tried again later.

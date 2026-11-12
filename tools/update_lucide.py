@@ -22,7 +22,8 @@ ICONS = dict(Warning="triangle-exclamation-point", Search="search", Portal="door
              Wallet="wallet", Clock="clock", Signal="wifi", Eye="eye", Home="house",
              Grid="grid-2x2", Layers="layers", Chart="chart-no-axes-combined",
              Info="info", Shield="shield", Save="save", Gauge="gauge", Activity="activity",
-             Coins="coins", Skull="skull", Locate="locate-fixed")
+             Coins="coins", Skull="skull", Locate="locate-fixed",
+             Folder="folder-open", Clipboard="clipboard-list")
 
 
 def download(path):

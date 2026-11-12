@@ -38,6 +38,8 @@ struct Shown {
     ids: Vec<Option<BlockStateId>>,
     lo: places::Pos,
     hi: places::Pos,
+    /// The layers drawn (the player's choice, counted from this preview's bottom).
+    layers: (places::LayerMode, i32),
 }
 #[derive(Default)]
 struct State {
@@ -47,12 +49,27 @@ struct State {
     anchor: [i32; 3],
     /// The world section each built section was built against.
     built: HashMap<[i32; 3], Section>,
+    /// Blocks still to place and blocks standing wrongly, per built section.
+    counts: HashMap<[i32; 3], (u32, u32)>,
+}
+/// Blocks still to place and blocks standing wrongly within the ghosts' reach (64 blocks
+/// around the player), for the preview panel: a file that already matches the world shows no
+/// ghosts at all, and this says so.
+pub(super) fn nearby_counts() -> (u32, u32) {
+    let guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().map_or((0, 0), |s| {
+        s.counts
+            .values()
+            .fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+    })
 }
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 fn key_of(game: &Game<'_>, list: &[(places::Placement, Arc<view::Shape>, bool)]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     crate::game::claim_borders_navigation_view::scope(game).hash(&mut h);
+    // The player's choice of layers: another choice builds the ghosts again.
+    format!("{:?}", view::layers(game)).hash(&mut h);
     for (pl, shape, _) in list {
         (
             &pl.file,
@@ -105,9 +122,12 @@ fn loaded(game: &Game<'_>, w: [i32; 3]) -> bool {
         && game.world.chunks.contains_key(&(w[0] >> 4, w[2] >> 4))
 }
 /// What the previews want at `w`: the game's state (None: a state the game does not know).
+/// A layer the player chose not to see wants nothing.
 fn wanted(shown: &[Shown], w: [i32; 3]) -> Option<Option<BlockStateId>> {
     shown.iter().find_map(|s| {
-        if (0..3).any(|i| w[i] < s.lo[i] || w[i] > s.hi[i]) {
+        if (0..3).any(|i| w[i] < s.lo[i] || w[i] > s.hi[i])
+            || !s.layers.0.shows(s.layers.1, w[1] - s.lo[1])
+        {
             return None;
         }
         let rel = places::unplace(w, s.placement.origin, s.placement.rotation);
@@ -207,7 +227,13 @@ fn push_box(out: &mut Vec<Vertex>, white: [f32; 2], min: [f32; 3], max: [f32; 3]
     }
 }
 /// The quads of section `k`.
-fn build(game: &Game<'_>, shown: &[Shown], anchor: [i32; 3], k: [i32; 3]) -> Vec<Vertex> {
+fn build(
+    game: &Game<'_>,
+    shown: &[Shown],
+    anchor: [i32; 3],
+    k: [i32; 3],
+    counts: &mut (u32, u32),
+) -> Vec<Vertex> {
     let mut quads = Vec::new();
     let white = horizon_client::gfx::lightning::white_uv(&game.gui.atlas.font.white());
     let facts = game.res.facts();
@@ -241,10 +267,12 @@ fn build(game: &Game<'_>, shown: &[Shown], anchor: [i32; 3], k: [i32; 3]) -> Vec
                     match verdict(game, shown, w) {
                         None => {}
                         Some(Verdict::Wrong) => {
+                            counts.1 += 1;
                             let min = rel.map(|v| v - 0.004);
                             push_box(&mut quads, white, min, min.map(|v| v + 1.008), WRONG);
                         }
                         Some(Verdict::Ghost(id)) => {
+                            counts.0 += 1;
                             let start = quads.len();
                             let at = glam::Mat4::from_translation(glam::Vec3::from_array(rel));
                             game.block_model_vertices(id, 0, at, FULL_BRIGHT, true, &mut quads);
@@ -312,6 +340,7 @@ pub(super) fn tick(game: &Game<'_>) {
     let (Some(me), false) = (me, list.is_empty()) else {
         if state.key.take().is_some() || !state.built.is_empty() {
             state.built.clear();
+            state.counts.clear();
             state.shown.clear();
             gpu::clear();
         }
@@ -320,6 +349,7 @@ pub(super) fn tick(game: &Game<'_>) {
     let key = key_of(game, &list);
     if state.key != Some(key) {
         state.key = Some(key);
+        let layers = view::layers(game);
         state.shown = list
             .into_iter()
             .map(|(placement, shape, _)| {
@@ -336,16 +366,19 @@ pub(super) fn tick(game: &Game<'_>) {
                     ids,
                     lo,
                     hi,
+                    layers,
                 }
             })
             .collect();
         state.anchor = state.shown.first().map_or([0; 3], |s| s.lo);
         state.built.clear();
+        state.counts.clear();
         gpu::clear();
         gpu::set_anchor(state.anchor);
     }
     if gpu::take_lost() {
         state.built.clear();
+        state.counts.clear();
     }
     let feet = me.map(|v| v.floor() as i32);
     let mut wanted: Vec<[i32; 3]> = Vec::new();
@@ -371,6 +404,7 @@ pub(super) fn tick(game: &Game<'_>) {
         .collect();
     for k in gone {
         state.built.remove(&k);
+        state.counts.remove(&k);
         gpu::put_section(k, Vec::new());
     }
     let distance = |k: &[i32; 3]| -> i64 {
@@ -388,8 +422,10 @@ pub(super) fn tick(game: &Game<'_>) {
         if start.elapsed() > BUDGET {
             break;
         }
-        let quads = build(game, &state.shown, state.anchor, k);
+        let mut counts = (0, 0);
+        let quads = build(game, &state.shown, state.anchor, k, &mut counts);
         gpu::put_section(k, quads);
         state.built.insert(k, now);
+        state.counts.insert(k, counts);
     }
 }

@@ -83,8 +83,6 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                         Control::AutoEat
                                             | Control::MiningCustom
                                             | Control::FarmStorage(_)
-                                            | Control::SchematicMaterials
-                                            | Control::SchematicFolder
                                     )
                                 );
                             if !footer {
@@ -105,8 +103,11 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 }
                             }
                         }
+                        // Mining keeps its two action buttons in the footer; the Schematics tab has
+                        // its folder and materials buttons in its own panel.
+                        let expected = if mode == BaritoneMode::Mining { 5 } else { 3 };
                         assert_eq!(
-                            footer_count, 5,
+                            footer_count, expected,
                             "actions, status, auto-eat and key hint must all remain visible"
                         );
                     }
@@ -732,13 +733,28 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 menu.tab = Tab::Experimental;
                 menu.experimental_section = ExperimentalSection::Baritone;
                 menu.baritone_mode = BaritoneMode::Schematic;
-                let widgets = menu.layout(&model, size[0], size[1]);
                 // No select or delete for a friend's preview: only show or hide.
-                assert!(
-                    widgets
+                let mut label = false;
+                for _ in 0..8 {
+                    let widgets = menu.layout(&model, size[0], size[1]);
+                    label |= widgets
                         .iter()
-                        .any(|w| w.text.contains("tower.litematic · Alex") && w.control.is_none())
-                );
+                        .any(|w| w.text.contains("tower.litematic · Alex") && w.control.is_none());
+                    if label
+                        || !widgets
+                            .iter()
+                            .any(|w| w.control == Some(Control::SchematicPlacePage(1)))
+                    {
+                        break;
+                    }
+                    click(&mut menu, &model, size, Control::SchematicPlacePage(1));
+                }
+                assert!(label, "{size:?}");
+                let mut menu = Menu::default();
+                menu.language = language;
+                menu.tab = Tab::Experimental;
+                menu.experimental_section = ExperimentalSection::Baritone;
+                menu.baritone_mode = BaritoneMode::Schematic;
                 // Paged to the friend's row, its button acts on it.
                 while !menu
                     .layout(&model, size[0], size[1])
@@ -752,6 +768,71 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                     Some(Action::SchematicFriendShow(1))
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn schematics_tab_lists_files_and_keeps_the_preview_controls_beside_them() {
+    for language in [Language::Russian, Language::English] {
+        let model = ViewModel {
+            language,
+            schematic_files: (0..40).map(|i| format!("build {i}.litematic")).collect(),
+            schematic_places: vec![(0, "build 0.litematic · 1 2 3".into(), true, true)],
+            ..ViewModel::default()
+        };
+        for size in [[536.0, 300.0], [800.0, 500.0], [1280.0, 720.0]] {
+            let mut menu = Menu::default();
+            menu.language = language;
+            menu.tab = Tab::Experimental;
+            menu.experimental_section = ExperimentalSection::Baritone;
+            menu.baritone_mode = BaritoneMode::Schematic;
+            let widgets = menu.layout(&model, size[0], size[1]);
+            let find = |c: Control| widgets.iter().find(|w| w.control == Some(c));
+            for c in [
+                Control::SchematicRefresh,
+                Control::SchematicFolder,
+                Control::SchematicMaterials,
+                Control::SchematicPreviewHere,
+                Control::SchematicChoice(0),
+                Control::SchematicLayerMode,
+            ] {
+                assert!(find(c).is_some(), "{c:?} missing at {size:?}");
+            }
+            // The list is to the left of the preview controls, and nothing overlaps.
+            let file = find(Control::SchematicChoice(0)).unwrap().rect;
+            let place = find(Control::SchematicPreviewHere).unwrap().rect;
+            assert!(file[0] + file[2] <= place[0], "{file:?} {place:?}");
+            let controls: Vec<_> = widgets.iter().filter(|w| w.control.is_some()).collect();
+            for (i, a) in controls.iter().enumerate() {
+                for b in &controls[i + 1..] {
+                    assert!(
+                        separate(a.rect, b.rect),
+                        "{:?} overlaps {:?} at {size:?}",
+                        a.control,
+                        b.control
+                    );
+                }
+            }
+            // The wheel scrolls the list a row at a time; it never runs past the end.
+            let first = |menu: &Menu| {
+                menu.layout(&model, size[0], size[1])
+                    .into_iter()
+                    .find_map(|w| match w.control {
+                        Some(Control::SchematicChoice(i)) => Some(i),
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            menu.scroll(&model, size[1], -1.0);
+            assert_eq!(first(&menu), 1);
+            for _ in 0..100 {
+                menu.scroll(&model, size[1], -1.0);
+            }
+            let last_first = first(&menu);
+            assert!(last_first > 1 && last_first < 40);
+            menu.scroll(&model, size[1], 1.0);
+            assert_eq!(first(&menu), last_first - 1);
         }
     }
 }

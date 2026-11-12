@@ -134,6 +134,54 @@ pub fn nudge(origin: Pos, yaw: f32, forward: i32, right: i32, up: i32) -> Pos {
         origin[2] + fz * forward + rz * right,
     ]
 }
+/// Which layers of a preview are drawn, each player's own choice: all of them, only one, or
+/// all up to one (to see inside a build while placing it). Layers count up from the bottom of
+/// each preview (layer 0 is its lowest block), so one choice fits every shown preview.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayerMode {
+    #[default]
+    All,
+    Single,
+    Below,
+}
+impl LayerMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Single,
+            Self::Single => Self::Below,
+            Self::Below => Self::All,
+        }
+    }
+    /// Whether the layer `layer` (counted from the preview's bottom) is drawn.
+    pub fn shows(self, chosen: i32, layer: i32) -> bool {
+        match self {
+            Self::All => true,
+            Self::Single => layer == chosen,
+            Self::Below => layer <= chosen,
+        }
+    }
+    /// The setting as kept: `all`, `single:5`, `below:5`.
+    pub fn encode(self, layer: i32) -> String {
+        match self {
+            Self::All => "all".into(),
+            Self::Single => format!("single:{layer}"),
+            Self::Below => format!("below:{layer}"),
+        }
+    }
+    /// The kept setting read back; anything unknown is every layer. The layer stays within a
+    /// preview's height (`MAX_LAYER`).
+    pub fn decode(text: &str) -> (Self, i32) {
+        let (mode, layer) = text.trim().split_once(':').unwrap_or((text.trim(), "0"));
+        let layer = layer.parse::<i32>().unwrap_or(0).clamp(0, MAX_LAYER);
+        match mode {
+            "single" => (Self::Single, layer),
+            "below" => (Self::Below, layer),
+            _ => (Self::All, layer),
+        }
+    }
+}
+/// The highest layer a preview can have (a schematic is at most 256 blocks to a side).
+pub const MAX_LAYER: i32 = 255;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +257,26 @@ mod tests {
         assert_eq!(nudge([0, 0, 0], 0.0, 0, 1, 0), [-1, 0, 0]);
         assert_eq!(nudge([0, 0, 0], -90.0, 1, 0, 0), [1, 0, 0]);
         assert_eq!(nudge([0, 0, 0], 179.0, 1, 0, -1), [0, -1, -1]);
+    }
+    #[test]
+    fn layers_show_all_one_or_up_to_one_and_read_back() {
+        assert!(LayerMode::All.shows(3, 40));
+        assert!(LayerMode::Single.shows(3, 3) && !LayerMode::Single.shows(3, 2));
+        assert!(LayerMode::Below.shows(3, 0) && LayerMode::Below.shows(3, 3));
+        assert!(!LayerMode::Below.shows(3, 4));
+        for (mode, layer) in [
+            (LayerMode::All, 0),
+            (LayerMode::Single, 7),
+            (LayerMode::Below, 12),
+        ] {
+            assert_eq!(LayerMode::decode(&mode.encode(layer)), (mode, layer));
+        }
+        assert_eq!(LayerMode::decode("single:-4"), (LayerMode::Single, 0));
+        assert_eq!(
+            LayerMode::decode("below:9999"),
+            (LayerMode::Below, MAX_LAYER)
+        );
+        assert_eq!(LayerMode::decode("junk"), (LayerMode::All, 0));
+        assert_eq!(LayerMode::All.next().next().next(), LayerMode::All);
     }
 }

@@ -59,6 +59,24 @@ fn with_places<T>(game: &Game<'_>, f: impl FnOnce(&mut Places) -> T) -> T {
 fn save(game: &Game<'_>, p: &Places) {
     game.native_set_setting(claims::SETTINGS_ID, SETTING, &places::encode(&p.list));
 }
+/// This player's choice of layers to draw (every preview, friends' too), kept in the settings.
+const LAYERS: &str = "schematic_layers";
+static LAYER_CHOICE: Mutex<Option<(places::LayerMode, i32)>> = Mutex::new(None);
+pub(super) fn layers(game: &Game<'_>) -> (places::LayerMode, i32) {
+    *LAYER_CHOICE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(|| {
+            game.native_setting(claims::SETTINGS_ID, LAYERS)
+                .map(|v| places::LayerMode::decode(&v))
+                .unwrap_or_default()
+        })
+}
+pub(super) fn set_layers(game: &Game<'_>, mode: places::LayerMode, layer: i32) {
+    let layer = layer.clamp(0, places::MAX_LAYER);
+    *LAYER_CHOICE.lock().unwrap_or_else(|e| e.into_inner()) = Some((mode, layer));
+    game.native_set_setting(claims::SETTINGS_ID, LAYERS, &mode.encode(layer));
+}
 /// The world a preview belongs to: kept across reconnects and restarts.
 fn here(game: &Game<'_>) -> Option<String> {
     walk::world_key(game)
@@ -304,6 +322,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    let (mode, layer) = layers(game);
     for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);
         g.cuboid(
@@ -312,6 +331,20 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
             if selected { 0xffffd060 } else { 0xaa88aacc },
             if selected { 2.0 } else { 1.0 },
         );
+        // The layer drawn (or the top one drawn) is outlined in the box.
+        if mode != places::LayerMode::All {
+            let y = lo[1] + layer.min(hi[1] - lo[1]);
+            g.cuboid(
+                [f64::from(lo[0]), f64::from(y), f64::from(lo[2])],
+                [
+                    f64::from(hi[0]) + 1.0,
+                    f64::from(y) + 1.0,
+                    f64::from(hi[2]) + 1.0,
+                ],
+                0xff60d0ff,
+                1.5,
+            );
+        }
     }
 }
 /// The editor's keys: (id, default key, Russian name, English name).
@@ -482,9 +515,47 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         ),
         None => format!("{}: {}", text("Схема", "Schematic"), pl.file),
     };
+    // How much of it is left: blocks in the file, and within reach what is still to place and
+    // what stands wrongly. A file that already matches the world draws no ghosts at all.
+    let blocks = SHAPES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| match m.get(&pl.file) {
+            Some(Loading::Ready(shape)) => Some(shape.cells.len()),
+            _ => None,
+        });
+    let (todo, wrong) = crate::game::claim_borders_schematic_ghosts::nearby_counts();
+    let progress = match blocks {
+        Some(0) => text("в файле нет блоков", "the file has no blocks").to_owned(),
+        Some(n) if todo == 0 && wrong == 0 => format!(
+            "{n} {} · {}",
+            text("блоков", "blocks"),
+            text(
+                "рядом всё совпадает с миром",
+                "nearby everything matches the world"
+            )
+        ),
+        Some(n) => format!(
+            "{n} {} · {} {todo} · {} {wrong}",
+            text("блоков", "blocks"),
+            text("поставить рядом", "to place nearby"),
+            text("неверных", "wrong")
+        ),
+        None => text("файл читается…", "reading the file…").to_owned(),
+    };
+    let layer_text = match layers(game) {
+        (places::LayerMode::All, _) => String::new(),
+        (places::LayerMode::Single, n) => format!(" · {} {}", text("слой", "layer"), n + 1),
+        (places::LayerMode::Below, n) => format!(" · {} 1–{}", text("слои", "layers"), n + 1),
+    };
     let lines = [
         first,
-        format!("XYZ {x} {y} {z} · {}°", u16::from(pl.rotation) * 90),
+        format!(
+            "XYZ {x} {y} {z} · {}°{layer_text}",
+            u16::from(pl.rotation) * 90
+        ),
+        progress,
         format!(
             "{} {}/{}/{}/{} · {} {} · {} {}",
             text("двигать", "move"),
