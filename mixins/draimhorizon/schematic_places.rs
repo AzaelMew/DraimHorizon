@@ -182,6 +182,28 @@ impl LayerMode {
 }
 /// The highest layer a preview can have (a schematic is at most 256 blocks to a side).
 pub const MAX_LAYER: i32 = 255;
+/// A key's short name for the panel: `key.keyboard.page.up` is PGUP, not UP (it was shown as
+/// the same key as the arrow), and long names are cut down to fit a key cap.
+pub fn key_cap(id: &str) -> String {
+    if let Some(button) = id.strip_prefix("key.mouse.") {
+        return format!("MOUSE {}", button.to_uppercase());
+    }
+    let name = id.strip_prefix("key.keyboard.").unwrap_or(id);
+    match name {
+        "up" => "UP".into(),
+        "down" => "DOWN".into(),
+        "left" => "LEFT".into(),
+        "right" => "RIGHT".into(),
+        "page.up" => "PGUP".into(),
+        "page.down" => "PGDN".into(),
+        "insert" => "INS".into(),
+        "delete" => "DEL".into(),
+        "home" => "HOME".into(),
+        "end" => "END".into(),
+        "unknown" | "" => "—".into(),
+        other => other.replace('.', " ").to_uppercase(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +300,14 @@ mod tests {
         );
         assert_eq!(LayerMode::decode("junk"), (LayerMode::All, 0));
         assert_eq!(LayerMode::All.next().next().next(), LayerMode::All);
+    }
+    #[test]
+    fn key_caps_tell_page_up_from_the_arrow() {
+        assert_eq!(key_cap("key.keyboard.page.up"), "PGUP");
+        assert_eq!(key_cap("key.keyboard.up"), "UP");
+        assert_eq!(key_cap("key.keyboard.insert"), "INS");
+        assert_eq!(key_cap("key.keyboard.keypad.5"), "KEYPAD 5");
+        assert_eq!(key_cap("key.mouse.left"), "MOUSE LEFT");
+        assert_eq!(key_cap("key.keyboard.unknown"), "—");
     }
 }
