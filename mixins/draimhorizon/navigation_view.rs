@@ -665,8 +665,6 @@ enum Tool {
 /// Puts a suitable tool in hand: the selected one if it fits, else a hotbar slot is selected, else
 /// a stack from the main inventory is swapped into the hotbar first.
 fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
-    use horizon_client::menu::Input;
-    static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
     let Some(slot) = tool_slot(game, target, false) else {
         // No tool is the right one, but dirt, sand and the like break by hand: carry on.
         return if target.is_some_and(|at| needs_no_tool(game, at)) {
@@ -675,6 +673,36 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
             Tool::Missing
         };
     };
+    hold_slot(game, slot, &|_| false)
+}
+/// The slot of the item with the most Fortune (a crop broken with it drops more): the selected
+/// one first, then the hotbar, then the inventory. Breaking a crop wears no tool.
+pub(super) fn fortune_slot(game: &Game<'_>) -> Option<usize> {
+    let level = |slot: usize| {
+        slot_stack(game, slot)
+            .filter(|s| s.count > 0)
+            .map_or(0, |s| s.enchantment_level("minecraft:fortune"))
+    };
+    std::iter::once(game.selected)
+        .chain(0..36)
+        .filter(|&slot| level(slot) > 0)
+        .max_by_key(|&slot| {
+            (
+                level(slot),
+                std::cmp::Reverse(slot != game.selected),
+                std::cmp::Reverse(slot),
+            )
+        })
+}
+/// Whether the stack in `slot` carries Fortune (kept in the hotbar by the farm's other swaps).
+pub(super) fn fortune_in(game: &Game<'_>, slot: usize) -> bool {
+    slot_stack(game, slot).is_some_and(|s| s.enchantment_level("minecraft:fortune") > 0)
+}
+/// Puts the stack of `slot` in hand: a hotbar slot is selected, a stack of the main inventory
+/// is swapped into the hotbar first (into an empty slot, else one `keep` does not protect).
+fn hold_slot(game: &mut Game<'_>, slot: usize, keep: &dyn Fn(usize) -> bool) -> Tool {
+    use horizon_client::menu::Input;
+    static LAST_SWAP: Mutex<Option<Instant>> = Mutex::new(None);
     if slot < 9 {
         if game.selected != slot {
             // The slot change has to reach the server before the first hit: the server works
@@ -694,6 +722,7 @@ fn ensure_tool(game: &mut Game<'_>, target: Option<model::Pos>) -> Tool {
     let spare = (0..9)
         .filter(|h| *h != game.selected)
         .find(|h| game.stack_in(*h).is_none())
+        .or_else(|| (0..9).rev().find(|h| *h != game.selected && !keep(*h)))
         .or_else(|| (0..9).rev().find(|h| *h != game.selected));
     let Some(spare) = spare else {
         return Tool::Missing;
@@ -1545,6 +1574,24 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         if crate::game::claim_borders_haul_view::active() {
             job.wait = Some(mining::Wait::Storage);
             return false;
+        }
+        // A crop is broken with the item with the most Fortune, when there is one: it drops
+        // more. Without one, whatever is in hand does (a crop needs no tool).
+        if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_some()
+            && !job.blocker
+            && let Some(slot) = fortune_slot(game)
+        {
+            let seeds = |h: usize| {
+                game.stack_in(h).is_some_and(|s| {
+                    crate::game::claim_borders_farming::Crop::ALL
+                        .iter()
+                        .any(|c| c.seed() == s.item.as_ref())
+                })
+            };
+            let seeds: Vec<bool> = (0..9).map(seeds).collect();
+            if let Tool::Wait = hold_slot(game, slot, &|h| seeds[h]) {
+                return false;
+            }
         }
         if crate::game::claim_borders_farming::Crop::from_code(job.ore).is_none() && !job.blocker {
             match ensure_tool(game, Some(target)) {

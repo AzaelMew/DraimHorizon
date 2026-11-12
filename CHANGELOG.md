@@ -8,6 +8,9 @@
 - A farm resumed after a server restart keeps the square it was started on. Without marked plots it took the square round wherever the bot was when the server went down.
 - Farm auto-sell sells the harvest at once instead of storing it. Between two crops, once a stack of 32 has gathered or there is nothing to harvest, the crops' yield is sold with `/sell hand` and not carried to the harvest chest. When the command does not work, selling stops for five minutes and the harvest goes to the chest.
 - Villager auto-trade: Shift-click an offer in a villager's trading window to repeat the trade for as long as it goes (the price from the whole inventory, until the villager's stock runs out). Each round is the game's own: the offer is selected, then the result is taken with a shift-click. It stops when nothing more is paid, the offer sells out or the window closes.
+- The farm's status line at the top shows what it sold: how many items (counted from the hand going down after each `/sell hand`) and, when the server sends its "Sold … for …" messages, the money they brought since the job started, e.g. "Farm: 242 · sold 640 (+1 280.00)".
+- Selling keeps the seeds of crops that are their own seed: carrots and potatoes keep a stack (64) for sowing; whole stacks above it are sold, the smallest first. Before, auto-sell could sell the carrots the farm needed to replant.
+- The farm harvests with the item with the most Fortune when there is one (selected, from the hotbar, or swapped in from the inventory), so crops drop more. Breaking a crop wears no tool. The seed fetch no longer swaps a Fortune tool out of the hotbar, and the Fortune swap prefers a slot without seeds, so the two never trade places at every crop.
 
 ## 0.39.18
 

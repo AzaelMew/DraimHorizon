@@ -1,7 +1,8 @@
 // Farm and schematic jobs share the normal movement, attack and placement drivers.
 use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_construction_view as placement,
-    claim_borders_draining as drain, claim_borders_farm_plots as plots,
+    claim_borders_draining as drain, claim_borders_economy as econ,
+    claim_borders_economy_client as econ_data, claim_borders_farm_plots as plots,
     claim_borders_farm_storage as store, claim_borders_farming as farm,
     claim_borders_navigation as nav, claim_borders_navigation_view as driver,
     claim_borders_schematic as schema, claim_borders_schematic_files as files,
@@ -178,6 +179,10 @@ struct State {
     sell_due: bool,
     // Until when selling is off after `/sell hand` did not work (the harvest goes to the chest).
     sell_blocked: Instant,
+    // Harvest sold since the job started (counted from the hand going down after each
+    // `/sell hand`), and when it started (unix ms, to match the server's sale messages).
+    sold: u32,
+    sold_since: u64,
     // Failed placements in a row, and cells given up on, for the end message.
     errors: u8,
     missed: u16,
@@ -236,6 +241,8 @@ impl Default for State {
             last_unload: Instant::now(),
             sell_due: false,
             sell_blocked: Instant::now(),
+            sold: 0,
+            sold_since: econ_data::now(),
             errors: 0,
             missed: 0,
             falling: false,
@@ -1543,6 +1550,24 @@ const SELL_PAUSE: Duration = Duration::from_secs(300);
 fn sell_frame(game: &mut Game<'_>) {
     use horizon_client::menu::Input;
     static LAST: Mutex<Option<(Instant, u32, u8)>> = Mutex::new(None);
+    // The stack in hand when the last command went: slot, item, count, when.
+    static SENT: Mutex<Option<(usize, String, u32, Instant)>> = Mutex::new(None);
+    {
+        let mut sent = SENT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((slot, item, count, at)) = sent.as_ref() {
+            let now = game
+                .stack_in(*slot)
+                .filter(|st| st.count > 0 && st.item.as_ref() == item.as_str())
+                .map_or(0, |st| st.count);
+            if now < *count {
+                let gone = count - now;
+                state(|s| s.sold = s.sold.saturating_add(gone));
+                *sent = None;
+            } else if at.elapsed() > Duration::from_secs(2) {
+                *sent = None;
+            }
+        }
+    }
     let (wanted, due, crops) = state(|s| match (&s.task, s.active, &s.store) {
         (Some(Task::Farm { config, .. }), true, None)
             if config.autosell
@@ -1572,7 +1597,7 @@ fn sell_frame(game: &mut Game<'_>) {
         return;
     }
     let inv = inventory(game);
-    let slots = store::sell_slots(&inv, &crops);
+    let slots = store::sell_slots(&inv, &crops, store::KEEP_SEEDS);
     // A sale starts once a stack has grown or there is nothing to harvest just now (not one
     // command per carrot); once started, every stack goes.
     let started = last.is_some();
@@ -1627,6 +1652,10 @@ fn sell_frame(game: &mut Game<'_>) {
         return;
     }
     *last = Some((Instant::now(), here, same));
+    if let Some((item, _)) = inv[slot].as_ref() {
+        *SENT.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((slot, item.clone(), here, Instant::now()));
+    }
     state(|s| {
         s.message = text(
             "продажа урожая: /sell hand",
@@ -3092,10 +3121,36 @@ pub(super) fn tick(game: &Game<'_>) {
     });
 }
 pub(super) fn snapshot() -> Option<(String, bool)> {
+    // What the farm sold: the count from the hand, and the money from the server's sale
+    // messages for the crops' yield since the job started (when the server sends them).
+    let sales = state(|s| match &s.task {
+        Some(Task::Farm { config, .. }) => {
+            Some((s.sold, s.sold_since, config.selected().collect::<Vec<_>>()))
+        }
+        _ => None,
+    });
+    let sold = sales.map(|(sold, since, crops)| {
+        let earned: econ::Coins = econ_data::read(|book, _, _, _| {
+            book.trades
+                .iter()
+                .filter(|t| !t.buying && t.at >= since && store::yields(&crops, &t.item))
+                .map(|t| t.net)
+                .fold(0, econ::Coins::saturating_add)
+        });
+        match (sold, earned) {
+            (0, 0) => String::new(),
+            (n, 0) => format!(" · {} {n}", text("продано", "sold")),
+            (n, money) => format!(" · {} {n} (+{})", text("продано", "sold"), econ::fmt(money)),
+        }
+    });
     state(|s| {
         let label = match s.task.as_ref() {
             Some(Task::Farm { harvested, .. }) => {
-                format!("{}: {harvested}", text("Ферма", "Farm"))
+                format!(
+                    "{}: {harvested}{}",
+                    text("Ферма", "Farm"),
+                    sold.as_deref().unwrap_or("")
+                )
             }
             Some(Task::Drain { filled, .. }) => {
                 format!("{}: {filled}", text("Осушение", "Drain"))

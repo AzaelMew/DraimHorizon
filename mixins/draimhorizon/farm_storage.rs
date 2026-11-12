@@ -29,16 +29,39 @@ pub fn yields(crops: &[Crop], name: &str) -> bool {
     crops.iter().any(|c| product(*c) == name) || (name == HAY_BLOCK && crops.contains(&Crop::Wheat))
 }
 /// The inventory slots to sell: every stack of what the crops yield (harvest and hay bales),
-/// never the seeds.
-pub fn sell_slots(inventory: &[Stack], crops: &[Crop]) -> Vec<usize> {
-    inventory
-        .iter()
-        .enumerate()
-        .filter_map(|(slot, stack)| match stack {
-            Some((name, _)) if yields(crops, name) => Some(slot),
-            _ => None,
-        })
-        .collect()
+/// never the seeds. A yield that is its own seed (carrots, potatoes) keeps `keep` of it for
+/// sowing: whole stacks go (a sale takes the stack in hand), the smallest first, while what is
+/// left still covers it.
+pub fn sell_slots(inventory: &[Stack], crops: &[Crop], keep: u32) -> Vec<usize> {
+    let sown = |name: &str| crops.iter().any(|c| c.seed() == name);
+    let mut out: Vec<usize> = Vec::new();
+    let mut sown_stacks: Vec<(&str, u32, usize)> = Vec::new();
+    for (slot, stack) in inventory.iter().enumerate() {
+        match stack {
+            Some((name, n)) if yields(crops, name) && sown(name) => {
+                sown_stacks.push((name, *n, slot))
+            }
+            Some((name, _)) if yields(crops, name) => out.push(slot),
+            _ => {}
+        }
+    }
+    sown_stacks.sort_by_key(|&(name, n, slot)| (name, n, slot));
+    let mut left: Vec<(&str, u32)> = Vec::new();
+    for &(name, _, _) in &sown_stacks {
+        if !left.iter().any(|(n, _)| *n == name) {
+            left.push((name, count(inventory, name)));
+        }
+    }
+    for (name, n, slot) in sown_stacks {
+        if let Some((_, total)) = left.iter_mut().find(|(item, _)| *item == name)
+            && *total >= keep.saturating_add(n)
+        {
+            *total -= n;
+            out.push(slot);
+        }
+    }
+    out.sort_unstable();
+    out
 }
 /// The seeds a composter takes (it turns them into bone meal): wheat and beetroot seeds.
 pub const COMPOST_SEEDS: [&str; 2] = ["minecraft:wheat_seeds", "minecraft:beetroot_seeds"];
@@ -508,7 +531,24 @@ mod tests {
             item("minecraft:wheat", 3),
             item(HAY_BLOCK, 2),
         ];
-        assert_eq!(sell_slots(&mixed, &[Crop::Wheat]), vec![1, 2]);
+        assert_eq!(sell_slots(&mixed, &[Crop::Wheat], KEEP_SEEDS), vec![1, 2]);
+        // Carrots are their own seed: enough stays for sowing, whole stacks are sold.
+        let carrots = vec![
+            item("minecraft:carrot", 64),
+            item("minecraft:carrot", 20),
+            item("minecraft:carrot", 64),
+            item("minecraft:potato", 64),
+        ];
+        assert_eq!(
+            sell_slots(&carrots, &[Crop::Carrots], KEEP_SEEDS),
+            vec![0, 1]
+        );
+        assert_eq!(
+            sell_slots(&carrots[..1], &[Crop::Carrots], KEEP_SEEDS),
+            Vec::<usize>::new()
+        );
+        // Potatoes not farmed here are not this farm's to sell.
+        assert!(!sell_slots(&carrots, &[Crop::Carrots], KEEP_SEEDS).contains(&3));
         let bales = vec![item(HAY_BLOCK, 3)];
         assert_eq!(deposit(&bales, &[Crop::Wheat], KEEP_SEEDS), vec![0]);
         assert!(deposit(&bales, &[Crop::Carrots], KEEP_SEEDS).is_empty());
