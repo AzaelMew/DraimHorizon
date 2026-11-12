@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "claim-borders"
-version = "0.39.20"
+version = "0.39.21"
 dependencies = [
  "claim-borders-relay-client",
  "serde_json",

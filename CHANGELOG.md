@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.21
+
+- A farm bot no longer stands in front of an open chest for good. A chest window that opened after the trip had given up on the click (on a slow server it can open seconds later) was left open with nothing to drive it, and the farm waited behind it for hours. Such a window is now used for the trip if one is under way; a container window open with no trip behind it is closed after six seconds while the farm runs, and a trip that keeps a window open for 40 seconds ends and is tried again later.
+- Bone meal no longer sends the farm round the bed. The click aimed at points half a block up and higher, above a young crop (an eighth of a block high), so the ray met the crop beside it or the farmland; after ten misses the farm gave up on the crop and walked to the next young one, and the next. Clicks on a block now also try points across its real height.
+
 ## 0.39.20
 
 - The farm's status line at the top shows what it sold: how many items (counted from the hand going down after each `/sell hand`) and, when the server sends its "Sold … for …" messages, the money they brought since the job started, e.g. "Farm: 242 · sold 640 (+1 280.00)".
