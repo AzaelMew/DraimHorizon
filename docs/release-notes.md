@@ -1,9 +1,9 @@
-**DraimHorizon 0.39.15 - Seed Map found marks shared with friends**
+**DraimHorizon 0.39.16 - Swimming with elytra on**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- Structures marked as looted on the Seed Map show on friends' maps too, with who marked them.
-- Shared only with friends over the encrypted relay, for the same seed; the newer mark or unmark wins.
-- Existing marks are kept. Builds on 0.39.14 (the map remembers its selection).
+- A fall into water with elytra on no longer takes the movement keys away: the player swims as without them.
+- The miner works under water with elytra on.
+- Builds on 0.39.15.
 
 Native client compiled against the pinned Nightly. Not verified in game.

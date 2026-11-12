@@ -1497,11 +1497,9 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             return physical;
         }
         // In the air (a glide, a shove from a hit): wait, no hit, no pause.
-        if game
-            .player
-            .as_ref()
-            .is_some_and(|p| p.fall_flying || !p.ground.on_ground && !p.fluids.was_touching_water)
-            && live_cell(game, model::block([player.x, player.y, player.z])) != model::Cell::Climb
+        if game.player.as_ref().is_some_and(|p| {
+            gliding_in_air(p) || !p.ground.on_ground && !p.fluids.was_touching_water
+        }) && live_cell(game, model::block([player.x, player.y, player.z])) != model::Cell::Climb
         {
             return false;
         }
@@ -3212,6 +3210,12 @@ fn glide_clear(game: &Game<'_>, position: [f64; 3], yaw: f32) -> bool {
         })
     })
 }
+/// Gliding through the air on elytra. The glide flag alone is not enough: the server keeps it
+/// after a fall into water (vanilla ends a glide on the ground, not in a liquid), and the body
+/// swims there, it does not glide.
+fn gliding_in_air(body: &horizon_client::motion::PlayerMotion) -> bool {
+    body.fall_flying && !body.fluids.was_touching_water && !body.is_in_lava()
+}
 /// Every other tick while falling with elytra: a fresh jump press spreads them.
 static ELYTRA_TAP: Mutex<bool> = Mutex::new(false);
 /// Elytra worn, with durability to spare.
@@ -3756,9 +3760,10 @@ pub(super) fn movement(
             }
         }
     }
-    if body.fall_flying {
+    if task_running() && gliding_in_air(body) {
         // Gliding with no route at hand: no keys (the look steers), never a pause; the route is
-        // planned again once landed.
+        // planned again once landed. Not in water (the glide flag outlasts a fall into it, and
+        // taking the keys there left the player unable to swim), and never without a task.
         *forward = 0.0;
         *strafe = 0.0;
         return;

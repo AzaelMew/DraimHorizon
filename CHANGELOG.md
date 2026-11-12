@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.16
+
+- Falling into water with elytra on no longer leaves the player unable to swim. The server keeps the glide flag after a fall into water (vanilla ends a glide on the ground, not in a liquid), and the mod's handling of a glide with no route took the movement keys away whenever the flag was set, with or without a task running; only taking the elytra off gave them back. It now applies only while a task is running and the player is really gliding through the air, never in water or lava.
+- Mining with elytra on: the miner no longer waits as if in the air while it swims under water with the glide flag still set.
+
 ## 0.39.15
 
 - Seed Map found marks are shared with friends. A structure marked as looted (or unmarked) on the Seed Map now shows the same way on every friend's Seed Map, and hovering it says who marked it ("Found by Alex"). Marks are sent over the existing end-to-end encrypted relay as a new `[DHF1]` frame (up to six structures a frame, well under 1 KiB) to every friend online (one frame a second, so a relay with a message quota is not exceeded), again when they change and when a friend comes online; they are accepted only from friends (the friend's pinned relay identity and its only session, in the server's player list) and only for the same seed. The friend's name comes from the relay, never from the frame, and friends' marks are not passed on to others.
