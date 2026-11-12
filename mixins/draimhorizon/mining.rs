@@ -399,7 +399,7 @@ pub fn plan_with_stats(
                     // A block with every side closed is dug to by `plan_buried`; the nearest
                     // ones are often the sand under the player's feet, which would crowd out
                     // the blocks that are open.
-                    let open = [
+                    let sides = [
                         [1, 0, 0],
                         [-1, 0, 0],
                         [0, 1, 0],
@@ -407,15 +407,16 @@ pub fn plan_with_stats(
                         [0, 0, 1],
                         [0, 0, -1],
                     ]
-                    .iter()
-                    .any(|d| {
-                        // Leaves count as open: a trunk inside its crown is reached by clearing
-                        // them on the way.
-                        let side = block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]);
-                        side.cell == nav::Cell::Air || side.soft || side.water
-                    });
-                    if open {
-                        candidates.push((x * x + y * y + z * z, at));
+                    .map(|d| block([at[0] + d[0], at[1] + d[1], at[2] + d[2]]));
+                    // Leaves count as open: a trunk inside its crown is reached by clearing them
+                    // on the way. But a block with a side open to the air comes first: the trunk
+                    // and stumps in the open before the logs buried in foliage (it went for the
+                    // nearest log through the leaves, and gave up on it after clearing a few).
+                    let bare = sides.iter().any(|b| b.cell == nav::Cell::Air || b.water);
+                    let covered = !bare && sides.iter().any(|b| b.soft);
+                    if bare || covered {
+                        let penalty = if covered { 400 } else { 0 };
+                        candidates.push((x * x + y * y + z * z + penalty, at));
                     }
                 }
             }
@@ -694,6 +695,9 @@ pub struct Job {
     pub phase: Phase,
     pub target: Option<nav::Pos>,
     pub excluded: Vec<nav::Pos>,
+    /// Blocks given up on since one was last broken: the job ends only when this many in a row
+    /// cannot be reached, not after so many over its whole length.
+    pub misses: u8,
     pub started_ms: u64,
     /// The block that was broken last: its drops are collected around it.
     pub last: Option<nav::Pos>,
@@ -733,6 +737,7 @@ impl Job {
             phase: Phase::Searching,
             target: None,
             excluded: Vec::new(),
+            misses: 0,
             started_ms: 0,
             last: None,
             blocker: false,
@@ -767,9 +772,19 @@ impl Job {
         if let Some(target) = self.target.take()
             && !self.excluded.contains(&target)
         {
+            // The oldest are let go: a block out of reach then may be within reach later.
+            if self.excluded.len() >= 256 {
+                self.excluded.remove(0);
+            }
             self.excluded.push(target);
         }
-        self.phase = if self.excluded.len() >= 32 {
+        self.misses = self.misses.saturating_add(1);
+        // A dig of one given block (a route that breaks its way, `excavation`) has nothing else
+        // to look for: skipping its block ends it, so the route plans again at once. It went on
+        // "searching" for good, and the route stood still until its time ran out.
+        // 32 blocks in a row given up on ends the job; a long job used to end after 32 over
+        // its whole length (tree tops out of reach), with reachable blocks all round.
+        self.phase = if self.misses >= 32 || self.ore == u8::MAX {
             self.active = false;
             Phase::NoTarget
         } else {
@@ -831,7 +846,13 @@ impl Job {
             }
             return;
         }
+        self.broken();
+    }
+    /// The block was broken (the server said so, or it has stayed gone long enough that the
+    /// server would have put it back if it refused): on to the next.
+    pub fn broken(&mut self) {
         self.refusals = 0;
+        self.misses = 0;
         if self.blocker {
             // Cleared: not a mined block. Look for the real target again.
             self.blocker = false;
@@ -916,6 +937,71 @@ mod tree_tests {
                 ..Block::default()
             }
         }
+    }
+    #[test]
+    fn a_log_in_the_open_is_mined_before_a_nearer_one_buried_in_leaves() {
+        // Flat ground; a log up in a crown three blocks over the ground, two east, wrapped in
+        // leaves on all six sides (reachable: from the ground beside it, below the crown), and a
+        // log five blocks west standing in the open. The buried one is nearer.
+        let covered = [2, 3, 0];
+        let open = [-5, 0, 0];
+        let world = |p: nav::Pos| {
+            let leaf = p != covered
+                && (p[0] - covered[0]).abs() <= 1
+                && (p[2] - covered[2]).abs() <= 1
+                && (-1..=1).contains(&(p[1] - covered[1]));
+            Block {
+                cell: if p[1] < 0 || p == covered || p == open || leaf {
+                    nav::Cell::Solid
+                } else {
+                    nav::Cell::Air
+                },
+                ore: p == covered || p == open,
+                breakable: true,
+                soft: leaf,
+                ..Block::default()
+            }
+        };
+        let (target, path) = plan([0, 0, 0], &[], world, || false).unwrap();
+        assert_eq!(target, open);
+        assert!(path.complete);
+    }
+    #[test]
+    fn a_long_job_ends_only_after_many_misses_in_a_row() {
+        let mut job = Job::new(0, 0).unwrap();
+        // Hundreds of blocks out of reach over the job, each time with a block mined between:
+        // it goes on.
+        for i in 0..300 {
+            job.select([i, 64, 0]);
+            job.skip();
+            assert!(job.active, "stopped after {i} misses with mining between");
+            job.select([i, 64, 1]);
+            job.phase = Phase::Confirming;
+            job.broken();
+        }
+        assert!(job.excluded.len() <= 256);
+        // 32 in a row: it ends.
+        for i in 0..32 {
+            assert!(job.active);
+            job.select([i, 70, 5]);
+            job.skip();
+        }
+        assert!(!job.active);
+        assert_eq!(job.phase, Phase::NoTarget);
+    }
+    #[test]
+    fn a_dig_of_one_block_ends_when_its_block_is_skipped() {
+        let mut dig = Job::excavation([3, 64, 0]);
+        assert!(dig.active && dig.phase == Phase::Breaking);
+        dig.skip();
+        // Nothing else to look for: ended, so the route plans again instead of waiting.
+        assert!(!dig.active);
+        assert_eq!(dig.phase, Phase::NoTarget);
+        // An ore job goes on looking after a skip.
+        let mut ore = Job::new(0, 1).unwrap();
+        ore.select([1, 2, 3]);
+        ore.skip();
+        assert!(ore.active && ore.phase == Phase::Searching);
     }
     #[test]
     fn a_tall_trunk_out_of_reach_is_climbed_to_and_leaves_count_as_open() {

@@ -481,8 +481,9 @@ pub const ELYTRA_DROP: i32 = 384;
 fn current_drop_limit() -> i32 {
     DROP_LIMIT.with(|d| d.get())
 }
-/// What each block of a drop beyond `MAX_DROP` costs a route: a long detour is taken first.
-const FAR_DROP_COST: i32 = 40;
+/// What each block of a drop beyond `MAX_DROP` costs a route: a step and a half, so a drop (within
+/// the safe height) beats a way round that is longer, and stairs on the way beat the drop.
+const FAR_DROP_COST: i32 = 15;
 /// The place to walk to for a goal given as a block: the goal itself when it can be stood in,
 /// otherwise the nearest place to stand in its column, up to three blocks up or down (a goal
 /// typed as the block under the feet, a waypoint saved on the ground). `None` when there is none.
@@ -805,7 +806,7 @@ const MOVES: [([i32; 3], i32); 98] = {
             while dy >= -1 {
                 moves[i] = (
                     [sides[s][0] * length, dy, sides[s][1] * length],
-                    10 * length + 15,
+                    10 * length + 6,
                 );
                 i += 1;
                 dy -= 1;
@@ -1244,6 +1245,8 @@ pub struct Navigator {
     pub complete: bool,
     pub running: bool,
     progress: Option<[f64; 3]>,
+    /// The step (index of `path`) whose run-up for a jump is done.
+    leap_backed: Option<usize>,
     stalled: u16,
     recoveries: u8,
     recovery_origin: Option<[f64; 3]>,
@@ -1260,6 +1263,26 @@ pub struct Input {
 /// the way the walker moves: forward, with a side step while turning, and a target behind is
 /// turned to first (the head turns, see the human look) instead of walked to backwards. Close by
 /// (fine positioning on an edge) every direction is allowed.
+/// The movement keys (forward, strafe) toward a direction `dx, dz` for a head turned to `yaw`
+/// (radians): the nearest of the eight ways.
+fn keys_toward(dx: f64, dz: f64, yaw: f64) -> (f32, f32) {
+    if dx.hypot(dz) < 1e-6 {
+        return (0.0, 0.0);
+    }
+    let forward = -dx * yaw.sin() + dz * yaw.cos();
+    let left = dx * yaw.cos() + dz * yaw.sin();
+    let sector = (left.atan2(forward) / (std::f64::consts::PI / 4.0)).round() as i32;
+    match sector.rem_euclid(8) {
+        0 => (1., 0.),
+        1 => (1., 1.),
+        2 => (0., 1.),
+        3 => (-1., 1.),
+        4 => (-1., 0.),
+        5 => (-1., -1.),
+        6 => (0., -1.),
+        _ => (1., -1.),
+    }
+}
 pub fn human_steer(position: [f64; 3], target: [f64; 3], yaw: f32) -> Input {
     let dx = target[0] - position[0];
     let dz = target[2] - position[2];
@@ -1383,6 +1406,8 @@ impl Navigator {
     pub fn accept(&mut self, path: Option<Path>) {
         self.path.clear();
         self.next = 1;
+        // A run-up done belongs to the old route.
+        self.leap_backed = None;
         self.progress = None;
         self.stalled = 0;
         if let Some(path) = path {
@@ -1569,15 +1594,35 @@ impl Navigator {
         // No progress for a while (a slab, a stair or an edge the planner took for flat, a body
         // in the way): jump now and then, then step aside, instead of pushing on in the same
         // way until the stall counts as stuck.
-        // A jump across a gap: run at it and jump once the edge is near.
-        let leap = (target[0] - from[0]).hypot(target[2] - from[2]) > 1.5;
-        if leap {
-            let run = (position[0] - from[0]).hypot(position[2] - from[2]);
+        // A jump across a gap: back up to the far side of the block it starts from (a run-up: a
+        // three-block gap needs nearly full sprint speed), sprint at the gap and jump at the very
+        // edge (the body stands on the block until its middle is 0.8 past the block's middle).
+        // The keys follow the head as on any step, so the run goes the right way whatever it
+        // faces. Jumping a quarter of a block in, from a standstill, fell short of the far side.
+        let span = (target[0] - from[0]).hypot(target[2] - from[2]);
+        if span > 1.5 {
+            let dir = [(target[0] - from[0]) / span, (target[2] - from[2]) / span];
+            let run = (position[0] - from[0]) * dir[0] + (position[2] - from[2]) * dir[1];
+            if self.leap_backed != Some(self.next) && grounded && run > -0.25 && span > 2.5 {
+                // Back to the rear of the block, facing the gap all the while.
+                let back = [from[0] - dir[0] * 0.35, from[2] - dir[1] * 0.35];
+                let (forward, strafe) =
+                    keys_toward(back[0] - position[0], back[1] - position[2], yaw);
+                return Input {
+                    forward,
+                    strafe,
+                    jump: false,
+                    sprint: false,
+                };
+            }
+            self.leap_backed = Some(self.next);
+            let (forward, strafe) =
+                keys_toward(target[0] - position[0], target[2] - position[2], yaw);
             return Input {
-                forward: 1.0,
-                strafe: 0.0,
-                jump: grounded && run >= 0.25,
-                sprint: true,
+                forward,
+                strafe,
+                jump: grounded && run >= 0.55,
+                sprint: forward > 0.0,
             };
         }
         let unstick = grounded && self.stalled >= 8 && self.stalled % 10 == 8;
@@ -1990,9 +2035,30 @@ mod tests {
             nodes: vec![[0, 0, 0], [4, 0, 0]],
             complete: true,
         }));
-        let input = n.input([0.8, 0.0, 0.5], -90.0, true);
-        assert!(input.sprint && input.jump && input.forward > 0.0);
+        // At the middle of the block it starts from: back up first, facing the gap (yaw -90 is
+        // east, +x), for a run-up.
+        let back = n.input([0.5, 0.0, 0.5], -90.0, true);
+        assert!(back.forward < 0.0 && !back.jump && !back.sprint, "{back:?}");
+        // At the rear of the block: the run-up begins, sprinting at the gap.
+        let run = n.input([0.2, 0.0, 0.5], -90.0, true);
+        assert!(run.forward > 0.0 && run.sprint && !run.jump, "{run:?}");
+        // Running past the middle: still no jump (it fell short when it jumped a quarter in).
+        let mid = n.input([0.8, 0.0, 0.5], -90.0, true);
+        assert!(mid.forward > 0.0 && mid.sprint && !mid.jump, "{mid:?}");
+        // At the edge: jump.
+        let edge = n.input([1.1, 0.0, 0.5], -90.0, true);
+        assert!(edge.forward > 0.0 && edge.sprint && edge.jump, "{edge:?}");
         assert_eq!(n.status, Status::Walking);
+        // Facing the other way (no human look): the keys still run toward the gap.
+        let mut w = Navigator::default();
+        w.begin([4, 0, 0], true);
+        w.accept(Some(Path {
+            nodes: vec![[0, 0, 0], [4, 0, 0]],
+            complete: true,
+        }));
+        let _ = w.input([0.1, 0.0, 0.5], 90.0, true);
+        let away = w.input([1.1, 0.0, 0.5], 90.0, true);
+        assert!(away.forward < 0.0 && away.jump && !away.sprint, "{away:?}");
         // Standing on a slab (half a block up) is standing on its cell.
         let mut m = Navigator::default();
         m.begin([1, 0, 0], true);
@@ -2085,20 +2151,37 @@ mod tests {
         };
         assert!(!down(MAX_DROP));
         assert!(down(FAR_DROP));
-        // With stairs down at hand, the stairs are taken instead of the long drop.
-        let stairs = |p: Pos| {
+        // Stairs three blocks aside: the shorter way down (the drop, within the safe height) is
+        // taken rather than the way round.
+        let aside = |p: Pos| {
             if p[2] == 3 && p[0] >= 3 && p[1] < 6 - (p[0] - 2) {
                 Cell::Solid
             } else {
                 roof(p)
             }
         };
-        let path = search_near_drop([0, 6, 0], [6, 0, 0], 0, FAR_DROP, stairs, || false).unwrap();
+        let path = search_near_drop([0, 6, 0], [6, 0, 0], 0, FAR_DROP, aside, || false).unwrap();
+        assert!(path.complete);
+        assert!(path.nodes.windows(2).any(|w| w[1][1] - w[0][1] < -MAX_DROP));
+        // Not the long way down the whole stair: a short route with a drop on it.
+        assert!(path.nodes.len() <= 8, "{:?}", path.nodes);
+        // Stairs right on the way down: as short, and no fall, so the stairs are taken.
+        let on_the_way = |p: Pos| {
+            if p[2] == 0 && p[0] >= 3 && p[1] < 6 - (p[0] - 2) {
+                Cell::Solid
+            } else {
+                roof(p)
+            }
+        };
+        let path =
+            search_near_drop([0, 6, 0], [9, 0, 0], 0, FAR_DROP, on_the_way, || false).unwrap();
         assert!(path.complete);
         assert!(
             path.nodes
                 .windows(2)
-                .all(|w| w[1][1] - w[0][1] >= -MAX_DROP)
+                .all(|w| w[1][1] - w[0][1] >= -MAX_DROP),
+            "{:?}",
+            path.nodes
         );
     }
     #[test]

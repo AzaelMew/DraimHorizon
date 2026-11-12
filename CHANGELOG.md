@@ -1,5 +1,14 @@
 # История версий
 
+## 0.39.18
+
+- Routes that break and place blocks no longer stand still. A block the route's dig could not take (the miner's safety checks) left the dig "searching" for good, so the route waited until its time ran out; it now ends at once and the route is planned again. A full inventory no longer stops a route's dig (the drop stays on the ground) nor starts a storage trip in the middle of the route. A step that makes no progress is planned again after 20 seconds (45 before).
+- Elytra: the jump presses that spread them were taken for the player's own keys, and the task paused in mid-air. Falling to spread them now does nothing else that tick, so the glide goes on to the landing without a pause.
+- Jumps across gaps: the walker backs up to the rear of the block it jumps from, sprints at the gap and jumps at the very edge; it jumped a quarter of a block in, from a standstill, and fell short of three-block gaps. The keys follow the head as on any step, so the run goes the right way whatever it faces.
+- Drops and jumps are preferred to long ways round: each block of drop past three costs a step and a half (it was four steps), within the safe height; a jump across a gap costs less too. Stairs right on the way are still taken over a drop.
+- Mining is faster and goes on longer. A block that stays gone for 0.7 s counts as broken without waiting for the server's answer (which came late on a busy server, and the miner stood for five seconds); no answer at all is a refusal after 2.5 s (5 s). The job ends only after 32 blocks in a row it cannot reach, not 32 over its whole length (tree tops out of reach made it say no ore was found with logs all round). Logs with a side open to the air are mined before ones buried in foliage.
+- Farm: in a marked plot all plain soil (dirt, grass, path) with air above is tilled; a new plot had no farmland to go by and was tilled only a little at each pass. Each part of the field gets only its own crop (another crop no longer stands in, which sowed the field with whatever seeds were at hand). A trip for seeds that fails counts as finding none for a while, so the farm stops asking for them again and again. The field is looked at again a fifth of a second after a crop is done (half a second before).
+
 ## 0.39.17
 
 - Large `.litematic` (and `.schem`) files are read: up to 256 blocks to a side, 4 194 304 cells and 262 144 blocks that are not air (it was 128, 64³ and 32 768, and the preview of a larger build stayed empty). A file that cannot be read now says why, in the previews list and on the preview panel, and Refresh in the Schematics tab reads it again; it used to be dropped without a word.

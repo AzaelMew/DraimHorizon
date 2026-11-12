@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.17"
+version = "0.39.18"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
