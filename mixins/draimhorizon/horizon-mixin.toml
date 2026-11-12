@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.18"
+version = "0.39.19"
 priority = 100
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
@@ -1238,4 +1238,20 @@ bindings = [
   { name = "_value", ty = "()", value = "$value" },
   { name = "m", ty = "&crate::mobs::Mob", value = "m" },
   { name = "p", ty = "&mut crate::mobs::anim::Poses", value = "&mut *p" },
+]
+
+[[module]]
+id = "villager-trade-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_villager_trade_view"
+source = "villager_trade_view.rs"
+
+[[injection]]
+id = "villager-trade-click"
+kind = "RETURN"
+target = "horizon_client::game::trading::Game<'_>::merchant_click"
+helper = "villager_trade_hook.rs"
+bindings = [
+  { name = "value", ty = "bool", value = "$value" },
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]

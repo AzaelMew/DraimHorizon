@@ -143,15 +143,28 @@ fn standing(game: &Game<'_>) -> Option<plots::Pos> {
 pub(super) fn command(game: &mut Game<'_>, message: &str) -> bool {
     let message = message.trim();
     let mut words = message.split_whitespace();
-    if !words
-        .next()
-        .is_some_and(|w| w.eq_ignore_ascii_case("/farm"))
-    {
+    let Some(name) = words.next().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    // `/dfarm` is the mod's alone: its subcommands are listed when it is typed bare or wrong.
+    let own = name == "/dfarm";
+    if name != "/farm" && !own {
         return false;
     }
     let Some(sub) = words.next().map(str::to_ascii_lowercase) else {
+        if own && game.native_on(claims::ID) {
+            game.native_chat(&format!("[DraimHorizon] {}", usage()));
+            return true;
+        }
         return false;
     };
+    if own
+        && !matches!(sub.as_str(), "pos1" | "pos2" | "save" | "clear" | "list")
+        && game.native_on(claims::ID)
+    {
+        game.native_chat(&format!("[DraimHorizon] {}", usage()));
+        return true;
+    }
     if !matches!(sub.as_str(), "pos1" | "pos2" | "save" | "clear" | "list")
         || !game.native_on(claims::ID)
     {
@@ -162,6 +175,12 @@ pub(super) fn command(game: &mut Game<'_>, message: &str) -> bool {
     let reply = run(game, &sub, &words.collect::<Vec<_>>().join(" "));
     game.native_chat(&format!("[DraimHorizon] {reply}"));
     true
+}
+fn usage() -> &'static str {
+    text(
+        "Участки фермы: /dfarm pos1, /dfarm pos2, /dfarm save [имя], /dfarm clear, /dfarm list (или /farm ...)",
+        "Farm plots: /dfarm pos1, /dfarm pos2, /dfarm save [name], /dfarm clear, /dfarm list (or /farm ...)",
+    )
 }
 fn run(game: &Game<'_>, sub: &str, rest: &str) -> String {
     let Some(scope) = walk::world_key(game) else {
@@ -191,8 +210,8 @@ fn run(game: &Game<'_>, sub: &str, rest: &str) -> String {
                 "{point}: {x} {y} {z}.{}",
                 if both {
                     text(
-                        " Сохраните: /farm save [имя]",
-                        " Save it: /farm save [name]",
+                        " Сохраните: /dfarm save [имя]",
+                        " Save it: /dfarm save [name]",
                     )
                 } else {
                     ""
@@ -203,8 +222,8 @@ fn run(game: &Game<'_>, sub: &str, rest: &str) -> String {
             let rows = rows(game);
             if rows.is_empty() {
                 return text(
-                    "Участков в этом мире нет. Отметьте: /farm pos1, /farm pos2, /farm save",
-                    "No plots in this world. Mark one: /farm pos1, /farm pos2, /farm save",
+                    "Участков в этом мире нет. Отметьте: /dfarm pos1, /dfarm pos2, /dfarm save",
+                    "No plots in this world. Mark one: /dfarm pos1, /dfarm pos2, /dfarm save",
                 )
                 .into();
             }
@@ -235,8 +254,8 @@ fn run(game: &Game<'_>, sub: &str, rest: &str) -> String {
         _ => with(game, |s| {
             let (Some((w1, a)), Some((w2, b))) = (&s.pos1, &s.pos2) else {
                 return text(
-                    "Сначала отметьте две точки: /farm pos1 и /farm pos2.",
-                    "Mark two points first: /farm pos1 and /farm pos2.",
+                    "Сначала отметьте две точки: /dfarm pos1 и /dfarm pos2.",
+                    "Mark two points first: /dfarm pos1 and /dfarm pos2.",
                 )
                 .into();
             };

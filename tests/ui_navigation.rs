@@ -642,7 +642,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
         menu.experimental_section = ExperimentalSection::Baritone;
         menu.baritone_mode = BaritoneMode::Farm;
         let widgets = menu.layout(&empty, 800.0, 500.0);
-        assert!(widgets.iter().any(|w| w.text.contains("/farm pos1")));
+        assert!(widgets.iter().any(|w| w.text.contains("/dfarm pos1")));
         assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
     }
 }

@@ -176,6 +176,8 @@ struct State {
     last_unload: Instant,
     // The harvest container is full and the harvest is to be sold (`/sell hand`).
     sell_due: bool,
+    // Until when selling is off after `/sell hand` did not work (the harvest goes to the chest).
+    sell_blocked: Instant,
     // Failed placements in a row, and cells given up on, for the end message.
     errors: u8,
     missed: u16,
@@ -233,6 +235,7 @@ impl Default for State {
             idle_deposit: false,
             last_unload: Instant::now(),
             sell_due: false,
+            sell_blocked: Instant::now(),
             errors: 0,
             missed: 0,
             falling: false,
@@ -379,18 +382,29 @@ pub(super) fn start_farm(
     // without any, the square around the player.
     let marked = crate::game::claim_borders_farm_plots_view::enabled(game);
     let (areas, marked) = if marked.is_empty() {
-        let origin = nav::standing_block(
-            [p.x, p.y, p.z],
-            &game.native_block(nav::block([p.x, p.y, p.z])),
-        );
-        (
-            vec![plots::Bounds::around(
-                origin,
-                i32::from(config.radius),
-                config.reach_y(),
-            )],
-            false,
-        )
+        let world = driver::world_key(game);
+        let square = |s: &Option<(String, u8, plots::Bounds)>| {
+            s.as_ref()
+                .filter(|(w, r, _)| Some(w) == world.as_ref() && *r == config.radius)
+                .map(|(_, _, b)| *b)
+        };
+        // A farm picked up again after a reconnect keeps the square it was started on, not
+        // the one around wherever the bot was when the server went down.
+        let kept = crate::game::claim_borders_resume::resuming()
+            .then(|| square(&LAST_SQUARE.lock().unwrap_or_else(|e| e.into_inner())))
+            .flatten();
+        let area = kept.unwrap_or_else(|| {
+            let origin = nav::standing_block(
+                [p.x, p.y, p.z],
+                &game.native_block(nav::block([p.x, p.y, p.z])),
+            );
+            plots::Bounds::around(origin, i32::from(config.radius), config.reach_y())
+        });
+        if let Some(world) = world {
+            *LAST_SQUARE.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((world, config.radius, area));
+        }
+        (vec![area], false)
     } else {
         (marked, true)
     };
@@ -410,6 +424,9 @@ pub(super) fn start_farm(
     });
     Ok(())
 }
+/// The square of the last farm started without marked plots: its world, radius and bounds.
+static LAST_SQUARE: std::sync::Mutex<Option<(String, u8, plots::Bounds)>> =
+    std::sync::Mutex::new(None);
 pub(super) fn start_drain(
     game: &Game<'_>,
     config: drain::Config,
@@ -778,15 +795,20 @@ fn store_due(game: &Game<'_>, s: &State) -> Option<(Purpose, nav::Pos)> {
     {
         return Some((Purpose::Compost, at));
     }
+    // With selling on, the harvest is sold where the farm stands (`sell_frame`), not stored;
+    // only when the command does not work does it go to the harvest container.
+    let selling = config.autosell && Instant::now() >= s.sell_blocked;
     // Wheat to bales first, so that the bales go in with the same unload.
-    if store::hay_plan(&inv, &crops).is_some()
+    if !selling
+        && store::hay_plan(&inv, &crops).is_some()
         && craft_allowed()
         && let Some(table) = purpose_chest(game, Purpose::Craft)
     {
         craft_started();
         return Some((Purpose::Craft, table));
     }
-    if !split.harvest.is_empty()
+    if !selling
+        && !split.harvest.is_empty()
         && let Some(chest) = purpose_chest(game, Purpose::Deposit)
     {
         return Some((Purpose::Deposit, chest));
@@ -1508,19 +1530,35 @@ fn craft_frame(game: &mut Game<'_>) {
     *last = Some(Instant::now());
     game.remote_menu_ops(&ops);
 }
-/// Sells the harvest with `/sell hand` once the harvest container turned out full: each stack
-/// of the crops' yield goes to the selected hotbar slot (a swap click), the command sells what is
-/// in the hand, and the next stack follows. A stack that does not shrink after three commands
-/// ends the selling (no such command here, or nothing is bought); it starts again after the next
-/// failed unload.
+/// Sells the harvest with `/sell hand` as it is gathered (with selling on, the harvest does not
+/// go to the container): between two crops, once a stack has grown or the field is idle, each
+/// stack of the crops' yield goes to the selected hotbar slot (a swap click), the command sells
+/// what is in the hand, and the next stack follows. A stack that does not shrink after three
+/// commands stops the selling for a few minutes (no such command here, or nothing is bought);
+/// the harvest goes to the container meanwhile.
+/// A stack this big starts a sale while there is still harvesting to do.
+const SELL_STACK: u32 = 32;
+/// How long selling stays off after the command did not work.
+const SELL_PAUSE: Duration = Duration::from_secs(300);
 fn sell_frame(game: &mut Game<'_>) {
     use horizon_client::menu::Input;
     static LAST: Mutex<Option<(Instant, u32, u8)>> = Mutex::new(None);
-    let (wanted, crops) = state(|s| match (&s.task, s.active, &s.store) {
-        (Some(Task::Farm { config, .. }), true, None) if config.autosell && s.sell_due => {
-            (true, config.selected().collect::<Vec<_>>())
+    let (wanted, due, crops) = state(|s| match (&s.task, s.active, &s.store) {
+        (Some(Task::Farm { config, .. }), true, None)
+            if config.autosell
+                && (s.sell_due || Instant::now() >= s.sell_blocked)
+                // Not in the middle of a dig or a sowing: the hand is in use then.
+                && s.phase == Phase::Ready
+                && !driver::workshop_pending()
+                && !placement::placement_pending() =>
+        {
+            (
+                true,
+                s.sell_due || s.waiting,
+                config.selected().collect::<Vec<_>>(),
+            )
         }
-        _ => (false, Vec::new()),
+        _ => (false, false, Vec::new()),
     });
     if !wanted
         || !game.native_on(claims::ID)
@@ -1534,7 +1572,19 @@ fn sell_frame(game: &mut Game<'_>) {
         return;
     }
     let inv = inventory(game);
-    let Some(&slot) = store::sell_slots(&inv, &crops).first() else {
+    let slots = store::sell_slots(&inv, &crops);
+    // A sale starts once a stack has grown or there is nothing to harvest just now (not one
+    // command per carrot); once started, every stack goes.
+    let started = last.is_some();
+    if !started
+        && !due
+        && !slots
+            .iter()
+            .any(|&i| inv[i].as_ref().is_some_and(|(_, n)| *n >= SELL_STACK))
+    {
+        return;
+    }
+    let Some(&slot) = slots.first() else {
         // Everything is sold.
         *last = None;
         state(|s| {
@@ -1547,7 +1597,10 @@ fn sell_frame(game: &mut Game<'_>) {
     if slot != selected {
         // Into the hand first (a number-key swap, the selected slot itself stays selected).
         if !game.remote_menu_ops(&[(Some(slot), selected as i32, Input::Swap)]) {
-            state(|s| s.sell_due = false);
+            state(|s| {
+                s.sell_due = false;
+                s.sell_blocked = Instant::now() + SELL_PAUSE;
+            });
         }
         *last = Some((Instant::now(), 0, 0));
         return;
@@ -1564,9 +1617,10 @@ fn sell_frame(game: &mut Game<'_>) {
         *last = None;
         state(|s| {
             s.sell_due = false;
+            s.sell_blocked = Instant::now() + SELL_PAUSE;
             s.message = text(
-                "/sell hand не сработал, урожай остаётся в инвентаре",
-                "/sell hand did not work, the harvest stays in the inventory",
+                "/sell hand не сработал, урожай идёт в сундук",
+                "/sell hand did not work, the harvest goes to the chest",
             )
             .into();
         });

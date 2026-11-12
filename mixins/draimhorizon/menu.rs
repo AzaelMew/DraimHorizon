@@ -1864,13 +1864,13 @@ impl Menu {
             [x, top, w, 11.0],
             if model.farm_plots.is_empty() {
                 self.language.text(
-                    "Участков нет: /farm pos1, /farm pos2, /farm save (без них — радиус вокруг)",
-                    "No plots: /farm pos1, /farm pos2, /farm save (without any, the radius around)",
+                    "Участков нет: /dfarm pos1, /dfarm pos2, /dfarm save (без них — радиус вокруг)",
+                    "No plots: /dfarm pos1, /dfarm pos2, /dfarm save (without any, the radius around)",
                 )
             } else {
                 self.language.text(
-                    "Участки (/farm pos1, /farm pos2, /farm save):",
-                    "Plots (/farm pos1, /farm pos2, /farm save):",
+                    "Участки (/dfarm pos1, /dfarm pos2, /dfarm save):",
+                    "Plots (/dfarm pos1, /dfarm pos2, /dfarm save):",
                 )
             },
             None,

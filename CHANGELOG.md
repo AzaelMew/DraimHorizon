@@ -1,5 +1,14 @@
 # История версий
 
+## 0.39.19
+
+- Farm plot commands work on servers with their own `/farm` command. The server's suggestions took the Enter key and the line went to the server, so `/farm pos1`, `/farm pos2` and `/farm save` did nothing. The mod now also catches the line in the native command hook, and a new `/dfarm` alias (offered by completion) never clashes with a server command.
+- The farm no longer stops with "Material missing (hotbar, off hand, inventory)" with seeds in the inventory. Each move of seeds from the inventory to the hotbar counted against a limit of 24 for the whole job, so after a while no more seeds were brought over. The limit now counts only moves in a row that bring nothing.
+- The farm no longer walks round a crop it is about to harvest. It aimed at the middle of the block, above the top of short ripe crops (carrots, potatoes, beetroot), so the ray met a neighbouring crop or the farmland and the farm went to the next spot round the crop. It now aims low in the crop and tries other points of it from where it stands before it moves.
+- A farm resumed after a server restart keeps the square it was started on. Without marked plots it took the square round wherever the bot was when the server went down.
+- Farm auto-sell sells the harvest at once instead of storing it. Between two crops, once a stack of 32 has gathered or there is nothing to harvest, the crops' yield is sold with `/sell hand` and not carried to the harvest chest. When the command does not work, selling stops for five minutes and the harvest goes to the chest.
+- Villager auto-trade: Shift-click an offer in a villager's trading window to repeat the trade for as long as it goes (the price from the whole inventory, until the villager's stock runs out). Each round is the game's own: the offer is selected, then the result is taken with a shift-click. It stops when nothing more is paid, the offer sells out or the window closes.
+
 ## 0.39.18
 
 - Routes that break and place blocks no longer stand still. A block the route's dig could not take (the miner's safety checks) left the dig "searching" for good, so the route waited until its time ran out; it now ends at once and the route is planned again. A full inventory no longer stops a route's dig (the drop stays on the ground) nor starts a storage trip in the middle of the route. A step that makes no progress is planned again after 20 seconds (45 before).
