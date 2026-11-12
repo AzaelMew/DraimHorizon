@@ -294,9 +294,17 @@ fn fetch(game: &mut Game<'_>, wanted: &dyn Fn(&str) -> bool) -> Fetch {
     let Some(from) = inventory_slot(game, wanted) else {
         return Fetch::Missing;
     };
+    // Not into the slot of a Fortune tool the farm harvests with: the two swaps would trade
+    // places at every crop.
     let target = (0..9)
         .filter(|slot| *slot != game.selected)
         .find(|slot| game.stack_in(*slot).is_none())
+        .or_else(|| {
+            (0..9).rev().find(|slot| {
+                *slot != game.selected
+                    && !crate::game::claim_borders_navigation_view::fortune_in(game, *slot)
+            })
+        })
         .or_else(|| (0..9).rev().find(|slot| *slot != game.selected));
     let Some(target) = target else {
         return Fetch::Missing;
