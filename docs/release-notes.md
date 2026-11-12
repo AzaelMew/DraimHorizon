@@ -1,7 +1,8 @@
-**DraimHorizon 0.39.22 - Schematics tab: file list, preview panel, layers, single player**
+**DraimHorizon 0.39.22 - faster breaking, Schematics tab, preview layers, single player**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
+- Every Baritone task breaks blocks back to back, without waiting for the server after each one.
 - Two columns: a scrollable list of schematic files on the left, every preview control on the right.
 - Open folder and Materials are proper buttons with icons; Materials explains itself on hover.
 - Single player: the file list fills by itself (it stayed empty until Refresh after a server).
