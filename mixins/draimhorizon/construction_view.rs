@@ -1094,6 +1094,21 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
     // Where the block really is first (a door's panel stands at one side of its cell, a gate's
     // bar across its middle), then the middle, the top and the four sides: a chest behind a bed
     // of crops has a clear line only to some of them.
+    // The top of its shape too: a young crop is an eighth of a block high, and points half a
+    // block up miss it (the ray met the crop beside it or the farmland, and the farm gave up on
+    // the crop and walked to the next one, round and round the bed).
+    let top = {
+        let facts = game
+            .res
+            .facts()
+            .get(game.world.block(pos[0], pos[1], pos[2]));
+        facts
+            .outline
+            .iter()
+            .map(|b| b[4])
+            .fold(0.0_f64, f64::max)
+            .clamp(0.1, 1.0)
+    };
     let shape = {
         let facts = game
             .res
@@ -1113,6 +1128,7 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
             c
         }
     };
+    let low = top * 0.5;
     for [x, y, z] in [
         shape,
         [0.5, 0.5, 0.5],
@@ -1122,6 +1138,12 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
         [0.5, 0.5, 0.15],
         [0.5, 0.5, 0.85],
         [0.5, 0.2, 0.5],
+        [0.5, low, 0.5],
+        [0.25, low, 0.25],
+        [0.75, low, 0.75],
+        [0.25, low, 0.75],
+        [0.75, low, 0.25],
+        [0.5, top * 0.9, 0.5],
     ] {
         aim(
             game,

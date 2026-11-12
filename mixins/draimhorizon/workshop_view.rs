@@ -955,7 +955,10 @@ fn end_store(game: &mut Game<'_>, failure: Option<&str>) {
     end_store_for(game, failure, 15);
 }
 /// As `end_store`, with the pause (in seconds) before the next trip.
+/// When the current trip's window began to be used (the cap on a transfer).
+static TRANSFER_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
 fn end_store_for(game: &mut Game<'_>, failure: Option<&str>, cooldown: u64) {
+    *TRANSFER_SINCE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     if game.screen == Screen::Inventory {
         game.close_container();
         game.screen = Screen::Playing;
@@ -992,7 +995,40 @@ fn end_store_for(game: &mut Game<'_>, failure: Option<&str>, cooldown: u64) {
 pub(super) fn store_frame(game: &mut Game<'_>) {
     craft_frame(game);
     sell_frame(game);
-    let Some(t) = state(|s| s.store) else {
+    let container = game.screen == Screen::Inventory
+        && game
+            .remote_menu_type()
+            .is_some_and(|menu| store::is_container_menu(menu) || menu == "minecraft:crafting");
+    // A container window left open with no trip to drive it (it opened after the trip gave up
+    // on it, or the trip ended without closing it): the farm stood in front of the chest for
+    // hours. It is closed after a few seconds while the farm runs.
+    static ORPHAN: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let mut orphan = ORPHAN.lock().unwrap_or_else(|e| e.into_inner());
+        let unattended = container
+            && state(|s| {
+                s.active
+                    && !s.preview
+                    && matches!(s.task, Some(Task::Farm { .. }))
+                    && s.store
+                        .is_none_or(|t| !matches!(t.step, Step::Open | Step::Transfer))
+            });
+        if !unattended {
+            *orphan = None;
+        } else if orphan.get_or_insert_with(Instant::now).elapsed() > Duration::from_secs(6) {
+            *orphan = None;
+            drop(orphan);
+            game.close_container();
+            game.screen = Screen::Playing;
+            game.capture(true);
+            return;
+        }
+    }
+    let store = state(|s| s.store);
+    if store.is_none_or(|t| t.step != Step::Transfer) {
+        *TRANSFER_SINCE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    let Some(t) = store else {
         return;
     };
     if !game.native_on(claims::ID) {
@@ -1006,6 +1042,13 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                     && menu == "minecraft:crafting")
         });
     match t.step {
+        // The window of the container opened after the click was given up on: use it.
+        Step::Walk if open => state(|s| {
+            if let Some(t) = s.store.as_mut() {
+                t.step = Step::Transfer;
+                t.last = Instant::now();
+            }
+        }),
         Step::Walk => craft_on_the_way(game, t),
         Step::Open => {
             if open {
@@ -1042,8 +1085,22 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
             }
         }
         Step::Transfer => {
+            let began = *TRANSFER_SINCE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(Instant::now);
             if !open {
                 end_store(game, Some(text("Склад закрылся", "The storage closed")));
+            } else if began.elapsed() > Duration::from_secs(40) {
+                // Whatever keeps it busy (a stack that never moves, a menu that never answers),
+                // the window does not stay open for good.
+                end_store(
+                    game,
+                    Some(text(
+                        "Склад не отвечает, попробую позже",
+                        "The storage does not answer, trying later",
+                    )),
+                );
             } else if t.last.elapsed() >= Duration::from_millis(160) {
                 transfer(game, t);
             }
