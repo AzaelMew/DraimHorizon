@@ -19,6 +19,15 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         game.send_unattended_command("market");
         return;
     }
+    // The farm plots (`/farm pos1|pos2|save|clear|list`, or `/dfarm ...`, which no server takes):
+    // here too, in case the line did not come through the chat hook (a server's own /farm and
+    // its suggestions can take the Enter key there).
+    if matches!(command.split_whitespace().next(), Some("farm" | "dfarm"))
+        && crate::game::claim_borders_farm_plots_view::command(game, &format!("/{command}"))
+    {
+        *ran = true;
+        return;
+    }
     let (verb, body) = command.split_once(' ').unwrap_or((command, ""));
     if matches!(verb, "r" | "reply") {
         *ran = true;

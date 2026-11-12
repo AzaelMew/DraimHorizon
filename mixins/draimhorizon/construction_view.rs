@@ -1307,6 +1307,10 @@ pub(super) fn input(game: &mut Game<'_>) -> bool {
         }
         return false;
     };
+    // The material is at hand: the swaps that brought it worked. The limit counts only swaps
+    // in a row that bring nothing; it counted every swap of the whole job, and after 24 a farm
+    // said the material was missing with seeds in the inventory.
+    state(|s| s.fetches = 0);
     let stack = match source {
         Source::Hotbar(slot) => {
             state(|s| {

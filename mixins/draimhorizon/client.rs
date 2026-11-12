@@ -693,6 +693,7 @@ pub(super) fn open_map(game: &mut Game<'_>) {
 pub(super) fn tick(game: &mut Game<'_>) {
     crate::game::claim_borders_navigation_view::keep_running_unfocused(game);
     crate::game::claim_borders_workshop_view::store_frame(game);
+    crate::game::claim_borders_villager_trade_view::frame(game);
     if !game.native_on(claims::ID) {
         state(|c| {
             c.relay = Relay::Off;

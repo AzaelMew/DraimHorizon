@@ -29,6 +29,12 @@ struct Saved {
     tries: u8,
 }
 static SAVED: Mutex<Option<Saved>> = Mutex::new(None);
+/// Set while a lost task is being started again, so that it keeps where it was working.
+static RESUMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// True while a task is started again after a reconnect (not by the player).
+pub(super) fn resuming() -> bool {
+    RESUMING.load(std::sync::atomic::Ordering::Relaxed)
+}
 fn server(game: &Game<'_>) -> Option<String> {
     game.remote.as_ref().map(|r| r.session.address.to_string())
 }
@@ -223,7 +229,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
     let goal = saved.goal;
     let tries = saved.tries;
     drop(guard);
-    match walk::start(game, goal, true) {
+    RESUMING.store(true, std::sync::atomic::Ordering::Relaxed);
+    let started = walk::start(game, goal, true);
+    RESUMING.store(false, std::sync::atomic::Ordering::Relaxed);
+    match started {
         Ok(()) => {
             // Started again: it is the remembered task once more.
             if let Some(s) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {

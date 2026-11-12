@@ -8,5 +8,6 @@ fn claim_borders_commands(commands: &mut Vec<&'static str>) {
         "waypoint",
         "r",
         "reply",
+        "dfarm",
     ]);
 }

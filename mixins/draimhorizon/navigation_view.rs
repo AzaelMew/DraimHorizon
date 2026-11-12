@@ -1581,10 +1581,21 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
             pause_state(s);
             return false;
         };
+        // A crop is low (carrots and beetroot barely reach half a block): its middle is aimed
+        // at low down, and when a neighbouring crop or the farmland takes the ray, other points
+        // of it are tried from where the player stands. Giving up at the first miss sent the
+        // farm walking round the crop from one spot to the next.
+        let crop = crate::game::claim_borders_farming::Crop::from_code(job.ore).is_some();
+        let aim = if crop { crop_aim(target) } else { 0 };
+        let point = if crop {
+            CROP_AIM[usize::from(aim)]
+        } else {
+            [0.5, 0.5, 0.5]
+        };
         let center = [
-            f64::from(target[0]) + 0.5,
-            f64::from(target[1]) + 0.5,
-            f64::from(target[2]) + 0.5,
+            f64::from(target[0]) + point[0],
+            f64::from(target[1]) + point[1],
+            f64::from(target[2]) + point[2],
         ];
         // The head comes round to the block as a person's does, not in one jump; the swing
         // starts once it points at it.
@@ -1616,6 +1627,11 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
                 s.mine_aim = None;
                 return false;
             }
+            _ if crop && usize::from(aim) + 1 < CROP_AIM.len() => {
+                *CROP_AIM_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some((target, aim + 1));
+                s.mine_aim = None;
+                return false;
+            }
             _ => {
                 job.skip();
                 s.mine_aim = None;
@@ -1626,6 +1642,28 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         s.mine_aim = Some([game.yaw, game.pitch]);
         true
     })
+}
+/// Points of a crop block aimed at in turn (low down, where every ripe crop has its shape).
+const CROP_AIM: [[f64; 3]; 7] = [
+    [0.5, 0.25, 0.5],
+    [0.5, 0.12, 0.5],
+    [0.3, 0.2, 0.3],
+    [0.7, 0.2, 0.7],
+    [0.3, 0.2, 0.7],
+    [0.7, 0.2, 0.3],
+    [0.5, 0.4, 0.5],
+];
+/// The crop being aimed at and which of its points.
+static CROP_AIM_AT: Mutex<Option<(model::Pos, u8)>> = Mutex::new(None);
+fn crop_aim(target: model::Pos) -> u8 {
+    let mut at = CROP_AIM_AT.lock().unwrap_or_else(|e| e.into_inner());
+    match *at {
+        Some((pos, n)) if pos == target => n,
+        _ => {
+            *at = Some((target, 0));
+            0
+        }
+    }
 }
 /// One meal in progress: the slot to go back to, the food bar when it began, and whether the
 /// food is already in hand (the slot change needs a tick to reach the server first).
