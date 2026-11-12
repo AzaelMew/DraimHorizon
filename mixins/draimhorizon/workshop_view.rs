@@ -1530,16 +1530,16 @@ fn craft_frame(game: &mut Game<'_>) {
     *last = Some(Instant::now());
     game.remote_menu_ops(&ops);
 }
+/// A stack this big starts a sale while there is still harvesting to do.
+const SELL_STACK: u32 = 32;
+/// How long selling stays off after the command did not work.
+const SELL_PAUSE: Duration = Duration::from_secs(300);
 /// Sells the harvest with `/sell hand` as it is gathered (with selling on, the harvest does not
 /// go to the container): between two crops, once a stack has grown or the field is idle, each
 /// stack of the crops' yield goes to the selected hotbar slot (a swap click), the command sells
 /// what is in the hand, and the next stack follows. A stack that does not shrink after three
 /// commands stops the selling for a few minutes (no such command here, or nothing is bought);
 /// the harvest goes to the container meanwhile.
-/// A stack this big starts a sale while there is still harvesting to do.
-const SELL_STACK: u32 = 32;
-/// How long selling stays off after the command did not work.
-const SELL_PAUSE: Duration = Duration::from_secs(300);
 fn sell_frame(game: &mut Game<'_>) {
     use horizon_client::menu::Input;
     static LAST: Mutex<Option<(Instant, u32, u8)>> = Mutex::new(None);
