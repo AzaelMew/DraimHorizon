@@ -34,7 +34,8 @@ pub(super) struct Shape {
 enum Loading {
     Pending(Receiver<Result<files::Response, String>>),
     Ready(Arc<Shape>),
-    Failed,
+    /// The file could not be read, and why (shown in the list and on the panel).
+    Failed(String),
 }
 static SHAPES: Mutex<Option<HashMap<String, Loading>>> = Mutex::new(None);
 fn text(ru: &'static str, en: &'static str) -> &'static str {
@@ -121,10 +122,13 @@ pub(super) fn rows(game: &Game<'_>) -> Vec<(usize, String, bool, bool)> {
             .filter(|(_, pl)| pl.scope == scope)
             .map(|(i, pl)| {
                 let [x, y, z] = pl.origin;
+                let error = load_error(&pl.file)
+                    .map(|e| format!(" · {}: {e}", text("не читается", "unreadable")))
+                    .unwrap_or_default();
                 (
                     i,
                     format!(
-                        "{} · {x} {y} {z} · {}°",
+                        "{} · {x} {y} {z} · {}°{error}",
                         pl.file,
                         u16::from(pl.rotation) * 90
                     ),
@@ -170,16 +174,21 @@ pub(super) fn remove(game: &Game<'_>, index: usize) {
 }
 /// The file's blocks for drawing, read in the background the first time.
 fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
+    shape_in(workshop::folder(game), file, file)
+}
+/// A file of `folder` read for drawing, kept under `key` (a friend's file is kept apart from the
+/// player's own of the same name).
+fn shape_in(folder: std::path::PathBuf, key: &str, file: &str) -> Option<Arc<Shape>> {
     let mut guard = SHAPES.lock().unwrap_or_else(|e| e.into_inner());
     let shapes = guard.get_or_insert_with(HashMap::new);
-    if !shapes.contains_key(file) {
-        let loading = match files::spawn(workshop::folder(game), Some(file.to_owned()), [0; 3], 0) {
+    if !shapes.contains_key(key) {
+        let loading = match files::spawn(folder, Some(file.to_owned()), [0; 3], 0) {
             Ok(rx) => Loading::Pending(rx),
-            Err(_) => Loading::Failed,
+            Err(e) => Loading::Failed(e),
         };
-        shapes.insert(file.to_owned(), loading);
+        shapes.insert(key.to_owned(), loading);
     }
-    let entry = shapes.get_mut(file)?;
+    let entry = shapes.get_mut(key)?;
     if let Loading::Pending(rx) = entry {
         match rx.try_recv() {
             Ok(Ok(files::Response::Loaded(blueprint))) => {
@@ -196,10 +205,16 @@ fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
                         min[i] = min[i].min(at[i]);
                         max[i] = max[i].max(at[i]);
                     }
-                    let i = *index.entry(state.clone()).or_insert_with(|| {
-                        states.push(state);
-                        states.len() as u32 - 1
-                    });
+                    // Looked up first: a large file repeats a few states many times over.
+                    let i = match index.get(&state) {
+                        Some(i) => *i,
+                        None => {
+                            let i = states.len() as u32;
+                            index.insert(state.clone(), i);
+                            states.push(state);
+                            i
+                        }
+                    };
                     cells.insert(at, i);
                 }
                 if cells.is_empty() {
@@ -213,12 +228,31 @@ fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
                     max,
                 }));
             }
-            Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => *entry = Loading::Failed,
+            Ok(Err(e)) => *entry = Loading::Failed(e),
+            Ok(_) => *entry = Loading::Failed("unexpected answer".into()),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                *entry = Loading::Failed("reading stopped".into());
+            }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
     }
     match entry {
         Loading::Ready(shape) => Some(shape.clone()),
+        _ => None,
+    }
+}
+/// Forgets the files that could not be read, so they are read again when next shown.
+pub(super) fn forget_failed() {
+    let mut guard = SHAPES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(shapes) = guard.as_mut() {
+        shapes.retain(|_, l| !matches!(l, Loading::Failed(_)));
+    }
+}
+/// Why a preview's file could not be read, if it could not.
+fn load_error(file: &str) -> Option<String> {
+    let guard = SHAPES.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.as_ref()?.get(file)? {
+        Loading::Failed(e) => Some(e.clone()),
         _ => None,
     }
 }
@@ -235,9 +269,33 @@ pub(super) fn shown(game: &Game<'_>) -> Vec<(places::Placement, Arc<Shape>, bool
             .map(|(i, x)| (x.clone(), pl.active == Some(i)))
             .collect()
     });
-    list.into_iter()
+    let mut shown: Vec<_> = list
+        .into_iter()
         .filter_map(|(pl, selected)| shape(game, &pl.file).map(|s| (pl, s, selected)))
-        .collect()
+        .collect();
+    // Friends' previews of this world (shown on this screen, their files kept): drawn the same way,
+    // never selected (only their owner edits them).
+    let folder = crate::game::claim_borders_schematic_share_view::shared_folder(game);
+    for (file, pl) in crate::game::claim_borders_schematic_share_view::shown(game) {
+        if let Some(shape) = shape_in(folder.clone(), &format!("shared:{file}"), &file) {
+            shown.push((pl, shape, false));
+        }
+    }
+    shown
+}
+/// The player's own shown previews of this world, in the order they were placed (shared with
+/// friends).
+pub(super) fn own_shown(game: &Game<'_>) -> Vec<places::Placement> {
+    let Some(scope) = here(game) else {
+        return Vec::new();
+    };
+    with_places(game, |pl| {
+        pl.list
+            .iter()
+            .filter(|x| x.scope == scope && x.visible)
+            .cloned()
+            .collect()
+    })
 }
 /// Draws the box of each shown preview of this world; the blocks themselves are ghosts
 /// (`schematic_ghosts`): what is still to be placed as its own translucent model, what stands
@@ -415,8 +473,17 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         name.rsplit('.').next().unwrap_or("").to_uppercase()
     };
     let [x, y, z] = pl.origin;
+    // A file that cannot be read shows why instead of an empty place.
+    let first = match load_error(&pl.file) {
+        Some(e) => format!(
+            "{}: {} · {e}",
+            text("Схема не читается", "Schematic unreadable"),
+            pl.file
+        ),
+        None => format!("{}: {}", text("Схема", "Schematic"), pl.file),
+    };
     let lines = [
-        format!("{}: {}", text("Схема", "Schematic"), pl.file),
+        first,
         format!("XYZ {x} {y} {z} · {}°", u16::from(pl.rotation) * 90),
         format!(
             "{} {}/{}/{}/{} · {} {} · {} {}",

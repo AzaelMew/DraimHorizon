@@ -646,3 +646,112 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
         assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
     }
 }
+
+#[test]
+fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
+    for language in [Language::Russian, Language::English] {
+        let model = ViewModel {
+            language,
+            experiments_accepted: true,
+            schematic_files: vec!["house.litematic".into()],
+            schematic_places: (0..2)
+                .map(|i| (i, format!("house.litematic · {i} 64 0 · 0°"), true, i == 0))
+                .collect(),
+            schematic_friend_places: (0..3)
+                .map(|i| (format!("tower.litematic · Alex · {i} 70 5"), i != 1))
+                .collect(),
+            ..ViewModel::default()
+        };
+        for size in [
+            [240.0, 216.0],
+            [320.0, 240.0],
+            [536.0, 260.0],
+            [640.0, 360.0],
+            [800.0, 500.0],
+            [1280.0, 720.0],
+        ] {
+            let mut menu = Menu::default();
+            menu.language = language;
+            menu.tab = Tab::Experimental;
+            menu.experimental_section = ExperimentalSection::Baritone;
+            menu.baritone_mode = BaritoneMode::Schematic;
+            let widgets = menu.layout(&model, size[0], size[1]);
+            for (i, w) in widgets.iter().enumerate() {
+                if !matches!(
+                    w.control,
+                    Some(Control::SchematicFriendShow(_) | Control::SchematicPlacePage(_))
+                ) {
+                    continue;
+                }
+                let r = w.rect;
+                assert!(
+                    r[0] >= 0.0 && r[1] >= 0.0 && r[0] + r[2] <= size[0] && r[1] + r[3] <= size[1]
+                );
+                for (j, other) in widgets.iter().enumerate() {
+                    if i != j && !other.text.is_empty() {
+                        assert!(
+                            separate(r, other.rect),
+                            "{:?} overlaps {:?} {:?} at {size:?}",
+                            w.control,
+                            other.control,
+                            other.text
+                        );
+                    }
+                }
+            }
+            // Every preview can be reached, paging when they do not fit.
+            let mut friends = BTreeSet::new();
+            let mut own = BTreeSet::new();
+            for _ in 0..8 {
+                let widgets = menu.layout(&model, size[0], size[1]);
+                for w in &widgets {
+                    match w.control {
+                        Some(Control::SchematicFriendShow(i)) => {
+                            friends.insert(i);
+                        }
+                        Some(Control::SchematicPlace(i)) => {
+                            own.insert(i);
+                        }
+                        _ => {}
+                    }
+                }
+                if widgets
+                    .iter()
+                    .any(|w| w.control == Some(Control::SchematicPlacePage(1)))
+                {
+                    click(&mut menu, &model, size, Control::SchematicPlacePage(1));
+                } else {
+                    break;
+                }
+            }
+            if size[1] >= 360.0 {
+                assert_eq!(friends.len(), 3, "{size:?}");
+                assert_eq!(own.len(), 2, "{size:?}");
+                let mut menu = Menu::default();
+                menu.language = language;
+                menu.tab = Tab::Experimental;
+                menu.experimental_section = ExperimentalSection::Baritone;
+                menu.baritone_mode = BaritoneMode::Schematic;
+                let widgets = menu.layout(&model, size[0], size[1]);
+                // No select or delete for a friend's preview: only show or hide.
+                assert!(
+                    widgets
+                        .iter()
+                        .any(|w| w.text.contains("tower.litematic · Alex") && w.control.is_none())
+                );
+                // Paged to the friend's row, its button acts on it.
+                while !menu
+                    .layout(&model, size[0], size[1])
+                    .iter()
+                    .any(|w| w.control == Some(Control::SchematicFriendShow(1)))
+                {
+                    click(&mut menu, &model, size, Control::SchematicPlacePage(1));
+                }
+                assert_eq!(
+                    click(&mut menu, &model, size, Control::SchematicFriendShow(1)),
+                    Some(Action::SchematicFriendShow(1))
+                );
+            }
+        }
+    }
+}

@@ -1,5 +1,11 @@
 # История версий
 
+## 0.39.17
+
+- Large `.litematic` (and `.schem`) files are read: up to 256 blocks to a side, 4 194 304 cells and 262 144 blocks that are not air (it was 128, 64³ and 32 768, and the preview of a larger build stayed empty). A file that cannot be read now says why, in the previews list and on the preview panel, and Refresh in the Schematics tab reads it again; it used to be dropped without a word.
+- Schematic previews are shared with friends. The player's shown previews of the world (the five placed last) are listed to every friend online over the encrypted relay as `[DHS1]` frames, again when they are moved, turned, hidden or removed and when a friend comes online; a friend without the file asks for it and gets it in pieces (600 bytes a frame, four a second, files up to 384 KiB), checked against its hash and kept by content in `shared-schematics/`, so the same file is fetched once. Friends see the preview (ghost blocks and box) where the owner placed it, in the same dimension, and list it under the previews of the world with who placed it and how much of the file has come; they can show or hide it on their own screen (kept across sessions), and only the owner moves, turns, hides or removes it. Frames are taken only from friends (pinned relay identity, its only session), pieces only from the friend who listed the file, and a friend's previews go when the friend goes offline. Files are read, written and looked for on threads of their own.
+- The previews of the world are paged in the Schematics tab when they do not fit (they were cut off).
+
 ## 0.39.16
 
 - Falling into water with elytra on no longer leaves the player unable to swim. The server keeps the glide flag after a fall into water (vanilla ends a glide on the ground, not in a liquid), and the mod's handling of a glide with no route took the movement keys away whenever the flag was set, with or without a task running; only taking the elytra off gave them back. It now applies only while a task is running and the player is really gliding through the air, never in water or lava.

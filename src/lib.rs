@@ -41,6 +41,9 @@ pub use draining as claim_borders_draining;
 #[path = "../mixins/draimhorizon/autoclick.rs"]
 pub mod autoclick;
 pub use autoclick as claim_borders_autoclick;
+#[path = "../mixins/draimhorizon/schematic_share.rs"]
+pub mod schematic_share;
+pub use schematic_share as claim_borders_schematic_share;
 #[path = "../mixins/draimhorizon/schematic_places.rs"]
 pub mod schematic_places;
 pub use schematic_places as claim_borders_schematic_places;

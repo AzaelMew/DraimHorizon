@@ -41,6 +41,17 @@ mod tests {
         assert!(BlockState::parse("minecraft:").is_err());
     }
     #[test]
+    fn a_large_litematica_build_is_read() {
+        // 140 x 4 x 140 with 39 200 blocks: past the earlier limits of 128 to a side and 32 768
+        // blocks, which left such a file's preview empty.
+        let doc = decode(include_bytes!("fixtures/schematics/litematic-large.nbt")).unwrap();
+        assert_eq!(doc.format, "litematic");
+        assert_eq!(doc.blocks.len(), 140 * 140 * 2);
+        let log = doc.blocks.iter().find(|(p, _)| p == &[0, 1, 0]).unwrap();
+        assert_eq!(log.1.name, "minecraft:oak_log");
+        assert!(doc.blocks.iter().all(|(p, _)| p[1] < 2));
+    }
+    #[test]
     fn imports_both_sponge_versions_and_signed_multi_region_coordinates() {
         let v2 = decode(include_bytes!("fixtures/schematics/sponge-v2.nbt")).unwrap();
         let v3 = decode(include_bytes!("fixtures/schematics/sponge-v3.nbt")).unwrap();

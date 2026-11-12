@@ -2,8 +2,12 @@
 use super::claim_borders_navigation::Pos;
 use std::collections::BTreeMap;
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_VOLUME: usize = 262_144;
-pub const MAX_BLOCKS: usize = 32_768;
+/// The largest file read: 256 blocks to a side, at most 4 194 304 cells (256 × 64 × 256) and
+/// 262 144 blocks that are not air. Real Litematica builds were refused under the earlier limits
+/// (128 to a side, 64³ cells, 32 768 blocks) and their preview never showed.
+pub const MAX_SIDE: u32 = 256;
+pub const MAX_VOLUME: usize = 4_194_304;
+pub const MAX_BLOCKS: usize = 262_144;
 pub type Result<T> = std::result::Result<T, String>;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BlockState {
@@ -382,8 +386,8 @@ impl Reader<'_> {
     }
 }
 fn volume(size: Pos) -> Result<usize> {
-    if size.iter().any(|s| *s == 0 || s.unsigned_abs() > 128) {
-        return Err("schematic dimensions must be 1–128".into());
+    if size.iter().any(|s| *s == 0 || s.unsigned_abs() > MAX_SIDE) {
+        return Err(format!("schematic dimensions must be 1–{MAX_SIDE}"));
     }
     let n = size
         .iter()
