@@ -1,8 +1,9 @@
 // Fullscreen seed atlas with dimension tabs, searchable icon filters and native item markers.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_map as map, claim_borders_map_view as terrain,
-    claim_borders_seed_map as model, claim_borders_seed_poi as poi,
-    claim_borders_seed_worker as worker, claim_borders_ui_view as ui,
+    claim_borders_seed_found_view as found_view, claim_borders_seed_map as model,
+    claim_borders_seed_poi as poi, claim_borders_seed_worker as worker,
+    claim_borders_ui_view as ui,
 };
 use claim_borders_relay_client::translation::Language;
 use horizon_client::{hud::HudBatch, items::ItemStack};
@@ -29,8 +30,6 @@ struct State {
     biome_tab: bool,
     left_click: Option<(std::time::Instant, usize, [f32; 2])>,
     right_click: Option<(std::time::Instant, usize, [f32; 2])>,
-    found: Option<poi::Found>,
-    found_error: Option<String>,
     poi_click: Option<poi::Click>,
     poi_hits: Vec<poi::Hit>,
 }
@@ -61,8 +60,6 @@ impl Default for State {
             biome_tab: false,
             left_click: None,
             right_click: None,
-            found: None,
-            found_error: None,
             poi_click: None,
             poi_hits: Vec::new(),
         }
@@ -89,8 +86,6 @@ pub(super) fn reset() {
         s.drag = None;
         s.right_click = None;
         s.scope.clear();
-        s.found = None;
-        s.found_error = None;
         s.poi_click = None;
         s.poi_hits.clear();
         s.search_focus = false;
@@ -556,20 +551,8 @@ pub(super) fn render(
             s.poi_click = None;
             s.poi_hits.clear();
             s.drag = None;
-            match poi::Found::load(
-                &game.native_data_dir(claims::SETTINGS_ID),
-                &source.scope,
-                model::SEED,
-            ) {
-                Ok(found) => {
-                    s.found = Some(found);
-                    s.found_error = None;
-                }
-                Err(error) => {
-                    s.found = None;
-                    s.found_error = Some(error);
-                }
-            }
+            // The found POIs of this world are loaded with it and shared with friends
+            // (`seed_found_view`).
         }
         if let Some(click) = &mut s.poi_click {
             click.update(screen.mouse);
@@ -675,14 +658,9 @@ pub(super) fn render(
                 if s.preferences.claims {
                     draw_claims(game, batch, &source, dim, view, r, p);
                 }
-                let clusters = poi::clusters(
-                    &panel.marks,
-                    s.selected,
-                    view,
-                    r,
-                    &s.preferences,
-                    s.found.as_ref(),
-                );
+                let clusters = found_view::with(&s.scope, |found, _| {
+                    poi::clusters(&panel.marks, s.selected, view, r, &s.preferences, found)
+                });
                 let first = batch.vertices.len();
                 for poi::Cluster {
                     count,
@@ -749,9 +727,21 @@ pub(super) fn render(
                                     language().text("приблизьте", "zoom in")
                                 )
                             } else if found {
-                                language()
-                                    .text("Найдено · ЛКМ: снять отметку", "Found · LMB: unmark")
-                                    .into()
+                                // Marked by a friend: their name.
+                                let by = found_view::with(&s.scope, |f, _| {
+                                    let key = poi::Poi::new(s.selected, &mark.id, mark.position)?;
+                                    f?.marked_by(&key).map(str::to_owned)
+                                });
+                                match by {
+                                    Some(name) => format!(
+                                        "{} {name} · {}",
+                                        language().text("Найдено:", "Found by"),
+                                        language().text("ЛКМ: снять отметку", "LMB: unmark")
+                                    ),
+                                    None => language()
+                                        .text("Найдено · ЛКМ: снять отметку", "Found · LMB: unmark")
+                                        .into(),
+                                }
                             } else {
                                 language()
                                     .text("ЛКМ: отметить найденным", "LMB: mark found")
@@ -884,7 +874,7 @@ pub(super) fn render(
                 }
             }
         }
-        if let Some(error) = &s.found_error {
+        if let Some(error) = found_view::with(&s.scope, |_, e| e.map(str::to_owned)) {
             info = format!(
                 "{}: {error}",
                 language().text(
@@ -1088,14 +1078,9 @@ pub(super) fn mouse(
                 if poi::target(&s.poi_hits, screen.mouse, blocked) != Some(key.clone()) {
                     return;
                 }
-                if let Some(found) = &mut s.found {
-                    // Failed saves retain the edit in memory and expose an error;
-                    // an invalid existing save never creates a writable Found.
-                    s.found_error = found
-                        .toggle(key)
-                        .and_then(|_| found.save(&game.native_data_dir(claims::SETTINGS_ID)))
-                        .err();
-                }
+                // Saved at once and sent to friends; a failed save keeps the edit in memory and
+                // shows the error, an unreadable save is never written over.
+                found_view::toggle(&s.scope, key);
             });
         }
         return true;
@@ -1242,7 +1227,7 @@ pub(super) fn mouse(
                 return;
             }
             s.drag = Some((screen.mouse, s.views[s.selected].center));
-            s.poi_click = if waypoint.is_none() && s.found.is_some() {
+            s.poi_click = if waypoint.is_none() && found_view::with(&s.scope, |f, _| f.is_some()) {
                 poi::target(&s.poi_hits, screen.mouse, false)
                     .map(|key| poi::Click::new(key, screen.mouse))
             } else {
