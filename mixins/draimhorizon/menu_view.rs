@@ -252,6 +252,17 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && screen.mouse[0] < x + w
                 && screen.mouse[1] >= y
                 && screen.mouse[1] < y + h;
+            if hover && widget.control == Some(model::Control::SchematicMaterials) {
+                request_tip = Some(
+                    s.menu
+                        .language
+                        .text(
+                            "Копирует в буфер обмена список блоков, которые нужны для схемы",
+                            "Copies the list of blocks the schematic needs to the clipboard",
+                        )
+                        .to_owned(),
+                );
+            }
             if hover && let Some(model::Control::PlayerRequest(kind)) = widget.control {
                 request_tip = Some(match s.menu.selected.and_then(|i| s.model.party.get(i)) {
                     None => s

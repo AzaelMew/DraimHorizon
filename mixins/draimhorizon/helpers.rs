@@ -156,8 +156,14 @@ pub(super) fn autoclick(game: &mut Game<'_>) {
         .as_deref()
         == Some("right");
     let rate = pace::rate(click_rate(game));
-    if click.clicker.down(clock(), rate) {
-        drop(click);
+    let (down, starts) = click.clicker.tick(clock(), rate);
+    drop(click);
+    if down {
         walk::press_for_click(game, right);
+    }
+    // Each pulse is a click as well: the held button breaks blocks, a click hits the mob under
+    // the crosshair (or uses the item once).
+    if starts {
+        crate::game::remote::claim_borders_click_press::press(game, right);
     }
 }

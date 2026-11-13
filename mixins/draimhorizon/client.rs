@@ -1534,7 +1534,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         let settings = &c.visual;
         menu::ViewModel {
             navigation_players,
-            schematic_files: crate::game::claim_borders_workshop_view::filenames(),
+            schematic_files: crate::game::claim_borders_workshop_view::filenames_read(game),
+            schematic_layers: crate::game::claim_borders_schematic_view::layers(game),
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
@@ -1691,6 +1692,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_schematic_view::forget_failed();
             crate::game::claim_borders_schematic_share_view::forget_files();
             crate::game::claim_borders_workshop_view::refresh(game)?;
+            Ok(Vec::new())
+        }
+        Action::SchematicLayers(mode, layer) => {
+            crate::game::claim_borders_schematic_view::set_layers(game, mode, layer);
             Ok(Vec::new())
         }
         Action::OpenSchematicFolder => {

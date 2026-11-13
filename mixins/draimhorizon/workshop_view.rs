@@ -304,6 +304,17 @@ pub(super) fn folder(game: &Game<'_>) -> PathBuf {
 pub(super) fn filenames() -> Vec<String> {
     state(|s| s.files.clone())
 }
+/// The files of the schematics folder, read again every few seconds while they are asked for
+/// (the menu is open): a list that was read in another world (a server, then single player)
+/// was dropped with that world's state, and the tab said the folder was empty until Refresh.
+pub(super) fn filenames_read(game: &Game<'_>) -> Vec<String> {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.is_none_or(|t| t.elapsed() > Duration::from_secs(4)) && refresh(game).is_ok() {
+        *last = Some(Instant::now());
+    }
+    filenames()
+}
 fn guard(game: &Game<'_>) -> Result<String, String> {
     if !game.native_on(claims::ID)
         || game

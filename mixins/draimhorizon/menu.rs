@@ -156,6 +156,8 @@ pub struct ViewModel {
     pub schematic_places: Vec<(usize, String, bool, bool)>,
     /// Friends' shared previews of this world: label (file, friend, place) and shown here.
     pub schematic_friend_places: Vec<(String, bool)>,
+    /// This player's choice of preview layers to draw, and the chosen layer.
+    pub schematic_layers: (super::claim_borders_schematic_places::LayerMode, i32),
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
@@ -314,6 +316,8 @@ pub enum Action {
     FarmPlotRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
+    /// Keeps this player's choice of preview layers (mode and layer).
+    SchematicLayers(super::claim_borders_schematic_places::LayerMode, i32),
     LoadSchematic {
         filename: String,
         origin: [i32; 3],
@@ -442,6 +446,11 @@ impl std::fmt::Debug for Action {
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
+            Self::SchematicLayers(mode, layer) => f
+                .debug_tuple("SchematicLayers")
+                .field(mode)
+                .field(layer)
+                .finish(),
             Self::LoadSchematic {
                 filename,
                 origin,
@@ -723,7 +732,6 @@ pub enum Control {
     FarmPlotShow(usize),
     FarmPlotRemove(usize),
     DrainRadius,
-    SchematicFile,
     SchematicRefresh,
     SchematicRotation,
     SchematicMaterials,
@@ -742,8 +750,9 @@ pub enum Control {
     SchematicEdit(SchematicEdit),
     /// Places the chosen file as a preview (at XYZ, or where the player stands).
     SchematicPreviewHere,
-    /// Pages through the schematics folder on the tab.
-    SchematicCatalogPage(i8),
+    /// Which layers of the previews are drawn (all, one, up to one), and the layer ±1.
+    SchematicLayerMode,
+    SchematicLayer(i8),
     /// Pages through the previews of this world (own and friends').
     SchematicPlacePage(i8),
     /// Pages through the marked farm plots.
@@ -760,8 +769,6 @@ pub enum Control {
     NavigationWaypointChoice(usize),
     NavigationChoicesPage(i8),
     SchematicChoice(usize),
-    SchematicChoicesPage(i8),
-    SchematicOpenFolder,
     ExperimentalTab(ExperimentalSection),
     HelperPage(usize),
     ToggleReconnect,
@@ -909,8 +916,6 @@ pub struct Menu {
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub navigation_choices_page: usize,
     /// The schematic file list is open under the file button.
-    pub schematic_choices: bool,
-    pub schematic_choices_page: usize,
     /// The page of the schematics folder shown on the tab.
     pub schematic_catalog_page: usize,
     pub schematic_place_page: usize,
@@ -971,8 +976,6 @@ impl Default for Menu {
             navigation_waypoint: None,
             navigation_choices: None,
             navigation_choices_page: 0,
-            schematic_choices: false,
-            schematic_choices_page: 0,
             schematic_catalog_page: 0,
             schematic_place_page: 0,
             farm_plot_page: 0,
@@ -1019,6 +1022,13 @@ impl Default for Menu {
             anchor: None,
         }
     }
+}
+/// Where the Schematics tab's panel starts, and the room kept below it (status and key hint).
+const SCHEMATIC_TOP: f32 = 100.0;
+const SCHEMATIC_BOTTOM: f32 = 48.0;
+/// The files the Schematics tab's list shows at once, below its header row.
+fn schematic_list_rows(top: f32, limit: f32) -> usize {
+    ((limit - (top + 18.0)) / 16.0).floor().max(0.0) as usize
 }
 fn widget(
     rect: [f32; 4],
@@ -1149,7 +1159,6 @@ impl Menu {
             && self.experimental_section == ExperimentalSection::Baritone
             && self.focus.is_none()
             && self.navigation_choices.is_none()
-            && !self.schematic_choices
             && !self.experiments_prompt
     }
     fn hotkey_hint(&self, model: &ViewModel) -> String {
@@ -1574,67 +1583,13 @@ impl Menu {
                 }
             }
         }
-        if self.tab == Tab::Experimental
-            && self.baritone_mode == BaritoneMode::Schematic
-            && self.schematic_choices
-            && let Some(anchor) = widgets
-                .iter()
-                .find(|w| w.control == Some(Control::SchematicFile))
-        {
-            let rect = anchor.rect;
-            // The files, then one entry that opens the folder to add more.
-            let total = model.schematic_files.len() + 1;
-            let page_count = total.div_ceil(8);
-            let page = self.schematic_choices_page.min(page_count - 1);
-            let start = page * 8;
-            let count = (total - start).min(8);
-            let item_h = 20.0;
-            let menu_h = (count + usize::from(page_count > 1)) as f32 * item_h;
-            let top = if rect[1] + rect[3] + menu_h <= height - 12.0 {
-                rect[1] + rect[3]
-            } else {
-                (rect[1] - menu_h).max(8.0)
-            };
-            for i in 0..count {
-                let index = start + i;
-                let (label, control) = match model.schematic_files.get(index) {
-                    Some(name) => (name.clone(), Control::SchematicChoice(index)),
-                    None => (
-                        self.language
-                            .text("Открыть папку…", "Open folder…")
-                            .to_owned(),
-                        Control::SchematicOpenFolder,
-                    ),
-                };
-                widgets.push(widget(
-                    [rect[0], top + i as f32 * item_h, rect[2], item_h],
-                    label,
-                    Some(control),
-                    self.schematic_file.as_deref()
-                        == model.schematic_files.get(index).map(String::as_str),
-                ));
-            }
-            if page_count > 1 {
-                let y = top + count as f32 * item_h;
-                widgets.push(widget(
-                    [rect[0], y, rect[2] / 2.0, item_h],
-                    format!("← {}/{}", page + 1, page_count),
-                    Some(Control::SchematicChoicesPage(-1)),
-                    false,
-                ));
-                widgets.push(widget(
-                    [rect[0] + rect[2] / 2.0, y, rect[2] / 2.0, item_h],
-                    format!("{}/{} →", page + 1, page_count),
-                    Some(Control::SchematicChoicesPage(1)),
-                    false,
-                ));
-            }
-        }
         widgets
     }
-    /// The Schematics tab below the file and place: the actions on the selected preview, the
-    /// editor that moves and turns it, the files of the schematics folder (click to choose one)
-    /// and the previews placed in this world (select, show or hide, delete).
+    /// The Schematics tab, in two columns. Left: the files of the schematics folder as a list
+    /// (the mouse wheel scrolls it; a click chooses one), with Refresh and Open folder above it.
+    /// Right: the preview — where the chosen file goes and its turn, place it, build it, the
+    /// editor that moves and turns the selected preview, show or hide, delete, copy its
+    /// materials — and the previews placed in this world below.
     fn schematic_panel(
         &self,
         model: &ViewModel,
@@ -1645,146 +1600,241 @@ impl Menu {
         out: &mut Vec<Widget>,
     ) {
         let row = 16.0;
-        let mut y = top;
+        let gap = 6.0;
+        let left_w = ((w - gap) * 0.46).floor();
+        let right = x + left_w + gap;
+        let right_w = w - left_w - gap;
         let active = model.schematic_places.iter().find(|p| p.3);
-        // Actions: place the chosen file as a preview, build the selected one, show or hide it,
-        // delete it.
-        if y + row <= limit {
-            let cell = (w - 12.0) / 4.0;
-            let actions = [
-                (
-                    self.language.text("Поставить предпоказ", "Place preview"),
-                    Control::SchematicPreviewHere,
+        let l = self.language;
+        // Left: header with the count and the two folder buttons, then the list.
+        let button = ((left_w - 4.0) * 0.3).min(110.0);
+        if top + row <= limit {
+            let mut title = widget(
+                [x, top, left_w - 2.0 * (button + 3.0), row - 2.0],
+                localized!(l, "Файлы: {}", "Files: {}", model.schematic_files.len()),
+                None,
+                false,
+            );
+            title.muted = true;
+            out.push(title);
+            out.push(widget(
+                [x + left_w - 2.0 * button - 3.0, top, button, row - 2.0],
+                l.text("Обновить", "Refresh"),
+                Some(Control::SchematicRefresh),
+                false,
+            ));
+            out.push(widget(
+                [x + left_w - button, top, button, row - 2.0],
+                l.text("Открыть папку", "Open folder"),
+                Some(Control::SchematicFolder),
+                false,
+            ));
+        }
+        let rows = schematic_list_rows(top, limit);
+        let list_top = top + row + 2.0;
+        if model.schematic_files.is_empty() {
+            if rows > 0 {
+                let mut empty = widget(
+                    [x, list_top, left_w, row * 2.0],
+                    l.text(
+                        "Папка пуста: положите .litematic / .schem / .nbt и нажмите «Обновить»",
+                        "The folder is empty: add .litematic / .schem / .nbt files and press Refresh",
+                    ),
+                    None,
                     false,
-                ),
-                (
-                    self.language.text("Строить", "Build"),
-                    Control::SchematicEdit(SchematicEdit::Build),
-                    false,
-                ),
-                (
-                    if active.is_some_and(|a| a.2) {
-                        self.language.text("Скрыть", "Hide")
-                    } else {
-                        self.language.text("Показать", "Show")
-                    },
-                    Control::SchematicEdit(SchematicEdit::Toggle),
-                    active.is_some_and(|a| a.2),
-                ),
-                (
-                    self.language.text("Удалить предпоказ", "Delete preview"),
-                    Control::SchematicEdit(SchematicEdit::Remove),
-                    false,
-                ),
-            ];
-            for (i, (label, control, on)) in actions.into_iter().enumerate() {
+                );
+                empty.muted = true;
+                out.push(empty);
+            }
+        } else if rows > 0 {
+            let start = self
+                .schematic_catalog_page
+                .min(model.schematic_files.len().saturating_sub(rows));
+            for (i, (index, name)) in model
+                .schematic_files
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(rows)
+                .enumerate()
+            {
                 out.push(widget(
-                    [x + i as f32 * (cell + 4.0), y, cell, row - 2.0],
-                    label,
-                    Some(control),
-                    on,
+                    [x, list_top + i as f32 * row, left_w, row - 2.0],
+                    name.clone(),
+                    Some(Control::SchematicChoice(index)),
+                    self.schematic_file.as_deref() == Some(name.as_str()),
                 ));
             }
+        }
+        // Right: the preview.
+        let mut y = top;
+        let full = |y: f32| [right, y, right_w, row - 2.0];
+        let cells = |n: usize, i: usize, y: f32| {
+            let cell = (right_w - 3.0 * (n as f32 - 1.0)) / n as f32;
+            [right + i as f32 * (cell + 3.0), y, cell, row - 2.0]
+        };
+        if y + row <= limit {
+            let mut title = widget(
+                full(y),
+                match (&self.schematic_file, active) {
+                    (_, Some(a)) => localized!(l, "Предпоказ: {}", "Preview: {}", a.1),
+                    (Some(file), None) => localized!(l, "Файл: {}", "File: {}", file),
+                    (None, None) => l
+                        .text("Выберите схему слева", "Choose a schematic on the left")
+                        .to_owned(),
+                },
+                None,
+                false,
+            );
+            title.muted = true;
+            out.push(title);
             y += row;
         }
-        // The editor: move the selected preview a block along each axis, turn it, bring it here.
         if y + row <= limit {
-            let cell = (w - 4.0 * 8.0) / 9.0;
+            out.push(widget(
+                cells(2, 0, y),
+                format!("XYZ: {}", self.schematic_origin),
+                Some(Control::Field(Field::SchematicOrigin)),
+                false,
+            ));
+            out.push(widget(
+                cells(2, 1, y),
+                localized!(l, "Поворот: {}°", "Turn: {}°", self.schematic_rotation * 90),
+                Some(Control::SchematicRotation),
+                false,
+            ));
+            y += row;
+        }
+        if y + row <= limit {
+            out.push(widget(
+                cells(2, 0, y),
+                l.text("Поставить предпоказ", "Place preview"),
+                Some(Control::SchematicPreviewHere),
+                false,
+            ));
+            out.push(widget(
+                cells(2, 1, y),
+                l.text("Строить", "Build"),
+                Some(Control::SchematicEdit(SchematicEdit::Build)),
+                false,
+            ));
+            y += row + 3.0;
+        }
+        // The editor of the selected preview: a block along each axis, then turn, here, look.
+        if y + 2.0 * row <= limit {
+            let moves = [
+                ("X −", [-1, 0, 0]),
+                ("Y −", [0, -1, 0]),
+                ("Z −", [0, 0, -1]),
+                ("X +", [1, 0, 0]),
+                ("Y +", [0, 1, 0]),
+                ("Z +", [0, 0, 1]),
+            ];
+            for (i, (label, step)) in moves.into_iter().enumerate() {
+                out.push(widget(
+                    cells(3, i % 3, y + (i / 3) as f32 * row),
+                    label,
+                    Some(Control::SchematicEdit(SchematicEdit::Move(step))),
+                    false,
+                ));
+            }
+            y += 2.0 * row;
+        }
+        if y + row <= limit {
             let edits = [
-                ("X −", SchematicEdit::Move([-1, 0, 0])),
-                ("X +", SchematicEdit::Move([1, 0, 0])),
-                ("Y −", SchematicEdit::Move([0, -1, 0])),
-                ("Y +", SchematicEdit::Move([0, 1, 0])),
-                ("Z −", SchematicEdit::Move([0, 0, -1])),
-                ("Z +", SchematicEdit::Move([0, 0, 1])),
-                (self.language.text("Поворот", "Turn"), SchematicEdit::Rotate),
-                (self.language.text("Ко мне", "To me"), SchematicEdit::Here),
-                (self.language.text("Вид", "View"), SchematicEdit::Look),
+                (l.text("Повернуть", "Turn"), SchematicEdit::Rotate),
+                (l.text("Ко мне", "To me"), SchematicEdit::Here),
+                (l.text("Вид", "View"), SchematicEdit::Look),
             ];
             for (i, (label, edit)) in edits.into_iter().enumerate() {
                 out.push(widget(
-                    [x + i as f32 * (cell + 4.0), y, cell, row - 2.0],
+                    cells(3, i, y),
                     label,
                     Some(Control::SchematicEdit(edit)),
                     false,
                 ));
             }
-            y += row + 2.0;
+            y += row;
         }
-        // Two columns: the folder's files and this world's previews.
-        let half = (w - 6.0) / 2.0;
-        let right = x + half + 6.0;
-        if y + 12.0 <= limit {
+        if y + row <= limit {
             out.push(widget(
-                [x, y, half, 11.0],
-                localized!(
-                    self.language,
-                    "Схемы в папке: {}",
-                    "Schematics in the folder: {}",
-                    model.schematic_files.len()
-                ),
-                None,
+                cells(3, 0, y),
+                if active.is_some_and(|a| a.2) {
+                    l.text("Скрыть", "Hide")
+                } else {
+                    l.text("Показать", "Show")
+                },
+                Some(Control::SchematicEdit(SchematicEdit::Toggle)),
+                active.is_some_and(|a| a.2),
+            ));
+            out.push(widget(
+                cells(3, 1, y),
+                l.text("Удалить", "Delete"),
+                Some(Control::SchematicEdit(SchematicEdit::Remove)),
                 false,
             ));
             out.push(widget(
-                [right, y, half, 11.0],
+                cells(3, 2, y),
+                l.text("Материалы", "Materials"),
+                Some(Control::SchematicMaterials),
+                false,
+            ));
+            y += row;
+        }
+        // Layers: this player's own view of every preview (all, one layer, up to a layer).
+        if y + row <= limit {
+            use super::claim_borders_schematic_places::LayerMode;
+            let (mode, layer) = model.schematic_layers;
+            let half = (right_w - 3.0) / 2.0;
+            out.push(widget(
+                [right, y, half, row - 2.0],
+                match mode {
+                    LayerMode::All => l.text("Слои: все", "Layers: all").to_owned(),
+                    LayerMode::Single => localized!(l, "Слой: {}", "Layer: {}", layer + 1),
+                    LayerMode::Below => localized!(l, "Слои: 1–{}", "Layers: 1–{}", layer + 1),
+                },
+                Some(Control::SchematicLayerMode),
+                mode != LayerMode::All,
+            ));
+            if mode != LayerMode::All {
+                let step = (half - 3.0) / 2.0;
+                out.push(widget(
+                    [right + half + 3.0, y, step, row - 2.0],
+                    l.text("Слой −", "Layer −"),
+                    Some(Control::SchematicLayer(-1)),
+                    false,
+                ));
+                out.push(widget(
+                    [right + half + 6.0 + step, y, step, row - 2.0],
+                    l.text("Слой +", "Layer +"),
+                    Some(Control::SchematicLayer(1)),
+                    false,
+                ));
+            }
+            y += row + 3.0;
+        }
+        // The previews of this world: the player's own, then friends' (show or hide only), a
+        // page at a time with the pager on the last line when they do not fit.
+        if y + 12.0 <= limit {
+            let mut title = widget(
+                [right, y, right_w, 11.0],
                 if model.schematic_places.is_empty() && model.schematic_friend_places.is_empty() {
-                    self.language
-                        .text("Предпоказов в мире нет", "No previews in this world")
+                    l.text("Предпоказов в этом мире нет", "No previews in this world")
                 } else {
-                    self.language
-                        .text("Предпоказы в этом мире:", "Previews in this world:")
+                    l.text("Предпоказы в этом мире:", "Previews in this world:")
                 },
                 None,
                 false,
-            ));
+            );
+            title.muted = true;
+            out.push(title);
             y += 13.0;
         }
         let rows = ((limit - y) / row).floor().max(0.0) as usize;
         if rows == 0 {
             return;
         }
-        // Files: one page of them, the pager on the last line when there are more.
-        let pager = model.schematic_files.len() > rows;
-        let per_page = if pager {
-            rows.saturating_sub(1).max(1)
-        } else {
-            rows
-        };
-        let pages = model.schematic_files.len().div_ceil(per_page).max(1);
-        let page = self.schematic_catalog_page.min(pages - 1);
-        for (i, (index, name)) in model
-            .schematic_files
-            .iter()
-            .enumerate()
-            .skip(page * per_page)
-            .take(per_page)
-            .enumerate()
-        {
-            out.push(widget(
-                [x, y + i as f32 * row, half, row - 2.0],
-                name.clone(),
-                Some(Control::SchematicChoice(index)),
-                self.schematic_file.as_deref() == Some(name.as_str()),
-            ));
-        }
-        if pager {
-            let py = y + per_page as f32 * row;
-            out.push(widget(
-                [x, py, half / 2.0 - 2.0, row - 2.0],
-                format!("← {}/{}", page + 1, pages),
-                Some(Control::SchematicCatalogPage(-1)),
-                false,
-            ));
-            out.push(widget(
-                [x + half / 2.0 + 2.0, py, half / 2.0 - 2.0, row - 2.0],
-                format!("{}/{} →", page + 1, pages),
-                Some(Control::SchematicCatalogPage(1)),
-                false,
-            ));
-        }
-        // Previews of this world: the player's own, then friends' (show or hide only), a page at
-        // a time with the pager on the last line when they do not fit.
+        let half = right_w;
         let button = 44.0_f32.min(half * 0.24);
         let own = model.schematic_places.len();
         let total = own + model.schematic_friend_places.len();
@@ -1819,16 +1869,16 @@ impl Menu {
                 out.push(widget(
                     [right + half - 2.0 * button - 3.0, py, button, row - 2.0],
                     if *shown {
-                        self.language.text("Скрыть", "Hide")
+                        l.text("Скрыть", "Hide")
                     } else {
-                        self.language.text("Показ.", "Show")
+                        l.text("Показ.", "Show")
                     },
                     Some(Control::SchematicPlaceShow(*index)),
                     *shown,
                 ));
                 out.push(widget(
                     [right + half - button, py, button, row - 2.0],
-                    self.language.text("Удал.", "Del."),
+                    l.text("Удал.", "Del."),
                     Some(Control::SchematicPlaceRemove(*index)),
                     false,
                 ));
@@ -1842,9 +1892,9 @@ impl Menu {
                 out.push(widget(
                     [right + half - button, py, button, row - 2.0],
                     if *shown {
-                        self.language.text("Скрыть", "Hide")
+                        l.text("Скрыть", "Hide")
                     } else {
-                        self.language.text("Показ.", "Show")
+                        l.text("Показ.", "Show")
                     },
                     Some(Control::SchematicFriendShow(entry - own)),
                     *shown,
@@ -3596,26 +3646,8 @@ impl Menu {
                         ),
                     ]
                 } else {
-                    vec![
-                        (
-                            self.schematic_file.clone().unwrap_or_else(|| {
-                                self.language.text("Выберите файл", "Select file").into()
-                            }),
-                            Control::SchematicFile,
-                        ),
-                        (
-                            self.language.text("Обновить", "Refresh").into(),
-                            Control::SchematicRefresh,
-                        ),
-                        (
-                            format!("XYZ: {}", self.schematic_origin),
-                            Control::Field(Field::SchematicOrigin),
-                        ),
-                        (
-                            format!("{}°", self.schematic_rotation * 90),
-                            Control::SchematicRotation,
-                        ),
-                    ]
+                    // The Schematics tab lays itself out (`schematic_panel`).
+                    Vec::new()
                 };
                 // The crop is picked from item icons (name as the tooltip), not by cycling.
                 let mut below = 0.0;
@@ -3685,8 +3717,8 @@ impl Menu {
                         model,
                         x,
                         w,
-                        100.0 + below + count.div_ceil(2) as f32 * step + 4.0,
-                        height - 68.0,
+                        SCHEMATIC_TOP,
+                        height - SCHEMATIC_BOTTOM,
                         &mut out,
                     );
                 }
@@ -4080,21 +4112,6 @@ impl Menu {
                 Some(Control::AutoEat),
                 model.auto_eat,
             ));
-            if self.baritone_mode == BaritoneMode::Schematic {
-                out.push(widget(
-                    [x, height - 64.0, tab_width, 18.0],
-                    self.language
-                        .text("Материалы → буфер", "Materials → clipboard"),
-                    Some(Control::SchematicMaterials),
-                    false,
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, height - 64.0, tab_width, 18.0],
-                    self.language.text("Открыть папку", "Open folder"),
-                    Some(Control::SchematicFolder),
-                    false,
-                ));
-            }
             let mut hint = widget(
                 [x, height - 24.0, (w - 100.0).max(1.0), 18.0],
                 self.hotkey_hint(model),
@@ -4322,8 +4339,8 @@ impl Menu {
                 Control::Helper(Helper::AutoClick),
                 model.helpers[Helper::AutoClick.index()],
                 self.language.text(
-                    "Нажимает выбранную кнопку мыши в заданном темпе",
-                    "Presses the chosen mouse button at the chosen pace",
+                    "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
+                    "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
                 ),
             ),
         ]);
@@ -4774,20 +4791,8 @@ impl Menu {
         let Some(control) = hit.and_then(|w| w.control) else {
             self.focus = None;
             self.navigation_choices = None;
-            self.schematic_choices = false;
             return None;
         };
-        if self.schematic_choices
-            && !matches!(
-                control,
-                Control::SchematicFile
-                    | Control::SchematicChoice(_)
-                    | Control::SchematicChoicesPage(_)
-                    | Control::SchematicOpenFolder
-            )
-        {
-            self.schematic_choices = false;
-        }
         if self.navigation_choices.is_some()
             && !matches!(
                 control,
@@ -4930,35 +4935,11 @@ impl Menu {
                 };
                 None
             }
-            Control::SchematicFile => {
-                self.focus = None;
-                if model.schematic_files.is_empty() {
-                    // Nothing to choose yet: show the folder so files can be put there.
-                    self.schematic_choices = false;
-                    return Some(Action::OpenSchematicFolder);
-                }
-                self.schematic_choices = !self.schematic_choices;
-                self.schematic_choices_page = 0;
-                // Pick up files added since the list was last read.
-                self.schematic_choices.then_some(Action::RefreshSchematics)
-            }
             Control::SchematicChoice(index) => {
                 if let Some(name) = model.schematic_files.get(index) {
                     self.schematic_file = Some(name.clone());
                 }
-                self.schematic_choices = false;
                 None
-            }
-            Control::SchematicChoicesPage(direction) => {
-                let pages = (model.schematic_files.len() + 1).div_ceil(8);
-                self.schematic_choices_page =
-                    (self.schematic_choices_page as isize + direction as isize)
-                        .rem_euclid(pages as isize) as usize;
-                None
-            }
-            Control::SchematicOpenFolder => {
-                self.schematic_choices = false;
-                Some(Action::OpenSchematicFolder)
             }
             Control::SchematicRefresh => Some(Action::RefreshSchematics),
             Control::SchematicRotation => {
@@ -4970,7 +4951,6 @@ impl Menu {
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
                 self.navigation_choices = None;
-                self.schematic_choices = false;
                 self.focus = None;
                 // The schematics folder is read again whenever its tab is opened.
                 (mode == BaritoneMode::Schematic).then_some(Action::RefreshSchematics)
@@ -5005,10 +4985,15 @@ impl Menu {
                     (self.schematic_place_page as isize + direction as isize).max(0) as usize;
                 None
             }
-            Control::SchematicCatalogPage(direction) => {
-                self.schematic_catalog_page =
-                    (self.schematic_catalog_page as isize + direction as isize).max(0) as usize;
-                None
+            Control::SchematicLayerMode => {
+                let (mode, layer) = model.schematic_layers;
+                Some(Action::SchematicLayers(mode.next(), layer))
+            }
+            Control::SchematicLayer(direction) => {
+                let (mode, layer) = model.schematic_layers;
+                let layer = (layer + i32::from(direction))
+                    .clamp(0, super::claim_borders_schematic_places::MAX_LAYER);
+                Some(Action::SchematicLayers(mode, layer))
             }
             Control::SchematicPlace(i) => Some(Action::SchematicPlace(i)),
             Control::SchematicPlaceShow(i) => Some(Action::SchematicPlaceShow(i)),
@@ -5806,12 +5791,18 @@ impl Menu {
             );
             return;
         }
-        if self.schematic_choices {
-            self.activate(
-                model,
-                height,
-                Control::SchematicChoicesPage(if delta > 0.0 { -1 } else { 1 }),
-            );
+        // The Schematics tab: the wheel scrolls the file list a row at a time.
+        if self.tab == Tab::Experimental
+            && self.experimental_section == ExperimentalSection::Baritone
+            && self.baritone_mode == BaritoneMode::Schematic
+        {
+            let rows = schematic_list_rows(SCHEMATIC_TOP, height - SCHEMATIC_BOTTOM);
+            let last = model.schematic_files.len().saturating_sub(rows.max(1));
+            self.schematic_catalog_page = if delta > 0.0 {
+                self.schematic_catalog_page.min(last).saturating_sub(1)
+            } else {
+                (self.schematic_catalog_page + 1).min(last)
+            };
             return;
         }
         if !self.relay_setup {
@@ -5991,10 +5982,6 @@ impl Menu {
             }
             if self.navigation_menu {
                 self.navigation_menu = false;
-                return true;
-            }
-            if self.schematic_choices {
-                self.schematic_choices = false;
                 return true;
             }
             self.access_token.clear();
@@ -8488,40 +8475,6 @@ mod tests {
         assert_eq!(seen.len(), mining::COUNT);
     }
     #[test]
-    fn schematic_button_opens_the_folder_or_a_file_list() {
-        let mut model = ViewModel::default();
-        let mut menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
-            baritone_mode: BaritoneMode::Schematic,
-            ..Menu::default()
-        };
-        assert!(matches!(
-            menu.activate(&model, 300.0, Control::SchematicFile),
-            Some(Action::OpenSchematicFolder)
-        ));
-        assert!(!menu.schematic_choices);
-        model.schematic_files = vec!["a.schem".into(), "b.litematic".into()];
-        assert!(matches!(
-            menu.activate(&model, 300.0, Control::SchematicFile),
-            Some(Action::RefreshSchematics)
-        ));
-        assert!(menu.schematic_choices);
-        let rows = menu.layout(&model, 360.0, 300.0);
-        assert!(
-            rows.iter()
-                .any(|w| w.control == Some(Control::SchematicChoice(1)))
-        );
-        assert!(
-            rows.iter()
-                .any(|w| w.control == Some(Control::SchematicOpenFolder))
-        );
-        assert!(!menu.baritone_keys_active());
-        menu.activate(&model, 300.0, Control::SchematicChoice(1));
-        assert_eq!(menu.schematic_file.as_deref(), Some("b.litematic"));
-        assert!(!menu.schematic_choices);
-    }
-    #[test]
     fn action_keys_reach_the_baritone_tab_unless_a_field_is_being_edited() {
         let mut menu = Menu::default();
         assert!(!menu.baritone_keys_active());
@@ -8578,8 +8531,6 @@ mod tests {
         }
         assert_eq!(menu.drain_radius, 6);
         menu.baritone_mode = BaritoneMode::Schematic;
-        menu.activate(&model, 200.0, Control::SchematicFile);
-        assert!(menu.schematic_choices);
         menu.activate(&model, 200.0, Control::SchematicChoice(0));
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
         for value in ["", "1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
@@ -8625,7 +8576,6 @@ mod tests {
                                     | Control::DrainRadius
                                     | Control::DrainPattern
                                     | Control::DrainSpacing
-                                    | Control::SchematicFile
                                     | Control::SchematicRefresh
                                     | Control::SchematicRotation
                                     | Control::SchematicMaterials

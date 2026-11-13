@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.22"
+version = "0.39.23"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -880,6 +880,13 @@ id = "clickthrough-view"
 file = "crates/horizon-client/src/game/remote.rs"
 name = "claim_borders_clickthrough_view"
 source = "clickthrough_view.rs"
+
+[[module]]
+id = "click-press"
+file = "crates/horizon-client/src/game/remote.rs"
+name = "claim_borders_click_press"
+source = "click_press.rs"
+visibility = "pub"
 
 [[injection]]
 id = "clickthrough-remote"

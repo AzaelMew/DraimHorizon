@@ -1328,6 +1328,25 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
     if job.wait == Some(mining::Wait::Storage) {
         job.wait = None;
     }
+    // Blocks taken as broken before the server's answer: one the server put back is mined
+    // again by the search (it is ore again); after three times it is left alone (a protected
+    // block, a claim), so the miner does not dig the same block for ever.
+    {
+        let mut bounces = BOUNCES.lock().unwrap_or_else(|e| e.into_inner());
+        bounces.retain(|(_, at, _, _)| at.elapsed() < BOUNCE_WINDOW);
+        for (pos, at, times, gone) in bounces.iter_mut() {
+            // Counted once each time it comes back, not on every tick it stands there again.
+            if !*gone || !mining_block(game, job.ore, *pos).ore {
+                continue;
+            }
+            *gone = false;
+            *times += 1;
+            *at = Instant::now();
+            if *times >= 3 && !job.excluded.contains(pos) {
+                job.excluded.push(*pos);
+            }
+        }
+    }
     match job.phase {
         mining::Phase::Searching => {
             // Anything of the kind within reach and in sight is dug at once, from where the
@@ -1372,7 +1391,28 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                 .is_some_and(|at| !mining_block(game, job.ore, at).ore)
             {
                 job.predicted_missing();
-                if job.phase == mining::Phase::Breaking {
+                if job.phase == mining::Phase::Breaking && s.mine_aim.is_some() {
+                    // Broken at the first swing (a fast tool on a soft block) before its dig
+                    // was numbered: it is broken, not a block that went by itself (which was
+                    // counted as a miss, and enough of them ended the job).
+                    if let Some(at) = job.target {
+                        let mut bounces = BOUNCES.lock().unwrap_or_else(|e| e.into_inner());
+                        if !bounces.iter().any(|(p, _, _, _)| *p == at) {
+                            if bounces.len() >= 64 {
+                                bounces.remove(0);
+                            }
+                            bounces.push((at, Instant::now(), 0, true));
+                        }
+                    }
+                    job.broken();
+                    *BLOCKER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                    if !job.active {
+                        s.nav.running = false;
+                    } else if job.phase == mining::Phase::Searching {
+                        s.nav.replan();
+                    }
+                    return;
+                } else if job.phase == mining::Phase::Breaking {
                     job.skip();
                     s.nav.replan();
                 }
@@ -1389,13 +1429,29 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
         }
         mining::Phase::Confirming => {
             let waited = now.saturating_sub(job.started_ms);
-            // The block has stayed gone for 0.7 s: the server would have put it back by now if
-            // it refused, so it is taken as broken without waiting for the answer (which came
-            // late on a busy server, and the miner stood for five seconds).
+            // The block is gone here: it is taken as broken at once and the miner goes on to
+            // the next, as a player does, without waiting for the server's answer (it waited
+            // 0.7 s after every block, and longer on a busy server). Should the server put the
+            // block back, it is ore again and mined again (`BOUNCES`).
             let gone = job
                 .target
                 .is_some_and(|t| !mining_block(game, job.ore, t).ore);
-            if gone && waited >= 700 {
+            if gone {
+                if let Some(at) = job.target {
+                    let mut bounces = BOUNCES.lock().unwrap_or_else(|e| e.into_inner());
+                    match bounces.iter_mut().find(|(p, _, _, _)| *p == at) {
+                        Some(entry) => {
+                            entry.1 = Instant::now();
+                            entry.3 = true;
+                        }
+                        None => {
+                            if bounces.len() >= 64 {
+                                bounces.remove(0);
+                            }
+                            bounces.push((at, Instant::now(), 0, true));
+                        }
+                    }
+                }
                 let before = job.confirmed;
                 job.broken();
                 if job.confirmed > before {
@@ -1648,8 +1704,8 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         // starts once it points at it.
         let (yaw, pitch) = (model::yaw_to(eye, center), model::pitch_to(eye, center));
         if model::angle_between(game.yaw, yaw).abs() > 4.0 || (game.pitch - pitch).abs() > 4.0 {
-            game.yaw = model::turn_toward(game.yaw, yaw, 30.0);
-            game.pitch = model::turn_toward(game.pitch, pitch, 24.0);
+            game.yaw = model::turn_toward(game.yaw, yaw, 45.0);
+            game.pitch = model::turn_toward(game.pitch, pitch, 36.0);
             // This turn is the miner's own, not the player moving the camera (which pauses).
             s.mine_aim = Some([game.yaw, game.pitch]);
             return false;
@@ -1690,6 +1746,10 @@ pub(super) fn mining_attack(game: &mut Game<'_>, physical: bool) -> bool {
         true
     })
 }
+/// Blocks taken as broken before the server answered: where, when, how often the server put it
+/// back, and whether it is gone now. Kept for a few seconds.
+static BOUNCES: Mutex<Vec<(model::Pos, Instant, u8, bool)>> = Mutex::new(Vec::new());
+const BOUNCE_WINDOW: Duration = Duration::from_secs(4);
 /// Points of a crop block aimed at in turn (low down, where every ripe crop has its shape).
 const CROP_AIM: [[f64; 3]; 7] = [
     [0.5, 0.25, 0.5],
