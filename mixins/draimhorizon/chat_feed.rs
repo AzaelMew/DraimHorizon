@@ -325,6 +325,8 @@ pub struct Feed {
     pub last_whisper_sender: Option<String>,
     next: u64,
     pub scroll: usize,
+    /// Bumped by every change to `entries`; lets the painter share one snapshot until it moves.
+    pub revision: u64,
 }
 fn player_name(value: &str) -> bool {
     !value.is_empty()
@@ -638,6 +640,7 @@ impl Feed {
         if line.trim().is_empty() {
             return None;
         }
+        self.touch();
         let bounded: String = line.chars().take(2048).collect();
         let (kind, name, body, joined) = event.unwrap_or_else(|| classify(&bounded));
         let channel = if matches!(kind, Kind::Whisper(_)) {
@@ -836,15 +839,36 @@ impl Feed {
         while restored.len() > MAX_ENTRIES {
             restored.pop_front();
         }
+        self.touch();
         self.entries = restored;
         Ok(())
     }
+    /// The entries as drawn for `target`: a translation made for another language is not shown.
+    pub fn snapshot(&self, target: impl Into<TargetLanguage>) -> Vec<Entry> {
+        let target = target.into();
+        self.entries
+            .iter()
+            .cloned()
+            .map(|mut entry| {
+                if !entry.has_translation(target) {
+                    entry.translated = None;
+                }
+                entry
+            })
+            .collect()
+    }
+    /// Mark `entries` changed. Callers that edit entries in place must call this.
+    pub fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
     pub fn reconfigure(&mut self, preferences: Preferences) {
+        self.touch();
         for entry in &mut self.entries {
             entry.comparison = comparison_key(&entry.raw, preferences.ignore_prefix);
         }
     }
     pub fn toggle_original(&mut self, id: u64) -> bool {
+        self.touch();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.show_original = !entry.show_original;
             return true;
@@ -852,18 +876,53 @@ impl Feed {
         false
     }
     pub fn clear(&mut self) {
+        self.touch();
         self.entries.clear();
         self.last_whisper_sender = None;
         self.scroll = 0;
     }
     pub fn translate(&mut self, id: u64, text: String, language: impl Into<TargetLanguage>) {
+        self.touch();
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.translated = Some(text.chars().take(2048).collect());
             entry.translation_language = language.into();
         }
     }
 }
+/// Remember the current roster's heads (name -> uuid and skin); a map past 256 names restarts.
+pub fn refresh_heads(
+    heads: &mut std::collections::HashMap<String, (u128, String)>,
+    players: impl IntoIterator<Item = (String, (u128, String))>,
+) {
+    if heads.len() > 256 {
+        heads.clear();
+    }
+    for (name, head) in players {
+        heads.insert(name, head);
+    }
+}
+/// Opacity of a card by age; restored (archived) cards show only while reading history.
+pub fn fade(entry: &Entry, now: u64, focused: bool, duration: u16) -> f32 {
+    if focused {
+        return 1.0;
+    }
+    if entry.archived {
+        return 0.0;
+    }
+    let age = now.saturating_sub(entry.at) as f32;
+    let life = f32::from(duration) * 1000.0;
+    ((life - age) / 1500.0).clamp(0.0, 1.0)
+}
 pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    // Text that fits on one line is measured once, not once per prefix. Without reordering text no
+    // prefix is wider than the whole, so the per-character loop below could not have wrapped it.
+    let bounded: String = text.chars().take(2048).collect();
+    if !bounded.contains('\n')
+        && super::claim_borders_text_layout::prefixes_never_wider(&bounded)
+        && measure(&bounded) <= width.max(12.0)
+    {
+        return vec![bounded];
+    }
     let mut rows = Vec::new();
     let mut line = String::new();
     for c in text.chars().take(2048) {
@@ -1467,5 +1526,253 @@ mod tests {
         );
         assert_eq!(f.entries[0].original, "Подключился");
         assert_eq!(f.entries[1].original, "Отключился");
+    }
+    #[test]
+    fn every_entry_mutation_moves_the_revision() {
+        let p = Preferences::default();
+        let mut feed = Feed::default();
+        let mut seen = feed.revision;
+        let mut moved = |feed: &Feed| {
+            let changed = feed.revision != seen;
+            seen = feed.revision;
+            changed
+        };
+        let id = feed.push_with("<Alex> hello", 1, p).unwrap();
+        assert!(moved(&feed));
+        feed.translate(id, "привет".into(), Language::Russian);
+        assert!(moved(&feed));
+        assert!(feed.toggle_original(id));
+        assert!(moved(&feed));
+        feed.reconfigure(p);
+        assert!(moved(&feed));
+        // A joined line that only updates the previous presence entry in place.
+        feed.push_with("Steve joined the game", 2, p);
+        assert!(moved(&feed));
+        feed.push_with("Steve joined for the first time: welcome!", 3, p);
+        assert!(moved(&feed));
+        // A repeat moves the old entry to the back.
+        feed.push_with("<Alex> hello", 4, p);
+        assert!(moved(&feed));
+        let archive = feed.archive();
+        let mut restored = Feed::default();
+        restored.restore(&archive, p).unwrap();
+        assert!(restored.revision != 0);
+        feed.clear();
+        assert!(moved(&feed));
+        feed.touch();
+        assert!(moved(&feed));
+    }
+    #[test]
+    fn stopping_at_the_first_faded_card_finds_every_visible_card() {
+        let p = Preferences::default();
+        let mut feed = Feed::default();
+        for (i, line) in ["<A> one", "<B> two", "<C> three"].into_iter().enumerate() {
+            feed.push_with(line, i as u64, p);
+        }
+        let archive = feed.archive();
+        let mut feed = Feed::default();
+        feed.restore(&archive, p).unwrap();
+        for (at, line) in [
+            (1_000, "<D> four"),
+            (4_000, "<E> five"),
+            (9_000, "<D> four"),
+            (12_000, "Steve joined the game"),
+            (15_000, "<F> six"),
+        ] {
+            feed.push_with(line, at, p);
+        }
+        let entries: Vec<Entry> = feed.entries.iter().cloned().collect();
+        assert!(entries.iter().any(|e| e.archived));
+        for duration in [0, 1, 5, 10, 30] {
+            for now in (0..=60_000).step_by(500) {
+                let full: Vec<u64> = entries
+                    .iter()
+                    .rev()
+                    .filter(|e| fade(e, now, false, duration) > 0.0)
+                    .map(|e| e.id)
+                    .collect();
+                // The rule `paint_region` applies: newest first, stop at the first faded card.
+                let cut: Vec<u64> = entries
+                    .iter()
+                    .rev()
+                    .take_while(|e| fade(e, now, false, duration) > 0.0)
+                    .map(|e| e.id)
+                    .collect();
+                assert_eq!(full, cut, "now {now}, duration {duration}");
+            }
+        }
+        // Reading history shows everything, archived cards included.
+        assert!(entries.iter().all(|e| fade(e, 99_999, true, 5) == 1.0));
+    }
+    /// The loop `wrap` used before its single-row shortcut, for comparison.
+    fn wrap_reference(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
+        let mut rows = Vec::new();
+        let mut line = String::new();
+        for c in text.chars().take(2048) {
+            if c == '\n' {
+                rows.push(std::mem::take(&mut line));
+                continue;
+            }
+            line.push(c);
+            if measure(&line) > width.max(12.0) && line.chars().count() > 1 {
+                if let Some(boundary) = line.rfind(char::is_whitespace) {
+                    let head = line[..boundary].trim_end();
+                    if !head.is_empty() {
+                        let remainder = line[boundary..].trim_start().to_owned();
+                        rows.push(head.to_owned());
+                        line = remainder;
+                        continue;
+                    }
+                }
+                line.pop();
+                rows.push(std::mem::take(&mut line));
+                line.push(c);
+            }
+        }
+        if !line.is_empty() || rows.is_empty() {
+            rows.push(line);
+        }
+        rows
+    }
+    #[test]
+    fn wrapping_is_unchanged_for_every_script_width_and_measure() {
+        // Glyph widths like the client's: per-script advances summed and rounded up; the last
+        // measure is deliberately not monotone for reordered text.
+        let ceil_sum = |s: &str| {
+            s.chars()
+                .map(|c| match c {
+                    ' ' => 3.0,
+                    c if c.is_ascii() => 5.5,
+                    '\u{0400}'..='\u{04ff}' => 6.25,
+                    _ => 9.0,
+                })
+                .sum::<f32>()
+                .ceil()
+        };
+        let reversed_run = |s: &str| {
+            if s.chars().any(|c| ('\u{0590}'..='\u{05ff}').contains(&c)) {
+                (s.chars().count() as f32 * 4.0) % 37.0
+            } else {
+                s.chars().count() as f32 * 4.0
+            }
+        };
+        let alphabet: Vec<char> = "ab cde  fgh Привет мир שלום ععع 日本語 \n\u{a0}—_"
+            .chars()
+            .collect();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..600 {
+            let len = (next() % 90) as usize + usize::from(case % 7 == 0) * 2500;
+            let text: String = (0..len)
+                .map(|_| alphabet[(next() % alphabet.len() as u64) as usize])
+                .collect();
+            for width in [0.0, 11.0, 30.0, 120.0, 300.0, 2_000.0] {
+                assert_eq!(
+                    wrap(&text, width, ceil_sum),
+                    wrap_reference(&text, width, ceil_sum),
+                    "{text:?} at {width}"
+                );
+                assert_eq!(
+                    wrap(&text, width, reversed_run),
+                    wrap_reference(&text, width, reversed_run),
+                    "{text:?} at {width}"
+                );
+                assert_eq!(
+                    wrap(&text, width, |s| s.chars().count() as f32),
+                    wrap_reference(&text, width, |s| s.chars().count() as f32)
+                );
+            }
+        }
+    }
+    #[test]
+    fn text_that_fits_is_measured_once_and_long_text_is_unchanged() {
+        let calls = std::cell::Cell::new(0);
+        let counted = |s: &str| {
+            calls.set(calls.get() + 1);
+            s.chars().count() as f32
+        };
+        assert_eq!(
+            wrap("Steve: hello world", 40.0, counted),
+            ["Steve: hello world"]
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(wrap("", 40.0, counted), [""]);
+        // The 12 px minimum line width still applies.
+        assert_eq!(wrap("a b", 0.0, |s| s.chars().count() as f32), ["a b"]);
+    }
+    #[test]
+    fn snapshots_keep_every_entry_and_only_the_translation_for_the_target() {
+        let p = Preferences::default();
+        let mut feed = Feed::default();
+        let first = feed.push_with("<Alex> hello", 1, p).unwrap();
+        let second = feed.push_with("<Alex> привет", 2, p).unwrap();
+        feed.push_with("Steve joined the game", 3, p);
+        feed.translate(first, "привет".into(), Language::Russian);
+        feed.translate(second, "hello".into(), Language::English);
+        assert!(feed.toggle_original(second));
+        let revision = feed.revision;
+        let ru = feed.snapshot(Language::Russian);
+        let en = feed.snapshot(Language::English);
+        assert_eq!(feed.revision, revision, "reading never invalidates");
+        assert_eq!(ru.len(), 3);
+        assert_eq!(en.len(), 3);
+        assert_eq!(ru[0].translated.as_deref(), Some("привет"));
+        assert_eq!(
+            ru[1].translated, None,
+            "an English result is hidden under a Russian target"
+        );
+        assert_eq!(
+            en[0].translated, None,
+            "a Russian result is hidden under an English target"
+        );
+        assert_eq!(en[1].translated.as_deref(), Some("hello"));
+        // The feed itself keeps both results, original text and toggles untouched.
+        assert_eq!(feed.entries[0].translated.as_deref(), Some("привет"));
+        assert!(feed.entries[1].show_original);
+        assert_eq!(ru[1].original, "привет");
+        let ids: Vec<_> = en.iter().map(|e| e.id).collect();
+        assert_eq!(ids, feed.entries.iter().map(|e| e.id).collect::<Vec<_>>());
+    }
+    #[test]
+    fn heads_of_authors_who_joined_or_left_while_cards_were_faded_are_kept() {
+        let roster = |players: &[(&str, u128, &str)]| -> Vec<(String, (u128, String))> {
+            players
+                .iter()
+                .map(|(n, u, s)| ((*n).to_owned(), (*u, (*s).to_owned())))
+                .collect()
+        };
+        let mut feed = Feed::default();
+        feed.push_with("<Alex> hi", 0, Preferences::default());
+        let mut heads = std::collections::HashMap::new();
+        // Every frame with history refreshes the roster, whether or not a card is painted.
+        let frame = |heads: &mut _, now: u64, players: Vec<(String, (u128, String))>| {
+            let painted = feed.entries.iter().any(|e| fade(e, now, false, 5) > 0.0);
+            if !feed.entries.is_empty() {
+                refresh_heads(heads, players);
+            }
+            painted
+        };
+        assert!(frame(&mut heads, 1_000, roster(&[("Alex", 1, "skin/a0")])));
+        // Cards fade; Alex gets a new skin and Kim joins, then Alex leaves: nothing is painted.
+        assert!(!frame(
+            &mut heads,
+            60_000,
+            roster(&[("Alex", 1, "skins/a1"), ("Kim", 2, "skins/k")])
+        ));
+        assert!(!frame(&mut heads, 61_000, roster(&[("Kim", 2, "skins/k")])));
+        // Opening history later: the heads are the latest ones seen, as before.
+        assert_eq!(heads["Alex"], (1, "skins/a1".to_owned()));
+        assert_eq!(heads["Kim"], (2, "skins/k".to_owned()));
+        // Past 256 names the map restarts from the current roster.
+        for i in 0..300u128 {
+            heads.insert(format!("n{i}"), (i, String::new()));
+        }
+        refresh_heads(&mut heads, roster(&[("Kim", 2, "skins/k")]));
+        assert_eq!(heads.len(), 1);
     }
 }

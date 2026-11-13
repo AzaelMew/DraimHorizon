@@ -1,10 +1,11 @@
 // One presentation layer for all DraimHorizons screens. Interactive geometry stays fixed.
+use crate::game::claim_borders_shape_cache as shapes;
 use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_ui_style as style,
     native_hooks::NativeScreenView,
 };
 use claim_borders_relay_client::translation::Language;
-use horizon_client::hud::{HudBatch, rgba};
+use horizon_client::hud::{HudBatch, HudVertex, rgba};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Mutex, OnceLock},
@@ -144,6 +145,93 @@ pub(super) fn screen_begin(game: &Game<'_>) {
         }
     });
 }
+fn shape_runs<T>(f: impl FnOnce(&mut shapes::Shapes<HudVertex>) -> T) -> T {
+    static RUNS: OnceLock<Mutex<shapes::Shapes<HudVertex>>> = OnceLock::new();
+    f(&mut RUNS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()))
+}
+/// Draw through `draw`, or replay the identical vertices it produced for the same key before.
+/// Routines that also touch blends, pictures or glyph patches are drawn live every time.
+fn replay(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    key: shapes::Key,
+    draw: impl FnOnce(&Game<'_>, &mut HudBatch),
+) {
+    if let Some(run) = shape_runs(|runs| runs.get(&key)) {
+        batch.vertices.extend_from_slice(&run);
+        return;
+    }
+    let start = batch.vertices.len();
+    let others = (
+        batch.blends.len(),
+        batch.patches.len(),
+        batch.pictures.len(),
+    );
+    draw(game, batch);
+    if others
+        == (
+            batch.blends.len(),
+            batch.patches.len(),
+            batch.pictures.len(),
+        )
+    {
+        shape_runs(|runs| runs.insert(key, &batch.vertices[start..]));
+    }
+}
+const SHAPE_FILL: u32 = 1;
+const SHAPE_ROUNDED: u32 = 2;
+const SHAPE_ICON: u32 = 0x100;
+/// `fill` for static decoration: the theme it reads is part of the key.
+pub(super) fn fill_cached(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], argb: u32) {
+    let p = preferences(game);
+    let extra = u64::from(p.accent.color()) << 32
+        | u64::from(p.alpha().to_bits()) << 1
+        | u64::from(p.shadows);
+    let key = shapes::Key::new(game.gui.atlas.revision, SHAPE_FILL, rect, argb, extra);
+    replay(game, batch, key, |game, batch| {
+        fill(game, batch, rect, argb)
+    });
+}
+pub(super) fn rounded_cached(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    radius: f32,
+    argb: u32,
+) {
+    let key = shapes::Key::new(
+        game.gui.atlas.revision,
+        SHAPE_ROUNDED,
+        rect,
+        argb,
+        u64::from(radius.to_bits()),
+    );
+    replay(game, batch, key, |game, batch| {
+        rounded(game, batch, rect, radius, argb)
+    });
+}
+pub(super) fn icon_cached(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    kind: Icon,
+    rect: [f32; 4],
+    rgb: u32,
+) {
+    let argb = 0xff000000 | rgb;
+    let key = shapes::Key::new(
+        game.gui.atlas.revision,
+        SHAPE_ICON + kind as u32,
+        rect,
+        argb,
+        0,
+    );
+    replay(game, batch, key, |game, batch| {
+        icon_tinted(game, batch, kind, rect, argb)
+    });
+}
 pub(super) fn rounded(
     game: &Game<'_>,
     batch: &mut HudBatch,
@@ -249,10 +337,11 @@ pub(super) fn clip(game: &Game<'_>, value: &str, width: f32) -> String {
     if game.native_text_width(value) <= width {
         return value.into();
     }
+    let ellipsis = game.native_text_width("…");
     let mut out = String::new();
     for c in value.chars() {
         out.push(c);
-        if game.native_text_width(&out) + game.native_text_width("…") > width {
+        if game.native_text_width(&out) + ellipsis > width {
             out.pop();
             break;
         }

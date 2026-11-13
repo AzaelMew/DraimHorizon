@@ -3,7 +3,10 @@ use crate::game::claim_borders_ui_view as ui;
 use crate::game::claim_borders_chat_archive as archive;
 use crate::game::claim_borders_chat_preferences as options;
 use crate::game::claim_borders_outgoing::TranslationTargets;
-use crate::game::{Game, Screen, claim_borders as claims, claim_borders_chat_feed as model};
+use crate::game::{
+    Game, Screen, claim_borders as claims, claim_borders_card_layout as card,
+    claim_borders_chat_feed as model, claim_borders_translation_plan as plan,
+};
 use claim_borders_relay_client::translation::{
     Language, SourcePolicy, TargetLanguage, Translator, valid_deepl_key,
 };
@@ -16,7 +19,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     io::{ErrorKind, Write},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Instant,
 };
 const TRANSLATION_RETRY_MS: u64 = 15_000;
@@ -46,9 +49,12 @@ struct State {
     loaded: bool,
     translator: Option<Translator>,
     translation_language: TargetLanguage,
-    requested: HashSet<u64>,
-    retry: HashMap<u64, (u64, u8)>,
-    translation_failed_at: Option<u64>,
+    plan: plan::Plan,
+    /// Bumped with every new translator so stale gates never survive a policy change.
+    translator_generation: u64,
+    /// The feed shared with the painter, valid for one feed revision and translation target.
+    snapshot: Option<(u64, TargetLanguage, Arc<Vec<model::Entry>>)>,
+    layouts: card::Cache,
     heads: HashMap<String, (u128, String)>,
     hits: Vec<options::Hit>,
     hit_viewport: [f32; 2],
@@ -81,9 +87,10 @@ impl Default for State {
             loaded: false,
             translator: None,
             translation_language: TargetLanguage::default(),
-            requested: HashSet::new(),
-            retry: HashMap::new(),
-            translation_failed_at: None,
+            plan: plan::Plan::default(),
+            translator_generation: 0,
+            snapshot: None,
+            layouts: card::Cache::default(),
             heads: HashMap::new(),
             hits: Vec::new(),
             hit_viewport: [0.0, 0.0],
@@ -139,9 +146,7 @@ pub(super) fn translator(
 pub(super) fn refresh_translators() {
     state(|s| {
         s.translator = None;
-        s.requested.clear();
-        s.retry.clear();
-        s.translation_failed_at = None;
+        s.plan.reset();
     });
     crate::game::claim_borders_outgoing_view::refresh_translators();
 }
@@ -276,6 +281,7 @@ pub(super) fn set_translation_targets(
             for entry in &mut s.feed.entries {
                 entry.translated = None;
             }
+            s.feed.touch();
         }
         s.settings.translation = targets;
     });
@@ -327,9 +333,7 @@ pub(super) fn toggle(game: &Game<'_>, translation: bool) {
             s.settings.translate = value;
             if !value {
                 s.translator = None;
-                s.requested.clear();
-                s.retry.clear();
-                s.translation_failed_at = None;
+                s.plan.reset();
             }
         } else {
             s.settings.modern = value;
@@ -458,11 +462,11 @@ pub(super) fn reset() {
         s.nickname_query = None;
         s.hits.clear();
         s.bounds = None;
-        s.requested.clear();
+        s.plan.reset();
         s.heads.clear();
+        s.layouts.clear();
+        s.snapshot = None;
         s.translator = None;
-        s.retry.clear();
-        s.translation_failed_at = None;
     });
 }
 pub(super) fn capture_content(
@@ -555,13 +559,15 @@ fn capture_inner(
             }
         }
         let retained: HashSet<_> = s.feed.entries.iter().map(|e| e.id).collect();
-        s.requested.retain(|id| retained.contains(id));
-        s.retry.retain(|id, _| retained.contains(id));
+        s.plan.retain(&retained);
     });
 }
 fn event_entry(entry: &model::Entry, p: options::Preferences) -> bool {
+    event_entry_kind(entry.kind, p)
+}
+fn event_entry_kind(kind: model::Kind, p: options::Preferences) -> bool {
     p.notifications != options::NotificationStyle::Off
-        && match entry.kind {
+        && match kind {
             model::Kind::Presence => p.presence,
             model::Kind::Death => p.deaths,
             _ => false,
@@ -643,15 +649,7 @@ pub(super) fn complete_nickname(game: &mut Game<'_>, key: winit::keyboard::KeyCo
     false
 }
 fn label(entry: &model::Entry) -> Cow<'_, str> {
-    if let Some(notice) = entry.auction {
-        notice.label_in(current_language()).into()
-    } else if let model::Kind::Whisper(direction) = entry.kind {
-        format!("{} {}", direction.label_in(current_language()), entry.name).into()
-    } else if entry.name.is_empty() {
-        current_language().text("Система", "System").into()
-    } else {
-        entry.name.as_str().into()
-    }
+    card::label(entry, current_language())
 }
 fn in_chat_area(game: &Game<'_>, point: [f32; 2], viewport: [f32; 2]) -> bool {
     if game.screen != Screen::Chat || !game.native_on(claims::ID) || !settings(game).modern {
@@ -735,17 +733,6 @@ fn text(
         rgba(r, g, b, (alpha * 255.0) as u8),
         false,
     );
-}
-fn fade(entry: &model::Entry, now: u64, focused: bool, duration: u16) -> f32 {
-    if focused {
-        return 1.0;
-    }
-    if entry.archived {
-        return 0.0;
-    }
-    let age = now.saturating_sub(entry.at) as f32;
-    let life = f32::from(duration) * 1000.0;
-    ((life - age) / 1500.0).clamp(0.0, 1.0)
 }
 fn draw_card(
     game: &mut Game<'_>,
@@ -934,6 +921,54 @@ struct PaintContext {
     focused: bool,
     translate: bool,
     line_limit: usize,
+    /// Entries arrive newest first, so fading is monotonic; false for the reordered pinned rows.
+    age_ordered: bool,
+}
+/// The wrapped (or single-line) rows of one card, shared until any input of the layout changes.
+fn card_rows(
+    game: &Game<'_>,
+    e: &model::Entry,
+    context: &PaintContext,
+    compact: bool,
+    inline: bool,
+    width: f32,
+    max_rows: usize,
+) -> Arc<Vec<String>> {
+    let font = card::FontId {
+        atlas: game.gui.atlas.revision,
+        epoch: game.gui.atlas.font.epoch(),
+    };
+    let ctx = card::Context {
+        language: context.language,
+        ui_language: current_language(),
+        translate: context.translate,
+        presence_style: context.preferences.presence_style,
+        compact,
+        inline,
+    };
+    let measure = |s: &str| game.native_text_width(s);
+    let full_inputs = card::Inputs::new(e, &ctx, font, width, card::Variant::Full);
+    // Misses are built outside the lock: they walk the font, and hits must stay cheap.
+    let full = match state(|s| s.layouts.get(&full_inputs)) {
+        Some(rows) => rows,
+        None => {
+            let rows = Arc::new(card::build(e, &ctx, width, measure));
+            state(|s| s.layouts.insert(&full_inputs, rows.clone()));
+            rows
+        }
+    };
+    if full.len() <= max_rows {
+        return full;
+    }
+    let cut_inputs = full_inputs.variant(card::Variant::Cut(max_rows as u32));
+    match state(|s| s.layouts.get(&cut_inputs)) {
+        Some(rows) => rows,
+        None => {
+            let rows = Arc::new(card::cut(&full, max_rows, width, measure));
+            state(|s| s.layouts.insert(&cut_inputs, rows.clone()));
+            rows
+        }
+    }
 }
 fn paint_region<'a>(
     game: &mut Game<'_>,
@@ -951,12 +986,17 @@ fn paint_region<'a>(
     };
     for e in entries {
         let motion = ui::preferences(game).motion;
-        let alpha = fade(e, context.now, context.focused, p.duration)
+        let faded = model::fade(e, context.now, context.focused, p.duration);
+        let alpha = faded
             * crate::game::claim_borders_ui_style::entrance(
                 context.now.saturating_sub(e.created_at) as f32 / 1000.0,
                 motion,
             );
         if alpha <= 0.0 {
+            // Entries are ordered by age, so once one has faded every older one has too.
+            if faded <= 0.0 && !context.focused && context.age_ordered {
+                break;
+            }
             continue;
         }
         let compact = e.auction.is_none()
@@ -968,33 +1008,6 @@ fn paint_region<'a>(
                         options::NotificationStyle::Compact | options::NotificationStyle::Inline
                     ));
         let inline = e.kind.is_chat() || compact;
-        let count = if e.repetitions > 1 {
-            format!(" ×{}", e.repetitions)
-        } else {
-            String::new()
-        };
-        let body = if compact {
-            format!(
-                "{}{count}",
-                if e.kind == model::Kind::Presence {
-                    model::presence_summary(e, p.presence_style, context.language)
-                } else {
-                    model::event_summary(e, context.translate, context.language)
-                }
-            )
-        } else if inline {
-            let label = label(e);
-            format!(
-                "{}{}{count}",
-                e.chat_prefix(&label, context.language),
-                e.display_body(context.translate, context.language)
-            )
-        } else {
-            format!(
-                "{}{count}",
-                e.display_body(context.translate, context.language)
-            )
-        };
         let badge_width = if e.kind.is_chat() {
             game.native_text_width(e.source_language.as_deref().unwrap_or("??")) + 4.0
         } else {
@@ -1009,13 +1022,6 @@ fn paint_region<'a>(
             0.0
         };
         let inset = 29.0 + badge_width + presence_mark;
-        let mut rows = if compact {
-            vec![model::single_line(&body, region[2] - inset, |s| {
-                game.native_text_width(s)
-            })]
-        } else {
-            model::wrap(&body, region[2] - inset, |s| game.native_text_width(s))
-        };
         let available = if context.layout.top {
             region[1] + region[3] - y
         } else {
@@ -1023,17 +1029,12 @@ fn paint_region<'a>(
         };
         let metrics = options::CardMetrics::new(p.compact_messages, inline, compact);
         let max_rows = metrics.max_rows(available).min(context.line_limit);
+        // Nothing more fits: skip formatting and wrapping the rest of the history.
         if max_rows == 0 {
             break;
         }
-        if rows.len() > max_rows {
-            rows.truncate(max_rows);
-            if let Some(last) = rows.last_mut() {
-                *last = model::single_line(&format!("{last}…"), region[2] - inset, |s| {
-                    game.native_text_width(s)
-                });
-            }
-        }
+        let width = region[2] - inset;
+        let rows = card_rows(game, e, &context, compact, inline, width, max_rows);
         let h = metrics.height(rows.len());
         if h > available {
             break;
@@ -1113,18 +1114,21 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             if s.translation_language != target_language {
                 s.translation_language = target_language;
                 s.translator = None;
-                s.requested.clear();
-                s.retry.clear();
-                s.translation_failed_at = None;
+                s.plan.reset();
+            }
+            if s.translator.is_none() {
+                s.translator_generation = s.translator_generation.wrapping_add(1);
             }
             let worker = s.translator.get_or_insert_with(|| {
                 translator(game, target_language, config.translation.policy(false))
             });
+            let mut changed = false;
             while let Some((id, value)) = worker.poll_translation() {
                 if let Some(value) = value {
                     if let Some(entry) = s.feed.entries.iter_mut().find(|e| e.id == id) {
                         if value.source_language.is_some() {
                             entry.source_language = value.source_language.clone();
+                            changed = true;
                         }
                         // Text returned unchanged, or only re-cased/re-punctuated, or reported by the
                         // provider as already in the target language, is not a translation.
@@ -1132,42 +1136,56 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                             s.feed.translate(id, value.text, target_language);
                         }
                     }
-                    s.translation_failed_at = None;
-                    s.retry.remove(&id);
+                    s.plan.finished(id);
                 } else {
-                    s.requested.remove(&id);
-                    let attempts = s.retry.get(&id).map_or(1, |(_, n)| n.saturating_add(1));
-                    let delay = TRANSLATION_RETRY_MS << attempts.saturating_sub(1).min(3);
-                    s.retry.insert(id, (now + delay, attempts));
-                    s.translation_failed_at = Some(now);
+                    s.plan.failed(id, now, TRANSLATION_RETRY_MS);
                 }
             }
-            for e in s.feed.entries.iter().rev().take(64) {
-                if !e.archived
-                    && (e.kind == model::Kind::Message
-                        || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
-                        || (e.kind == model::Kind::Death && event_entry(e, p)))
-                    && !e.has_translation(target_language)
-                    && !s.requested.contains(&e.id)
-                    && s.retry.get(&e.id).is_none_or(|(at, _)| now >= *at)
-                    && worker.submit(e.id, &e.original)
-                {
-                    s.requested.insert(e.id);
-                }
+            if changed {
+                s.feed.touch();
             }
-        }
-        (
-            s.feed
+            // Everything the candidate list depends on besides time; unchanged means nothing to do.
+            let events = event_entry_kind(model::Kind::Death, p);
+            let gate = plan::Gate {
+                feed_revision: s.feed.revision,
+                show_players,
+                death_events: events,
+                target: target_language,
+                translator: s.translator_generation,
+            };
+            let candidates = s
+                .feed
                 .entries
                 .iter()
-                .cloned()
-                .map(|mut entry| {
-                    if !entry.has_translation(target_language) {
-                        entry.translated = None;
-                    }
-                    entry
+                .rev()
+                .take(64)
+                .filter(|e| {
+                    !e.archived
+                        && (e.kind == model::Kind::Message
+                            || (show_players && matches!(e.kind, model::Kind::Whisper(_)))
+                            || (e.kind == model::Kind::Death && events))
+                        && !e.has_translation(target_language)
                 })
-                .collect::<Vec<_>>(),
+                .map(|e| (e.id, e.original.as_str()));
+            s.plan.schedule(gate, now, candidates, |id, text| {
+                worker.try_submit(id, text)
+            });
+        }
+        let snapshot = match &s.snapshot {
+            Some((revision, target, entries))
+                if *revision == s.feed.revision && *target == target_language =>
+            {
+                entries.clone()
+            }
+            _ => {
+                // Rebuilt only when the feed or the target changes, never per frame.
+                let entries = Arc::new(s.feed.snapshot(target_language));
+                s.snapshot = Some((s.feed.revision, target_language, entries.clone()));
+                entries
+            }
+        };
+        (
+            snapshot,
             s.started.elapsed().as_millis() as u64,
             s.feed.scroll,
             if focused {
@@ -1187,16 +1205,16 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             viewport
         },
     );
+    // The roster is refreshed on every frame with history, painted or not, so authors who joined or
+    // left while their cards were faded or filtered already have their latest head when shown.
     if !entries.is_empty()
         && let Some((players, _, _)) = game.remote_tab_players()
     {
         state(|s| {
-            if s.heads.len() > 256 {
-                s.heads.clear();
-            }
-            for player in players {
-                s.heads.insert(player.name, (player.uuid, player.skin));
-            }
+            model::refresh_heads(
+                &mut s.heads,
+                players.into_iter().map(|p| (p.name, (p.uuid, p.skin))),
+            )
         });
     }
     let context = PaintContext {
@@ -1206,6 +1224,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         now,
         focused,
         line_limit: 24,
+        age_ordered: true,
         translate: config.translate && !game.modifiers.alt_key(),
     };
     let mut hits = Vec::new();
@@ -1254,17 +1273,18 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     }
     if priority.tray && channel == model::Channel::All {
         let mut names = HashSet::new();
+        let window = u64::from(priority.seconds) * 1000;
+        // Newest first and ordered by age: the first expired or restored entry ends the walk.
         let mut pinned: Vec<_> = entries
             .iter()
             .rev()
+            .take_while(|e| !e.archived && now.saturating_sub(e.at) < window)
             .filter(|e| {
-                !e.archived
-                    && now.saturating_sub(e.at) < u64::from(priority.seconds) * 1000
-                    && (e.auction.is_some()
-                        || (show_players
-                            && e.kind == model::Kind::Message
-                            && priority_rule(&e.name).is_some_and(|r| r.pinned)
-                            && names.insert(e.name.to_ascii_lowercase())))
+                e.auction.is_some()
+                    || (show_players
+                        && e.kind == model::Kind::Message
+                        && priority_rule(&e.name).is_some_and(|r| r.pinned)
+                        && names.insert(e.name.to_ascii_lowercase()))
             })
             .collect();
         pinned.sort_by_key(|e| e.auction.is_none());
@@ -1275,6 +1295,7 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
             let mut pinned_context = context;
             pinned_context.layout.top = true;
             pinned_context.line_limit = 2;
+            pinned_context.age_ordered = false;
             pinned_context.preferences.duration = priority.seconds;
             paint_region(
                 game,
@@ -1332,7 +1353,8 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
                 if !config.translate {
                     language.text("выкл.", "off")
                 } else if s
-                    .translation_failed_at
+                    .plan
+                    .failed_at()
                     .is_some_and(|failed| now.saturating_sub(failed) < TRANSLATION_RETRY_MS)
                 {
                     language.text("последний перевод не удался", "last translation failed")

@@ -1,10 +1,13 @@
-**DraimHorizon 0.40.0 - friends survive a relay key change**
+**DraimHorizon 0.40.1 - lighter custom chat and sidebar**
 
-Target: official Horizon Nightly source `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0` (unchanged).
+Target: official Horizon Nightly source `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0` (unchanged). Performance maintenance; appearance and behavior are intended to be identical.
 
-- A friend who reinstalls the mod, moves to a new PC or resets the data folder gets a new relay key. Their frames used to be dropped until both sides removed and re-added each other. Now the key is re-pinned automatically when the relay lists exactly one identity for the friend's UUID, the old key is no longer connected, and the same account and nickname are on the game server's player list. The session restarts and a chat notice (English and Russian) tells you.
-- If the friend lost the friendship entirely, the mod invites them once after three unanswered handshakes; they only accept. A friend who forgot you and invites again from the key you already pinned is relinked without a click.
-- Ambiguous cases change nothing: two keys for one account, a friend who is not on the server, or a malformed code. The row reads "Key changed · waiting to verify the identity".
-- Security trade-off: relay UUIDs and nicknames are self-claimed. The new key is trusted without an out-of-band code comparison, protected by the token-gated private relay, the server player-list check and a visible notice. Remove the friend if the notice was not expected.
+- Chat reuses wrapped rows until the text, translation, width, language, presentation flags or font change (compared structurally, bounded). Fading, entrance animation and scrolling still run every frame. Layout is skipped when no card fits, and drawing stops at the first faded card.
+- Chat shares one history snapshot that is rebuilt only when the feed or translation target changes, instead of copying up to 500 entries each frame.
+- Chat heads and their per-frame roster refresh are unchanged (optimization deferred).
+- Translation scheduling is unchanged in behavior (verified frame for frame against the old loop): settled lines are not re-sent, a full queue is retried on the next render, failures keep their backoff.
+- The sidebar no longer holds the economy lock while drawing and reuses clipped labels and static decoration geometry; live values are drawn every frame.
 
-Verification: Rust formatting, Clippy with warnings denied, the workspace tests, official mixin staging, the pinned native client compile-check and native bundle validation pass. Live in-game acceptance with two real clients is not verified.
+Verification: 550 tests passed (one ignored), Clippy, formatting, the pinned native client compile-check and bundle validation passed. Isolated live before/after runs used the same Nightly, local world, camera and 500-message fixture. With both custom widgets enabled, CPU preparation fell from 1.424 to 1.031 ms/frame and total CPU time from 1.824 to 1.434 ms/frame. Average FPS stayed effectively unchanged (183.66 versus 184.07); these are CPU-overhead improvements, not a demonstrated FPS increase. Sidebar-only timings were mixed and do not establish a live speedup.
+
+Inspected live chat crops matched pixel-for-pixel for stable focused, scrolled, GUI-scale-3, Russian-label and original-toggle cases. Tab filtering, expiry and reopening retained history also worked. This covers the tested local cases, not every server, skin or translation-provider scenario; live provider requests were not exercised.
