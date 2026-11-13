@@ -218,11 +218,7 @@ pub(super) fn flush() {
             && s.dirty
             && let Some(w) = &s.worker
         {
-            let _ = w.save(
-                s.path.clone(),
-                s.scope.clone(),
-                s.book.encode_at(&s.scope, now()),
-            );
+            let _ = w.save_book(s.path.clone(), s.scope.clone(), &s.book, now());
         }
         if let Some(w) = &s.worker {
             w.finish();
@@ -592,7 +588,7 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
         token,
     ))
 }
-/// Identifies the server window as it is now; built once per frame and kept in `State::probed`.
+/// Shared construction of the server-window identity; the frame probe is kept in `State::probed`.
 fn window_token(game: &Game<'_>) -> String {
     format!(
         "{:?}|{}",
@@ -620,7 +616,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             crate::game::claim_borders_map_history::hash(scope.as_bytes())
         ));
         let loaded = disk::load(&path, &scope).and_then(|raw| {
-            raw.map(|r| model::Book::decode_at(&r, &scope, now()))
+            raw.map(|r| model::Book::decode_at(&r, &scope, now))
                 .transpose()
         });
         let pref = game
@@ -647,7 +643,6 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
     }
-    crate::game::claim_borders_commerce_view::frame(game);
     actions(game);
     // A new server window is read on the frame it arrives, so the catalogue replaces it
     // before the server's own page is ever drawn.
@@ -669,6 +664,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         true
     });
+    // Refresh the probe before the catalogue can use server_page's cached token.
+    crate::game::claim_borders_commerce_view::frame(game);
     if !due {
         return;
     }
@@ -875,11 +872,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
         if s.dirty && s.writable && now.saturating_sub(s.last_save) > 5000 {
             s.book.drop_expired(now);
             if let Some(w) = &s.worker
-                && w.save(
-                    s.path.clone(),
-                    s.scope.clone(),
-                    s.book.encode_at(&s.scope, now),
-                )
+                && w.save_book(s.path.clone(), s.scope.clone(), &s.book, now)
             {
                 s.dirty = false;
                 s.last_save = now;

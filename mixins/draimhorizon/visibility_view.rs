@@ -5,6 +5,9 @@ pub fn render(game: &Game<'_>, camera: glam::DVec3, alpha: f64, out: &mut Vec<Ve
     if !game.native_window()
         || !visibility::enabled(
             game.native_on(claims::ID),
+            game.native_setting(claims::SETTINGS_ID, "experiments_accepted")
+                .as_deref()
+                == Some("true"),
             game.native_setting(claims::SETTINGS_ID, "show_invisible_entities")
                 .as_deref(),
         )

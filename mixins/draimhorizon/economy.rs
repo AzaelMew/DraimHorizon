@@ -727,7 +727,7 @@ pub struct Trade {
     pub net: Coins,
     pub buying: bool,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Book {
     pub quotes: BTreeMap<String, Quote>,
     pub unsupported: BTreeSet<String>,
@@ -1307,7 +1307,6 @@ impl Book {
         let mut lots: Vec<&Listing> = self.listings.values().filter(|l| l.expires > now).collect();
         lots.sort_by_key(|l| std::cmp::Reverse((l.seen, l.id)));
         v["ah_complete_at"] = json!(self.ah_complete_at);
-        let mut with_stacks = true;
         loop {
             v["listings"] = lots
                 .iter()
@@ -1317,24 +1316,17 @@ impl Book {
                     ])
                 })
                 .collect();
-            v["stacks"] = if with_stacks {
-                lots.iter()
-                    .filter_map(|l| self.stacks.get(&l.id).map(|text| json!([l.id, text])))
-                    .collect()
-            } else {
-                json!([])
-            };
+            v["stacks"] = lots
+                .iter()
+                .filter_map(|l| self.stacks.get(&l.id).map(|text| json!([l.id, text])))
+                .collect();
             let raw = v.to_string();
             // The file must stay inside the persistence limit, or saving would stop altogether:
-            // shed the stacks first, then the oldest quarter of the lots, until it fits.
+            // shed the oldest quarter of the lots with their stacks until it fits.
             if raw.len() <= FILE_BUDGET || lots.is_empty() {
                 return raw;
             }
-            if with_stacks {
-                with_stacks = false;
-            } else {
-                lots.truncate(lots.len() * 3 / 4);
-            }
+            lots.truncate(lots.len() * 3 / 4);
         }
     }
     pub fn decode_at(raw: &str, scope: &str, now: u64) -> Result<Self, String> {
@@ -2259,6 +2251,43 @@ mod cache_tests {
             5000,
             "lots are kept even when stack text is trimmed"
         );
+    }
+    #[test]
+    fn oversized_cache_keeps_newest_lots_with_their_stacks() {
+        let mut book = Book::default();
+        for id in 0..5000u64 {
+            let mut listing = lot(id, 1000, 3_600_000);
+            listing.label = "💎".repeat(80);
+            listing.seen = NOW + id;
+            book.observe_lot(listing);
+        }
+        for id in (0..5000u64).rev() {
+            book.remember_stack(id, "\"".repeat(4000));
+        }
+        let raw = book.encode_at(SCOPE, NOW + 5000);
+        assert!(raw.len() <= FILE_BUDGET);
+        let back = Book::decode_at(&raw, SCOPE, NOW + 5000).unwrap();
+        assert!(!back.listings.is_empty());
+        assert!(back.listings.contains_key(&4999));
+        assert!(
+            back.stacks.contains_key(&4999),
+            "keep the newest item's details"
+        );
+        assert!(!back.listings.contains_key(&0), "trim oldest lots first");
+        assert_eq!(
+            book.listings.len(),
+            5000,
+            "encoding must not mutate the live book"
+        );
+    }
+    #[test]
+    fn direct_purchases_require_a_sighting_within_two_minutes() {
+        let book = book_with(&[1]);
+        let shown = &book.listings[&1];
+        assert!(book.direct_buy_allowed(shown, false, None, NOW + 120_000));
+        assert!(!book.direct_buy_allowed(shown, false, None, NOW + 120_001));
+        assert!(!book.direct_buy_allowed(shown, true, None, NOW));
+        assert!(!restored(&book, NOW).direct_buy_allowed(shown, false, None, NOW));
     }
     #[test]
     fn a_purchase_needs_the_same_offer_the_player_saw() {

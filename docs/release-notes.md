@@ -1,11 +1,13 @@
 **DraimHorizon 0.39.23 - cached auctions, seed prediction range and invisible entity visibility**
 
-Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
+Target: official Horizon Nightly source `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`; five moved gameplay hooks are adapted to the new module layout.
 
-- **J → Settings → General → Show invisible entities** restores invisible player and mob models locally. Off by default, persisted, with English and Russian labels. Normal depth testing, range and frustum culling apply. Entity metadata, potion timers, server gameplay and other players' views do not change. Invisible armour stands and item frames are left alone.
+- **J → Settings → General → Show invisible entities** restores invisible player and mob models locally. Off by default, persisted, and requires experimental consent. English and Russian warnings explain that this may violate server rules and lead to a ban. Normal depth testing, range and frustum culling apply. Entity metadata, potion timers, server gameplay and other players' views do not change. Invisible armour stands and item frames are left alone.
 - Experiments → Ores offers saved 1 chunk, 3x3 and 5x5 SMP seed prediction ranges. Existing preferences retain 1 chunk; 5x5 is labelled heavy. Generation remains cancellable on the background worker with shared terrain/decorating halos. Loaded-chunk highlighting and the existing 256-highlight / 128-block limits are unchanged.
 - The custom auction catalogue restores bounded saved lots and item stacks for this server/account immediately and starts a fresh hidden walk on every opening. Search, sorting and paging remain usable; incoming lots do not reorder the list under the pointer.
-- Saved lots show their age in English and Russian and always require purchase confirmation. Changed, expired or vanished lots are refused. Only a provably complete scan prunes unseen saved lots; interrupted, blank or partial pages preserve them. Switching to the server view stops the walk.
+- Saved lots show their age in English and Russian and always require purchase confirmation. Direct purchases require a matching live lot seen within 120 seconds. Changed, expired or vanished lots are refused. Pruning requires a settled terminal listing page and a listing count within `N / 50` of the server total; interrupted, blank or partial pages preserve saved lots. Switching to the server view stops the walk.
+- Oversized caches trim oldest quarters while retaining newest lots and their exact item stacks. Encoding runs on the persistence worker. Window tokens are reused, window-absence timing is shared, and budget-refused stack IDs are not repeatedly encoded within the same window.
+- The minimum-height Ores layout reserves all three control rows and fits five rows of ore tiles without overlaps.
 - Integrated with the published 0.39.22 changes: the new Schematics tab and preview layers, faster Baritone breaking, and real Auto Click pulses are preserved.
 
 Verification covers Rust formatting, Clippy, workspace tests, official mixin staging, the pinned native client compile-check, a native renderer regression using authored geometry, and native bundle validation. Live in-game acceptance of the combined build is not verified; auction timing, rendered appearance and server ore accuracy remain unverified in game.

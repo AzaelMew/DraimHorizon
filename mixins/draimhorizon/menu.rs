@@ -2534,8 +2534,8 @@ impl Menu {
                         Control::ShowInvisibleEntities,
                         model.show_invisible_entities,
                         self.language.text(
-                            "Видеть невидимых только у себя; на многих серверах это запрещено правилами",
-                            "Render invisible players and mobs on your client only; many servers forbid this",
+                            "Требует согласия на эксперименты; на серверах возможен бан",
+                            "Requires experimental consent; servers may ban this feature",
                         ),
                     ),
                 ];
@@ -2546,7 +2546,7 @@ impl Menu {
                 for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
                     let y = 54.0 + index as f32 * step;
                     v.push(widget([x, y, w, 22.0], label, Some(control), selected));
-                    if detailed {
+                    if detailed || control == Control::ShowInvisibleEntities {
                         let mut hint =
                             widget([x + 6.0, y + 26.0, w - 12.0, 14.0], hint, None, false);
                         hint.muted = true;
@@ -4160,7 +4160,7 @@ impl Menu {
         .into_iter()
         .enumerate()
         {
-            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+            let step = ((height - 132.0) / 5.0).clamp(16.0, 28.0);
             let y = 82.0 + index as f32 * step;
             out.push(widget(
                 [x, y, w, (step - 2.0).min(22.0)],
@@ -4908,6 +4908,13 @@ impl Menu {
             Control::PatNotify => Some(Action::SetPatNotify(!model.pat_notify)),
             Control::ProtectGlowBerries => {
                 Some(Action::SetProtectGlowBerries(!model.protect_glow_berries))
+            }
+            Control::ShowInvisibleEntities
+                if !model.show_invisible_entities && !model.experiments_accepted =>
+            {
+                self.experiments_prompt = true;
+                self.focus = None;
+                None
             }
             Control::ShowInvisibleEntities => Some(Action::SetShowInvisibleEntities(
                 !model.show_invisible_entities,
@@ -6591,6 +6598,13 @@ mod tests {
             assert!(!model.show_invisible_entities);
             assert_eq!(
                 menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                None
+            );
+            assert!(menu.experiments_prompt);
+            menu.experiments_prompt = false;
+            model.experiments_accepted = true;
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
                 Some(Action::SetShowInvisibleEntities(true))
             );
             model.show_invisible_entities = true;
@@ -7148,7 +7162,7 @@ mod tests {
             tab: Tab::Experimental,
             ..Menu::default()
         };
-        for height in [200.0, 216.0, 300.0, 500.0] {
+        for height in [200.0, 216.0, 240.0, 256.0, 280.0, 300.0, 500.0] {
             let rows = menu.layout(&model, 360.0, height);
             let controls: Vec<_> = rows
                 .iter()

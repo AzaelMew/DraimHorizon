@@ -1,6 +1,6 @@
 // Render-only selection; no entity metadata or active effects are modified.
-pub fn enabled(mod_on: bool, setting: Option<&str>) -> bool {
-    mod_on && setting == Some("true")
+pub fn enabled(mod_on: bool, experiments_accepted: bool, setting: Option<&str>) -> bool {
+    mod_on && experiments_accepted && setting == Some("true")
 }
 
 pub fn reveal(shared_flag: bool, potion: bool, removed: bool, camera: bool) -> bool {
@@ -14,11 +14,12 @@ mod tests {
     #[test]
     fn disabled_mod_and_missing_or_false_settings_never_reveal_entities() {
         for setting in [None, Some("false"), Some("invalid"), Some("true")] {
-            assert!(!enabled(false, setting));
+            assert!(!enabled(false, true, setting));
+            assert!(!enabled(true, false, setting));
         }
-        assert!(!enabled(true, None));
-        assert!(!enabled(true, Some("false")));
-        assert!(enabled(true, Some("true")));
+        assert!(!enabled(true, true, None));
+        assert!(!enabled(true, true, Some("false")));
+        assert!(enabled(true, true, Some("true")));
     }
 
     #[test]

@@ -41,6 +41,12 @@ fn save(path: &Path, scope: &str, raw: &str) -> Result<(), String> {
 }
 enum Job {
     Save(PathBuf, String, String),
+    SaveBook(
+        PathBuf,
+        String,
+        Box<super::claim_borders_economy::Book>,
+        u64,
+    ),
     Finish(SyncSender<()>),
 }
 pub struct Worker {
@@ -61,6 +67,12 @@ impl Worker {
                                 let _ = errors.try_send(e);
                             }
                         }
+                        Job::SaveBook(path, scope, book, now) => {
+                            let raw = book.encode_at(&scope, now);
+                            if let Err(e) = save(&path, &scope, &raw) {
+                                let _ = errors.try_send(e);
+                            }
+                        }
                         Job::Finish(done) => {
                             let _ = done.try_send(());
                         }
@@ -75,6 +87,18 @@ impl Worker {
     }
     pub fn save(&self, path: PathBuf, scope: String, raw: String) -> bool {
         self.tx.try_send(Job::Save(path, scope, raw)).is_ok()
+    }
+    /// Snapshot on the caller; serialize and enforce the file budget on the I/O lane.
+    pub fn save_book(
+        &self,
+        path: PathBuf,
+        scope: String,
+        book: &super::claim_borders_economy::Book,
+        now: u64,
+    ) -> bool {
+        self.tx
+            .try_send(Job::SaveBook(path, scope, Box::new(book.clone()), now))
+            .is_ok()
     }
     pub fn finish(&self) {
         let (tx, rx) = mpsc::sync_channel(1);
@@ -105,6 +129,22 @@ mod tests {
         worker.finish();
         assert_eq!(load(&path, "s").unwrap().as_deref(), Some(valid));
         assert!(load(&path, "other").is_err());
+        let mut book = super::super::claim_borders_economy::Book::default();
+        book.watch.insert("minecraft:diamond".into());
+        assert!(worker.save_book(path.clone(), "s".into(), &book, 100));
+        book.watch.insert("minecraft:dirt".into());
+        worker.finish();
+        let saved = super::super::claim_borders_economy::Book::decode_at(
+            &load(&path, "s").unwrap().unwrap(),
+            "s",
+            100,
+        )
+        .unwrap();
+        assert!(saved.watch.contains("minecraft:diamond"));
+        assert!(
+            !saved.watch.contains("minecraft:dirt"),
+            "queued book is a snapshot"
+        );
         let future = r#"{"schema":2,"scope":"s"}"#;
         fs::write(&path, future).unwrap();
         assert!(worker.save(path.clone(), "s".into(), valid.into()));

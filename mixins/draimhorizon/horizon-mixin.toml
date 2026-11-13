@@ -26,7 +26,7 @@ visibility = "pub"
 [[injection]]
 id = "visibility-models"
 kind = "RETURN"
-target = "horizon_client::game::creatures::Game<'_>::mob_geometry"
+target = "horizon_client::game::creatures::mob_geometry::Game<'_>::mob_geometry"
 helper = "visibility_hook.rs"
 bindings = [
   { name = "_value", ty = "()", value = "$value" },
@@ -38,7 +38,7 @@ bindings = [
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca"
+horizon_revision = "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0"
 
 [[module]]
 id = "runtime"
@@ -674,7 +674,7 @@ bindings = [
 [[injection]]
 id = "map-flush-on-exit"
 kind = "HEAD"
-target = "horizon_client::game::Game<'_>::save_for_exit"
+target = "horizon_client::game::world_session::Game<'_>::save_for_exit"
 helper = "map_exit_hook.rs"
 
 [[module]]
@@ -905,7 +905,7 @@ bindings = [
 id = "clickthrough-local"
 kind = "HEAD"
 cancellable = true
-target = "horizon_client::game::Game<'_>::use_item_as_player"
+target = "horizon_client::game::item_actions::Game<'_>::use_item_as_player"
 helper = "clickthrough_local_hook.rs"
 bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
@@ -1096,7 +1096,7 @@ source = "chat_archive.rs"
 [[injection]]
 id = "inventory-tools-below-items"
 kind = "HEAD"
-target = "horizon_client::game::Game<'_>::draw_carried"
+target = "horizon_client::game::inventory_slots::Game<'_>::draw_carried"
 helper = "inventory_tools_draw_hook.rs"
 bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
@@ -1125,7 +1125,7 @@ source = "reconnect.rs"
 id = "reconnect-after-disconnect"
 kind = "HEAD"
 cancellable = true
-target = "horizon_client::game::extras::Game<'_>::reconnect_after"
+target = "horizon_client::game::extras::reconnect::Game<'_>::reconnect_after"
 helper = "reconnect_hook.rs"
 bindings = [
  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },

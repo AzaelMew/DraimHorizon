@@ -288,19 +288,16 @@ pub const WINDOW_GRACE_MS: u64 = 1500;
 /// How long the server's window has been missing: the one owner of the grace rule, shared by
 /// the catalogue walk and the catalogue session.
 #[derive(Default)]
-pub struct Absence(u64);
+pub struct Absence(Option<u64>);
 impl Absence {
     /// Called every frame with whether the window is missing. True once it has been missing
     /// for longer than the grace period.
     pub fn gone(&mut self, away: bool, now: u64) -> bool {
         if !away {
-            self.0 = 0;
+            self.0 = None;
             return false;
         }
-        if self.0 == 0 {
-            self.0 = now.max(1);
-        }
-        now.saturating_sub(self.0) > WINDOW_GRACE_MS
+        now.saturating_sub(*self.0.get_or_insert(now)) > WINDOW_GRACE_MS
     }
 }
 /// One opening of the auction catalogue. Every new opening walks the auction again, however
@@ -811,6 +808,33 @@ mod tests {
         let mut s = Scanner::default();
         s.start(Kind::Auction, 0);
         s
+    }
+    #[test]
+    fn shared_absence_timer_handles_zero_boundaries_and_reopening() {
+        let mut absence = Absence::default();
+        assert!(!absence.gone(true, 0));
+        assert!(!absence.gone(true, WINDOW_GRACE_MS));
+        assert!(absence.gone(true, WINDOW_GRACE_MS + 1));
+        assert!(!absence.gone(false, 2000));
+        assert!(!absence.gone(true, 3000));
+        assert!(!absence.gone(true, 3000 + WINDOW_GRACE_MS));
+        assert!(absence.gone(true, 3001 + WINDOW_GRACE_MS));
+    }
+    #[test]
+    fn completion_count_slack_is_bounded_and_still_requires_a_terminal_listing_page() {
+        let mut s = walk();
+        s.expected = Some(100);
+        s.pages = 3;
+        s.listing_pages = 2;
+        s.lots.extend(1..=98);
+        let last = listing_page(98, 1, true, false);
+        assert!(s.reached_the_end(&last));
+        assert!(!s.reached_the_end(&blank()));
+        assert!(!s.reached_the_end(&listing_page(98, 1, false, false)));
+        s.lots.remove(&98);
+        assert!(!s.reached_the_end(&last));
+        s.expected = Some(u32::MAX);
+        assert!(!s.reached_the_end(&last));
     }
     #[test]
     fn a_walk_to_a_settled_last_page_with_every_counted_lot_is_complete() {
