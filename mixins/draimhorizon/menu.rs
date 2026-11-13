@@ -2534,8 +2534,8 @@ impl Menu {
                         Control::ShowInvisibleEntities,
                         model.show_invisible_entities,
                         self.language.text(
-                            "Видеть невидимых игроков и мобов только на своём клиенте",
-                            "Render invisible players and mobs on your client only",
+                            "Видеть невидимых только у себя; на многих серверах это запрещено правилами",
+                            "Render invisible players and mobs on your client only; many servers forbid this",
                         ),
                     ),
                 ];
@@ -4170,7 +4170,7 @@ impl Menu {
             ));
         }
         // One icon tile per ore, toggled like the seed map filters; the name is the tooltip.
-        let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+        let step = ((height - 132.0) / 5.0).clamp(16.0, 28.0);
         let range_y = 82.0 + 2.0 * step;
         let range_w = (w - 8.0) / 3.0;
         for (radius, label) in [

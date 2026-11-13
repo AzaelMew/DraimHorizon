@@ -694,6 +694,8 @@ const MAX_ROWS: usize = 20_000;
 const STACK_TEXT_MAX: usize = 4096;
 const STACK_BYTES_MAX: usize = 2 * 1024 * 1024;
 const FILE_BUDGET: usize = 3_800_000;
+/// How long after being seen a lot still counts as current enough to buy without asking.
+const FRESH_MS: u64 = 120_000;
 const MAX_LOT_LIFE: u64 = 400 * 86_400_000;
 /// How far a lot of the catalogue can be trusted right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1297,41 +1299,43 @@ impl Book {
             }
         }
     }
-    pub fn encode(&self, scope: &str) -> String {
-        self.encode_at(scope, wall())
-    }
     /// Saved auction lots ride in the same file as the prices: the schema stays 1 so older
     /// builds still read it, and a file without them loads as before.
     pub fn encode_at(&self, scope: &str, now: u64) -> String {
         let mut v = json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"auction_watch":self.auction_watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()});
-        let lots: Vec<&Listing> = self.listings.values().filter(|l| l.expires > now).collect();
-        v["listings"] = lots
-            .iter()
-            .map(|l| {
-                json!([
-                    l.id, l.item, l.label, l.count, l.cost, l.seller, l.bid, l.seen, l.expires
-                ])
-            })
-            .collect();
-        v["stacks"] = lots
-            .iter()
-            .filter_map(|l| self.stacks.get(&l.id).map(|text| json!([l.id, text])))
-            .collect();
+        // Newest first, so trimming to the persistence limit keeps the freshest lots.
+        let mut lots: Vec<&Listing> = self.listings.values().filter(|l| l.expires > now).collect();
+        lots.sort_by_key(|l| std::cmp::Reverse((l.seen, l.id)));
         v["ah_complete_at"] = json!(self.ah_complete_at);
-        let mut raw = v.to_string();
-        // The file must stay inside the persistence limit, or saving would stop altogether.
-        if raw.len() > FILE_BUDGET {
-            v["stacks"] = json!([]);
-            raw = v.to_string();
+        let mut with_stacks = true;
+        loop {
+            v["listings"] = lots
+                .iter()
+                .map(|l| {
+                    json!([
+                        l.id, l.item, l.label, l.count, l.cost, l.seller, l.bid, l.seen, l.expires
+                    ])
+                })
+                .collect();
+            v["stacks"] = if with_stacks {
+                lots.iter()
+                    .filter_map(|l| self.stacks.get(&l.id).map(|text| json!([l.id, text])))
+                    .collect()
+            } else {
+                json!([])
+            };
+            let raw = v.to_string();
+            // The file must stay inside the persistence limit, or saving would stop altogether:
+            // shed the stacks first, then the oldest quarter of the lots, until it fits.
+            if raw.len() <= FILE_BUDGET || lots.is_empty() {
+                return raw;
+            }
+            if with_stacks {
+                with_stacks = false;
+            } else {
+                lots.truncate(lots.len() * 3 / 4);
+            }
         }
-        if raw.len() > FILE_BUDGET {
-            v["listings"] = json!([]);
-            raw = v.to_string();
-        }
-        raw
-    }
-    pub fn decode(raw: &str, scope: &str) -> Result<Self, String> {
-        Self::decode_at(raw, scope, wall())
     }
     pub fn decode_at(raw: &str, scope: &str, now: u64) -> Result<Self, String> {
         if raw.len() > 4 * 1024 * 1024 {
@@ -1534,6 +1538,10 @@ impl Book {
     ) -> bool {
         self.buy_ready(shown, now).is_ok()
             && self.lot_state(shown.id, now) == LotState::Fresh
+            && self
+                .listings
+                .get(&shown.id)
+                .is_some_and(|l| now.saturating_sub(l.seen) <= FRESH_MS)
             && shown.buys_without_asking(ask, balance)
     }
 }
@@ -1549,11 +1557,6 @@ pub fn stable_order(previous: &[u64], sorted: &[u64]) -> Vec<u64> {
         .collect();
     out.extend(sorted.iter().copied().filter(|id| seen.insert(*id)));
     out
-}
-fn wall() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
 }
 fn restore_listing(row: &Value, now: u64) -> Option<Listing> {
     let row = row.as_array().filter(|r| r.len() == 9)?;
@@ -1687,9 +1690,9 @@ mod tests {
         assert!(!listing.within_unit_price(249));
         listing.bid = true;
         assert!(!listing.within_unit_price(250));
-        let mut restored = Book::decode(&book.encode("server-a"), "server-a").unwrap();
+        let mut restored = Book::decode_at(&book.encode_at("server-a", 0), "server-a", 0).unwrap();
         assert_eq!(restored.auction_watch["minecraft:diamond"], 250);
-        assert!(Book::decode(&book.encode("server-a"), "server-b").is_err());
+        assert!(Book::decode_at(&book.encode_at("server-a", 0), "server-b", 0).is_err());
         assert!(restored.set_auction_watch("diamond", 0));
         assert!(restored.auction_watch.is_empty());
     }
@@ -1845,7 +1848,7 @@ mod tests {
         // The lot comes back as saved data: shown, but never an opportunity before a new walk.
         assert_eq!(restored.lot_state(l.id, NOW), LotState::Saved);
         assert!(restored.opportunity(&l, &p, NOW, "me").is_none());
-        assert!(Book::decode(&raw, "another/account").is_err());
+        assert!(Book::decode_at(&raw, "another/account", NOW).is_err());
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
     }
     #[test]
@@ -1931,9 +1934,9 @@ mod live_server_tests {
         )
         .unwrap();
         assert!(!p.encode().contains("tax"));
-        let b=Book::decode(r#"{"schema":1,"scope":"s","quotes":[],"rules":[200,500,100,100],"tax_lines":["old bill"]}"#,"s").unwrap();
+        let b=Book::decode_at(r#"{"schema":1,"scope":"s","quotes":[],"rules":[200,500,100,100],"tax_lines":["old bill"]}"#,"s",0).unwrap();
         assert_eq!(b.resale(7000, 10000, &p), Some((100, 2900)));
-        assert!(!b.encode("s").contains("tax"));
+        assert!(!b.encode_at("s", 0).contains("tax"));
     }
 }
 

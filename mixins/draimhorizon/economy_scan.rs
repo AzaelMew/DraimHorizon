@@ -285,13 +285,31 @@ impl Stop {
 /// gap between two network polls, and a longer absence is a real close. A wrong value costs
 /// convenience, not data: ending the session never prunes the saved lots.
 pub const WINDOW_GRACE_MS: u64 = 1500;
+/// How long the server's window has been missing: the one owner of the grace rule, shared by
+/// the catalogue walk and the catalogue session.
+#[derive(Default)]
+pub struct Absence(u64);
+impl Absence {
+    /// Called every frame with whether the window is missing. True once it has been missing
+    /// for longer than the grace period.
+    pub fn gone(&mut self, away: bool, now: u64) -> bool {
+        if !away {
+            self.0 = 0;
+            return false;
+        }
+        if self.0 == 0 {
+            self.0 = now.max(1);
+        }
+        now.saturating_sub(self.0) > WINDOW_GRACE_MS
+    }
+}
 /// One opening of the auction catalogue. Every new opening walks the auction again, however
 /// recently the last walk finished; frames of one opening, a walk already under way and a
 /// window swapped for a moment never start a second walk.
 #[derive(Default)]
 pub struct Session {
     shown: bool,
-    away: u64,
+    away: Absence,
 }
 impl Session {
     pub fn shown(&self) -> bool {
@@ -299,14 +317,7 @@ impl Session {
     }
     /// Called every frame with whether the server's window is open. True when the session ended.
     pub fn window(&mut self, open: bool, now: u64) -> bool {
-        if open {
-            self.away = 0;
-            return false;
-        }
-        if self.away == 0 {
-            self.away = now.max(1);
-        }
-        if self.shown && now.saturating_sub(self.away) > WINDOW_GRACE_MS {
+        if self.away.gone(!open, now) && self.shown {
             self.shown = false;
             return true;
         }
@@ -531,7 +542,8 @@ impl Scanner {
             Some(0) => self.lots.is_empty(),
             Some(n) if n != u32::MAX => {
                 self.pages >= 2
-                    && self.lots.len() >= n as usize
+                    // A little slack on big auctions: the count may include lots the pager never shows.
+                    && self.lots.len() + n as usize / 50 >= n as usize
                     && page.buttons.iter().any(|b| role(page, b) == Role::Listing)
                     && (self.listing_pages < 2
                         || page.buttons.iter().any(|b| role(page, b) == Role::Previous))

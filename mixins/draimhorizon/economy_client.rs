@@ -136,8 +136,11 @@ struct State {
     probed: String,
     /// The window whose lot stacks were last saved.
     stacked: String,
+    /// Lots the budget refused for the window named by `stacked_for`, so they are not encoded again.
+    refused: std::collections::BTreeSet<u64>,
+    refused_for: String,
     /// When the server window was first seen gone during a catalogue walk.
-    away_at: u64,
+    away: scan::Absence,
 }
 impl Default for State {
     fn default() -> Self {
@@ -172,7 +175,9 @@ impl Default for State {
             ah_pages: std::collections::BTreeSet::new(),
             probed: String::new(),
             stacked: String::new(),
-            away_at: 0,
+            refused: std::collections::BTreeSet::new(),
+            refused_for: String::new(),
+            away: scan::Absence::default(),
         }
     }
 }
@@ -213,7 +218,11 @@ pub(super) fn flush() {
             && s.dirty
             && let Some(w) = &s.worker
         {
-            let _ = w.save(s.path.clone(), s.scope.clone(), s.book.encode(&s.scope));
+            let _ = w.save(
+                s.path.clone(),
+                s.scope.clone(),
+                s.book.encode_at(&s.scope, now()),
+            );
         }
         if let Some(w) = &s.worker {
             w.finish();
@@ -544,11 +553,7 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
         "auction house" | "аукцион" | "аукционный дом" => scan::Kind::Auction,
         _ => return None,
     };
-    let token = format!(
-        "{:?}|{}",
-        game.remote_menu(),
-        game.draimhorizons_menu_stamp()
-    );
+    let token = window_token(game);
     let mut buttons = Vec::new();
     let valid = game.menu_session(|menu, _, _| {
         if !matches!(menu.kind(), horizon_client::menu::Kind::Chest(6)) || menu.carried.is_some() {
@@ -587,6 +592,14 @@ fn menu(game: &mut Game<'_>) -> Option<(scan::Page, String)> {
         token,
     ))
 }
+/// Identifies the server window as it is now; built once per frame and kept in `State::probed`.
+fn window_token(game: &Game<'_>) -> String {
+    format!(
+        "{:?}|{}",
+        game.remote_menu(),
+        game.draimhorizons_menu_stamp()
+    )
+}
 pub(super) fn frame(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) || game.remote.is_none() {
         suspend();
@@ -606,8 +619,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
             "economy-{:016x}.json",
             crate::game::claim_borders_map_history::hash(scope.as_bytes())
         ));
-        let loaded = disk::load(&path, &scope)
-            .and_then(|raw| raw.map(|r| model::Book::decode(&r, &scope)).transpose());
+        let loaded = disk::load(&path, &scope).and_then(|raw| {
+            raw.map(|r| model::Book::decode_at(&r, &scope, now()))
+                .transpose()
+        });
         let pref = game
             .native_setting(claims::SETTINGS_ID, "economy")
             .and_then(|r| model::Preferences::decode(&r).ok())
@@ -636,25 +651,13 @@ pub(super) fn frame(game: &mut Game<'_>) {
     actions(game);
     // A new server window is read on the frame it arrives, so the catalogue replaces it
     // before the server's own page is ever drawn.
-    let window = (game.screen == Screen::Inventory).then(|| {
-        format!(
-            "{:?}|{}",
-            game.remote_menu(),
-            game.draimhorizons_menu_stamp()
-        )
-    });
+    let window = (game.screen == Screen::Inventory).then(|| window_token(game));
     let gone = game.screen != Screen::Inventory;
     let due = state(|s| {
         // The window closed under a catalogue walk: stop it, unless the server is only
         // swapping one window for the next.
-        if s.status.catalog && gone {
-            if s.away_at == 0 {
-                s.away_at = now;
-            } else if now.saturating_sub(s.away_at) > scan::WINDOW_GRACE_MS {
-                abandon(s);
-            }
-        } else {
-            s.away_at = 0;
+        if s.away.gone(s.status.catalog && gone, now) {
+            abandon(s);
         }
         let changed = window.as_ref().is_some_and(|w| *w != s.probed);
         if now.saturating_sub(s.last_frame) < 200 && !changed {
@@ -871,15 +874,16 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         if s.dirty && s.writable && now.saturating_sub(s.last_save) > 5000 {
             s.book.drop_expired(now);
-        }
-        if s.dirty
-            && s.writable
-            && now.saturating_sub(s.last_save) > 5000
-            && let Some(w) = &s.worker
-            && w.save(s.path.clone(), s.scope.clone(), s.book.encode(&s.scope))
-        {
-            s.dirty = false;
-            s.last_save = now;
+            if let Some(w) = &s.worker
+                && w.save(
+                    s.path.clone(),
+                    s.scope.clone(),
+                    s.book.encode_at(&s.scope, now),
+                )
+            {
+                s.dirty = false;
+                s.last_save = now;
+            }
         }
     });
     if let Some(slot) = click {
@@ -966,7 +970,7 @@ fn abandon(s: &mut State) {
     s.return_scan = false;
     s.auto_cycle = false;
     s.opening = None;
-    s.away_at = 0;
+    s.away = scan::Absence::default();
     s.status.message = Message::None;
 }
 /// The module is off, or there is no server session: no walk may go on, and what the walk
@@ -1006,14 +1010,20 @@ pub(super) fn remember_stacks(lots: &[(u64, ItemStack)]) {
         if s.stacked == s.menu_token {
             return;
         }
+        if s.refused_for != s.menu_token {
+            s.refused.clear();
+            s.refused_for = s.menu_token.clone();
+        }
         let mut complete = true;
         for (id, stack) in lots {
             if !s.book.listings.contains_key(id) {
                 complete = false;
-            } else if !s.book.stacks.contains_key(id) {
+            } else if !s.book.stacks.contains_key(id) && !s.refused.contains(id) {
                 let text = horizon_client::item_data::canon_stack(Some(stack));
                 if s.book.remember_stack(*id, text) {
                     s.dirty = true;
+                } else {
+                    s.refused.insert(*id);
                 }
             }
         }
@@ -1060,11 +1070,7 @@ pub(super) fn forget_listing(id: u64) {
 }
 fn start_scan(game: &mut Game<'_>, kind: scan::Kind, automatic: bool) {
     let now = now();
-    let old = format!(
-        "{:?}|{}",
-        game.remote_menu(),
-        game.draimhorizons_menu_stamp()
-    );
+    let old = window_token(game);
     state(|s| {
         s.opening = Some((old, now));
         s.auto_cycle = automatic;
@@ -1097,11 +1103,7 @@ pub(super) fn server_page(game: &Game<'_>) -> Option<(scan::Page, String)> {
     if !game.native_on(claims::ID) || game.screen != Screen::Inventory {
         return None;
     }
-    let token = format!(
-        "{:?}|{}",
-        game.remote_menu(),
-        game.draimhorizons_menu_stamp()
-    );
+    let token = state(|s| s.probed.clone());
     read(|_, p, status, _| {
         if p.flag("enabled") && p.flag("overlay") && status.menu_token == token {
             status.page.clone().map(|page| (page, token))
