@@ -7,4 +7,4 @@ Target: official Horizon Nightly source `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea
 - Ambiguous cases change nothing: two keys for one account, a friend who is not on the server, or a malformed code. The row reads "Key changed · waiting to verify the identity".
 - Security trade-off: relay UUIDs and nicknames are self-claimed. The new key is trusted without an out-of-band code comparison, protected by the token-gated private relay, the server player-list check and a visible notice. Remove the friend if the notice was not expected.
 
-Verification covers Rust formatting, Clippy, workspace tests, official mixin staging and the pinned native client compile-check; see the result in the delivery message. Live in-game acceptance with two real clients is not verified.
+Verification: Rust formatting, Clippy with warnings denied, the workspace tests, official mixin staging, the pinned native client compile-check and native bundle validation pass. Live in-game acceptance with two real clients is not verified.

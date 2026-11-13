@@ -168,6 +168,7 @@ struct Client {
     last_hello: BTreeMap<u128, u64>,
     // Friends whose relay key was re-pinned: failed handshakes counted until relinked.
     rekeyed: BTreeMap<u128, u8>,
+    rekey_checked: u64,
     last_claims: BTreeMap<u128, u64>,
     claim_revision: u64,
     own_claims: Option<Vec<claims::Claim>>,
@@ -212,6 +213,7 @@ impl Default for Client {
             status_cursor: 0,
             last_hello: BTreeMap::new(),
             rekeyed: BTreeMap::new(),
+            rekey_checked: 0,
             last_claims: BTreeMap::new(),
             claim_revision: 1,
             own_claims: None,
@@ -2438,6 +2440,17 @@ const REKEY_HELLOS: u8 = 3;
 /// reset data folder): the new key is pinned automatically under the narrow rules of
 /// `relay_settings::rekey_target`, the session restarts, and the player is told.
 fn adopt_changed_identities(game: &mut Game<'_>) {
+    // Once a second is plenty: a failed save must not retry on every game tick.
+    if !state(|c| {
+        let time = now(c);
+        let due = time.saturating_sub(c.rekey_checked) >= 1000;
+        if due {
+            c.rekey_checked = time;
+        }
+        due
+    }) {
+        return;
+    }
     let tab = cached_online(game);
     let notices = state(|c| {
         let mut found = Vec::new();
@@ -2471,8 +2484,13 @@ fn adopt_changed_identities(game: &mut Game<'_>) {
             return Vec::new();
         };
         found.retain(|(uuid, _, code)| next.pin(&c.scope, *uuid, code).is_ok());
-        if found.is_empty() || next.save(&c.root.join("relay-contacts.json")).is_err() {
+        if found.is_empty() {
             return Vec::new();
+        }
+        if let Err(error) = next.save(&c.root.join("relay-contacts.json")) {
+            // Report the failure once, then retry in about a minute.
+            c.rekey_checked = now(c).saturating_add(59_000);
+            return vec![error];
         }
         c.pins = Some(next);
         let mut notices = Vec::new();
