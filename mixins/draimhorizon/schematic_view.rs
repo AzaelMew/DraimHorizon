@@ -59,6 +59,24 @@ fn with_places<T>(game: &Game<'_>, f: impl FnOnce(&mut Places) -> T) -> T {
 fn save(game: &Game<'_>, p: &Places) {
     game.native_set_setting(claims::SETTINGS_ID, SETTING, &places::encode(&p.list));
 }
+/// This player's choice of layers to draw (every preview, friends' too), kept in the settings.
+const LAYERS: &str = "schematic_layers";
+static LAYER_CHOICE: Mutex<Option<(places::LayerMode, i32)>> = Mutex::new(None);
+pub(super) fn layers(game: &Game<'_>) -> (places::LayerMode, i32) {
+    *LAYER_CHOICE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(|| {
+            game.native_setting(claims::SETTINGS_ID, LAYERS)
+                .map(|v| places::LayerMode::decode(&v))
+                .unwrap_or_default()
+        })
+}
+pub(super) fn set_layers(game: &Game<'_>, mode: places::LayerMode, layer: i32) {
+    let layer = layer.clamp(0, places::MAX_LAYER);
+    *LAYER_CHOICE.lock().unwrap_or_else(|e| e.into_inner()) = Some((mode, layer));
+    game.native_set_setting(claims::SETTINGS_ID, LAYERS, &mode.encode(layer));
+}
 /// The world a preview belongs to: kept across reconnects and restarts.
 fn here(game: &Game<'_>) -> Option<String> {
     walk::world_key(game)
@@ -304,6 +322,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    let (mode, layer) = layers(game);
     for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);
         g.cuboid(
@@ -312,6 +331,20 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
             if selected { 0xffffd060 } else { 0xaa88aacc },
             if selected { 2.0 } else { 1.0 },
         );
+        // The layer drawn (or the top one drawn) is outlined in the box.
+        if mode != places::LayerMode::All {
+            let y = lo[1] + layer.min(hi[1] - lo[1]);
+            g.cuboid(
+                [f64::from(lo[0]), f64::from(y), f64::from(lo[2])],
+                [
+                    f64::from(hi[0]) + 1.0,
+                    f64::from(y) + 1.0,
+                    f64::from(hi[2]) + 1.0,
+                ],
+                0xff60d0ff,
+                1.5,
+            );
+        }
     }
 }
 /// The editor's keys: (id, default key, Russian name, English name).
@@ -459,8 +492,10 @@ pub(super) fn keys(game: &mut Game<'_>) {
 }
 /// The editor panel: while the selected preview of this world is shown, where it stands, how it
 /// is turned and the keys that move it.
+/// The panel of the selected preview: a card with the file, where it stands, how much is left
+/// and the editor's keys as key caps.
 pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
-    use crate::game::claim_borders_ui_view as ui;
+    use crate::game::{claim_borders_ui_style as style, claim_borders_ui_view as ui};
     if !game.native_playing() || game.ui.hide_gui {
         return;
     }
@@ -469,63 +504,223 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
     };
     let key = |i: usize| {
         let (id, default, _, _) = KEYS[i];
-        let name = game.native_mod_key(claims::ID, id, default);
-        name.rsplit('.').next().unwrap_or("").to_uppercase()
+        places::key_cap(&game.native_mod_key(claims::ID, id, default))
     };
+    let accent = ui::preferences(game).accent.color();
     let [x, y, z] = pl.origin;
-    // A file that cannot be read shows why instead of an empty place.
-    let first = match load_error(&pl.file) {
-        Some(e) => format!(
-            "{}: {} · {e}",
-            text("Схема не читается", "Schematic unreadable"),
-            pl.file
-        ),
-        None => format!("{}: {}", text("Схема", "Schematic"), pl.file),
+    let error = load_error(&pl.file);
+    let blocks = SHAPES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| match m.get(&pl.file) {
+            Some(Loading::Ready(shape)) => Some(shape.cells.len()),
+            _ => None,
+        });
+    let (todo, wrong) = crate::game::claim_borders_schematic_ghosts::nearby_counts();
+    let layer = match layers(game) {
+        (places::LayerMode::All, _) => String::new(),
+        (places::LayerMode::Single, n) => format!(" · {} {}", text("слой", "layer"), n + 1),
+        (places::LayerMode::Below, n) => format!(" · {} 1–{}", text("слои", "layers"), n + 1),
     };
-    let lines = [
-        first,
-        format!("XYZ {x} {y} {z} · {}°", u16::from(pl.rotation) * 90),
-        format!(
-            "{} {}/{}/{}/{} · {} {} · {} {}",
-            text("двигать", "move"),
-            key(4),
-            key(5),
-            key(6),
-            key(7),
-            text("выше", "up"),
-            key(8),
-            text("поворот", "turn"),
-            key(2)
-        ),
-        format!(
-            "{} {} · {} {} · {} {}",
-            text("ко мне", "to me"),
-            key(3),
-            text("скрыть", "hide"),
-            key(0),
-            text("убрать", "remove"),
-            key(1)
-        ),
+    let place = format!("XYZ {x} {y} {z} · {}°{layer}", u16::from(pl.rotation) * 90);
+    // Status chips: (colour, text).
+    let mut chips: Vec<(u32, String)> = Vec::new();
+    match (&error, blocks) {
+        (Some(e), _) => chips.push((
+            style::BAD,
+            format!("{}: {e}", text("Не читается", "Unreadable")),
+        )),
+        (None, None) => chips.push((
+            style::MUTED,
+            text("Файл читается…", "Reading the file…").into(),
+        )),
+        (None, Some(0)) => chips.push((
+            style::WARN,
+            text("В файле нет блоков", "No blocks in the file").into(),
+        )),
+        (None, Some(n)) => {
+            chips.push((style::MUTED, format!("{n} {}", text("блоков", "blocks"))));
+            if todo == 0 && wrong == 0 {
+                chips.push((
+                    style::GOOD,
+                    text("Рядом всё совпадает", "Nearby all matches").into(),
+                ));
+            } else {
+                if todo > 0 {
+                    chips.push((
+                        style::WARN,
+                        format!("{} {todo}", text("Поставить", "To place")),
+                    ));
+                }
+                if wrong > 0 {
+                    chips.push((style::BAD, format!("{} {wrong}", text("Неверных", "Wrong"))));
+                }
+            }
+        }
+    }
+    // The four move keys get a row of their own; the rest sit in two columns below.
+    let moves = [key(4), key(5), key(6), key(7)];
+    let move_label = text("Двигать", "Move");
+    let keys = [
+        (key(2), text("Повернуть", "Turn")),
+        (key(3), text("Ко мне", "To me")),
+        (key(0), text("Скрыть", "Hide")),
+        (key(1), text("Убрать", "Remove")),
+        (key(8), text("Выше · Shift ниже", "Up · Shift down")),
     ];
-    let width = lines
-        .iter()
-        .map(|l| game.native_text_width(l))
-        .fold(0.0f32, f32::max)
-        + 16.0;
-    let top = batch.height * 0.35;
-    ui::fill(
+    // Sizes.
+    let pad = 8.0;
+    let line = 12.0;
+    let cap_h = 11.0;
+    let width_of = |s: &str| game.native_text_width(s);
+    let cap_w = |s: &str| width_of(s) + 8.0;
+    let column = |c: usize| {
+        // A last key on its own row does not widen the columns.
+        keys[..keys.len() / 2 * 2]
+            .iter()
+            .skip(c)
+            .step_by(2)
+            .map(|(k, l)| cap_w(k) + 4.0 + width_of(l))
+            .fold(0.0f32, f32::max)
+    };
+    let moves_w = moves.iter().map(|k| cap_w(k) + 3.0).sum::<f32>() + 1.0 + width_of(move_label);
+    let lone = keys
+        .get(keys.len() / 2 * 2)
+        .map_or(0.0, |(k, l)| cap_w(k) + 4.0 + width_of(l));
+    let keys_w = (column(0) + 14.0 + column(1)).max(moves_w).max(lone);
+    let chips_w: f32 = chips.iter().map(|(_, t)| width_of(t) + 14.0).sum::<f32>()
+        + 4.0 * chips.len().saturating_sub(1) as f32;
+    let title_w = 16.0 + width_of(&pl.file);
+    let inner = keys_w
+        .max(chips_w)
+        .max(title_w)
+        .max(width_of(&place))
+        .clamp(200.0, (batch.width * 0.45).max(200.0));
+    let rows = 1.0 + keys.len().div_ceil(2) as f32;
+    let height =
+        pad + line + 2.0 + line + 4.0 + cap_h + 6.0 + 1.0 + 5.0 + rows * (cap_h + 3.0) + pad - 3.0;
+    let left = 6.0;
+    let top = (batch.height * 0.35)
+        .min(batch.height - height - 6.0)
+        .max(6.0);
+    let card = [left, top, inner + 2.0 * pad, height];
+    ui::rounded(game, batch, card, 6.0, 0xe6000000 | style::BACKGROUND);
+    ui::rounded(
         game,
         batch,
-        [6.0, top, width, 12.0 * lines.len() as f32 + 8.0],
-        0xcc1d2a3a,
+        [left, top + 6.0, 2.0, height - 12.0],
+        1.0,
+        0xff000000 | accent,
     );
-    for (i, line) in lines.iter().enumerate() {
+    let x0 = left + pad;
+    let mut cy = top + pad;
+    // Title: icon and file.
+    ui::icon(
+        game,
+        batch,
+        style::Icon::Layers,
+        [x0, cy - 1.0, 10.0, 10.0],
+        accent,
+    );
+    ui::text(
+        game,
+        batch,
+        &ui::clip(game, &pl.file, inner - 16.0),
+        [x0 + 14.0, cy],
+        style::TEXT,
+        false,
+    );
+    cy += line + 2.0;
+    ui::text(
+        game,
+        batch,
+        &ui::clip(game, &place, inner),
+        [x0, cy],
+        style::MUTED,
+        false,
+    );
+    cy += line + 4.0;
+    // Status chips.
+    let mut cx = x0;
+    for (color, label) in &chips {
+        let label = ui::clip(game, label, (x0 + inner - cx - 14.0).max(0.0));
+        if label.is_empty() {
+            break;
+        }
+        let w = width_of(&label) + 14.0;
+        ui::rounded(
+            game,
+            batch,
+            [cx, cy, w, cap_h],
+            3.0,
+            0xff000000 | style::SURFACE,
+        );
+        ui::rounded(
+            game,
+            batch,
+            [cx + 4.0, cy + 4.0, 3.0, 3.0],
+            1.5,
+            0xff000000 | color,
+        );
+        ui::text(game, batch, &label, [cx + 10.0, cy + 2.0], *color, false);
+        cx += w + 4.0;
+    }
+    cy += cap_h + 6.0;
+    // Divider, then the keys in two columns: key cap, then what it does.
+    game.native_fill(batch, [x0, cy, inner, 1.0], 0x40000000 | style::BORDER);
+    cy += 5.0;
+    let mut kx = x0;
+    for cap in &moves {
+        let w = cap_w(cap);
+        ui::rounded(
+            game,
+            batch,
+            [kx, cy, w, cap_h],
+            2.5,
+            0xff000000 | style::RAISED,
+        );
+        game.native_fill(
+            batch,
+            [kx + 1.0, cy + cap_h - 1.0, w - 2.0, 1.0],
+            0x80000000 | style::BORDER,
+        );
+        ui::text(game, batch, cap, [kx + 4.0, cy + 2.0], style::TEXT, false);
+        kx += w + 3.0;
+    }
+    ui::text(
+        game,
+        batch,
+        move_label,
+        [kx + 1.0, cy + 2.0],
+        style::MUTED,
+        false,
+    );
+    cy += cap_h + 3.0;
+    let second = x0 + column(0) + 14.0;
+    for (i, (cap, label)) in keys.iter().enumerate() {
+        let kx = if i % 2 == 0 { x0 } else { second };
+        let ky = cy + (i / 2) as f32 * (cap_h + 3.0);
+        let w = cap_w(cap);
+        ui::rounded(
+            game,
+            batch,
+            [kx, ky, w, cap_h],
+            2.5,
+            0xff000000 | style::RAISED,
+        );
+        game.native_fill(
+            batch,
+            [kx + 1.0, ky + cap_h - 1.0, w - 2.0, 1.0],
+            0x80000000 | style::BORDER,
+        );
+        ui::text(game, batch, cap, [kx + 4.0, ky + 2.0], style::TEXT, false);
         ui::text(
             game,
             batch,
-            line,
-            [14.0, top + 5.0 + 12.0 * i as f32],
-            if i == 0 { 0xffd060 } else { 0xd8e2ec },
+            label,
+            [kx + w + 4.0, ky + 2.0],
+            style::MUTED,
             false,
         );
     }

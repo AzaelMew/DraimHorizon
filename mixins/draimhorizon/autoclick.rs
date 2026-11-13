@@ -49,13 +49,32 @@ impl Clicker {
         }
     }
     /// Whether the button is down at `now_ms` (any steady clock) at `rate` clicks per second.
+    #[cfg(test)]
     pub fn down(&mut self, now_ms: u64, rate: u16) -> bool {
+        self.tick(now_ms, rate).0
+    }
+    /// Whether the button is down at `now_ms`, and whether a click starts now. Holding the
+    /// button only goes on breaking a block; hitting a mob takes a click, so each pulse is one
+    /// (and the held button, the top rate, clicks once a game tick).
+    pub fn tick(&mut self, now_ms: u64, rate: u16) -> (bool, bool) {
         let interval = 1000 / u64::from(rate.max(1));
-        if interval <= PRESS_MS {
-            return true;
-        }
         let next = *self.next.get_or_insert(now_ms);
+        if interval <= PRESS_MS {
+            if now_ms >= next {
+                // On the tick's own schedule (whatever the frame rate), with no burst after a stall.
+                let after = next + PRESS_MS;
+                self.next = Some(if after <= now_ms {
+                    now_ms + PRESS_MS
+                } else {
+                    after
+                });
+                return (true, true);
+            }
+            return (true, false);
+        }
+        let mut click = false;
         if now_ms >= next {
+            click = true;
             self.release = now_ms + PRESS_MS;
             self.next = Some(next + interval);
             // A long stall must not be paid back with a burst.
@@ -63,7 +82,7 @@ impl Clicker {
                 self.next = Some(now_ms + interval);
             }
         }
-        now_ms < self.release
+        (now_ms < self.release, click)
     }
     /// Forgets the pace (switched off, a screen opened): the next press comes at once.
     pub fn reset(&mut self) {
@@ -115,5 +134,22 @@ mod tests {
         assert_eq!(label(4, false), "5/s");
         assert_eq!(label(RATES.len() as u8 - 1, false), "hold");
         assert_eq!(label(RATES.len() as u8 - 1, true), "удержание");
+    }
+    #[test]
+    fn every_pulse_is_one_click_and_holding_clicks_every_tick() {
+        let count = |rate: u16, step: u64| {
+            let mut clicker = Clicker::default();
+            (0..4000)
+                .step_by(step as usize)
+                .filter(|now| clicker.tick(*now, rate).1)
+                .count()
+        };
+        for step in [4, 7, 16] {
+            assert_eq!(count(5, step), 20, "5/s for 4 s, polled every {step} ms");
+            assert_eq!(count(10, step), 40);
+            // Held: about one click a game tick (20 a second), never more.
+            let held = count(20, step);
+            assert!((70..=80).contains(&held), "{held} at {step} ms");
+        }
     }
 }
