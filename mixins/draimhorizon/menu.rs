@@ -4296,8 +4296,8 @@ impl Menu {
                 Control::Helper(Helper::AutoClick),
                 model.helpers[Helper::AutoClick.index()],
                 self.language.text(
-                    "Нажимает выбранную кнопку мыши в заданном темпе",
-                    "Presses the chosen mouse button at the chosen pace",
+                    "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
+                    "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
                 ),
             ),
         ]);

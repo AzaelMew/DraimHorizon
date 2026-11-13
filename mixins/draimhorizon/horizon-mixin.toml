@@ -848,6 +848,13 @@ file = "crates/horizon-client/src/game/remote.rs"
 name = "claim_borders_clickthrough_view"
 source = "clickthrough_view.rs"
 
+[[module]]
+id = "click-press"
+file = "crates/horizon-client/src/game/remote.rs"
+name = "claim_borders_click_press"
+source = "click_press.rs"
+visibility = "pub"
+
 [[injection]]
 id = "clickthrough-remote"
 kind = "HEAD"
