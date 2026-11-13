@@ -83,13 +83,18 @@ struct State {
     /// The pager as last drawn: card pages and the server's own page buttons.
     pager: (usize, Option<scan::Button>, Option<scan::Button>),
     /// The catalogue replaces the auction while it stays open from its home page.
-    catalog: bool,
+    session: scan::Session,
     catalog_page: usize,
     catalog_pages: usize,
     /// 0 = unit price, 1 = lot price, 2 = ending soonest, 3 = newest.
     catalog_sort: u8,
-    /// The lot whose purchase waits for confirmation.
-    buy: Option<u64>,
+    /// The lot, as the player saw it, whose purchase waits for confirmation.
+    buy: Option<economy::Listing>,
+    /// The catalogue's order while it is browsed: lots keep their places as data arrives.
+    order: Vec<u64>,
+    order_key: (String, u8),
+    /// The cards on screen as drawn, so a click acts on what was seen, not on newer data.
+    shown: HashMap<u64, economy::Listing>,
     /// A confirmed server command, sent on the next frame.
     command: Option<String>,
     /// Item stacks seen for each lot, for icons and the item tooltip.
@@ -114,7 +119,8 @@ pub(super) fn reset() {
 }
 /// The auction catalogue is on screen, so a click is for it rather than for a scan.
 pub(super) fn catalog_active(game: &Game<'_>) -> bool {
-    live(game).is_some_and(|(page, _)| page.family == scan::Kind::Auction) && state(|s| s.catalog)
+    live(game).is_some_and(|(page, _)| page.family == scan::Kind::Auction)
+        && state(|s| s.session.shown())
 }
 pub(super) fn active(game: &Game<'_>) -> bool {
     live(game).is_some()
@@ -126,6 +132,8 @@ fn view_key(kind: scan::Kind) -> &'static str {
     }
 }
 fn toggle_view(game: &Game<'_>, kind: scan::Kind) {
+    // The walk clicks the server's pages; it must not go on under the player's own hands.
+    data::cancel_scan();
     data::configure(game, view_key(kind), 1);
     state(|s| {
         s.pending = None;
@@ -136,7 +144,9 @@ fn toggle_view(game: &Game<'_>, kind: scan::Kind) {
     });
 }
 fn live(game: &Game<'_>) -> Option<(scan::Page, String)> {
-    let page = data::server_page(game)?;
+    // While the catalogue walks the auction a page change is not yet parsed for a frame or
+    // two; the walk's last page stands in so the server's own page is never drawn or clicked.
+    let page = data::server_page(game).or_else(|| data::catalog_hold(game))?;
     if !data::read(|_, prefs, _, _| prefs.flag(view_key(page.0.family))) {
         None
     } else {
@@ -161,6 +171,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             Some(false)
         });
         let lots = data::lot_stacks(game);
+        data::remember_stacks(&lots);
         state(|s| {
             if s.stacks.len() > 6000 {
                 s.stacks.clear();
@@ -213,14 +224,34 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
         });
     }
-    if game.screen != Screen::Inventory {
-        state(|s| {
+    // A server swapping one window for the next must not end the catalogue session under the
+    // player; a window that stays closed does, and the next opening is a new session.
+    let open = game.screen == Screen::Inventory;
+    let now = data::now();
+    state(|s| {
+        if !open {
             s.pending = None;
             s.focus = false;
             s.hits.clear();
-            s.catalog = false;
+        }
+        if s.session.window(open, now) {
             s.buy = None;
-        });
+        }
+    });
+}
+/// How long ago, in the player's language.
+fn ago(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (n, unit) = match secs {
+        0..60 => (secs, t("с", "s")),
+        60..3600 => (secs / 60, t("мин", "min")),
+        3600..86_400 => (secs / 3600, t("ч", "h")),
+        _ => (secs / 86_400, t("д", "d")),
+    };
+    if russian() {
+        format!("{n} {unit} назад")
+    } else {
+        format!("{n} {unit} ago")
     }
 }
 /// The auction's start page, where the catalogue walk begins.
@@ -318,19 +349,28 @@ fn render_catalog(
     s.hover = None;
     s.hover_lot = None;
     s.control_tip = None;
-    let (mut lots, scanning, pages, finished, balance, caps) = data::read(|book, _, status, _| {
-        (
-            book.listings.values().cloned().collect::<Vec<_>>(),
-            status.catalog,
-            status.pages,
-            status.catalog_at,
-            book.balance.map(|(v, _)| v),
-            book.auction_watch.clone(),
-        )
-    });
+    let (mut lots, scanning, pages, finished, balance, caps, generation) =
+        data::read(|book, _, status, _| {
+            (
+                book.listings.values().cloned().collect::<Vec<_>>(),
+                status.catalog,
+                status.pages,
+                status.catalog_at,
+                book.balance.map(|(v, _)| v),
+                book.auction_watch.clone(),
+                book.generation,
+            )
+        });
     let now = data::now();
     lots.retain(|l| l.expires > now);
     let total = lots.len();
+    // Lots the current walk has not seen are saved data: shown, but not proof of anything.
+    let saved_seen = lots
+        .iter()
+        .filter(|l| l.generation != generation)
+        .map(|l| l.seen)
+        .max();
+    let newest_seen = lots.iter().map(|l| l.seen).max();
     lots.retain(|l| {
         crate::game::claim_borders_input::matches(
             &s.query.value,
@@ -344,6 +384,18 @@ fn render_catalog(
         3 => lots.sort_by(|a, b| b.id.cmp(&a.id)),
         _ => lots.sort_by(|a, b| per_unit(a).total_cmp(&per_unit(b)).then(a.id.cmp(&b.id))),
     }
+    // Sorting applies when the search or the sort changes; between those, lots that arrive
+    // join at the end instead of moving the ones the player is reading.
+    let key = (s.query.value.clone(), s.catalog_sort);
+    if s.order_key != key {
+        s.order.clear();
+        s.order_key = key;
+    }
+    let sorted: Vec<u64> = lots.iter().map(|l| l.id).collect();
+    s.order = economy::stable_order(&s.order, &sorted);
+    let mut by_id: HashMap<u64, economy::Listing> = lots.drain(..).map(|l| (l.id, l)).collect();
+    lots.extend(s.order.iter().filter_map(|id| by_id.remove(id)));
+    s.shown.clear();
     ui::rounded(
         game,
         batch,
@@ -370,22 +422,37 @@ fn render_catalog(
     let title = t("Аукцион", "Auction");
     ui::text(game, batch, title, [x + 28.0, y + 11.0], style::TEXT, false);
     let status = if scanning {
-        if russian() {
-            format!("Загрузка · стр. {} · {total} лотов", pages.max(1))
-        } else {
-            format!("Loading · page {} · {total} lots", pages.max(1))
+        let saved = saved_seen.map(|t| ago(now.saturating_sub(t)));
+        match (russian(), saved) {
+            (true, Some(age)) => format!(
+                "Обновление · стр. {} · {total} лотов · сохранено {age}",
+                pages.max(1)
+            ),
+            (true, None) => format!("Обновление · стр. {} · {total} лотов", pages.max(1)),
+            (false, Some(age)) => format!(
+                "Refreshing · page {} · {total} lots · saved {age}",
+                pages.max(1)
+            ),
+            (false, None) => format!("Refreshing · page {} · {total} lots", pages.max(1)),
         }
     } else if finished > 0 {
-        let ago = now.saturating_sub(finished) / 1000;
+        let age = ago(now.saturating_sub(finished));
         if russian() {
-            format!("{total} лотов · обновлено {ago} с назад")
+            format!("{total} лотов · обновлено {age}")
         } else {
-            format!("{total} lots · updated {ago} s ago")
+            format!("{total} lots · updated {age}")
+        }
+    } else if let Some(seen) = newest_seen {
+        let age = ago(now.saturating_sub(seen));
+        if russian() {
+            format!("{total} лотов · сохранённые данные, видели {age}")
+        } else {
+            format!("{total} lots · saved data, last seen {age}")
         }
     } else if russian() {
-        format!("{total} лотов · сохранённые данные")
+        "Нет сохранённых данных".to_string()
     } else {
-        format!("{total} lots · saved data")
+        "No saved data".to_string()
     };
     let title_w = game.native_text_width(title);
     let balance_text = balance.map(coins).unwrap_or_default();
@@ -575,6 +642,15 @@ fn render_catalog(
     s.catalog_page = s.catalog_page.min(pages_total - 1);
     let gw = (w - 16.0 + 4.0) / cols as f32;
     for (i, l) in lots.iter().skip(s.catalog_page * per).take(per).enumerate() {
+        let saved = l.generation != generation;
+        s.shown.insert(l.id, l.clone());
+        if !s.stacks.contains_key(&l.id) {
+            // The exact stack saved with the lot; a plain stack when there is none.
+            let stack = data::saved_stack(l.id)
+                .filter(|st| *st.item == *l.item)
+                .unwrap_or_else(|| horizon_client::items::ItemStack::new(&l.item, 1));
+            s.stacks.insert(l.id, stack);
+        }
         let r = [
             x + 8.0 + (i % cols) as f32 * gw,
             top + (i / cols) as f32 * (card_h + 3.0),
@@ -610,7 +686,13 @@ fn render_catalog(
             batch,
             &ui::clip(game, &name, r[2] - 36.0 - price_w),
             [r[0] + 25.0, r[1] + 4.0],
-            if deal { 0x87e4af } else { style::TEXT },
+            if deal {
+                0x87e4af
+            } else if saved {
+                0xa9b6c4
+            } else {
+                style::TEXT
+            },
             false,
         );
         ui::text(
@@ -656,6 +738,11 @@ fn render_catalog(
     if lots.is_empty() {
         let text = if scanning {
             t("Загружаем лоты аукциона…", "Loading the auction's lots…")
+        } else if total == 0 && finished == 0 {
+            t(
+                "Нет сохранённых лотов · нажмите «Обновить»",
+                "No saved lots yet · press Refresh",
+            )
         } else if total == 0 {
             t("На аукционе нет лотов", "The auction has no lots")
         } else {
@@ -744,8 +831,8 @@ fn render_catalog(
         0xb8cdce,
         false,
     );
-    if let Some(id) = s.buy {
-        render_buy(game, batch, s, screen, id, balance);
+    if let Some(shown) = s.buy.clone() {
+        render_buy(game, batch, s, screen, shown, balance);
     }
 }
 /// The purchase confirmation: what, from whom, for how much, and the command it sends.
@@ -754,7 +841,7 @@ fn render_buy(
     batch: &mut HudBatch,
     s: &mut State,
     screen: &crate::game::native_hooks::NativeScreenView<'_>,
-    id: u64,
+    l: economy::Listing,
     balance: Option<economy::Coins>,
 ) {
     use crate::game::claim_borders_ui_style as style;
@@ -762,10 +849,10 @@ fn render_buy(
     s.hover = None;
     s.hover_lot = None;
     s.control_tip = None;
-    let Some(l) = data::read(|book, _, _, _| book.listings.get(&id).cloned()) else {
-        s.buy = None;
-        return;
-    };
+    // The dialog shows the lot as it was chosen; newer data never rewrites it silently.
+    let now = data::now();
+    let (ready, state_now) =
+        data::read(|book, _, _, _| (book.buy_ready(&l, now), book.lot_state(l.id, now)));
     let form = style::DialogLayout::new([batch.width, batch.height], [360.0, 224.0]);
     let [mx, _, mw, _] = form.panel;
     game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x9009111c);
@@ -853,6 +940,34 @@ fn render_buy(
             false,
         );
     }
+    let warning = match (ready, state_now) {
+        (Err(why), _) => Some((refusal(why), 0xe39ca8)),
+        (Ok(()), economy::LotState::Saved) => Some((
+            if russian() {
+                format!(
+                    "Сохранённые данные ({}): лот мог быть продан или изменён.",
+                    ago(now.saturating_sub(l.seen))
+                )
+            } else {
+                format!(
+                    "Saved data ({}): the lot may be sold or changed.",
+                    ago(now.saturating_sub(l.seen))
+                )
+            },
+            0xf0d68a,
+        )),
+        _ => None,
+    };
+    if let Some((text, color)) = warning {
+        ui::text(
+            game,
+            batch,
+            &ui::clip(game, &text, mw - 24.0),
+            [mx + 12.0, by + 26.0 + lines.len() as f32 * 12.0],
+            color,
+            false,
+        );
+    }
     let cancel = form.footer(0, false);
     let ok = form.footer(1, false);
     if !l.bid {
@@ -893,7 +1008,7 @@ fn render_buy(
         screen.mouse,
     );
     s.hits.push((cancel, Hit::Cancel));
-    if !l.bid {
+    if !l.bid && ready.is_ok() {
         ui::button(game, batch, ok, t("Купить", "Buy"), false, screen.mouse);
         s.hits.push((ok, Hit::Buy));
     }
@@ -1384,19 +1499,17 @@ pub(super) fn render(
     let start = batch.vertices.len();
     game.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x80111b27);
     // The auction's home page starts the catalogue: the walk runs behind it, and its pages
-    // are never drawn. A fresh walk is skipped when one just finished.
+    // are never drawn. Every new opening walks the auction again (see `scan::Session`).
     if auction_home(&page) {
-        let (running, finished) = data::read(|_, _, status, _| (status.catalog, status.catalog_at));
-        let fresh = finished > 0 && data::now().saturating_sub(finished) < 15_000;
-        let first = state(|s| !std::mem::replace(&mut s.catalog, true));
-        let refresh = state(|s| {
-            let due = s.refresh.as_ref().is_some_and(|old| *old != token);
-            if due {
+        let running = data::read(|_, _, status, _| status.catalog);
+        let start = state(|s| {
+            let refresh = s.refresh.as_ref().is_some_and(|old| *old != token);
+            if refresh {
                 s.refresh = None;
             }
-            due
+            s.session.home(running, refresh)
         });
-        if !running && (first && !fresh || refresh) {
+        if start {
             data::start_catalog();
         }
     }
@@ -1405,7 +1518,7 @@ pub(super) fn render(
         .buttons
         .iter()
         .any(|b| matches!(scan::role(&page, b), Buy(_) | Bid));
-    if page.family == scan::Kind::Auction && !confirming && state(|s| s.catalog) {
+    if page.family == scan::Kind::Auction && !confirming && state(|s| s.session.shown()) {
         state(|s| {
             s.token = token.clone();
             render_catalog(game, batch, s, screen, [x, y, w, h]);
@@ -2336,26 +2449,30 @@ pub(super) fn mouse(
                 s.buy = None;
             }
             Some(Hit::Lot(id)) => {
-                // Without the question a click buys at once, except lots taking bids and
-                // purchases the known balance cannot cover, which still explain themselves.
-                let direct = data::read(|book, prefs, _, _| {
-                    book.listings.get(&id).is_some_and(|l| {
-                        l.buys_without_asking(
+                // Without the question a click buys at once, except lots taking bids, saved
+                // lots the current walk has not seen, and purchases the known balance cannot
+                // cover. It acts on the card as drawn, checked against the data now.
+                if let Some(shown) = s.shown.get(&id).cloned() {
+                    let now = data::now();
+                    let direct = data::read(|book, prefs, _, _| {
+                        book.direct_buy_allowed(
+                            &shown,
                             prefs.flag("confirm_buy"),
                             book.balance.map(|(v, _)| v),
+                            now,
                         )
-                    })
-                });
-                if direct {
-                    buy(s, id);
-                } else {
-                    s.buy = Some(id);
-                    s.notice.clear();
+                    });
+                    if direct {
+                        buy(s, shown);
+                    } else {
+                        s.buy = Some(shown);
+                        s.notice.clear();
+                    }
                 }
             }
             Some(Hit::Buy) => {
-                if let Some(id) = s.buy.take() {
-                    buy(s, id);
+                if let Some(shown) = s.buy.take() {
+                    buy(s, shown);
                 }
             }
             Some(Hit::AskToggle) => {
@@ -2365,13 +2482,14 @@ pub(super) fn mouse(
             Some(Hit::Command(command)) => {
                 // My listings and Mail are server pages; the catalogue steps aside for them.
                 data::cancel_scan();
-                s.catalog = false;
+                s.session.leave();
                 s.command = Some(command.into());
             }
             Some(Hit::Refresh) => {
                 // The walk starts from the home page: from there at once, otherwise once the
                 // reopened auction arrives.
                 data::cancel_scan();
+                s.order.clear();
                 if auction_home(&page) {
                     data::start_catalog();
                 } else {
@@ -2379,10 +2497,10 @@ pub(super) fn mouse(
                     s.command = Some("ah".into());
                 }
             }
-            Some(Hit::Pager(dir)) if s.catalog => catalog_step(s, dir),
+            Some(Hit::Pager(dir)) if s.session.shown() => catalog_step(s, dir),
             Some(Hit::Pager(dir)) => step(s, &token, dir),
             Some(Hit::Search) => s.focus = true,
-            Some(Hit::Sort) if s.catalog => {
+            Some(Hit::Sort) if s.session.shown() => {
                 s.catalog_sort = (s.catalog_sort + 1) % 4;
                 s.catalog_page = 0;
             }
@@ -2528,7 +2646,7 @@ pub(super) fn scroll(game: &Game<'_>, amount: f64, canceled: &mut bool) -> bool 
             } else {
                 s.modal_scroll.saturating_add(1)
             };
-        } else if s.catalog {
+        } else if s.session.shown() {
             catalog_step(s, if amount > 0.0 { -1 } else { 1 });
         } else {
             let token = s.token.clone();
@@ -2537,8 +2655,14 @@ pub(super) fn scroll(game: &Game<'_>, amount: f64, canceled: &mut bool) -> bool 
     });
     true
 }
-/// Sends `/ah buy <number>`: the server buys at once, with no window of its own.
-fn buy(s: &mut State, id: u64) {
+/// Sends `/ah buy <number>`: the server buys at once, with no window of its own. The lot must
+/// still be there, unexpired and unchanged from what the player saw.
+fn buy(s: &mut State, shown: economy::Listing) {
+    if let Err(why) = data::read(|book, _, _, _| book.buy_ready(&shown, data::now())) {
+        s.notice = refusal(why);
+        return;
+    }
+    let id = shown.id;
     // A walk must not read the server's answer page as the end of the list.
     data::cancel_scan();
     s.command = Some(format!("ah buy {id}"));
@@ -2548,6 +2672,20 @@ fn buy(s: &mut State, id: u64) {
     } else {
         format!("Sent /ah buy {id} · the server replies in chat")
     };
+}
+fn refusal(why: economy::BuyRefusal) -> String {
+    match why {
+        economy::BuyRefusal::Gone => t(
+            "Лот пропал из каталога · обновите список",
+            "The lot is gone from the catalogue · refresh the list",
+        ),
+        economy::BuyRefusal::Expired => t("Лот истёк", "The lot has expired"),
+        economy::BuyRefusal::Changed => t(
+            "Лот изменился (цена или продавец) · выберите его заново",
+            "The lot changed (price or seller) · choose it again",
+        ),
+    }
+    .into()
 }
 fn catalog_step(s: &mut State, dir: i32) {
     s.catalog_page = if dir < 0 {

@@ -137,6 +137,7 @@ pub struct ViewModel {
     pub pat_policy: super::claim_borders_patting::Policy,
     pub pat_notify: bool,
     pub protect_glow_berries: bool,
+    pub show_invisible_entities: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
     pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
@@ -278,6 +279,7 @@ pub enum Action {
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
+    SetShowInvisibleEntities(bool),
     SetHelper(Helper, bool),
     /// The auto-clicker's button: true for the right one.
     SetAutoClickButton(bool),
@@ -429,6 +431,9 @@ impl std::fmt::Debug for Action {
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
                 f.debug_tuple("SetProtectGlowBerries").field(on).finish()
+            }
+            Self::SetShowInvisibleEntities(on) => {
+                f.debug_tuple("SetShowInvisibleEntities").field(on).finish()
             }
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -713,6 +718,7 @@ pub enum Control {
     /// Switches the notification of a received pat.
     PatNotify,
     ProtectGlowBerries,
+    ShowInvisibleEntities,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -825,6 +831,7 @@ pub enum Control {
     ChatSection(ChatSection),
     ExperimentalAllowed,
     ExperimentalSource,
+    ExperimentalRange(u8),
     ExperimentalOreToggle(u8),
     ChatAdjust(ChatOption, i8),
     ChatPlacement,
@@ -2517,6 +2524,20 @@ impl Menu {
                             "Prevent breaking vines and harvesting berries; sneak to bypass",
                         ),
                     ),
+                    (
+                        localized!(
+                            self.language,
+                            "Показывать невидимых: {}",
+                            "Show invisible entities: {}",
+                            self.on(model.show_invisible_entities)
+                        ),
+                        Control::ShowInvisibleEntities,
+                        model.show_invisible_entities,
+                        self.language.text(
+                            "Требует согласия на эксперименты; на серверах возможен бан",
+                            "Requires experimental consent; servers may ban this feature",
+                        ),
+                    ),
                 ];
                 // Hints show under the switches when every row and its hint fit.
                 let detailed = height >= 54.0 + rows.len() as f32 * 52.0;
@@ -2525,7 +2546,7 @@ impl Menu {
                 for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
                     let y = 54.0 + index as f32 * step;
                     v.push(widget([x, y, w, 22.0], label, Some(control), selected));
-                    if detailed {
+                    if detailed || control == Control::ShowInvisibleEntities {
                         let mut hint =
                             widget([x + 6.0, y + 26.0, w - 12.0, 14.0], hint, None, false);
                         hint.muted = true;
@@ -4139,7 +4160,7 @@ impl Menu {
         .into_iter()
         .enumerate()
         {
-            let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
+            let step = ((height - 132.0) / 5.0).clamp(16.0, 28.0);
             let y = 82.0 + index as f32 * step;
             out.push(widget(
                 [x, y, w, (step - 2.0).min(22.0)],
@@ -4149,8 +4170,30 @@ impl Menu {
             ));
         }
         // One icon tile per ore, toggled like the seed map filters; the name is the tooltip.
-        let step = ((height - 132.0) / 4.0).clamp(16.0, 28.0);
-        let top = 82.0 + 2.0 * step;
+        let step = ((height - 132.0) / 5.0).clamp(16.0, 28.0);
+        let range_y = 82.0 + 2.0 * step;
+        let range_w = (w - 8.0) / 3.0;
+        for (radius, label) in [
+            self.language.text("1 чанк", "1 chunk"),
+            "3x3",
+            self.language.text("5x5 (тяжело)", "5x5 (heavy)"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            out.push(widget(
+                [
+                    x + radius as f32 * (range_w + 4.0),
+                    range_y,
+                    range_w,
+                    (step - 2.0).min(22.0),
+                ],
+                label,
+                Some(Control::ExperimentalRange(radius as u8)),
+                p.prediction_radius == radius as u8,
+            ));
+        }
+        let top = 82.0 + 3.0 * step;
         let count = experimental::ORES.len();
         let tile = ((w + 2.0) / count as f32 - 2.0)
             .min(height - 52.0 - top)
@@ -4866,6 +4909,16 @@ impl Menu {
             Control::ProtectGlowBerries => {
                 Some(Action::SetProtectGlowBerries(!model.protect_glow_berries))
             }
+            Control::ShowInvisibleEntities
+                if !model.show_invisible_entities && !model.experiments_accepted =>
+            {
+                self.experiments_prompt = true;
+                self.focus = None;
+                None
+            }
+            Control::ShowInvisibleEntities => Some(Action::SetShowInvisibleEntities(
+                !model.show_invisible_entities,
+            )),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -5404,11 +5457,13 @@ impl Menu {
 
             Control::ExperimentalAllowed
             | Control::ExperimentalSource
+            | Control::ExperimentalRange(_)
             | Control::ExperimentalOreToggle(_) => {
                 let mut p = model.experimental;
                 match control {
                     Control::ExperimentalAllowed => p.allowed = !p.allowed,
                     Control::ExperimentalSource => p.prediction = !p.prediction,
+                    Control::ExperimentalRange(radius) => p.prediction_radius = radius.min(2),
                     Control::ExperimentalOreToggle(kind)
                         if usize::from(kind) < experimental::ORES.len() =>
                     {
@@ -6483,6 +6538,7 @@ mod tests {
                                     Control::PatPolicy,
                                     Control::PatNotify,
                                     Control::ProtectGlowBerries,
+                                    Control::ShowInvisibleEntities,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;
@@ -6530,6 +6586,33 @@ mod tests {
             menu.activate(&model, 400.0, Control::ProtectGlowBerries),
             Some(Action::SetProtectGlowBerries(false))
         ));
+    }
+    #[test]
+    fn invisible_entities_switches_both_ways_and_defaults_off() {
+        for language in [Language::English, Language::Russian] {
+            let mut menu = Menu {
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel::default();
+            assert!(!model.show_invisible_entities);
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                None
+            );
+            assert!(menu.experiments_prompt);
+            menu.experiments_prompt = false;
+            model.experiments_accepted = true;
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                Some(Action::SetShowInvisibleEntities(true))
+            );
+            model.show_invisible_entities = true;
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                Some(Action::SetShowInvisibleEntities(false))
+            );
+        }
     }
     #[test]
     fn toggle_captions_have_matching_russian_and_english_controls() {
@@ -7079,7 +7162,7 @@ mod tests {
             tab: Tab::Experimental,
             ..Menu::default()
         };
-        for height in [200.0, 216.0, 300.0, 500.0] {
+        for height in [200.0, 216.0, 240.0, 256.0, 280.0, 300.0, 500.0] {
             let rows = menu.layout(&model, 360.0, height);
             let controls: Vec<_> = rows
                 .iter()
@@ -7089,12 +7172,13 @@ mod tests {
                         Some(
                             Control::ExperimentalAllowed
                                 | Control::ExperimentalSource
+                                | Control::ExperimentalRange(_)
                                 | Control::ExperimentalOreToggle(_)
                         )
                     )
                 })
                 .collect();
-            assert_eq!(controls.len(), 2 + experimental::ORES.len());
+            assert_eq!(controls.len(), 5 + experimental::ORES.len());
             for (i, a) in controls.iter().enumerate() {
                 for b in &controls[i + 1..] {
                     assert!(
@@ -7135,6 +7219,43 @@ mod tests {
             panic!("unknown tile should leave preferences as they are");
         };
         assert_eq!(p.ores, before);
+    }
+
+    #[test]
+    fn seed_prediction_range_buttons_save_each_choice_in_both_languages() {
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Experimental,
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel::default();
+            model.experimental.prediction = true;
+            for radius in [1, 2, 0] {
+                let rows = menu.layout(&model, 360.0, 200.0);
+                let row = rows
+                    .iter()
+                    .find(|row| row.control == Some(Control::ExperimentalRange(radius)))
+                    .unwrap();
+                let mouse = [
+                    row.rect[0] + row.rect[2] * 0.5,
+                    row.rect[1] + row.rect[3] * 0.5,
+                ];
+                let Some(Action::SetExperimental(p)) = menu.click(&model, [360.0, 200.0], mouse)
+                else {
+                    panic!("range click did not save preferences")
+                };
+                assert_eq!(p.prediction_radius, radius);
+                assert_eq!(p.ores, model.experimental.ores);
+                assert_eq!(p.allowed, model.experimental.allowed);
+                assert!(p.prediction);
+                model.experimental = p;
+                let rows = menu.layout(&model, 360.0, 200.0);
+                assert!(rows.iter().any(|row| row.control
+                    == Some(Control::ExperimentalRange(radius))
+                    && row.selected));
+            }
+        }
     }
 
     #[test]

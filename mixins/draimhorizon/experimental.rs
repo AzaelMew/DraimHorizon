@@ -77,6 +77,7 @@ pub const ORES: [Ore; 10] = [
 pub struct Preferences {
     pub allowed: bool,
     pub prediction: bool,
+    pub prediction_radius: u8,
     pub ores: u16,
     pub selected: u8,
 }
@@ -85,6 +86,7 @@ impl Default for Preferences {
         Self {
             allowed: false,
             prediction: false,
+            prediction_radius: 0,
             ores: 3,
             selected: 0,
         }
@@ -94,11 +96,12 @@ impl Preferences {
     pub fn normalized(mut self) -> Self {
         self.ores &= (1 << ORES.len()) - 1;
         self.selected %= ORES.len() as u8;
+        self.prediction_radius = self.prediction_radius.min(2);
         self
     }
     pub fn encode(self) -> String {
         let p = self.normalized();
-        json!({"schema":1,"allowed":p.allowed,"prediction":p.prediction,"ores":p.ores,"selected":p.selected}).to_string()
+        json!({"schema":1,"allowed":p.allowed,"prediction":p.prediction,"prediction_radius":p.prediction_radius,"ores":p.ores,"selected":p.selected}).to_string()
     }
     pub fn decode(raw: &str) -> Result<Self, String> {
         if raw.len() > 4096 {
@@ -111,6 +114,7 @@ impl Preferences {
         Ok(Self {
             allowed: v["allowed"].as_bool().unwrap_or(false),
             prediction: v["prediction"].as_bool().unwrap_or(false),
+            prediction_radius: v["prediction_radius"].as_u64().unwrap_or(0).min(2) as u8,
             ores: v["ores"].as_u64().unwrap_or(3).min(u64::from(u16::MAX)) as u16,
             selected: v["selected"].as_u64().unwrap_or(0).min(255) as u8,
         }
@@ -125,6 +129,13 @@ impl Preferences {
             .find(|(i, o)| self.includes(*i) && o.blocks.contains(&id))
             .map(|(i, _)| i as u8)
     }
+}
+/// Row-major chunk square, bounded even for malformed saved settings.
+pub fn prediction_chunks(center: (i32, i32), radius: u8) -> Vec<(i32, i32)> {
+    let radius = i32::from(radius.min(2));
+    (-radius..=radius)
+        .flat_map(|z| (-radius..=radius).map(move |x| (center.0 + x, center.1 + z)))
+        .collect()
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark {
@@ -181,6 +192,35 @@ pub fn edges(mark: &Mark) -> Vec<([f64; 3], [f64; 3])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prediction_range_migrates_roundtrips_and_bounds_chunk_squares() {
+        assert_eq!(
+            Preferences::decode(r#"{"schema":1}"#)
+                .unwrap()
+                .prediction_radius,
+            0
+        );
+        for radius in 0..=2 {
+            let p = Preferences {
+                prediction_radius: radius,
+                ..Preferences::default()
+            };
+            assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
+            let chunks = prediction_chunks((-3, -7), radius);
+            let r = i32::from(radius);
+            assert_eq!(chunks.len(), ((2 * r + 1).pow(2)) as usize);
+            assert_eq!(chunks.first(), Some(&(-3 - r, -7 - r)));
+            assert_eq!(chunks.last(), Some(&(-3 + r, -7 + r)));
+            assert!(chunks.contains(&(-3, -7)));
+        }
+        assert_eq!(prediction_chunks((0, 0), 255).len(), 25);
+        assert_eq!(
+            Preferences::decode(r#"{"schema":1,"prediction_radius":999}"#)
+                .unwrap()
+                .prediction_radius,
+            2
+        );
+    }
     #[test]
     fn english_ore_labels_are_not_cyrillic() {
         for ore in ORES {

@@ -671,12 +671,47 @@ impl Listing {
     pub fn buys_without_asking(&self, ask: bool, balance: Option<Coins>) -> bool {
         !ask && !self.bid && balance.is_none_or(|v| v >= self.cost)
     }
+    /// The same lot with the same terms (what a purchase confirmation promised).
+    pub fn same_offer(&self, o: &Self) -> bool {
+        (
+            self.id,
+            &self.item,
+            self.count,
+            self.cost,
+            &self.seller,
+            self.bid,
+        ) == (o.id, &o.item, o.count, o.cost, &o.seller, o.bid)
+    }
     pub fn within_unit_price(&self, cap: Coins) -> bool {
         !self.bid
             && self.count > 0
             && cap > 0
             && i128::from(self.cost) <= i128::from(cap) * i128::from(self.count)
     }
+}
+const MAX_LISTINGS: usize = 5000;
+const MAX_ROWS: usize = 20_000;
+const STACK_TEXT_MAX: usize = 4096;
+const STACK_BYTES_MAX: usize = 2 * 1024 * 1024;
+const FILE_BUDGET: usize = 3_800_000;
+/// How long after being seen a lot still counts as current enough to buy without asking.
+const FRESH_MS: u64 = 120_000;
+const MAX_LOT_LIFE: u64 = 400 * 86_400_000;
+/// How far a lot of the catalogue can be trusted right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LotState {
+    Gone,
+    Expired,
+    /// Restored from disk or seen before the current walk: it may be sold or changed.
+    Saved,
+    /// Seen by the current walk.
+    Fresh,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuyRefusal {
+    Gone,
+    Expired,
+    Changed,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Rules {
@@ -692,7 +727,7 @@ pub struct Trade {
     pub net: Coins,
     pub buying: bool,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Book {
     pub quotes: BTreeMap<String, Quote>,
     pub unsupported: BTreeSet<String>,
@@ -711,6 +746,10 @@ pub struct Book {
     pub generation: u64,
     pub complete_scan: bool,
     pub observed_pages: u32,
+    /// When the last complete walk of the whole auction finished (0: none saved).
+    pub ah_complete_at: u64,
+    /// Item stack text (SNBT) of lots, for exact titles and details after a restart.
+    pub stacks: BTreeMap<u64, String>,
     pub movers: Vec<String>,
     pub movers_at: u64,
 }
@@ -817,6 +856,11 @@ fn quote_line(text: &str) -> Option<(Option<Coins>, Option<Coins>)> {
     }
     (buy.is_some() || sell.is_some()).then_some((buy, sell))
 }
+fn valid_seller(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 16
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
 pub fn listing(label: &str, item: &str, now: u64, generation: u64) -> Option<Listing> {
     let parts: Vec<_> = label.split('·').map(str::trim).collect();
     if parts.len() != 4 {
@@ -835,12 +879,7 @@ pub fn listing(label: &str, item: &str, now: u64, generation: u64) -> Option<Lis
         amount(parts[1])?
     };
     let seller = parts[2];
-    if seller.is_empty()
-        || seller.len() > 16
-        || !seller
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    {
+    if !valid_seller(seller) {
         return None;
     }
     let expires = duration(parts[3].strip_suffix(" left")?)?.checked_add(now)?;
@@ -1260,10 +1299,37 @@ impl Book {
             }
         }
     }
-    pub fn encode(&self, scope: &str) -> String {
-        json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"auction_watch":self.auction_watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()}).to_string()
+    /// Saved auction lots ride in the same file as the prices: the schema stays 1 so older
+    /// builds still read it, and a file without them loads as before.
+    pub fn encode_at(&self, scope: &str, now: u64) -> String {
+        let mut v = json!({"schema":1,"scope":scope,"day":self.day,"movers":self.movers,"movers_at":self.movers_at,"quotes":self.quotes.iter().map(|(id,q)|json!([id,q.buy,q.sell,q.at,q.history,q.blocked,q.blocked_until])).collect::<Vec<_>>(),"watch":self.watch,"auction_watch":self.auction_watch,"rules":[null,null,self.rules.fee_bp,self.rules.fee_min],"trades":self.trades.iter().map(|t|json!([t.at,t.item,t.count,t.gross,t.net,t.buying])).collect::<Vec<_>>()});
+        // Newest first, so trimming to the persistence limit keeps the freshest lots.
+        let mut lots: Vec<&Listing> = self.listings.values().filter(|l| l.expires > now).collect();
+        lots.sort_by_key(|l| std::cmp::Reverse((l.seen, l.id)));
+        v["ah_complete_at"] = json!(self.ah_complete_at);
+        loop {
+            v["listings"] = lots
+                .iter()
+                .map(|l| {
+                    json!([
+                        l.id, l.item, l.label, l.count, l.cost, l.seller, l.bid, l.seen, l.expires
+                    ])
+                })
+                .collect();
+            v["stacks"] = lots
+                .iter()
+                .filter_map(|l| self.stacks.get(&l.id).map(|text| json!([l.id, text])))
+                .collect();
+            let raw = v.to_string();
+            // The file must stay inside the persistence limit, or saving would stop altogether:
+            // shed the oldest quarter of the lots with their stacks until it fits.
+            if raw.len() <= FILE_BUDGET || lots.is_empty() {
+                return raw;
+            }
+            lots.truncate(lots.len() * 3 / 4);
+        }
     }
-    pub fn decode(raw: &str, scope: &str) -> Result<Self, String> {
+    pub fn decode_at(raw: &str, scope: &str, now: u64) -> Result<Self, String> {
         if raw.len() > 4 * 1024 * 1024 {
             return Err("economy cache too large".into());
         }
@@ -1349,8 +1415,163 @@ impl Book {
                 }
             }
         }
+        // Saved lots are an unverified snapshot: generation 0 is older than the current one.
+        book.generation = 1;
+        book.ah_complete_at = v["ah_complete_at"].as_u64().unwrap_or(0).min(now);
+        if let Some(rows) = v["listings"].as_array() {
+            for row in rows.iter().take(MAX_ROWS) {
+                if book.listings.len() >= MAX_LISTINGS {
+                    break;
+                }
+                if let Some(l) = restore_listing(row, now) {
+                    book.listings.insert(l.id, l);
+                }
+            }
+        }
+        if let Some(rows) = v["stacks"].as_array() {
+            for row in rows.iter().take(MAX_ROWS) {
+                if let (Some(lot), Some(text)) = (row[0].as_u64(), row[1].as_str()) {
+                    book.remember_stack(lot, text.into());
+                }
+            }
+        }
         Ok(book)
     }
+    /// Starts a new walk of the auction: lots seen from now on belong to it.
+    pub fn begin_walk(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.complete_scan = false;
+        self.observed_pages = 0;
+    }
+    /// Merges one observed lot by its number. False when the cache is full of other lots.
+    pub fn observe_lot(&mut self, l: Listing) -> bool {
+        if self.listings.len() >= MAX_LISTINGS && !self.listings.contains_key(&l.id) {
+            // Pruning needs proof of a complete walk, so a full cache makes room by giving up
+            // the oldest saved lot the current walk has not seen, never one it has.
+            let generation = self.generation;
+            let oldest = self
+                .listings
+                .values()
+                .filter(|o| o.generation != generation)
+                .min_by_key(|o| (o.seen, o.id))
+                .map(|o| o.id);
+            match oldest {
+                Some(old) => {
+                    self.forget_lot(old);
+                }
+                None => return false,
+            }
+        }
+        self.listings.insert(l.id, l);
+        true
+    }
+    pub fn remember_stack(&mut self, lot: u64, text: String) -> bool {
+        if !self.listings.contains_key(&lot) || text.len() > STACK_TEXT_MAX {
+            return false;
+        }
+        let others: usize = self
+            .stacks
+            .iter()
+            .filter(|(id, _)| **id != lot)
+            .map(|(_, t)| t.len())
+            .sum();
+        if others + text.len() > STACK_BYTES_MAX {
+            return false;
+        }
+        self.stacks.insert(lot, text);
+        true
+    }
+    pub fn forget_lot(&mut self, lot: u64) -> bool {
+        self.stacks.remove(&lot);
+        self.listings.remove(&lot).is_some()
+    }
+    pub fn drop_expired(&mut self, now: u64) {
+        self.listings.retain(|_, l| l.expires > now);
+        let listings = &self.listings;
+        self.stacks.retain(|id, _| listings.contains_key(id));
+    }
+    /// Ends a walk. Only one that reached the end of the whole auction may drop the lots it did
+    /// not see; a limit, timeout, disconnect or close leaves the saved lots as they were.
+    pub fn finish_scan(&mut self, complete: bool, now: u64) {
+        if !complete {
+            return;
+        }
+        let generation = self.generation;
+        self.listings.retain(|_, l| l.generation == generation);
+        let listings = &self.listings;
+        self.stacks.retain(|id, _| listings.contains_key(id));
+        self.complete_scan = true;
+        self.ah_complete_at = now;
+    }
+    pub fn lot_state(&self, lot: u64, now: u64) -> LotState {
+        match self.listings.get(&lot) {
+            None => LotState::Gone,
+            Some(l) if l.expires <= now => LotState::Expired,
+            Some(l) if l.generation == self.generation => LotState::Fresh,
+            Some(_) => LotState::Saved,
+        }
+    }
+    /// The lot the player saw must still be there, unexpired and unchanged.
+    pub fn buy_ready(&self, shown: &Listing, now: u64) -> Result<(), BuyRefusal> {
+        match self.listings.get(&shown.id) {
+            None => Err(BuyRefusal::Gone),
+            Some(l) if l.expires <= now => Err(BuyRefusal::Expired),
+            Some(l) if !l.same_offer(shown) => Err(BuyRefusal::Changed),
+            Some(_) => Ok(()),
+        }
+    }
+    /// A click may skip the question only for a lot the current walk has seen.
+    pub fn direct_buy_allowed(
+        &self,
+        shown: &Listing,
+        ask: bool,
+        balance: Option<Coins>,
+        now: u64,
+    ) -> bool {
+        self.buy_ready(shown, now).is_ok()
+            && self.lot_state(shown.id, now) == LotState::Fresh
+            && self
+                .listings
+                .get(&shown.id)
+                .is_some_and(|l| now.saturating_sub(l.seen) <= FRESH_MS)
+            && shown.buys_without_asking(ask, balance)
+    }
+}
+/// Keeps the order the player is looking at: lots already listed keep their places, lots that
+/// left are dropped and new ones go last, so an update never moves a lot under the pointer.
+pub fn stable_order(previous: &[u64], sorted: &[u64]) -> Vec<u64> {
+    let wanted: BTreeSet<u64> = sorted.iter().copied().collect();
+    let mut seen = BTreeSet::new();
+    let mut out: Vec<u64> = previous
+        .iter()
+        .copied()
+        .filter(|id| wanted.contains(id) && seen.insert(*id))
+        .collect();
+    out.extend(sorted.iter().copied().filter(|id| seen.insert(*id)));
+    out
+}
+fn restore_listing(row: &Value, now: u64) -> Option<Listing> {
+    let row = row.as_array().filter(|r| r.len() == 9)?;
+    let label = row[2].as_str()?;
+    let seller = row[5].as_str().filter(|s| valid_seller(s))?;
+    let expires = row[8]
+        .as_u64()
+        .filter(|e| *e > now && *e <= now + MAX_LOT_LIFE)?;
+    (label.chars().count() <= 80 && !label.chars().any(char::is_control)).then_some(())?;
+    Some(Listing {
+        id: row[0].as_u64()?,
+        item: id(row[1].as_str()?)?,
+        label: label.into(),
+        count: u32::try_from(row[3].as_u64()?)
+            .ok()
+            .filter(|n| (1..=1_000_000).contains(n))?,
+        cost: row[4].as_i64().filter(|n| (0..=MAX).contains(n))?,
+        seller: seller.into(),
+        bid: row[6].as_bool()?,
+        seen: row[7].as_u64()?.min(now),
+        expires,
+        generation: 0,
+    })
 }
 
 #[cfg(test)]
@@ -1461,9 +1682,9 @@ mod tests {
         assert!(!listing.within_unit_price(249));
         listing.bid = true;
         assert!(!listing.within_unit_price(250));
-        let mut restored = Book::decode(&book.encode("server-a"), "server-a").unwrap();
+        let mut restored = Book::decode_at(&book.encode_at("server-a", 0), "server-a", 0).unwrap();
         assert_eq!(restored.auction_watch["minecraft:diamond"], 250);
-        assert!(Book::decode(&book.encode("server-a"), "server-b").is_err());
+        assert!(Book::decode_at(&book.encode_at("server-a", 0), "server-b", 0).is_err());
         assert!(restored.set_auction_watch("diamond", 0));
         assert!(restored.auction_watch.is_empty());
     }
@@ -1606,18 +1827,20 @@ mod tests {
         assert!(book.hand_sale(&l.item, 22, &p, NOW + 3_600_000).is_none());
     }
     #[test]
-    fn cached_prices_do_not_restore_wallet_limits_or_auction_listings() {
+    fn cached_prices_do_not_restore_wallet_limits_and_saved_lots_are_not_trade_signals() {
         let (mut book, p, l) = sample();
         book.listings.insert(l.id, l.clone());
         book.watch.insert(l.item.clone());
-        let raw = book.encode("server/account");
-        let restored = Book::decode(&raw, "server/account").unwrap();
+        let raw = book.encode_at("server/account", NOW);
+        let restored = Book::decode_at(&raw, "server/account", NOW).unwrap();
         assert_eq!(restored.quotes[&l.item].sell, Some(400));
         assert!(restored.balance.is_none());
         assert!(restored.coin_left.is_none());
         assert!(restored.quotes[&l.item].left.is_none());
-        assert!(restored.listings.is_empty());
-        assert!(Book::decode(&raw, "another/account").is_err());
+        // The lot comes back as saved data: shown, but never an opportunity before a new walk.
+        assert_eq!(restored.lot_state(l.id, NOW), LotState::Saved);
+        assert!(restored.opportunity(&l, &p, NOW, "me").is_none());
+        assert!(Book::decode_at(&raw, "another/account", NOW).is_err());
         assert_eq!(Preferences::decode(&p.encode()).unwrap(), p);
     }
     #[test]
@@ -1703,9 +1926,9 @@ mod live_server_tests {
         )
         .unwrap();
         assert!(!p.encode().contains("tax"));
-        let b=Book::decode(r#"{"schema":1,"scope":"s","quotes":[],"rules":[200,500,100,100],"tax_lines":["old bill"]}"#,"s").unwrap();
+        let b=Book::decode_at(r#"{"schema":1,"scope":"s","quotes":[],"rules":[200,500,100,100],"tax_lines":["old bill"]}"#,"s",0).unwrap();
         assert_eq!(b.resale(7000, 10000, &p), Some((100, 2900)));
-        assert!(!b.encode("s").contains("tax"));
+        assert!(!b.encode_at("s", 0).contains("tax"));
     }
 }
 
@@ -1732,5 +1955,416 @@ mod scoreboard_regressions {
         assert_eq!(book.coin_left, Some((1_250_000, 11)));
         assert_eq!(book.coin_cap, Some(2_500_000));
         assert_eq!(sidebar_amount("invalid"), None);
+    }
+}
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    const NOW: u64 = 1_000_000;
+    const SCOPE: &str = "play.example.org#00000000000000000000000000000001";
+    fn lot(id: u64, cost: Coins, expires_in: u64) -> Listing {
+        Listing {
+            id,
+            item: "minecraft:diamond".into(),
+            label: format!("Diamond {id}"),
+            count: 4,
+            cost,
+            seller: "Alex_1".into(),
+            bid: false,
+            seen: NOW,
+            expires: NOW + expires_in,
+            generation: 0,
+        }
+    }
+    fn book_with(ids: &[u64]) -> Book {
+        let mut book = Book::default();
+        for id in ids {
+            assert!(book.observe_lot(lot(*id, 1000 + *id as Coins, 3_600_000)));
+        }
+        book
+    }
+    fn restored(book: &Book, now: u64) -> Book {
+        Book::decode_at(&book.encode_at(SCOPE, now), SCOPE, now).unwrap()
+    }
+    #[test]
+    fn listings_and_stack_text_survive_a_save_and_reload() {
+        let mut book = book_with(&[1, 2, 3]);
+        assert!(book.remember_stack(2, r#"{id:"minecraft:diamond",count:4}"#.into()));
+        book.ah_complete_at = NOW - 500;
+        let back = restored(&book, NOW + 10);
+        assert_eq!(back.listings.len(), 3);
+        let l = &back.listings[&2];
+        assert_eq!((l.cost, l.count, l.seller.as_str()), (1002, 4, "Alex_1"));
+        assert_eq!((l.seen, l.expires), (NOW, NOW + 3_600_000));
+        assert_eq!(
+            back.stacks[&2],
+            r#"{id:"minecraft:diamond",count:4}"#.to_string()
+        );
+        assert_eq!(back.ah_complete_at, NOW - 500);
+        // Everything restored is saved data: none of it counts as seen by the current scan.
+        assert!(
+            back.listings
+                .values()
+                .all(|l| l.generation != back.generation)
+        );
+        assert_eq!(back.lot_state(2, NOW + 10), LotState::Saved);
+    }
+    #[test]
+    fn old_cache_without_listings_still_loads_and_other_data_is_kept() {
+        let mut book = book_with(&[1]);
+        book.watch.insert("minecraft:diamond".into());
+        let raw = book.encode_at(SCOPE, NOW);
+        let mut v: Value = serde_json::from_str(&raw).unwrap();
+        v.as_object_mut().unwrap().remove("listings");
+        v.as_object_mut().unwrap().remove("stacks");
+        let old = Book::decode_at(&v.to_string(), SCOPE, NOW).unwrap();
+        assert!(old.listings.is_empty());
+        assert!(old.watch.contains("minecraft:diamond"));
+        assert_eq!(v["schema"], 1, "the schema stays readable by older builds");
+    }
+    #[test]
+    fn corrupt_or_hostile_rows_are_dropped_without_losing_the_rest() {
+        let book = book_with(&[1, 2]);
+        let mut v: Value = serde_json::from_str(&book.encode_at(SCOPE, NOW)).unwrap();
+        let rows = v["listings"].as_array_mut().unwrap();
+        rows.push(json!([
+            9,
+            "not an item!",
+            "x",
+            1,
+            1,
+            "Alex",
+            false,
+            NOW,
+            NOW + 1000
+        ]));
+        rows.push(json!([
+            10,
+            "minecraft:dirt",
+            "x",
+            0,
+            5,
+            "Alex",
+            false,
+            NOW,
+            NOW + 1000
+        ]));
+        rows.push(json!([
+            11,
+            "minecraft:dirt",
+            "x",
+            1,
+            -5,
+            "Alex",
+            false,
+            NOW,
+            NOW + 1000
+        ]));
+        rows.push(json!([
+            12,
+            "minecraft:dirt",
+            "x",
+            1,
+            5,
+            "bad seller!",
+            false,
+            NOW,
+            NOW + 1000
+        ]));
+        rows.push(json!([
+            13,
+            "minecraft:dirt",
+            "x",
+            1,
+            5,
+            "Alex",
+            false,
+            NOW,
+            u64::MAX
+        ]));
+        rows.push(json!("garbage"));
+        rows.push(json!([
+            14,
+            "minecraft:dirt",
+            "x",
+            1,
+            5,
+            "Alex",
+            false,
+            NOW,
+            NOW - 1
+        ]));
+        v["stacks"] = json!([
+            [1, "x".repeat(100_000)],
+            [99, "{}"],
+            [2, "{id:\"ok\"}"],
+            "junk"
+        ]);
+        let back = Book::decode_at(&v.to_string(), SCOPE, NOW).unwrap();
+        assert_eq!(
+            back.listings.keys().copied().collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(back.stacks.len(), 1);
+        assert!(back.stacks.contains_key(&2));
+        let mut broken: Value = serde_json::from_str(&book.encode_at(SCOPE, NOW)).unwrap();
+        broken["listings"] = json!("nope");
+        assert!(
+            Book::decode_at(&broken.to_string(), SCOPE, NOW)
+                .unwrap()
+                .listings
+                .is_empty()
+        );
+        assert!(Book::decode_at("{not json", SCOPE, NOW).is_err());
+    }
+    #[test]
+    fn restored_cache_is_bounded() {
+        let mut v: Value = serde_json::from_str(&Book::default().encode_at(SCOPE, NOW)).unwrap();
+        v["listings"] = (0..6000u64)
+            .map(|id| {
+                json!([
+                    id,
+                    "minecraft:dirt",
+                    "Dirt",
+                    1,
+                    5,
+                    "Alex",
+                    false,
+                    NOW,
+                    NOW + 60_000
+                ])
+            })
+            .collect();
+        let back = Book::decode_at(&v.to_string(), SCOPE, NOW).unwrap();
+        assert_eq!(back.listings.len(), 5000);
+    }
+    #[test]
+    fn a_cache_belongs_to_one_server_and_account() {
+        let raw = book_with(&[1]).encode_at(SCOPE, NOW);
+        assert!(
+            Book::decode_at(
+                &raw,
+                "play.example.org#00000000000000000000000000000002",
+                NOW
+            )
+            .is_err()
+        );
+        assert!(
+            Book::decode_at(
+                &raw,
+                "other.example.org#00000000000000000000000000000001",
+                NOW
+            )
+            .is_err()
+        );
+        assert!(Book::decode_at(&raw, SCOPE, NOW).is_ok());
+    }
+    #[test]
+    fn expired_lots_are_neither_restored_listed_nor_buyable() {
+        let mut book = book_with(&[1]);
+        book.observe_lot(lot(2, 5000, 1000));
+        let later = NOW + 2000;
+        assert_eq!(book.lot_state(2, later), LotState::Expired);
+        assert_eq!(
+            book.buy_ready(&lot(2, 5000, 1000), later),
+            Err(BuyRefusal::Expired)
+        );
+        assert!(!restored(&book, later).listings.contains_key(&2));
+        book.remember_stack(2, "{}".into());
+        book.drop_expired(later);
+        assert!(!book.listings.contains_key(&2) && !book.stacks.contains_key(&2));
+        assert!(book.listings.contains_key(&1));
+    }
+    #[test]
+    fn a_partial_scan_never_prunes_unseen_cached_lots() {
+        let saved = book_with(&[1, 2, 3]);
+        let mut book = restored(&saved, NOW);
+        book.begin_walk();
+        assert!(book.observe_lot(Listing {
+            generation: book.generation,
+            ..lot(2, 1002, 3_600_000)
+        }));
+        // Page limit, timeout, disconnect or close: the scan did not finish.
+        book.finish_scan(false, NOW + 5);
+        assert_eq!(book.listings.len(), 3);
+        assert_eq!(book.ah_complete_at, 0);
+        assert!(!book.complete_scan);
+        // What a closed session saves still holds every lot.
+        assert_eq!(restored(&book, NOW + 5).listings.len(), 3);
+    }
+    #[test]
+    fn only_a_complete_scan_evicts_lots_missing_from_it() {
+        let mut book = restored(&book_with(&[1, 2, 3]), NOW);
+        book.remember_stack(3, "{}".into());
+        book.begin_walk();
+        for id in [1, 2] {
+            assert!(book.observe_lot(Listing {
+                generation: book.generation,
+                ..lot(id, 1000, 3_600_000)
+            }));
+        }
+        book.finish_scan(true, NOW + 9);
+        assert_eq!(
+            book.listings.keys().copied().collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(!book.stacks.contains_key(&3));
+        assert!(book.complete_scan);
+        assert_eq!(book.ah_complete_at, NOW + 9);
+        assert_eq!(book.lot_state(1, NOW + 9), LotState::Fresh);
+    }
+    #[test]
+    fn observing_merges_by_lot_id_and_keeps_known_stack_data() {
+        let mut book = book_with(&[7]);
+        book.remember_stack(7, "{id:\"minecraft:diamond\"}".into());
+        book.begin_walk();
+        assert!(book.observe_lot(Listing {
+            generation: book.generation,
+            cost: 900,
+            ..lot(7, 0, 3_600_000)
+        }));
+        assert_eq!(book.listings.len(), 1);
+        assert_eq!(book.listings[&7].cost, 900);
+        assert_eq!(book.lot_state(7, NOW), LotState::Fresh);
+        assert!(book.stacks.contains_key(&7));
+        assert!(
+            !book.remember_stack(8, "{}".into()),
+            "a stack needs its lot"
+        );
+        assert!(
+            !book.remember_stack(7, "x".repeat(5000)),
+            "oversized stack text is refused"
+        );
+    }
+    #[test]
+    fn saved_data_stays_inside_the_cache_file_limit() {
+        let mut book = Book::default();
+        for id in 0..5000u64 {
+            book.observe_lot(lot(id, 1000, 3_600_000));
+            book.remember_stack(id, "a".repeat(4000));
+        }
+        let raw = book.encode_at(SCOPE, NOW);
+        assert!(raw.len() < 3_800_000, "encoded {} bytes", raw.len());
+        let back = Book::decode_at(&raw, SCOPE, NOW).unwrap();
+        assert_eq!(
+            back.listings.len(),
+            5000,
+            "lots are kept even when stack text is trimmed"
+        );
+    }
+    #[test]
+    fn oversized_cache_keeps_newest_lots_with_their_stacks() {
+        let mut book = Book::default();
+        for id in 0..5000u64 {
+            let mut listing = lot(id, 1000, 3_600_000);
+            listing.label = "💎".repeat(80);
+            listing.seen = NOW + id;
+            book.observe_lot(listing);
+        }
+        for id in (0..5000u64).rev() {
+            book.remember_stack(id, "\"".repeat(4000));
+        }
+        let raw = book.encode_at(SCOPE, NOW + 5000);
+        assert!(raw.len() <= FILE_BUDGET);
+        let back = Book::decode_at(&raw, SCOPE, NOW + 5000).unwrap();
+        assert!(!back.listings.is_empty());
+        assert!(back.listings.contains_key(&4999));
+        assert!(
+            back.stacks.contains_key(&4999),
+            "keep the newest item's details"
+        );
+        assert!(!back.listings.contains_key(&0), "trim oldest lots first");
+        assert_eq!(
+            book.listings.len(),
+            5000,
+            "encoding must not mutate the live book"
+        );
+    }
+    #[test]
+    fn direct_purchases_require_a_sighting_within_two_minutes() {
+        let book = book_with(&[1]);
+        let shown = &book.listings[&1];
+        assert!(book.direct_buy_allowed(shown, false, None, NOW + 120_000));
+        assert!(!book.direct_buy_allowed(shown, false, None, NOW + 120_001));
+        assert!(!book.direct_buy_allowed(shown, true, None, NOW));
+        assert!(!restored(&book, NOW).direct_buy_allowed(shown, false, None, NOW));
+    }
+    #[test]
+    fn a_purchase_needs_the_same_offer_the_player_saw() {
+        let mut book = book_with(&[5]);
+        let shown = book.listings[&5].clone();
+        assert_eq!(book.buy_ready(&shown, NOW), Ok(()));
+        book.observe_lot(Listing {
+            cost: shown.cost + 1,
+            ..shown.clone()
+        });
+        assert_eq!(book.buy_ready(&shown, NOW), Err(BuyRefusal::Changed));
+        let mut other_seller = shown.clone();
+        other_seller.seller = "Mallory".into();
+        book.observe_lot(other_seller);
+        assert_eq!(book.buy_ready(&shown, NOW), Err(BuyRefusal::Changed));
+        book.forget_lot(5);
+        assert_eq!(book.buy_ready(&shown, NOW), Err(BuyRefusal::Gone));
+        assert_eq!(book.lot_state(5, NOW), LotState::Gone);
+    }
+    #[test]
+    fn saved_lots_are_never_bought_without_the_question() {
+        let mut book = restored(&book_with(&[5]), NOW);
+        let saved = book.listings[&5].clone();
+        assert_eq!(book.lot_state(5, NOW), LotState::Saved);
+        assert!(!book.direct_buy_allowed(&saved, false, None, NOW));
+        book.begin_walk();
+        book.observe_lot(Listing {
+            generation: book.generation,
+            ..saved.clone()
+        });
+        let seen = book.listings[&5].clone();
+        assert!(book.direct_buy_allowed(&seen, false, None, NOW));
+        assert!(!book.direct_buy_allowed(&seen, true, None, NOW));
+        assert!(!book.direct_buy_allowed(&seen, false, Some(1), NOW));
+        assert!(!book.direct_buy_allowed(&seen, false, None, seen.expires));
+    }
+    #[test]
+    fn browsing_order_stays_put_while_new_lots_arrive() {
+        // Sorted by price the cheap newcomer would jump to the front.
+        assert_eq!(
+            stable_order(&[10, 20, 30], &[5, 10, 20, 30]),
+            vec![10, 20, 30, 5]
+        );
+        // Gone lots leave; the rest keep their places.
+        assert_eq!(stable_order(&[10, 20, 30], &[30, 10]), vec![10, 30]);
+        // A fresh session (changed sort or search) takes the sorted order.
+        assert_eq!(stable_order(&[], &[3, 1, 2]), vec![3, 1, 2]);
+        assert_eq!(stable_order(&[1, 1, 2], &[1, 2]), vec![1, 2]);
+    }
+    #[test]
+    fn a_full_cache_makes_room_by_dropping_the_oldest_unseen_saved_lot() {
+        let mut book = Book::default();
+        for id in 0..5000u64 {
+            let mut l = lot(id, 100, 3_600_000);
+            l.seen = NOW + id;
+            book.observe_lot(l);
+        }
+        let mut book = restored(&book, NOW);
+        book.begin_walk();
+        let g = book.generation;
+        assert!(book.observe_lot(Listing {
+            generation: g,
+            ..lot(9000, 5, 3_600_000)
+        }));
+        assert_eq!(book.listings.len(), 5000);
+        assert!(
+            !book.listings.contains_key(&0),
+            "the oldest saved lot made room"
+        );
+        assert!(book.listings.contains_key(&1));
+        // Lots the walk has seen are never evicted by later ones.
+        for id in 0..5000u64 {
+            book.listings.entry(id).and_modify(|l| l.generation = g);
+        }
+        assert!(!book.observe_lot(Listing {
+            generation: g,
+            ..lot(9001, 5, 3_600_000)
+        }));
     }
 }

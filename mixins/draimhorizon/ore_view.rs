@@ -27,7 +27,11 @@ enum Status {
     OffAfterWorldChange,
     Computing,
     Reading,
-    Result { prediction: bool, blocks: usize },
+    Result {
+        prediction: bool,
+        radius: u8,
+        blocks: usize,
+    },
     Error(String),
 }
 fn language() -> Language {
@@ -113,11 +117,25 @@ pub(super) fn status() -> String {
         Status::Reading => language
             .text("Чтение загруженных чанков…", "Reading loaded chunks…")
             .into(),
-        Status::Result { prediction, blocks } => {
+        Status::Result {
+            prediction,
+            radius,
+            blocks,
+        } => {
             let source = if prediction {
-                language.text("Прогноз сида (1 чанк)", "Seed prediction (1 chunk)")
+                let range = match radius {
+                    0 => language.text("1 чанк", "1 chunk"),
+                    1 => "3x3",
+                    _ => "5x5",
+                };
+                format!(
+                    "{} ({range})",
+                    language.text("Прогноз сида", "Seed prediction")
+                )
             } else {
-                language.text("Загруженные чанки", "Loaded chunks")
+                language
+                    .text("Загруженные чанки", "Loaded chunks")
+                    .to_owned()
             };
             match language {
                 Language::Russian => format!("{source}: {blocks} блоков · O — выключить"),
@@ -247,12 +265,14 @@ pub(super) fn frame(game: &Game<'_>) {
             vertical_band: (player.y.floor() as i32).div_euclid(32),
             ores: prefs.ores,
             prediction: prefs.prediction,
+            prediction_radius: prefs.prediction_radius,
         };
         if let Some(result) = s.worker.as_ref().and_then(worker::Handle::take) {
-            if s.requested.as_ref() == Some(&result.key) {
+            if result.key == key && s.requested.as_ref() == Some(&result.key) {
                 s.status = result.error.map_or_else(
                     || Status::Result {
                         prediction: prefs.prediction,
+                        radius: prefs.prediction_radius,
                         blocks: result.marks.len(),
                     },
                     Status::Error,

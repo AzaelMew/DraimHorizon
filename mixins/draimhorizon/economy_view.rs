@@ -417,7 +417,11 @@ pub(super) fn render(
                     ),
                     (
                         language().text("Лотов на аукционе", "Auction lots"),
-                        book.listings.len().to_string(),
+                        book.listings
+                            .values()
+                            .filter(|l| l.expires > now)
+                            .count()
+                            .to_string(),
                         0xb9a7e8,
                     ),
                 ]

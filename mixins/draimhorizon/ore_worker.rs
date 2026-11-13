@@ -21,6 +21,7 @@ pub struct Key {
     pub vertical_band: i32,
     pub ores: u16,
     pub prediction: bool,
+    pub prediction_radius: u8,
 }
 pub struct Query {
     pub key: Key,
@@ -198,11 +199,11 @@ fn predict(
     let (worker, (min, height)) = generators.get_mut(&q.key.dimension).unwrap();
     let result = (|| {
         let (cx, cz) = q.key.center;
+        let radius = i32::from(q.key.prediction_radius.min(2));
         let mut terrain = BTreeMap::<(i32, i32), ProtoChunk>::new();
-        // Decorate every neighbour capable of placing a feature into the middle chunk.
-        // Each of those centres requires a 3x3 terrain region, giving a 5x5 halo overall.
-        for z in cz - 2..=cz + 2 {
-            for x in cx - 2..=cx + 2 {
+        // Share terrain and decoration halos across the selected target square.
+        for z in cz - radius - 2..=cz + radius + 2 {
+            for x in cx - radius - 2..=cx + radius + 2 {
                 if canceled() {
                     return Err("canceled".into());
                 }
@@ -212,15 +213,17 @@ fn predict(
                 terrain.insert((x, z), chunk);
             }
         }
-        for z in cz - 1..=cz + 1 {
-            for x in cx - 1..=cx + 1 {
+        for z in cz - radius - 1..=cz + radius + 1 {
+            for x in cx - radius - 1..=cx + radius + 1 {
                 if canceled() {
                     return Err("canceled".into());
                 }
                 let positions: [(i32, i32); 9] =
                     std::array::from_fn(|i| (x + i as i32 % 3 - 1, z + i as i32 / 3 - 1));
                 let mut region: [ProtoChunk; 9] = std::array::from_fn(|i| {
-                    terrain.remove(&positions[i]).expect("5x5 terrain halo")
+                    terrain
+                        .remove(&positions[i])
+                        .expect("prediction terrain halo")
                 });
                 worker.decorate(&mut region).map_err(|e| e.to_string())?;
                 for (at, chunk) in positions.into_iter().zip(region) {
@@ -228,27 +231,29 @@ fn predict(
                 }
             }
         }
-        let chunk = &terrain[&(cx, cz)];
         let mut marks = Vec::new();
-        for y in *min..*min + *height {
-            if canceled() {
-                return Err("canceled".into());
-            }
-            if (f64::from(y) - q.player[1]).abs() > model::RANGE {
-                continue;
-            }
-            for z in 0..16 {
-                for x in 0..16 {
-                    if let Some(kind) = table
-                        .get(chunk.block(x, y, z).0 as usize)
-                        .copied()
-                        .flatten()
-                    {
-                        marks.push(model::Mark {
-                            position: [cx * 16 + x, y, cz * 16 + z],
-                            kind,
-                            predicted: true,
-                        });
+        for (cx, cz) in model::prediction_chunks(q.key.center, q.key.prediction_radius) {
+            let chunk = &terrain[&(cx, cz)];
+            for y in *min..*min + *height {
+                if canceled() {
+                    return Err("canceled".into());
+                }
+                if (f64::from(y) - q.player[1]).abs() > model::RANGE {
+                    continue;
+                }
+                for z in 0..16 {
+                    for x in 0..16 {
+                        if let Some(kind) = table
+                            .get(chunk.block(x, y, z).0 as usize)
+                            .copied()
+                            .flatten()
+                        {
+                            marks.push(model::Mark {
+                                position: [cx * 16 + x, y, cz * 16 + z],
+                                kind,
+                                predicted: true,
+                            });
+                        }
                     }
                 }
             }
