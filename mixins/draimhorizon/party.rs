@@ -69,6 +69,9 @@ struct Pending {
     name: String,
     nonce: u64,
     at: u64,
+    // Set only on our own re-invitation of an existing friend, whose acceptance
+    // replaces the old friendship record instead of being rejected as a mismatch.
+    rebond: bool,
 }
 
 #[derive(Clone)]
@@ -213,6 +216,35 @@ impl Party {
                 name: name.into(),
                 nonce,
                 at: now,
+                rebond: false,
+            },
+        );
+        Ok(vec![out])
+    }
+
+    /// Invite an existing friend again after their relay identity changed.
+    /// The peer may have lost the friendship, so a matching acceptance replaces ours.
+    pub fn reinvite(&mut self, uuid: u128, now: u64) -> Result<Vec<Outbound>, String> {
+        self.prune(now);
+        let name = self
+            .friends
+            .get(&uuid)
+            .ok_or("Not an accepted friend.")?
+            .friend
+            .name
+            .clone();
+        if self.pending_count() >= MAX_PENDING && !self.outgoing.contains_key(&uuid) {
+            return Err("Friend or invitation limit reached.".into());
+        }
+        let nonce = self.nonce();
+        let out = outbound(uuid, &name, json!(["i", nonce]))?;
+        self.outgoing.insert(
+            uuid,
+            Pending {
+                name,
+                nonce,
+                at: now,
+                rebond: true,
             },
         );
         Ok(vec![out])
@@ -294,6 +326,7 @@ impl Party {
                 name: name.clone(),
                 nonce,
                 at: now,
+                rebond: false,
             },
         );
         Ok(vec![outbound(uuid, &name, json!(["h", nonce]))?])
@@ -348,6 +381,7 @@ impl Party {
                         name: name.into(),
                         nonce,
                         at: now,
+                        rebond: false,
                     },
                 );
             }
@@ -363,13 +397,16 @@ impl Party {
                     return Err("Friend limit reached.".into());
                 }
                 let incoming_nonce = pending.nonce;
+                let rebond = pending.rebond;
                 if let Some(record) = self.friends.get(&uuid) {
-                    if record.bond != invite.min(remote_nonce) {
+                    if record.bond == invite.min(remote_nonce) {
+                        self.outgoing.remove(&uuid);
+                        self.incoming.remove(&uuid);
+                        return Ok(Vec::new());
+                    }
+                    if !rebond {
                         return Err("Acceptance does not match crossed invitations.".into());
                     }
-                    self.outgoing.remove(&uuid);
-                    self.incoming.remove(&uuid);
-                    return Ok(Vec::new());
                 }
                 let bond = self
                     .incoming
@@ -1078,6 +1115,57 @@ mod tests {
         assert_eq!(a.friends()[0].uuid, B);
         assert_eq!(b.friends()[0].uuid, A);
         assert!(a.receive(B, "Bob", &ack.body, 4).is_err());
+    }
+
+    #[test]
+    fn reinvite_relinks_a_friend_who_lost_or_kept_the_friendship() {
+        // `forgot`: the peer reinstalled and has no record at all. Otherwise the
+        // peer kept its record, but with a bond from an earlier invitation.
+        for forgot in [true, false] {
+            let (mut a, mut b) = parties();
+            if forgot {
+                b = Party::new("server|Bob", 909);
+            }
+            assert!(a.reinvite(C, 10).is_err(), "only existing friends");
+            let invite = a.reinvite(B, 10).unwrap().remove(0);
+            b.receive(A, "Alice", &invite.body, 11).unwrap();
+            assert_eq!(b.pending(11)[0].uuid, A);
+            let ack = b.accept(A, 12).unwrap().remove(0);
+            a.receive(B, "Bob", &ack.body, 13).unwrap();
+            assert_eq!(a.friends().len(), 1);
+            assert_eq!(b.friends().len(), 1);
+            // The relinked sessions carry telemetry both ways.
+            let (af, bf) = (
+                a.snapshot_for(B, snapshot()).unwrap(),
+                b.snapshot_for(A, snapshot()).unwrap(),
+            );
+            a.receive(B, "Bob", &bf.body, 14).unwrap();
+            b.receive(A, "Alice", &af.body, 14).unwrap();
+            assert_eq!(a.online(&[B], 14).len(), 1);
+            assert_eq!(b.online(&[A], 14).len(), 1);
+            // A consumed acceptance cannot be replayed, and removal still works.
+            assert!(a.receive(B, "Bob", &ack.body, 15).is_err());
+            let removal = a.remove(B).unwrap().remove(0);
+            b.receive(A, "Alice", &removal.body, 16).unwrap();
+            assert!(b.friends().is_empty());
+        }
+    }
+
+    #[test]
+    fn mismatched_acceptance_stays_rejected_without_a_reinvitation() {
+        let (mut a, _) = parties();
+        // The peer forgot us and invites on its own; we never invited it again.
+        let mut b = Party::new("server|Bob", 909);
+        let invite = b.invite(A, "Alice", 10).unwrap().remove(0);
+        a.receive(B, "Bob", &invite.body, 11).unwrap();
+        let ack = a.accept(B, 12).unwrap().remove(0);
+        b.receive(A, "Alice", &ack.body, 13).unwrap();
+        assert_eq!(b.friends().len(), 1);
+        // A forged acceptance for a bond we never offered is not enough.
+        let forged = json!(["a", 5, 6]);
+        let body = format!("{PREFIX}{forged}");
+        assert!(a.receive(B, "Bob", &body, 14).is_err());
+        assert_eq!(a.friends().len(), 1);
     }
 
     #[test]

@@ -27,6 +27,34 @@ pub fn permits_frame(
     }
 }
 
+/// New relay identity code to adopt for an existing friend whose key changed
+/// (reinstall, new PC, reset data folder), or `None` when it must not be adopted.
+///
+/// Relay UUIDs and nicknames are self-claimed, so adoption is deliberately narrow:
+/// the directory lists exactly one identity for the friend's UUID, the old pinned
+/// key is not live at the same time, and that account is on the Minecraft server's
+/// tab list under the same nickname. `directory` yields `(uuid, code, name)`.
+pub fn rekey_target<'a>(
+    pinned: &str,
+    uuid: u128,
+    directory: impl IntoIterator<Item = (u128, &'a str, &'a str)>,
+    on_server: impl Fn(u128, &str) -> bool,
+) -> Option<&'a str> {
+    let mut candidate = None;
+    for (peer, code, name) in directory {
+        if peer != uuid {
+            continue;
+        }
+        if code.eq_ignore_ascii_case(pinned) || candidate.is_some() {
+            return None;
+        }
+        candidate = Some((code, name));
+    }
+    let (code, name) = candidate?;
+    (code.len() == 24 && code.bytes().all(|b| b.is_ascii_hexdigit()) && on_server(uuid, name))
+        .then_some(code)
+}
+
 const SETTINGS_LIMIT: u64 = 16 * 1024;
 const PINS_LIMIT: u64 = 256 * 1024;
 const MAX_SCOPES: usize = 128;
@@ -510,6 +538,50 @@ mod tests {
         assert!(PinStore::default().save(&path).is_err());
         assert_eq!(fs::read(&target).unwrap(), before);
         assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    }
+}
+
+#[cfg(test)]
+mod rekey_tests {
+    use super::rekey_target;
+    const OLD: &str = "0123456789abcdef01234567";
+    const NEW: &str = "fedcba9876543210fedcba98";
+    const OTHER: &str = "aaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn on_tab(uuid: u128, name: &str) -> bool {
+        uuid == 7 && name.eq_ignore_ascii_case("Bob")
+    }
+
+    #[test]
+    fn adopts_the_only_new_identity_of_a_friend_on_the_server() {
+        let dir = [(7, NEW, "Bob"), (8, OTHER, "Eve")];
+        assert_eq!(rekey_target(OLD, 7, dir, on_tab), Some(NEW));
+        assert_eq!(
+            rekey_target(OLD, 7, [(7, NEW, "bob")], on_tab),
+            Some(NEW),
+            "nickname comparison ignores case like the tab list does"
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_missing_or_unverified_identities() {
+        // The old key is still live, so two keys claim the same account.
+        assert_eq!(
+            rekey_target(OLD, 7, [(7, OLD, "Bob"), (7, NEW, "Bob")], on_tab),
+            None
+        );
+        assert_eq!(
+            rekey_target(OLD, 7, [(7, NEW, "Bob"), (7, OTHER, "Bob")], on_tab),
+            None
+        );
+        // The unchanged key is not a change; an absent friend has nothing to adopt.
+        assert_eq!(rekey_target(OLD, 7, [(7, OLD, "Bob")], on_tab), None);
+        assert_eq!(rekey_target(OLD, 7, [(8, NEW, "Eve")], on_tab), None);
+        // The server tab list must show the same account and nickname.
+        assert_eq!(rekey_target(OLD, 7, [(7, NEW, "Mallory")], on_tab), None);
+        assert_eq!(rekey_target(OLD, 9, [(9, NEW, "Bob")], on_tab), None);
+        // Malformed codes are never stored as pins.
+        assert_eq!(rekey_target(OLD, 7, [(7, "short", "Bob")], on_tab), None);
     }
 }
 
