@@ -1,5 +1,13 @@
 # История версий
 
+## 0.40.0
+
+- Friends keep their place when their relay identity changes. A reinstall, a new PC or a reset data folder gives a friend a new key, and until now every frame from the new key was dropped, so the friend had to be removed and added again on both sides. Now, when the relay directory lists exactly one identity for a friend's UUID, the old pinned key is no longer connected, and that account is on the game server's player list under the same nickname, the new key is pinned automatically, the session restarts, and an English/Russian notice in chat and the Friends tab says so. If anything is ambiguous (two keys for one account, the friend is not on the server, a malformed code) nothing is changed and the row reads "Key changed · waiting to verify the identity".
+- If the friend lost the friendship altogether (fresh install, no data), the mod invites them once after three unanswered handshakes, so they only have to accept. Accepting replaces the old friendship record on our side instead of being refused as a mismatch (`Party::reinvite`; the old rejection still applies to unsolicited acceptances).
+- A friend who forgot us and invites again from the key we already pinned is relinked without a click; the invitation popup is replaced by "Friendship with X was relinked automatically". An invitation from a different key still needs a manual accept.
+- The decision is a pure function (`relay_settings::rekey_target`) with tests for the single-identity, old-key-still-live, two-new-keys, wrong-nickname, absent-friend and malformed-code cases; the party tests cover relinking both for a peer that kept its record and for one that has none.
+- Trade-off: UUIDs and nicknames in the relay are self-claimed, so this trusts a new key for an existing friend without comparing codes out of band. The relay is token-gated and private, adoption needs the server's own player list to show the same account, and the notice names the friend so a surprise can be undone by removing them.
+
 ## 0.39.23
 
 - Review fixes: oversized auction caches retain newest lots together with their item details, trimming oldest quarters; encoding runs on the persistence worker. Direct purchases require a matching live listing seen within 120 seconds; older listings require confirmation. Window tokens are reused, refused stack IDs are remembered per window, and scans share one window-absence timer. Completed terminal-page scans allow a bounded 2% discrepancy in the server listing count.

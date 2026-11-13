@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.23"
+version = "0.40.0"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.

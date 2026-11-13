@@ -166,6 +166,9 @@ struct Client {
     last_snapshots: BTreeMap<u128, party::Snapshot>,
     status_cursor: usize,
     last_hello: BTreeMap<u128, u64>,
+    // Friends whose relay key was re-pinned: failed handshakes counted until relinked.
+    rekeyed: BTreeMap<u128, u8>,
+    rekey_checked: u64,
     last_claims: BTreeMap<u128, u64>,
     claim_revision: u64,
     own_claims: Option<Vec<claims::Claim>>,
@@ -209,6 +212,8 @@ impl Default for Client {
             last_snapshots: BTreeMap::new(),
             status_cursor: 0,
             last_hello: BTreeMap::new(),
+            rekeyed: BTreeMap::new(),
+            rekey_checked: 0,
             last_claims: BTreeMap::new(),
             claim_revision: 1,
             own_claims: None,
@@ -725,6 +730,7 @@ pub(super) fn tick(game: &mut Game<'_>) {
     }) {
         return;
     }
+    adopt_changed_identities(game);
     let tab = active_peers(game);
     let Some(player) = game.native_player() else {
         return;
@@ -782,12 +788,29 @@ pub(super) fn tick(game: &mut Game<'_>) {
                     && (!c.last_hello.contains_key(&uuid)
                         || time.saturating_sub(*c.last_hello.get(&uuid).unwrap_or(&0)) >= 10_000)
                 {
+                    // After an automatic re-pin the friend may have lost the friendship
+                    // (fresh install). Invite once so it only needs to accept.
+                    let relink = c.rekeyed.get_mut(&uuid).is_some_and(|tries| {
+                        *tries += 1;
+                        *tries > REKEY_HELLOS
+                    });
+                    if relink {
+                        c.rekeyed.remove(&uuid);
+                        if let Ok(frames) = p.reinvite(uuid, time) {
+                            if c.controls.len() + frames.len() <= 32 {
+                                c.controls.extend(frames);
+                            }
+                        }
+                    }
                     if let Ok(frames) = p.start_session(uuid, time) {
                         if c.controls.len() + frames.len() <= 32 {
                             c.controls.extend(frames);
                         }
                     }
                     c.last_hello.insert(uuid, time);
+                }
+                if p.peer_ready(uuid) {
+                    c.rekeyed.remove(&uuid);
                 }
                 if p.peer_ready(uuid) && c.last_claims.get(&uuid) != Some(&c.claim_revision) {
                     let shared: Vec<_> = c
@@ -1414,8 +1437,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 let detail = if changed {
                     language
                         .text(
-                            "Ключ изменился — добавьте заново",
-                            "Key changed. Add this friend again.",
+                            "Ключ изменился · ждём подтверждения личности",
+                            "Key changed · waiting to verify the identity",
                         )
                         .into()
                 } else if live.iter().any(|s| s.uuid == friend.uuid) {
@@ -2410,6 +2433,92 @@ fn active_peers(game: &mut Game<'_>) -> Vec<(u128, String)> {
     })
 }
 
+/// Failed handshakes after an automatic re-pin before the friend is invited again.
+const REKEY_HELLOS: u8 = 3;
+
+/// Friends keep their place when only the relay identity changed (reinstall, new PC,
+/// reset data folder): the new key is pinned automatically under the narrow rules of
+/// `relay_settings::rekey_target`, the session restarts, and the player is told.
+fn adopt_changed_identities(game: &mut Game<'_>) {
+    // Once a second is plenty: a failed save must not retry on every game tick.
+    if !state(|c| {
+        let time = now(c);
+        let due = time.saturating_sub(c.rekey_checked) >= 1000;
+        if due {
+            c.rekey_checked = time;
+        }
+        due
+    }) {
+        return;
+    }
+    let tab = cached_online(game);
+    let notices = state(|c| {
+        let mut found = Vec::new();
+        if !c.connected {
+            return Vec::<String>::new();
+        }
+        let (Some(party), Some(pins)) = (c.party.as_ref(), c.pins.as_ref()) else {
+            return Vec::new();
+        };
+        for friend in party.friends() {
+            let Some(old) = pins.get(&c.scope, friend.uuid) else {
+                continue;
+            };
+            let directory = c
+                .peers
+                .iter()
+                .map(|p| (p.uuid, p.code.as_str(), p.name.as_str()));
+            let on_server = |uuid: u128, name: &str| {
+                tab.iter()
+                    .any(|(id, n)| *id == uuid && n.eq_ignore_ascii_case(name))
+            };
+            if let Some(new) = relay_settings::rekey_target(old, friend.uuid, directory, on_server)
+            {
+                found.push((friend.uuid, friend.name, new.to_owned()));
+            }
+        }
+        if found.is_empty() {
+            return Vec::new();
+        }
+        let Some(mut next) = c.pins.clone() else {
+            return Vec::new();
+        };
+        found.retain(|(uuid, _, code)| next.pin(&c.scope, *uuid, code).is_ok());
+        if found.is_empty() {
+            return Vec::new();
+        }
+        if let Err(error) = next.save(&c.root.join("relay-contacts.json")) {
+            // Report the failure once, then retry in about a minute.
+            c.rekey_checked = now(c).saturating_add(59_000);
+            return vec![error];
+        }
+        c.pins = Some(next);
+        let mut notices = Vec::new();
+        for (uuid, name, _) in found {
+            if let Some(p) = &mut c.party {
+                p.forget_session(uuid);
+            }
+            c.rekeyed.insert(uuid, 0);
+            c.pending_codes.remove(&uuid);
+            c.last_hello.remove(&uuid);
+            c.last_status.remove(&uuid);
+            c.last_claims.remove(&uuid);
+            c.pages.retain(|f| f.uuid != uuid);
+            notices.push(tr!(
+                "Ключ друга {} изменился (переустановка?). Он перепривязан автоматически; если это не он, удалите его из друзей.",
+                "Friend {}'s key changed (reinstall?). It was relinked automatically; if that was not them, remove the friend.",
+                name
+            ));
+        }
+        c.cached_territories.clear();
+        notices
+    });
+    for notice in notices {
+        state(|c| c.menu_feedback = notice.clone());
+        game.native_chat(&format!("[Party] {notice}"));
+    }
+}
+
 fn frame_kind(body: &str) -> Option<String> {
     let value =
         serde_json::from_str::<serde_json::Value>(body.strip_prefix(party::PREFIX)?).ok()?;
@@ -2488,9 +2597,19 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
         if !allowed {
             return None;
         }
+        let pinned_key = pinned == Some(peer.code.as_str());
         let before = candidate.friends();
         let pending_before = candidate.pending(time);
-        let frames = candidate.receive(peer.uuid, &peer.name, &body, time).ok()?;
+        let mut frames = candidate.receive(peer.uuid, &peer.name, &body, time).ok()?;
+        // A friend that forgot us re-invites from the key we pinned: that key is
+        // already trusted, so relink without another manual confirmation.
+        let relinked = kind == "i"
+            && pinned_key
+            && before.iter().any(|f| f.uuid == peer.uuid)
+            && candidate.pending(time).iter().any(|f| f.uuid == peer.uuid);
+        if relinked {
+            frames.extend(candidate.accept(peer.uuid, time).ok()?);
+        }
         if c.controls.len() + frames.len() > 32 {
             return None;
         }
@@ -2513,6 +2632,11 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
                 return Some(error);
             }
             c.pins = Some(pins);
+        } else if relinked || kind == "a" {
+            // The friend list is unchanged but its bond was replaced.
+            if let Err(error) = candidate.save(&party_path(c)) {
+                return Some(error);
+            }
         }
         c.party = Some(candidate);
         if kind == "i" {
@@ -2529,6 +2653,12 @@ fn receive_network(peer: websocket::Peer, body: String, tab: &[(u128, String)]) 
             Some(tr!(
                 "{} отклонил приглашение",
                 "{} declined the invitation",
+                peer.name
+            ))
+        } else if relinked {
+            Some(tr!(
+                "Дружба с {} восстановлена автоматически",
+                "Friendship with {} was relinked automatically",
                 peer.name
             ))
         } else if invited {
