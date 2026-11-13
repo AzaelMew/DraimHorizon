@@ -137,6 +137,7 @@ pub struct ViewModel {
     pub pat_policy: super::claim_borders_patting::Policy,
     pub pat_notify: bool,
     pub protect_glow_berries: bool,
+    pub show_invisible_entities: bool,
     /// The helpers of the Helpers tab, by `Helper::index` (all off by default).
     pub helpers: [bool; 6],
     /// The auto-clicker presses the right button (the left one when false).
@@ -276,6 +277,7 @@ pub enum Action {
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
+    SetShowInvisibleEntities(bool),
     SetHelper(Helper, bool),
     /// The auto-clicker's button: true for the right one.
     SetAutoClickButton(bool),
@@ -425,6 +427,9 @@ impl std::fmt::Debug for Action {
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
                 f.debug_tuple("SetProtectGlowBerries").field(on).finish()
+            }
+            Self::SetShowInvisibleEntities(on) => {
+                f.debug_tuple("SetShowInvisibleEntities").field(on).finish()
             }
             Self::SetAutoClickButton(right) => {
                 f.debug_tuple("SetAutoClickButton").field(right).finish()
@@ -704,6 +709,7 @@ pub enum Control {
     /// Switches the notification of a received pat.
     PatNotify,
     ProtectGlowBerries,
+    ShowInvisibleEntities,
     /// Cycles what Drain builds: a fill, lines or a grid.
     DrainPattern,
     /// Cycles the distance between the lines of a pattern.
@@ -2465,6 +2471,20 @@ impl Menu {
                         self.language.text(
                             "Не ломать лианы и не собирать ягоды; приседайте для обхода",
                             "Prevent breaking vines and harvesting berries; sneak to bypass",
+                        ),
+                    ),
+                    (
+                        localized!(
+                            self.language,
+                            "Показывать невидимых: {}",
+                            "Show invisible entities: {}",
+                            self.on(model.show_invisible_entities)
+                        ),
+                        Control::ShowInvisibleEntities,
+                        model.show_invisible_entities,
+                        self.language.text(
+                            "Видеть невидимых игроков и мобов только на своём клиенте",
+                            "Render invisible players and mobs on your client only",
                         ),
                     ),
                 ];
@@ -4861,6 +4881,9 @@ impl Menu {
             Control::ProtectGlowBerries => {
                 Some(Action::SetProtectGlowBerries(!model.protect_glow_berries))
             }
+            Control::ShowInvisibleEntities => Some(Action::SetShowInvisibleEntities(
+                !model.show_invisible_entities,
+            )),
             Control::DrainRadius => {
                 self.drain_radius = match self.drain_radius {
                     3 => 6,
@@ -6496,6 +6519,7 @@ mod tests {
                                     Control::PatPolicy,
                                     Control::PatNotify,
                                     Control::ProtectGlowBerries,
+                                    Control::ShowInvisibleEntities,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;
@@ -6543,6 +6567,26 @@ mod tests {
             menu.activate(&model, 400.0, Control::ProtectGlowBerries),
             Some(Action::SetProtectGlowBerries(false))
         ));
+    }
+    #[test]
+    fn invisible_entities_switches_both_ways_and_defaults_off() {
+        for language in [Language::English, Language::Russian] {
+            let mut menu = Menu {
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel::default();
+            assert!(!model.show_invisible_entities);
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                Some(Action::SetShowInvisibleEntities(true))
+            );
+            model.show_invisible_entities = true;
+            assert_eq!(
+                menu.activate(&model, 400.0, Control::ShowInvisibleEntities),
+                Some(Action::SetShowInvisibleEntities(false))
+            );
+        }
     }
     #[test]
     fn toggle_captions_have_matching_russian_and_english_controls() {

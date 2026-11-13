@@ -1,8 +1,9 @@
-**DraimHorizon 0.39.21 - farm: no more stuck chest windows, bone meal without circling**
+**DraimHorizon 0.39.22 - show invisible entities**
 
 Target: official Horizon Nightly source `fdc87aecdbd116bf1e08adcd062fcbaea8c2e2ca`.
 
-- A chest window that opened late is used, an unattended one is closed after 6 s, and a trip never keeps a window open more than 40 s.
-- Bone meal clicks aim within a young crop's real height, so the farm stops walking round the bed.
+- **J → Settings → General → Show invisible entities** restores invisible player and mob models locally. Off by default; persisted using the existing settings namespace. English and Russian controls are included.
+- Normal depth testing, view range and frustum culling still apply. This cannot reveal entities withheld by a server or change what another player sees.
+- Entity metadata and potion timers are not changed. Turning the switch or the whole mod off restores normal rendering immediately. Invisible armour stands and item frames are not living entities and are left alone.
 
-Native client compiled against the pinned Nightly. Not verified in game.
+Verification: Rust formatting, Clippy, workspace tests, official mixin staging, native client compile-check, a native renderer regression using authored geometry, and bundle validation. Live in-game acceptance is not verified.

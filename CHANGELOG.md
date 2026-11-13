@@ -1,5 +1,10 @@
 # История версий
 
+## 0.39.22
+
+- Added an off-by-default **Show invisible entities** switch in **J → Settings → General**, with English and Russian labels. It restores the models of invisible players and mobs on this client, with normal range, frustum culling and depth testing; it does not reveal through walls or entities the server has not sent.
+- The renderer borrows entities unchanged: potion timers, invisibility metadata, server gameplay and other players' views remain untouched. Disabling the switch or DraimHorizon immediately removes the additional models.
+
 ## 0.39.21
 
 - A farm bot no longer stands in front of an open chest for good. A chest window that opened after the trip had given up on the click (on a slow server it can open seconds later) was left open with nothing to drive it, and the farm waited behind it for hours. Such a window is now used for the trip if one is under way; a container window open with no trip behind it is closed after six seconds while the farm runs, and a trip that keeps a window open for 40 seconds ends and is tried again later.

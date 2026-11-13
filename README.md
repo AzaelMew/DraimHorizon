@@ -27,6 +27,8 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 
 **Patting** — Aim at a player within 3 blocks and press **K** (rebindable under Options → Mods → Settings) for two gentle pats. Your own arm moves at once. A player running DraimHorizon on the same relay sees your arm move too, plus an optional "*name* patted you" line. **J → Settings → General** sets who may pat you (friends only by default, everyone or nobody) and turns that line on or off. Patting is cosmetic only: it sends no attack, item use or chat. Players without the mod see nothing.
 
+**Show invisible entities** — Enable **J → Settings → General → Show invisible entities** to see invisible players and mobs locally. Off by default. Models use normal depth testing and view range, not a through-wall overlay. Potion timers, server gameplay and other players' views do not change; the client cannot reveal entities the server does not send. Invisible armour stands and item frames are left alone.
+
 ## Items and trading
 
 ![Auction catalogue with search and purchase confirmation](docs/showcase/trading.svg)

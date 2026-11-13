@@ -1,7 +1,40 @@
 [mod]
 id = "draimhorizon"
-version = "0.39.21"
+version = "0.39.22"
 priority = 100
+
+# Additional visible models only: server metadata and effects remain untouched.
+[[module]]
+id = "visibility"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_visibility"
+source = "visibility.rs"
+
+[[module]]
+id = "visibility-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_visibility_view"
+source = "visibility_view.rs"
+
+[[module]]
+id = "visibility-model"
+file = "crates/horizon-client/src/mobs/render.rs"
+name = "claim_borders_visibility_model"
+source = "visibility_model.rs"
+visibility = "pub"
+
+[[injection]]
+id = "visibility-models"
+kind = "RETURN"
+target = "horizon_client::game::creatures::Game<'_>::mob_geometry"
+helper = "visibility_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "camera", ty = "glam::DVec3", value = "camera" },
+  { name = "alpha", ty = "f64", value = "alpha" },
+  { name = "out", ty = "&mut Vec<horizon_client::mesher::Vertex>", value = "&mut *out" },
+]
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
