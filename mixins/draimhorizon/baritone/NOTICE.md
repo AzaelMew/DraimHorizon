@@ -28,9 +28,8 @@ file layout, module names (`baritone_*`) and authorship.
   block-change, interact, toast, beacon; `hooks/tick.rs` calls `off_tick`, which lets go once after the
   port was on instead of running `stop` every tick; `hooks/unload.rs` and `game/unload_stash.rs` keep no
   chunks while off). `block_changed` no longer clones the block name. Sections are timed with `prof!`
-  when the profiler is on. The chunk packer budget is 1 ms a tick (`PACK_BUDGET_MS` in
-  `behavior/pathing.rs`, upstream 4 and 6) and a search slice is 10 ms (`SEARCH_SLICE` in
-  `behavior/pathing_behavior.rs`, upstream 25).
+  and `claim_borders_baritone_profile::time` when the profiler is on. The chunk packer and search
+  budgets are upstream's again (4 and 6 ms, 25 ms): shortening them made it slower in a game.
 - DraimHorizon's own glue is MIT and lives outside this directory: `baritone_bridge.rs` (walks for the
   farm and mining, the tab's settings and status) and `baritone_walk.rs` (its pure logic). They call
   the port only through `crate::game::baritone::with` and its public API.
