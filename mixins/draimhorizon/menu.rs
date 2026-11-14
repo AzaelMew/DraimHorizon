@@ -689,6 +689,26 @@ pub fn rail_width(panel_width: f32, panel_height: f32) -> f32 {
         0.0
     }
 }
+/// The pages of the Farm mode of Automation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FarmSection {
+    #[default]
+    Crops,
+    Options,
+    Chests,
+    Plots,
+}
+impl FarmSection {
+    pub const ALL: [Self; 4] = [Self::Crops, Self::Options, Self::Chests, Self::Plots];
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Crops => language.text("Культуры", "Crops"),
+            Self::Options => language.text("Опции", "Options"),
+            Self::Chests => language.text("Сундуки", "Chests"),
+            Self::Plots => language.text("Участки", "Plots"),
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ExperimentalSection {
     #[default]
@@ -862,6 +882,8 @@ pub enum Control {
     /// A port setting: `.1` is the direction of a stepper (a flag toggles whichever it is).
     BaritoneSetting(usize, bool),
     BaritoneProfile,
+    /// A page of the Farm mode.
+    FarmSection(FarmSection),
     /// A row of the Mining picker (index into the filtered rows).
     BaritoneMineRow(usize),
     /// The previous (false) or next (true) page of the Mining picker.
@@ -1077,8 +1099,11 @@ pub struct Menu {
     pub navigation_z: String,
     pub baritone_block: String,
     pub baritone_mine_page: usize,
+    pub farm_section: FarmSection,
     /// The blocks chosen in Mining as of the last snapshot (the action keys use them, menu closed).
     pub baritone_mine_cache: Vec<String>,
+    /// The schematic files as of the last snapshot (Start in Build, with the menu closed).
+    pub baritone_files_cache: Vec<String>,
     /// The player chosen in Navigation (its name, for `follow player`).
     pub navigation_player_name: Option<String>,
     /// The action keys act on the Baritone tab (the last of it and Automation on screen).
@@ -1151,7 +1176,9 @@ impl Default for Menu {
             navigation_z: String::new(),
             baritone_block: String::new(),
             baritone_mine_page: 0,
+            farm_section: FarmSection::Crops,
             baritone_mine_cache: Vec::new(),
+            baritone_files_cache: Vec::new(),
             navigation_player_name: None,
             keys_for_baritone_tab: false,
             baritone_section: BaritoneSection::Tasks,
@@ -1291,6 +1318,17 @@ fn merge_steppers(widgets: Vec<Widget>) -> Vec<Widget> {
 fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[1] >= r[1] && p[0] < r[0] + r[2] && p[1] < r[1] + r[3]
 }
+#[cfg(test)]
+impl Menu {
+    /// A copy of the menu showing `section` of the Baritone tab (for tests of the action keys).
+    fn clone_for(&self, section: BaritoneSection) -> Menu {
+        let mut menu = Menu::default();
+        menu.keep_baritone(self);
+        menu.tab = Tab::Baritone;
+        menu.baritone_section = section;
+        menu
+    }
+}
 impl Menu {
     pub fn clear_navigation_coordinates(&mut self) {
         self.navigation_x.clear();
@@ -1335,7 +1373,9 @@ impl Menu {
         self.navigation_z = from.navigation_z.clone();
         self.baritone_block = from.baritone_block.clone();
         self.baritone_mine_page = from.baritone_mine_page;
+        self.farm_section = from.farm_section;
         self.baritone_mine_cache = from.baritone_mine_cache.clone();
+        self.baritone_files_cache = from.baritone_files_cache.clone();
         self.navigation_player_name = from.navigation_player_name.clone();
         self.keys_for_baritone_tab = from.keys_for_baritone_tab;
         self.baritone_section = from.baritone_section;
@@ -1418,9 +1458,20 @@ impl Menu {
             }
             BaritoneSection::Tunnel => Ok(self.baritone_tunnel()),
             BaritoneSection::Bridge => Ok(self.baritone_bridge()),
-            BaritoneSection::Tasks | BaritoneSection::Build | BaritoneSection::Settings => {
-                Err(missing())
-            }
+            // Start in Build builds the chosen file (at the typed X/Y/Z, or where you stand).
+            BaritoneSection::Build => self
+                .baritone_build_from(&self.baritone_files_cache)
+                .ok_or_else(|| {
+                    language
+                        .text(
+                            "Выберите схему (имя без пробелов) и укажите X Y Z целиком или оставьте пустыми",
+                            "Choose a schematic (a name without spaces) and give X Y Z whole or leave them empty",
+                        )
+                        .to_owned()
+                }),
+            // Start on the home page takes up what Pause held.
+            BaritoneSection::Tasks => Ok(Action::Baritone("resume".into())),
+            BaritoneSection::Settings => Err(missing()),
         }
     }
     /// The Tunnel button: the sizes chosen in the section.
@@ -1514,6 +1565,7 @@ impl Menu {
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
         self.baritone_mine_cache.clone_from(&next.baritone.mine);
+        self.baritone_files_cache.clone_from(&next.schematic_files);
         self.selected = self.selected.and_then(|index| match self.tab {
             Tab::Waypoints => previous
                 .waypoints
@@ -3763,10 +3815,11 @@ impl Menu {
     /// The Build button: the chosen schematic file, at the typed X/Y/Z or, with the three empty,
     /// at the player. A file name with a space is refused (the port reads one word).
     fn baritone_build(&self, model: &ViewModel) -> Option<Action> {
-        let n = model.schematic_files.len();
-        let file = model
-            .schematic_files
-            .get(self.baritone_file.min(n.checked_sub(1)?))?;
+        self.baritone_build_from(&model.schematic_files)
+    }
+    fn baritone_build_from(&self, files: &[String]) -> Option<Action> {
+        let n = files.len();
+        let file = files.get(self.baritone_file.min(n.checked_sub(1)?))?;
         if file.is_empty() || file.chars().any(char::is_whitespace) {
             return None;
         }
@@ -3911,6 +3964,7 @@ impl Menu {
                         cmd,
                     );
                 }
+                hint(&mut out, 128.0, &self.hotkey_hint(model));
                 // Tasks without input.
                 for (i, (text, cmd)) in [
                     (l.text("Ферма", "Farm"), BaritoneCmd::Farm),
@@ -4302,6 +4356,205 @@ impl Menu {
         out.push(line);
         out
     }
+    /// The Farm mode of Automation: a row of pages (Crops, Options, Chests, Plots) and the page's
+    /// controls. Harvesting, planting and the containers work as before; only where the buttons
+    /// are changed, so that each page fits the smallest panel.
+    #[allow(clippy::too_many_arguments)]
+    fn farm_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        step: f32,
+        h: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        use super::claim_borders_farm_storage::Role;
+        use super::claim_borders_farming::Crop;
+        let l = self.language;
+        let gap = 2.0;
+        // The pages.
+        let pw = (w - gap * 3.0) / 4.0;
+        for (i, section) in FarmSection::ALL.into_iter().enumerate() {
+            out.push(widget(
+                [x + i as f32 * (pw + gap), 100.0, pw, 16.0],
+                section.label(l),
+                Some(Control::FarmSection(section)),
+                self.farm_section == section,
+            ));
+        }
+        let top = 120.0;
+        let half = (w - gap) / 2.0;
+        match self.farm_section {
+            FarmSection::Crops => {
+                // The crop is picked from item icons (name as the tooltip), not by cycling.
+                let tile = 22.0;
+                for (i, crop) in Crop::ALL.into_iter().enumerate() {
+                    let name = match crop {
+                        Crop::Wheat => l.text("Пшеница", "Wheat"),
+                        Crop::Carrots => l.text("Морковь", "Carrots"),
+                        Crop::Potatoes => l.text("Картофель", "Potatoes"),
+                        Crop::Beetroot => l.text("Свёкла", "Beetroot"),
+                    };
+                    out.push(widget(
+                        [x + i as f32 * (tile + gap), top, tile, tile],
+                        name,
+                        Some(Control::FarmCropPick(crop)),
+                        self.farm_crops & crop.bit() != 0,
+                    ));
+                }
+                let from = x + Crop::ALL.len() as f32 * (tile + gap) + 4.0;
+                let bw = (x + w - from).max(40.0);
+                out.push(widget(
+                    [from, top, bw, 10.0],
+                    localized!(l, "Радиус: {}", "Radius: {}", self.farm_radius),
+                    Some(Control::FarmRadius),
+                    false,
+                ));
+                out.push(widget(
+                    [from, top + 12.0, bw, 10.0],
+                    if self.farm_levels == 0 {
+                        l.text("Уровни: плоская", "Levels: flat").to_owned()
+                    } else {
+                        localized!(l, "Уровни: ±{}", "Levels: ±{}", self.farm_levels)
+                    },
+                    Some(Control::FarmLevels),
+                    false,
+                ));
+            }
+            FarmSection::Options => {
+                let on = |v: bool| {
+                    if v {
+                        l.text("Вкл", "On")
+                    } else {
+                        l.text("Выкл", "Off")
+                    }
+                };
+                for (i, (label, control, active)) in [
+                    (
+                        localized!(l, "Пересадка: {}", "Replant: {}", on(self.farm_replant)),
+                        Control::FarmReplant,
+                        self.farm_replant,
+                    ),
+                    (
+                        localized!(
+                            l,
+                            "Костная мука: {}",
+                            "Bone meal: {}",
+                            on(self.farm_bonemeal)
+                        ),
+                        Control::FarmBonemeal,
+                        self.farm_bonemeal,
+                    ),
+                    (
+                        localized!(
+                            l,
+                            "Авто-продажа: {}",
+                            "Auto sell: {}",
+                            on(self.farm_autosell)
+                        ),
+                        Control::FarmAutoSell,
+                        self.farm_autosell,
+                    ),
+                    (
+                        l.text("Точка ожидания", "Wait spot").to_owned(),
+                        Control::FarmSafe,
+                        model.farm_safe.is_some(),
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [
+                            x + (i % 2) as f32 * (half + gap),
+                            top + (i / 2) as f32 * step,
+                            half,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        active,
+                    ));
+                }
+            }
+            FarmSection::Chests => {
+                // The three containers: harvest, seeds, bone meal. Aim at a chest, barrel or
+                // shulker box and press (or `/dfarm chest <role>`); a highlighted button has its
+                // container set. They are kept per world, so a restart finds them again.
+                let third = (w - gap * 2.0) / 3.0;
+                for (i, (role, ru, en)) in [
+                    (Role::Harvest, "Урожай", "Harvest"),
+                    (Role::Seeds, "Семена", "Seeds"),
+                    (Role::Meal, "Мука", "Meal"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [x + i as f32 * (third + gap), top, third, 16.0],
+                        l.text(ru, en),
+                        Some(Control::FarmStorage(role)),
+                        model.farm_storage[role.index()].is_some(),
+                    ));
+                }
+                // Where each is, with the colour of the frame drawn around it in the world, as
+                // many lines as there is room for.
+                let at = |pos: Option<[i32; 3]>, none: &str| {
+                    pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
+                };
+                let unset = l.text("не задан", "not set");
+                let entries = [
+                    localized!(
+                        l,
+                        "Урожай (оранж.): {}",
+                        "Harvest (orange): {}",
+                        at(model.farm_storage[0], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Семена (зелён.): {}",
+                        "Seeds (green): {}",
+                        at(model.farm_storage[1], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Мука (бел.): {}",
+                        "Meal (white): {}",
+                        at(model.farm_storage[2], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Точка (син.): {}",
+                        "Spot (blue): {}",
+                        at(model.farm_safe, unset)
+                    ),
+                    localized!(
+                        l,
+                        "Компостер (корич.): {}",
+                        "Composter (brown): {}",
+                        at(model.farm_composter, l.text("рядом нет", "none nearby"))
+                    ),
+                ];
+                for (i, entry) in entries.into_iter().enumerate() {
+                    let y = top + 18.0 + (i / 2) as f32 * 12.0;
+                    if y + 11.0 > height - 50.0 {
+                        break;
+                    }
+                    out.push(widget(
+                        [x + (i % 2) as f32 * (half + gap), y, half, 11.0],
+                        entry,
+                        None,
+                        false,
+                    ));
+                }
+            }
+            FarmSection::Plots => {
+                self.farm_plot_list(model, x, w, top, height - 50.0, out);
+            }
+        }
+    }
     fn experimental_layout(
         &self,
         model: &ViewModel,
@@ -4359,217 +4612,18 @@ impl Menu {
             }
             let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
             let h = (step - 2.0).min(22.0);
-            if matches!(
-                self.baritone_mode,
-                BaritoneMode::Farm | BaritoneMode::Schematic
-            ) {
-                let farm = self.baritone_mode == BaritoneMode::Farm;
-                let rows: Vec<(String, Control)> = if farm {
-                    vec![
-                        (
-                            localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
-                            Control::FarmRadius,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Пересадка: {}",
-                                "Replant: {}",
-                                if self.farm_replant {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmReplant,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Костная мука: {}",
-                                "Bone meal: {}",
-                                if self.farm_bonemeal {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmBonemeal,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Авто-продажа: {}",
-                                "Auto sell: {}",
-                                if self.farm_autosell {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmAutoSell,
-                        ),
-                        (
-                            if self.farm_levels == 0 {
-                                self.language
-                                    .text("Уровни: плоская", "Levels: flat")
-                                    .to_owned()
-                            } else {
-                                localized!(
-                                    self.language,
-                                    "Уровни: ±{}",
-                                    "Levels: ±{}",
-                                    self.farm_levels
-                                )
-                            },
-                            Control::FarmLevels,
-                        ),
-                    ]
-                } else {
-                    // The Schematics tab lays itself out (`schematic_panel`).
-                    Vec::new()
-                };
-                // The crop is picked from item icons (name as the tooltip), not by cycling.
-                let mut below = 0.0;
-                if farm {
-                    use super::claim_borders_farming::Crop;
-                    let tile = 22.0;
-                    for (i, crop) in Crop::ALL.into_iter().enumerate() {
-                        let name = match crop {
-                            Crop::Wheat => self.language.text("Пшеница", "Wheat"),
-                            Crop::Carrots => self.language.text("Морковь", "Carrots"),
-                            Crop::Potatoes => self.language.text("Картофель", "Potatoes"),
-                            Crop::Beetroot => self.language.text("Свёкла", "Beetroot"),
-                        };
-                        out.push(widget(
-                            [x + i as f32 * (tile + 2.0), 100.0, tile, tile],
-                            name,
-                            Some(Control::FarmCropPick(crop)),
-                            self.farm_crops & crop.bit() != 0,
-                        ));
-                    }
-                    // The three containers share the row with the crops: harvest, seeds, bone
-                    // meal. Aim at a chest, barrel or shulker box and press; press with the
-                    // crosshair elsewhere to clear. A highlighted button has its container set.
-                    use super::claim_borders_farm_storage::Role;
-                    let from = x + Crop::ALL.len() as f32 * (tile + 2.0) + 4.0;
-                    let width = ((x + w - from - 6.0) / 4.0).max(18.0);
-                    for (i, (role, ru, en)) in [
-                        (Role::Harvest, "Урожай", "Harvest"),
-                        (Role::Seeds, "Семена", "Seeds"),
-                        (Role::Meal, "Мука", "Meal"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        out.push(widget(
-                            [from + i as f32 * (width + 2.0), 100.0, width, tile],
-                            self.language.text(ru, en),
-                            Some(Control::FarmStorage(role)),
-                            model.farm_storage[role.index()].is_some(),
-                        ));
-                    }
-                    // The fourth button: the safe point to wait at. Stand there and press.
-                    out.push(widget(
-                        [from + 3.0 * (width + 2.0), 100.0, width, tile],
-                        self.language.text("Точка", "Spot"),
-                        Some(Control::FarmSafe),
-                        model.farm_safe.is_some(),
-                    ));
-                    below = tile + 2.0;
-                }
-                let count = rows.len();
-                for (i, (label, c)) in rows.into_iter().enumerate() {
-                    out.push(widget(
-                        [
-                            x + (i % 2) as f32 * (tab_width + 4.0),
-                            100.0 + below + (i / 2) as f32 * step,
-                            tab_width,
-                            h,
-                        ],
-                        label,
-                        Some(c),
-                        false,
-                    ));
-                }
-                if !farm {
-                    self.schematic_panel(
-                        model,
-                        x,
-                        w,
-                        SCHEMATIC_TOP,
-                        height - SCHEMATIC_BOTTOM,
-                        &mut out,
-                    );
-                }
-                if farm {
-                    // What the buttons are bound to, with the coordinates and the colour of the
-                    // frame drawn around it in the world, as many lines as there is room for.
-                    let at = |pos: Option<[i32; 3]>, none: &str| {
-                        pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
-                    };
-                    let unset = self.language.text("не задан", "not set");
-                    let entries = [
-                        localized!(
-                            self.language,
-                            "Урожай (оранж.): {}",
-                            "Harvest (orange): {}",
-                            at(model.farm_storage[0], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Семена (зелён.): {}",
-                            "Seeds (green): {}",
-                            at(model.farm_storage[1], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Мука (бел.): {}",
-                            "Meal (white): {}",
-                            at(model.farm_storage[2], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Точка (син.): {}",
-                            "Spot (blue): {}",
-                            at(model.farm_safe, unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Компостер (корич.): {}",
-                            "Composter (brown): {}",
-                            at(
-                                model.farm_composter,
-                                self.language.text("рядом нет", "none nearby")
-                            )
-                        ),
-                    ];
-                    let top = 100.0 + below + count.div_ceil(2) as f32 * step + 2.0;
-                    let half = (w - 4.0) / 2.0;
-                    let mut next = top;
-                    // The plots come first: room for the header and up to three of them (with
-                    // the pager when there are more) is kept before the coordinate lines.
-                    let plots = model.farm_plots.len();
-                    let keep = if plots == 0 {
-                        0.0
-                    } else {
-                        15.0 + 15.0 * plots.min(3) as f32 + if plots > 3 { 15.0 } else { 0.0 }
-                    };
-                    for (i, entry) in entries.into_iter().enumerate() {
-                        let y = top + (i / 2) as f32 * 12.0;
-                        if y + 11.0 > height - 50.0 - keep {
-                            break;
-                        }
-                        out.push(widget(
-                            [x + (i % 2) as f32 * (half + 4.0), y, half, 11.0],
-                            entry,
-                            None,
-                            false,
-                        ));
-                        next = y + 12.0;
-                    }
-                    self.farm_plot_list(model, x, w, next + 2.0, height - 50.0, &mut out);
-                }
+            if self.baritone_mode == BaritoneMode::Farm {
+                self.farm_layout(model, x, w, height, step, h, &mut out);
+            } else if self.baritone_mode == BaritoneMode::Schematic {
+                // The Schematics tab lays itself out (`schematic_panel`).
+                self.schematic_panel(
+                    model,
+                    x,
+                    w,
+                    SCHEMATIC_TOP,
+                    height - SCHEMATIC_BOTTOM,
+                    &mut out,
+                );
             } else if self.baritone_mode == BaritoneMode::Drain {
                 use super::claim_borders_draining::Pattern;
                 out.push(widget(
@@ -5555,6 +5609,10 @@ impl Menu {
                 } else {
                     (now + pages - 1) % pages
                 };
+                None
+            }
+            Control::FarmSection(section) => {
+                self.farm_section = section;
                 None
             }
             Control::BaritoneMineClear => Some(Action::BaritoneMineSet(Vec::new())),
@@ -8253,6 +8311,192 @@ mod tests {
         ));
         // There is no preview for either.
         assert!(menu.baritone_request(false).is_err());
+    }
+
+    #[test]
+    fn farm_pages_hold_every_control_and_each_page_fits_the_smallest_panel() {
+        use super::super::claim_borders_farm_storage::Role;
+        use super::super::claim_borders_farming::Crop;
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            navigation_status: "Farm status".into(),
+            farm_storage: [Some([1, 64, 2]), None, Some([3, 64, 4])],
+            ..ViewModel::default()
+        };
+        model.farm_plots = vec![(0, "Field".into(), true, true)];
+        // Which control lives on which page: nothing is lost in the move.
+        let pages: [(FarmSection, Vec<Control>); 4] = [
+            (
+                FarmSection::Crops,
+                vec![
+                    Control::FarmCropPick(Crop::Wheat),
+                    Control::FarmCropPick(Crop::Beetroot),
+                    Control::FarmRadius,
+                    Control::FarmLevels,
+                ],
+            ),
+            (
+                FarmSection::Options,
+                vec![
+                    Control::FarmReplant,
+                    Control::FarmBonemeal,
+                    Control::FarmAutoSell,
+                    Control::FarmSafe,
+                ],
+            ),
+            (
+                FarmSection::Chests,
+                vec![
+                    Control::FarmStorage(Role::Harvest),
+                    Control::FarmStorage(Role::Seeds),
+                    Control::FarmStorage(Role::Meal),
+                ],
+            ),
+            (FarmSection::Plots, vec![Control::FarmPlotFarm(0)]),
+        ];
+        for language in [Language::Russian, Language::English] {
+            for (section, controls) in &pages {
+                for (width, height) in [(360.0, 216.0), (360.0, 300.0), (800.0, 500.0)] {
+                    let menu = Menu {
+                        tab: Tab::Experimental,
+                        experimental_section: ExperimentalSection::Baritone,
+                        baritone_mode: BaritoneMode::Farm,
+                        farm_section: *section,
+                        language,
+                        ..Menu::default()
+                    };
+                    let rows = menu.layout(&model, width, height);
+                    // The row of pages is always there, with this page highlighted.
+                    for page in FarmSection::ALL {
+                        let tab = rows
+                            .iter()
+                            .find(|r| r.control == Some(Control::FarmSection(page)))
+                            .expect("a page button");
+                        assert_eq!(tab.selected, page == *section);
+                        assert!(tab.rect[0] >= 0.0 && tab.rect[0] + tab.rect[2] <= width);
+                    }
+                    for control in controls {
+                        let r = rows
+                            .iter()
+                            .find(|r| r.control == Some(*control))
+                            .unwrap_or_else(|| {
+                                panic!("{control:?} missing on {section:?} at {width}x{height}")
+                            });
+                        assert!(
+                            r.rect[2] > 8.0 && r.rect[0] + r.rect[2] <= width + 1.0,
+                            "{control:?}"
+                        );
+                        // Above the status line of the footer.
+                        let status = rows
+                            .iter()
+                            .find(|w| w.text == "Farm status")
+                            .expect("status");
+                        assert!(
+                            r.rect[1] + r.rect[3] <= status.rect[1] + 1.0,
+                            "{control:?} on {section:?} at {width}x{height} meets the status"
+                        );
+                    }
+                }
+            }
+        }
+        // A page button only changes the page.
+        let mut menu = Menu::default();
+        assert_eq!(menu.farm_section, FarmSection::Crops);
+        assert!(
+            menu.activate(&model, 216.0, Control::FarmSection(FarmSection::Chests))
+                .is_none()
+        );
+        assert_eq!(menu.farm_section, FarmSection::Chests);
+    }
+
+    #[test]
+    fn the_action_keys_start_the_section_on_screen_and_follow_the_tab_last_used() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            schematic_files: vec!["house.schem".into()],
+            hotkeys: ["KEYPAD 1", "KEYPAD 2", "KEYPAD 3", "KEYPAD 4"].map(str::to_owned),
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        menu.baritone_mine_cache = vec!["minecraft:stone".into()];
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("1".into(), "64".into(), "2".into());
+        for (section, check) in [
+            (
+                BaritoneSection::Navigation,
+                matches!(
+                    menu.clone_for(BaritoneSection::Navigation).baritone_request(true),
+                    Ok(Action::Baritone(l)) if l == "goto 1 64 2"
+                ),
+            ),
+            (
+                BaritoneSection::Mining,
+                matches!(
+                    menu.clone_for(BaritoneSection::Mining).baritone_request(true),
+                    Ok(Action::BaritoneMine(l)) if l == ["minecraft:stone"]
+                ),
+            ),
+            (
+                BaritoneSection::Tunnel,
+                matches!(
+                    menu.clone_for(BaritoneSection::Tunnel)
+                        .baritone_request(true),
+                    Ok(Action::BaritoneTunnel { floor: true, .. })
+                ),
+            ),
+            (
+                BaritoneSection::Bridge,
+                matches!(
+                    menu.clone_for(BaritoneSection::Bridge)
+                        .baritone_request(true),
+                    Ok(Action::BaritoneBridge { .. })
+                ),
+            ),
+            (
+                BaritoneSection::Build,
+                matches!(
+                    menu.clone_for(BaritoneSection::Build).baritone_request(true),
+                    Ok(Action::BaritoneBuild { file, origin: Some([1, 64, 2]) }) if file == "house.schem"
+                ),
+            ),
+            (
+                BaritoneSection::Tasks,
+                matches!(
+                    menu.clone_for(BaritoneSection::Tasks).baritone_request(true),
+                    Ok(Action::Baritone(l)) if l == "resume"
+                ),
+            ),
+        ] {
+            assert!(check, "Start in {section:?}");
+        }
+        assert!(
+            menu.clone_for(BaritoneSection::Settings)
+                .baritone_request(true)
+                .is_err()
+        );
+        // There is no preview anywhere on the tab.
+        for section in BaritoneSection::ALL {
+            assert!(
+                menu.clone_for(section).baritone_request(false).is_err(),
+                "{section:?}"
+            );
+        }
+        // The keys are named on the home page.
+        let rows = menu.layout(&model, 360.0, 200.0);
+        assert!(rows.iter().any(|r| r.text.contains("KEYPAD 2")));
+        // They belong to the tab used last: Baritone, then Automation, then Baritone again.
+        let mut menu = Menu::default();
+        assert!(!menu.keys_scope_is_baritone_tab());
+        menu.activate(&model, 200.0, Control::Tab(Tab::Baritone));
+        assert!(menu.keys_scope_is_baritone_tab());
+        menu.tab = Tab::Waypoints;
+        assert!(menu.keys_scope_is_baritone_tab());
+        menu.activate(&model, 200.0, Control::Tab(Tab::Experimental));
+        assert!(!menu.keys_scope_is_baritone_tab());
     }
 
     #[test]

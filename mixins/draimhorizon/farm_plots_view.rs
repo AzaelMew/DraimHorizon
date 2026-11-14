@@ -6,7 +6,8 @@
 // field again after a reconnect.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_farm_plots as plots,
-    claim_borders_navigation as nav, claim_borders_navigation_view as walk,
+    claim_borders_farm_storage as store, claim_borders_navigation as nav,
+    claim_borders_navigation_view as walk, claim_borders_workshop_view as workshop,
 };
 use horizon_client::gizmos::Gizmos;
 use std::sync::Mutex;
@@ -159,14 +160,19 @@ pub(super) fn command(game: &mut Game<'_>, message: &str) -> bool {
         return false;
     };
     if own
-        && !matches!(sub.as_str(), "pos1" | "pos2" | "save" | "clear" | "list")
+        && !matches!(
+            sub.as_str(),
+            "pos1" | "pos2" | "save" | "clear" | "list" | "chest"
+        )
         && game.native_on(claims::ID)
     {
         game.native_chat(&format!("[DraimHorizon] {}", usage()));
         return true;
     }
-    if !matches!(sub.as_str(), "pos1" | "pos2" | "save" | "clear" | "list")
-        || !game.native_on(claims::ID)
+    if !matches!(
+        sub.as_str(),
+        "pos1" | "pos2" | "save" | "clear" | "list" | "chest"
+    ) || !game.native_on(claims::ID)
     {
         return false;
     }
@@ -178,15 +184,64 @@ pub(super) fn command(game: &mut Game<'_>, message: &str) -> bool {
 }
 fn usage() -> &'static str {
     text(
-        "Участки фермы: /dfarm pos1, /dfarm pos2, /dfarm save [имя], /dfarm clear, /dfarm list (или /farm ...)",
-        "Farm plots: /dfarm pos1, /dfarm pos2, /dfarm save [name], /dfarm clear, /dfarm list (or /farm ...)",
+        "Ферма: /dfarm pos1, pos2, save [имя], clear, list; сундуки: /dfarm chest <урожай|семена|мука> (прицел на сундук), /dfarm chest clear <роль|all> (или /farm ...)",
+        "Farm: /dfarm pos1, pos2, save [name], clear, list; containers: /dfarm chest <harvest|seeds|meal> (aim at one), /dfarm chest clear <role|all> (or /farm ...)",
     )
+}
+/// The role a word names, in either language.
+fn role_named(word: &str) -> Option<store::Role> {
+    match word.to_lowercase().as_str() {
+        "harvest" | "урожай" => Some(store::Role::Harvest),
+        "seeds" | "seed" | "семена" => Some(store::Role::Seeds),
+        "meal" | "bonemeal" | "мука" => Some(store::Role::Meal),
+        _ => None,
+    }
+}
+fn role_label(role: store::Role) -> &'static str {
+    match role {
+        store::Role::Harvest => text("Склад урожая", "Harvest container"),
+        store::Role::Seeds => text("Склад семян", "Seeds container"),
+        store::Role::Meal => text("Склад муки", "Meal container"),
+    }
+}
+/// `/dfarm chest <harvest|seeds|meal>` sets the container aimed at (kept per world and role, like
+/// the plots); `/dfarm chest clear <role|all>` forgets one or all of them.
+fn chest(game: &Game<'_>, rest: &str) -> String {
+    let mut words = rest.split_whitespace();
+    let first = words.next().map(str::to_lowercase);
+    match first.as_deref() {
+        Some("clear" | "сброс") => match words.next().map(str::to_lowercase).as_deref() {
+            Some("all" | "все") => {
+                for role in store::Role::ALL {
+                    workshop::clear_storage(game, role);
+                }
+                text("Все склады фермы забыты.", "All farm containers forgotten.").into()
+            }
+            Some(word) => match role_named(word) {
+                Some(role) => {
+                    workshop::clear_storage(game, role);
+                    format!("{}: {}", role_label(role), text("забыт", "forgotten"))
+                }
+                None => usage().into(),
+            },
+            None => usage().into(),
+        },
+        Some(word) => match role_named(word) {
+            Some(role) => match workshop::set_storage(game, role) {
+                Ok([x, y, z]) => format!("{}: {x} {y} {z}", role_label(role)),
+                Err(e) => e,
+            },
+            None => usage().into(),
+        },
+        None => usage().into(),
+    }
 }
 fn run(game: &Game<'_>, sub: &str, rest: &str) -> String {
     let Some(scope) = walk::world_key(game) else {
         return text("Сначала войдите в мир.", "Join a world first.").into();
     };
     match sub {
+        "chest" => chest(game, rest),
         "pos1" | "pos2" => {
             let Some(at) = standing(game) else {
                 return text("Сначала войдите в мир.", "Join a world first.").into();

@@ -24,6 +24,8 @@ Open **Baritone → Mining**. Pick what to mine from the list: it holds **every 
 
 ### Farm containers
 
+The Farm mode is split into four pages: **Crops**, **Options**, **Chests** and **Plots**. The containers are set on **Chests** (or with `/dfarm chest <harvest|seeds|meal>`; `/dfarm chest clear <role|all>` forgets them) and are remembered per world and role, so a restart or a reconnect finds them again.
+
 On the Farm tab, pick the crops from the icons (several at once; one always stays selected). With several crops the field is shared fairly: two take a half each (west and east), three a third each, four a quarter each (the four corners of the square); each part is sown with its own crop, and thin lines on the ground show where the parts meet. Each part gets only its own crop: if a part's seeds run out they are fetched, and with none in the seeds container either (or no way to it) the part waits for them for a while instead of being sown with another crop. In a marked plot all plain soil (dirt, grass, path) with air above is tilled with a hoe; the square around the start tills only trampled beds. To the right of the icons are three buttons, one per container: **Harvest**, **Seeds** and **Meal** (bone meal). To set one, aim the crosshair at a chest, trapped chest, barrel or shulker box and press its button (press it with the crosshair on anything else to clear it). The containers belong to the current world and are never simply the nearest ones. Under the buttons the menu lists what each is bound to, with its coordinates, and in the world each bound block has a coloured frame: harvest orange, seeds green, meal white, the composter brown, the safe spot blue.
 
 - **Harvest** takes the crops (wheat, beetroot, and half of the carrots and potatoes).

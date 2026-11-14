@@ -2,7 +2,8 @@ use claim_borders::{
     economy,
     economy_ui::{DetailScroll, Panel},
     menu::{
-        Action, BaritoneMode, Control, ExperimentalSection, Helper, Language, Menu, Tab, ViewModel,
+        Action, BaritoneMode, Control, ExperimentalSection, FarmSection, Helper, Language, Menu,
+        Tab, ViewModel,
     },
     outgoing::{TranslationControl, TranslationField, TranslationScreen, TranslationTargets},
     ui_style::{DialogLayout, PagedPanel},
@@ -552,6 +553,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
             menu.tab = Tab::Experimental;
             menu.experimental_section = ExperimentalSection::Baritone;
             menu.baritone_mode = BaritoneMode::Farm;
+            menu.farm_section = FarmSection::Plots;
             let widgets = menu.layout(&model, size[0], size[1]);
             let plot = |c: Option<Control>| {
                 matches!(
@@ -613,6 +615,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
                 menu.tab = Tab::Experimental;
                 menu.experimental_section = ExperimentalSection::Baritone;
                 menu.baritone_mode = BaritoneMode::Farm;
+                menu.farm_section = FarmSection::Plots;
                 for (control, action) in [
                     (Control::FarmPlotFarm(index), Action::FarmPlotFarm(index)),
                     (Control::FarmPlotShow(index), Action::FarmPlotShow(index)),
@@ -636,6 +639,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
         menu.tab = Tab::Experimental;
         menu.experimental_section = ExperimentalSection::Baritone;
         menu.baritone_mode = BaritoneMode::Farm;
+        menu.farm_section = FarmSection::Plots;
         let widgets = menu.layout(&empty, 800.0, 500.0);
         assert!(widgets.iter().any(|w| w.text.contains("/dfarm pos1")));
         assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
