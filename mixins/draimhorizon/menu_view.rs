@@ -679,6 +679,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             if let Some(
                 control @ (model::Control::MiningTarget(_)
                 | model::Control::FarmCropPick(_)
+                | model::Control::AutoEatFood(_)
                 | model::Control::ExperimentalOreToggle(_)),
             ) = widget.control
             {
@@ -691,6 +692,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         crate::game::claim_borders_mining::icon(index)
                     }
                     model::Control::FarmCropPick(crop) => Some(crop.icon()),
+                    model::Control::AutoEatFood(index) => s
+                        .model
+                        .auto_eat_options
+                        .get(index)
+                        .map(|(id, _, _)| id.as_str()),
                     _ => None,
                 };
                 if let Some(item) = icon

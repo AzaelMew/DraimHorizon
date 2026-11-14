@@ -133,6 +133,10 @@ pub struct ViewModel {
     pub shulker_peek: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// Explicit item ids allowed for Auto Eat; empty means nothing may be eaten.
+    pub auto_eat_foods: Vec<String>,
+    /// Safe foods from the live item registry: id, display name, hunger restored.
+    pub auto_eat_options: Vec<(String, String, u32)>,
     /// Who may pat this player, and whether a pat shows a notification.
     pub pat_policy: super::claim_borders_patting::Policy,
     pub pat_notify: bool,
@@ -276,6 +280,7 @@ pub enum SchematicEdit {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetAutoEatFood(String, bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
@@ -427,6 +432,11 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetAutoEatFood(item, on) => f
+                .debug_tuple("SetAutoEatFood")
+                .field(item)
+                .field(on)
+                .finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
@@ -705,6 +715,9 @@ pub enum Control {
     FarmLevels,
     /// Switches eating on its own.
     AutoEat,
+    AutoEatFoods,
+    AutoEatFood(usize),
+    AutoEatFoodPage(usize),
     /// Switches one of the helpers of the Helpers tab.
     Helper(Helper),
     /// Cycles the auto-clicker's button: left or right.
@@ -923,6 +936,8 @@ pub struct Menu {
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
     pub helper_page: usize,
+    pub auto_eat_food_picker: bool,
+    pub auto_eat_food_page: usize,
     deepl_key: String,
     pub language: Language,
     pub tab: Tab,
@@ -990,6 +1005,8 @@ impl Default for Menu {
             construct_floor: true,
             experimental_section: ExperimentalSection::default(),
             helper_page: 0,
+            auto_eat_food_picker: false,
+            auto_eat_food_page: 0,
             deepl_key: String::new(),
             language: Language::default(),
             tab: Tab::Waypoints,
@@ -4224,6 +4241,89 @@ impl Menu {
         ));
         out
     }
+    fn auto_eat_food_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        out.push(widget(
+            [x, 84.0, w, 20.0],
+            localized!(
+                self.language,
+                "Назад · Разрешённая еда: {}",
+                "Back · Allowed foods: {}",
+                model.auto_eat_foods.len()
+            ),
+            Some(Control::AutoEatFoods),
+            false,
+        ));
+        out.push(widget(
+            [x, 108.0, w, 14.0],
+            self.language.text(
+                "Выберите еду; пустой список запрещает всё",
+                "Select foods; an empty list allows nothing",
+            ),
+            None,
+            false,
+        ));
+        // Same square item tiles and spacing as the mining target filter.
+        let tile = 22.0;
+        let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
+        let rows = (((height - 66.0 - 128.0) / (tile + 2.0)).floor() as usize).max(1);
+        let per = rows * cols;
+        let pages = model.auto_eat_options.len().div_ceil(per).max(1);
+        let page = self.auto_eat_food_page.min(pages - 1);
+        let half = (w - 4.0) * 0.5;
+        for (i, (item, name, nutrition)) in model
+            .auto_eat_options
+            .iter()
+            .enumerate()
+            .skip(page * per)
+            .take(per)
+        {
+            let at = i - page * per;
+            out.push(widget(
+                [
+                    x + (at % cols) as f32 * (tile + 2.0),
+                    128.0 + (at / cols) as f32 * (tile + 2.0),
+                    tile,
+                    tile,
+                ],
+                format!("{name} (+{nutrition})"),
+                Some(Control::AutoEatFood(i)),
+                model.auto_eat_foods.contains(item),
+            ));
+        }
+        for (column, target, label) in [
+            (
+                0,
+                page.saturating_sub(1),
+                localized!(
+                    self.language,
+                    "Назад · {} / {}",
+                    "Previous · {} / {}",
+                    page + 1,
+                    pages
+                ),
+            ),
+            (
+                1,
+                (page + 1).min(pages - 1),
+                self.language.text("Далее", "Next").into(),
+            ),
+        ] {
+            out.push(widget(
+                [x + column as f32 * (half + 4.0), height - 48.0, half, 20.0],
+                label,
+                Some(Control::AutoEatFoodPage(target)),
+                false,
+            ));
+        }
+        out
+    }
     /// The Helpers tab: a switch per helper, with a line under it saying what it does.
     fn helpers_layout(
         &self,
@@ -4233,6 +4333,9 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
+        if self.auto_eat_food_picker {
+            return self.auto_eat_food_layout(model, x, w, height, out);
+        }
         let state = |on: bool| {
             if on {
                 self.language.text("вкл", "on")
@@ -4251,8 +4354,8 @@ impl Menu {
                 Control::AutoEat,
                 model.auto_eat,
                 self.language.text(
-                    "Ест сама при голоде, всегда, не только в задачах",
-                    "Eats by itself when hungry, always, not only during tasks",
+                    "Только выбранная еда, без потери очков голода",
+                    "Only selected foods, without wasting hunger points",
                 ),
             ),
             (
@@ -4298,8 +4401,24 @@ impl Menu {
                 ),
             ),
         ];
-        // The auto-resume switch is the fifth row, the human look the sixth, the auto-clicker's
-        // the seventh and its two choices share the eighth.
+        let mut rows: Vec<_> = rows.into_iter().collect();
+        rows.insert(
+            1,
+            (
+                localized!(
+                    self.language,
+                    "Разрешённая еда: {}",
+                    "Allowed foods: {}",
+                    model.auto_eat_foods.len()
+                ),
+                Control::AutoEatFoods,
+                !model.auto_eat_foods.is_empty(),
+                self.language.text(
+                    "Выберите, что может есть авто-еда",
+                    "Choose which foods Auto Eat may consume",
+                ),
+            ),
+        );
         let rows = rows.into_iter().chain([
             (
                 localized!(
@@ -4896,6 +5015,18 @@ impl Menu {
                 None
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
+            Control::AutoEatFoods => {
+                self.auto_eat_food_picker = !self.auto_eat_food_picker;
+                self.auto_eat_food_page = 0;
+                None
+            }
+            Control::AutoEatFoodPage(page) => {
+                self.auto_eat_food_page = page;
+                None
+            }
+            Control::AutoEatFood(index) => model.auto_eat_options.get(index).map(|(item, _, _)| {
+                Action::SetAutoEatFood(item.clone(), !model.auto_eat_foods.contains(item))
+            }),
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
             }
@@ -8439,6 +8570,72 @@ mod tests {
             expected_preferences.presence_style = expected;
             assert_eq!(next, expected_preferences);
             model.chat_preferences = next;
+        }
+    }
+    #[test]
+    fn auto_eat_filter_uses_mining_sized_tiles_and_all_foods_are_reachable() {
+        let mut model = ViewModel {
+            auto_eat_options: (0..45)
+                .map(|i| (format!("minecraft:food_{i}"), format!("Food {i}"), 4))
+                .collect(),
+            ..Default::default()
+        };
+        for language in [Language::English, Language::Russian] {
+            for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
+                let mut menu = Menu {
+                    tab: Tab::Experimental,
+                    experimental_section: ExperimentalSection::Helpers,
+                    language,
+                    ..Default::default()
+                };
+                assert!(
+                    menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new())
+                        .iter()
+                        .any(|w| w.control == Some(Control::AutoEatFoods))
+                );
+                menu.activate(&model, height, Control::AutoEatFoods);
+                let mut seen = std::collections::BTreeSet::new();
+                for page in 0..45 {
+                    menu.activate(&model, height, Control::AutoEatFoodPage(page));
+                    let widgets =
+                        menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new());
+                    for w in widgets
+                        .iter()
+                        .filter(|w| matches!(w.control, Some(Control::AutoEatFood(_))))
+                    {
+                        let Some(Control::AutoEatFood(index)) = w.control else {
+                            unreachable!()
+                        };
+                        seen.insert(index);
+                        assert_eq!([w.rect[2], w.rect[3]], [22.0, 22.0]);
+                        assert!(w.rect[0] >= 100.0 && w.rect[0] + w.rect[2] <= width);
+                        assert!(w.rect[1] >= 128.0 && w.rect[1] + w.rect[3] <= height - 48.0);
+                        assert_eq!(
+                            w.selected,
+                            model
+                                .auto_eat_foods
+                                .contains(&model.auto_eat_options[index].0)
+                        );
+                    }
+                }
+                assert_eq!(seen.len(), model.auto_eat_options.len());
+                assert_eq!(
+                    menu.activate(&model, height, Control::AutoEatFood(0)),
+                    Some(Action::SetAutoEatFood("minecraft:food_0".into(), true))
+                );
+                model.auto_eat_foods = vec!["minecraft:food_0".into()];
+                assert_eq!(
+                    menu.activate(&model, height, Control::AutoEatFood(0)),
+                    Some(Action::SetAutoEatFood("minecraft:food_0".into(), false))
+                );
+                model.auto_eat_foods.clear();
+                assert_eq!(
+                    menu.activate(&model, height, Control::AutoEatFood(999)),
+                    None
+                );
+                menu.activate(&model, height, Control::AutoEatFoods);
+                assert!(!menu.auto_eat_food_picker);
+            }
         }
     }
     #[test]

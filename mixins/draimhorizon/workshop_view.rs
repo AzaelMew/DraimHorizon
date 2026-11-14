@@ -842,6 +842,7 @@ const WHEAT: &str = "minecraft:wheat";
 /// Whether anything in the inventory can be eaten (and is not one of the foods eating on its
 /// own leaves alone).
 fn has_food(game: &Game<'_>) -> bool {
+    let allowed = crate::game::claim_borders_navigation_view::auto_eat_foods(game);
     (0..36).any(|g| {
         let stack = if g < 9 {
             game.stack_in(g)
@@ -849,20 +850,30 @@ fn has_food(game: &Game<'_>) -> bool {
             game.inventory.get(g).and_then(Option::as_ref)
         };
         stack.filter(|st| st.count > 0).is_some_and(|st| {
-            !crate::game::claim_borders_auto_eat::avoid(&st.item)
+            crate::game::claim_borders_auto_eat::allowed(&st.item, &allowed)
                 && game
                     .res
                     .items()
                     .get(&st.item)
-                    .is_some_and(|item| item.food.is_some())
+                    .is_some_and(|item| item.food.is_some_and(|(nutrition, _)| nutrition > 0))
         })
     })
 }
-/// The food bar is where eating on its own starts and there is nothing to eat.
+/// Restock only food that Auto Eat is enabled and allowed to use.
+fn can_auto_bread(game: &Game<'_>) -> bool {
+    crate::game::claim_borders_navigation_view::auto_eat_enabled(game)
+        && crate::game::claim_borders_auto_eat::allowed(
+            "minecraft:bread",
+            &crate::game::claim_borders_navigation_view::auto_eat_foods(game),
+        )
+}
+/// Restock at the existing farm threshold, not merely because a larger meal does not fit yet.
 fn hungry_without_food(game: &Game<'_>) -> bool {
-    game.player.as_ref().is_some_and(|p| {
-        (p.health.food.food as i32) <= crate::game::claim_borders_auto_eat::HUNGRY_AT
-    }) && !has_food(game)
+    can_auto_bread(game)
+        && game.player.as_ref().is_some_and(|p| {
+            (p.health.food.food as i32) <= crate::game::claim_borders_auto_eat::HUNGRY_AT
+        })
+        && !has_food(game)
 }
 /// The first hoe in the inventory, any material.
 fn hoe(game: &Game<'_>) -> Option<String> {
@@ -1316,7 +1327,7 @@ fn transfer(game: &mut Game<'_>, t: Store) {
             // Three wheat in the top row of the 3x3 grid make a loaf: the stack goes in one per
             // cell, up to three loaves, a shift-click takes them, the rest goes back. Done once
             // there is food.
-            let plan = if has_food(game) {
+            let plan = if has_food(game) || !can_auto_bread(game) {
                 Vec::new()
             } else {
                 inv.iter()

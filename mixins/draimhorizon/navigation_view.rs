@@ -1777,6 +1777,7 @@ fn crop_aim(target: model::Pos) -> u8 {
 struct Meal {
     original: usize,
     slot: usize,
+    item: String,
     level: i32,
     since: Instant,
     armed: bool,
@@ -1788,11 +1789,18 @@ pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
         .as_deref()
         != Some("false")
 }
-/// Eats while a task runs and the food bar is low: puts food in hand, holds the use button
-/// until the bar rises, then takes the old slot back. True while it holds the button.
+pub(super) fn auto_eat_foods(game: &Game<'_>) -> Vec<String> {
+    crate::game::claim_borders_auto_eat::allowed_foods(
+        game.native_setting(claims::SETTINGS_ID, "auto_eat_foods")
+            .as_deref(),
+    )
+}
+/// Eats selected food only when every hunger point fits, during tasks or manual play. Holds
+/// the use button until the bar rises, then takes the old slot back.
 fn auto_eat(game: &mut Game<'_>) -> bool {
     use crate::game::claim_borders_auto_eat as eat;
     let level = game.player.as_ref().map(|p| p.health.food.food as i32);
+    let allowed = auto_eat_foods(game);
     // Eating is not only for tasks: by hand it waits while the attack or the use button is held
     // (a fight, a block being broken, a bow drawn) and gives way if one is pressed during a meal.
     let running = level.is_some()
@@ -1806,12 +1814,29 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
         return false;
     };
     if let Some(m) = meal.as_mut() {
+        // Inventory/server updates can replace the stack after selection. Recheck it and
+        // the allowlist before holding use so a pending meal cannot consume another item.
+        let still_usable = slot_stack(game, m.slot).is_some_and(|stack| {
+            stack.count > 0
+                && stack.item.as_ref() == m.item
+                && eat::allowed(&stack.item, &allowed)
+                && game
+                    .res
+                    .items()
+                    .get(&stack.item)
+                    .and_then(|item| item.food)
+                    .is_some_and(|(nutrition, _)| nutrition > 0 && nutrition as i32 <= 20 - level)
+        });
         let done = level > m.level
             || level >= 20
             || !running
+            || !still_usable
+            || (m.armed && game.selected != m.slot)
             || m.since.elapsed() > Duration::from_millis(eat::EAT_TIMEOUT_MS);
         if done {
-            game.selected = m.original;
+            if game.selected == m.slot {
+                game.selected = m.original;
+            }
             *meal = None;
             return false;
         }
@@ -1831,6 +1856,9 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     let foods: Vec<eat::Food> = (0..36)
         .filter_map(|slot| {
             let stack = slot_stack(game, slot)?;
+            if stack.count == 0 || !eat::allowed(&stack.item, &allowed) {
+                return None;
+            }
             let (nutrition, _) = game.res.items().get(&stack.item)?.food?;
             Some(eat::Food {
                 slot,
@@ -1865,6 +1893,7 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
     *meal = Some(Meal {
         original: game.selected,
         slot: food.slot,
+        item: food.item,
         level,
         since: Instant::now(),
         armed: false,

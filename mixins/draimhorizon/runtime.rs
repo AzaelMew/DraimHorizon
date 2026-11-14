@@ -8,7 +8,7 @@ pub const ID: &str = "draimhorizon";
 /// Key under which settings and data were saved before the mod id became `draimhorizon`.
 pub const SETTINGS_ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizon";
-pub const VERSION: &str = "0.40.2";
+pub const VERSION: &str = "0.40.3";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 pub fn description_in(language: Language) -> &'static str {
     language.text(
