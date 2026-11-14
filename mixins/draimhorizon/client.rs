@@ -2121,7 +2121,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 Ok([x, y, z]) => Ok(vec![format!("{name}: {x} {y} {z}")]),
                 // Aiming at nothing useful while one is set: forget it.
                 Err(_) if workshop::storage_of(game, role).is_some() => {
-                    workshop::clear_storage(role);
+                    workshop::clear_storage(game, role);
                     Ok(vec![format!("{name}: {}", l.text("сброшен", "cleared"))])
                 }
                 Err(e) => Err(e),

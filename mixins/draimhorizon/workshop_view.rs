@@ -530,14 +530,43 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
         Ok(())
     })
 }
-/// The containers the player set, one per role, in the current world.
-static STORAGE: Mutex<[Option<(String, nav::Pos)>; 3]> = Mutex::new([None, None, None]);
+/// The containers the player set, per world and role. Kept in the settings, so they are
+/// remembered after a restart.
+struct Saved {
+    loaded: bool,
+    list: Vec<store::Saved>,
+}
+static STORAGE: Mutex<Saved> = Mutex::new(Saved {
+    loaded: false,
+    list: Vec::new(),
+});
+const STORAGE_SETTING: &str = "farm_storage";
+fn with_storage<T>(game: &Game<'_>, f: impl FnOnce(&mut Saved) -> T) -> T {
+    let mut s = STORAGE.lock().unwrap_or_else(|e| e.into_inner());
+    if !s.loaded {
+        s.loaded = true;
+        s.list = game
+            .native_setting(claims::SETTINGS_ID, STORAGE_SETTING)
+            .map(|v| store::decode_saved(&v))
+            .unwrap_or_default();
+    }
+    f(&mut s)
+}
+fn save_storage(game: &Game<'_>, list: &[store::Saved]) {
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        STORAGE_SETTING,
+        &store::encode_saved(list),
+    );
+}
 pub(super) fn storage_of(game: &Game<'_>, role: store::Role) -> Option<nav::Pos> {
     let scope = driver::scope(game)?;
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()]
-        .as_ref()
-        .filter(|(s, _)| *s == scope)
-        .map(|(_, at)| *at)
+    with_storage(game, |s| {
+        s.list
+            .iter()
+            .find(|(w, r, _)| *w == scope && *r == role)
+            .map(|(_, _, at)| *at)
+    })
 }
 /// The harvest container (the one mining unloads into as well).
 pub(super) fn storage(game: &Game<'_>) -> Option<nav::Pos> {
@@ -560,11 +589,23 @@ pub(super) fn set_storage(game: &Game<'_>, role: store::Role) -> Result<nav::Pos
     if !store::is_container(&game.native_block(hit.pos)) {
         return Err(aimed().into());
     }
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()] = Some((scope, hit.pos));
+    with_storage(game, |s| {
+        s.list.retain(|(w, r, _)| !(*w == scope && *r == role));
+        s.list.push((scope, role, hit.pos));
+        let extra = s.list.len().saturating_sub(store::MAX_SAVED);
+        s.list.drain(..extra);
+        save_storage(game, &s.list);
+    });
     Ok(hit.pos)
 }
-pub(super) fn clear_storage(role: store::Role) {
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()] = None;
+pub(super) fn clear_storage(game: &Game<'_>, role: store::Role) {
+    let Some(scope) = driver::scope(game) else {
+        return;
+    };
+    with_storage(game, |s| {
+        s.list.retain(|(w, r, _)| !(*w == scope && *r == role));
+        save_storage(game, &s.list);
+    });
 }
 /// The container a trip for `purpose` goes to. Seeds go to the seeds container, or to the
 /// harvest one when there is none; bone meal only has its own.

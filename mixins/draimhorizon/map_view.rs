@@ -11,6 +11,11 @@ struct Drag {
     mouse: [f32; 2],
     center: [f64; 2],
 }
+/// Last death point unless the player removed it from the map (a new death shows again).
+fn active_death(game: &Game<'_>) -> Option<(String, [i32; 3])> {
+    let death = game.level.last_death.clone()?;
+    state(|s| s.dismissed_death.as_ref() != Some(&death)).then_some(death)
+}
 struct State {
     preferences: model::Preferences,
     loaded: bool,
@@ -35,6 +40,7 @@ struct State {
     probes: std::collections::BTreeSet<u64>,
     points: Vec<(String, [f64; 3])>,
     seed_patch: Option<horizon_client::font::Patch>,
+    dismissed_death: Option<(String, [i32; 3])>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -65,6 +71,7 @@ impl Default for State {
             probes: std::collections::BTreeSet::new(),
             points: Vec::new(),
             seed_patch: None,
+            dismissed_death: None,
         }
     }
 }
@@ -465,12 +472,7 @@ pub(super) fn map_marks(
             }
         }
     }
-    if let Some((_, [x, _, z])) = game
-        .level
-        .last_death
-        .as_ref()
-        .filter(|(dim, _)| dim == dimension)
-    {
+    if let Some((_, [x, _, z])) = active_death(game).filter(|(dim, _)| dim == dimension) {
         let at = xy([f64::from(*x) + 0.5, f64::from(*z) + 0.5]);
         if contains(rect, at) {
             ui::fill(
@@ -882,6 +884,7 @@ fn operate(game: &Game<'_>, button: Button) {
         crate::game::claim_borders_menu_view::claims_settings();
         return;
     }
+    let death = active_death(game);
     state(|s| match button {
         Button::Mobs => {}
         Button::ZoomIn => s.view.zoom_at([64.0, 64.0], 128.0, 0.5),
@@ -894,7 +897,7 @@ fn operate(game: &Game<'_>, button: Button) {
             }
         }
         Button::Death => {
-            if let Some((dim, [x, _, z])) = &game.level.last_death {
+            if let Some((dim, [x, _, z])) = &death {
                 s.dimension.clone_from(dim);
                 s.view.center = [f64::from(*x) + 0.5, f64::from(*z) + 0.5];
                 s.follow = false;
@@ -1149,7 +1152,7 @@ pub(super) fn render(
                 cz.div_euclid(16),
                 language().text("Владелец", "Owner")
             )
-        } else if let Some((dim, [x, y, z])) = &game.level.last_death {
+        } else if let Some((dim, [x, y, z])) = &active_death(game) {
             let distance = if dim == &source.dimension {
                 let meters = crate::game::claim_borders_waypoints::distance(
                     source.player,
@@ -1581,7 +1584,14 @@ pub(super) fn mouse(
                 ))
             });
             if let Some((dim, point, radius)) = target {
-                if let Some(w) = crate::game::claim_borders_client::own_waypoints()
+                let death = active_death(game).filter(|(d, [x, _, z])| {
+                    d == &dim
+                        && (f64::from(*x) + 0.5 - point[0]).hypot(f64::from(*z) + 0.5 - point[1])
+                            <= radius
+                });
+                if let Some(death) = death {
+                    state(|s| s.dismissed_death = Some(death));
+                } else if let Some(w) = crate::game::claim_borders_client::own_waypoints()
                     .into_iter()
                     .filter(|w| w.dimension == dim)
                     .map(|w| {

@@ -15,6 +15,8 @@
 - Frame cost of the mod: `client::frame` rebuilt the map's source (every claim, mark and mob, the avatars) on every frame, about a quarter of a frame at 300 frames a second in a profile. It is rebuilt once a tick now (every frame while the mod's screen is open); the player's own place and heading on the minimap still follow every frame (`map_view::pose`).
 - Profiler: Baritone tab > Settings > Profile writes the cost of the port's sections (per second: calls, total ms, mean µs, max ms, busiest first) to `profile.txt` in the port's data folder once a second, to find what is slow in a real game. It also times the mod's own tick and frame and the frame interval, works with the port off, keeps the slowest second in `profile-peak.txt`, is off by default and costs one atomic read per section while off.
 
+- Map: the last death point can now be removed like a regular waypoint. Double-clicking it with the left mouse button hides it from the map, the Death button and the status line. The game's own last-death state (used by the recovery compass) is not changed, and a new death shows the point again.
+- Farm (Experiments → Baritone): the harvest, seeds and bone-meal containers the player points at are now remembered. They are saved per world and role in the settings, so they survive a restart and a reconnect instead of having to be set again. Aiming at nothing useful while one is set still clears it. Encoding and decoding live in `farm_storage` with a round-trip test (bad lines dropped, a role of a world keeps its last line, bounded to 96 entries).
 
 ## 0.40.2
 
