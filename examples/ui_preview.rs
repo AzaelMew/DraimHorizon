@@ -199,14 +199,14 @@ fn main() -> std::io::Result<()> {
         for (name, tab, section, experimental_section, size) in [
             (
                 "mining-wide",
-                menu::Tab::Experimental,
+                menu::Tab::Baritone,
                 0,
                 menu::ExperimentalSection::Baritone,
                 [800.0, 500.0],
             ),
             (
                 "mining-compact",
-                menu::Tab::Experimental,
+                menu::Tab::Baritone,
                 0,
                 menu::ExperimentalSection::Baritone,
                 [240.0, 216.0],
@@ -267,7 +267,7 @@ fn main() -> std::io::Result<()> {
             menu.settings_section = section;
             menu.experimental_section = experimental_section;
             if name.starts_with("mining-") {
-                menu.baritone_mode = menu::BaritoneMode::Mining;
+                menu.baritone_section = menu::BaritoneSection::Mining;
             }
             let file = root.join(format!("{name}-{locale}.svg"));
             std::fs::write(&file, preview(&menu, size))?;

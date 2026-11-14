@@ -4,21 +4,23 @@ Open **J → Experiments → Baritone** and accept the experimental warning. The
 
 ## Global automation keys
 
-In **Options → Mods → DraimHorizon**, assign **Baritone: preview**, **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They replace the former on-screen buttons in all tabs. By default they are **Numpad 1** (preview), **Numpad 2** (start / resume), **Numpad 3** (pause) and **Numpad 4** (stop); the numeric keypad is unused by the game. Change them in the same page, for example on a laptop without a keypad. Horizon saves them with the other native-mod bindings. The keys also work while the menu is open on a Baritone tab (unless you are typing in a field); Start then closes the menu and begins the task. Choose and configure a tab, then press start; press preview first to see the route without acting. Pressing Start again while a task is active does not restart it.
+In **Options → Mods → DraimHorizon**, assign **Baritone: preview**, **Baritone: start / resume**, **Baritone: pause** and **Baritone: stop**. They replace the former on-screen buttons in all tabs. By default they are **Numpad 1** (preview), **Numpad 2** (start / resume), **Numpad 3** (pause) and **Numpad 4** (stop); the numeric keypad is unused by the game. Change them in the same page, for example on a laptop without a keypad. Horizon saves them with the other native-mod bindings. The keys also work while the menu is open on a Baritone tab (unless you are typing in a field); Start then closes the menu and begins the task. Choose and configure a tab, then press start. On the Baritone tab Start runs the section on screen, Pause pauses and Stop cancels; there is no preview there (Baritone draws its own path, Settings → Draw the path). Pressing Start again while a task is active does not restart it.
 
 A running task is not paused by opening the inventory, the chat, the mod's menu or the map: it keeps walking, and a hit, a placed block or a bite waits for the screen to close. Escape's pause menu, signs, books and your own movement, jump, sneak or attack input still pause it.
 
 Bindings are ignored while a screen or text editor is open, the window is unfocused, modifiers are held, or experimental consent is absent. A binding shared with another automation action, an enabled native mod or a gameplay key does not trigger automation; choose a unique key. Native key repeats and key releases do not start actions.
 
-Navigation executes dig and bridge routes step by step: it breaks blocks in the way and places a block under a gap, re-planning after each route and giving up with a visible reason after a bounded number of failures.
+Navigation (Baritone → Navigation) is Baritone's `goto`: type X/Y/Z, or choose a waypoint (walked to) or a player (followed). It plans the whole route, with parkour, pillars and bridges as its settings allow (Baritone → Settings).
 
 ### Eating
 
 While a task runs and the food bar is at 7 shanks or below, the mod eats on its own: it takes the best fitting safe food from the hotbar or inventory (never rotten flesh, spider eyes, raw chicken, golden apples or similar), holds the use button until the bar rises and puts the previous slot back. The **Eat** switch next to the status line turns it off; it is on by default.
 
-### Mining storage
+### Mining (Baritone tab)
 
-The Mining tab has the same **Storage** button: aim at a chest, barrel or shulker box and press it (it is the same container as the farm's, set per world). When the inventory is full, meaning every slot is taken and every stack of the mined kind is at its limit, the miner walks to the storage, opens it, shift-clicks across everything it does not need and walks back to where it stopped. It keeps tools and armour (anything that wears), food, a totem and one stack of the mined block for building; sand laid one by one across the inventory does not count as full. If the container is full or unreachable the miner idles and tries again after one to two minutes.
+Open **Baritone → Mining**. Pick what to mine from the list: it holds **every block of the game** (type in **Find** to narrow it, `<` `>` to page) and, first, our sets (ores, stone, sand, wood...: one click takes all their blocks in or out). The choice is kept between sessions; **Clear** empties it. **Mine** runs Baritone's own `mine` on the chosen blocks, which finds them, walks, digs and picks up on its own.
+
+**When the inventory is full** (every slot taken, or no free slot for the other drops) the bot stops mining and unloads, then mines again. If a shulker box with room is carried it is put down beside the player, filled, broken and picked up again; otherwise it walks to the container set with **Storage** (aim at a chest, barrel or shulker box and press it; it is the farm's Harvest container, kept per world). It keeps tools and armour, food, a totem and one stack of the mined block. With neither a shulker box nor a container it says so in chat and stops. **Cancel**, the Stop key or `#cancel` end the task.
 
 ### Farm containers
 

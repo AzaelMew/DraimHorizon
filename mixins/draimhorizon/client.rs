@@ -255,6 +255,23 @@ fn state<T>(f: impl FnOnce(&mut Client) -> T) -> T {
     f(&mut client)
 }
 
+/// Every block the Mining picker lists, worked out once per game (the registry does not change
+/// while it runs) and shared.
+fn block_catalogue(game: &Game<'_>) -> std::sync::Arc<Vec<String>> {
+    static CACHE: Mutex<Option<(usize, std::sync::Arc<Vec<String>>)>> = Mutex::new(None);
+    let facts = game.res.facts();
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((len, list)) = cache.as_ref()
+        && *len == facts.states.len()
+    {
+        return list.clone();
+    }
+    let list = std::sync::Arc::new(crate::game::claim_borders_mine_picker::catalogue(
+        facts.states.iter().map(|s| &*s.name),
+    ));
+    *cache = Some((facts.states.len(), list.clone()));
+    list
+}
 fn baritone_off() -> String {
     crate::game::claim_borders_chat_view::current_language()
         .text(
@@ -1620,11 +1637,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
             schematic_friend_places: crate::game::claim_borders_schematic_share_view::rows(game),
-            mining_custom: {
-                crate::game::claim_borders_navigation_view::load_custom_blocks(game);
-                crate::game::claim_borders_mining::custom()
-            },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            blocks: block_catalogue(game),
             baritone_enabled: game
                 .native_setting(claims::SETTINGS_ID, "baritone_enabled")
                 .as_deref()
@@ -1640,6 +1654,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         .native_setting(claims::SETTINGS_ID, "baritone_profile")
                         .as_deref()
                         == Some("true"),
+                    mine: game
+                        .native_setting(claims::SETTINGS_ID, "baritone_mine_blocks")
+                        .map(|text| crate::game::claim_borders_mine_picker::decode(&text))
+                        .unwrap_or_default(),
                 }
             },
             auto_eat_foods: crate::game::claim_borders_navigation_view::auto_eat_foods(game),
@@ -1980,6 +1998,13 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 Some([x, y, z]) => format!("build {file} {x} {y} {z}"),
                 None => format!("build {file}"),
             };
+            // Cancelling ends the mining watch too.
+            if matches!(
+                line.split_whitespace().next(),
+                Some("cancel" | "stop" | "forcecancel")
+            ) {
+                crate::game::claim_borders_baritone_bridge::mine_stop();
+            }
             crate::game::baritone::run_line(game, &line);
             Ok(Vec::new())
         }
@@ -1988,6 +2013,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 return Err(baritone_off());
             }
             crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneMineSet(list) => {
+            let text = crate::game::claim_borders_mine_picker::encode(&list);
+            game.native_set_setting(claims::SETTINGS_ID, "baritone_mine_blocks", &text);
+            Ok(Vec::new())
+        }
+        Action::BaritoneMine(names) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::mine_start(game, names)?;
             Ok(Vec::new())
         }
         Action::BaritoneWaypoint(id) => {
@@ -2106,38 +2143,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         Action::FarmPlotRemove(i) => {
             crate::game::claim_borders_farm_plots_view::remove(game, i);
             Ok(Vec::new())
-        }
-        Action::MiningCustom => {
-            use crate::game::claim_borders_mining as mining;
-            let l = crate::game::claim_borders_chat_view::current_language();
-            let name = l.text("Свой блок", "Own block");
-            let picked = game
-                .pick()
-                .map(|hit| game.native_block(hit.pos))
-                .filter(|b| !b.ends_with(":air") && !b.ends_with("cave_air"));
-            let message = match picked {
-                Some(block) => {
-                    let short = block
-                        .strip_prefix("minecraft:")
-                        .unwrap_or(&block)
-                        .to_owned();
-                    if mining::toggle_custom(&block) {
-                        format!("{name}: + {short}")
-                    } else {
-                        format!("{name}: − {short}")
-                    }
-                }
-                None => {
-                    mining::set_custom(Vec::new());
-                    format!("{name}: {}", l.text("список очищен", "list cleared"))
-                }
-            };
-            game.native_set_setting(
-                claims::SETTINGS_ID,
-                "mining_custom",
-                &mining::custom().join(","),
-            );
-            Ok(vec![message])
         }
         Action::FarmSafe => {
             use crate::game::claim_borders_workshop_view as workshop;

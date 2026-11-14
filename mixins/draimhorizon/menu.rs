@@ -136,6 +136,8 @@ pub struct ViewModel {
     /// The Baritone port is switched on (the tab's switch).
     pub baritone_enabled: bool,
     pub baritone: BaritoneView,
+    /// Every block of the game that can be mined, for the Mining section's picker.
+    pub blocks: std::sync::Arc<Vec<String>>,
     /// Explicit item ids allowed for Auto Eat; empty means nothing may be eaten.
     pub auto_eat_foods: Vec<String>,
     /// Safe foods from the live item registry: id, display name, hunger restored.
@@ -157,8 +159,6 @@ pub struct ViewModel {
     pub farm_safe: Option<[i32; 3]>,
     /// The composter found by the running farm's field, if any.
     pub farm_composter: Option<[i32; 3]>,
-    /// The blocks of the "own block" mining target.
-    pub mining_custom: Vec<String>,
     /// The schematic previews placed in this world: (index, label, shown, selected).
     pub schematic_places: Vec<(usize, String, bool, bool)>,
     /// Friends' shared previews of this world: label (file, friend, place) and shown here.
@@ -296,6 +296,10 @@ pub enum Action {
     /// Set entry `.0` of the port settings list to `.1`.
     BaritoneSetting(usize, i32),
     SetBaritoneProfile(bool),
+    /// The blocks chosen in the Mining section are now these.
+    BaritoneMineSet(Vec<String>),
+    /// Mine these blocks with the port (and unload when the inventory is full).
+    BaritoneMine(Vec<String>),
     SetAutoEatFood(String, bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
@@ -312,7 +316,6 @@ pub enum Action {
     /// The safe point of the farm: set to where the player stands, or cleared.
     FarmSafe,
     /// The block under the crosshair goes into the "own block" mining target, or out of it.
-    MiningCustom,
     /// The schematic editor acting on the selected preview.
     SchematicEdit(SchematicEdit),
     /// Places `file` as a preview at `origin` (where the player stands when none), turned.
@@ -433,7 +436,6 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
-            Self::MiningCustom => f.write_str("MiningCustom"),
             Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
             Self::SchematicEdit(e) => f.debug_tuple("SchematicEdit").field(e).finish(),
             Self::SchematicPreview { file, .. } => {
@@ -460,6 +462,10 @@ impl std::fmt::Debug for Action {
                 f.debug_tuple("BaritoneSetting").field(i).field(v).finish()
             }
             Self::SetBaritoneProfile(on) => f.debug_tuple("SetBaritoneProfile").field(on).finish(),
+            Self::BaritoneMineSet(list) => {
+                f.debug_tuple("BaritoneMineSet").field(&list.len()).finish()
+            }
+            Self::BaritoneMine(list) => f.debug_tuple("BaritoneMine").field(&list.len()).finish(),
             Self::SetAutoEatFood(item, on) => f
                 .debug_tuple("SetAutoEatFood")
                 .field(item)
@@ -761,6 +767,8 @@ pub struct BaritoneView {
     pub values: Vec<i32>,
     /// The port writes what its work costs to `profile.txt` once a second.
     pub profile: bool,
+    /// The blocks chosen in Mining (ids).
+    pub mine: Vec<String>,
 }
 /// What the buttons of the Baritone tab ask the port to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -779,7 +787,6 @@ pub enum BaritoneCmd {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BaritoneMode {
-    Mining,
     Tunnel,
     Bridge,
     #[default]
@@ -826,6 +833,12 @@ pub enum Control {
     /// A port setting: `.1` is the direction of a stepper (a flag toggles whichever it is).
     BaritoneSetting(usize, bool),
     BaritoneProfile,
+    /// A row of the Mining picker (index into the filtered rows).
+    BaritoneMineRow(usize),
+    /// The previous (false) or next (true) page of the Mining picker.
+    BaritoneMinePage(bool),
+    /// Empties the Mining choice.
+    BaritoneMineClear,
     /// The previous (false) or next (true) schematic file of the Build section.
     BaritoneFile(bool),
     AutoEatFoods,
@@ -868,10 +881,6 @@ pub enum Control {
     ConstructHeight,
     ConstructFloor,
     BaritoneMode(BaritoneMode),
-    MiningTarget(u8),
-    /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
-    /// aimed at nothing, clears the list).
-    MiningCustom,
     /// The schematic editor's buttons (on the selected preview).
     SchematicEdit(SchematicEdit),
     /// Places the chosen file as a preview (at XYZ, or where the player stands).
@@ -888,7 +897,6 @@ pub enum Control {
     SchematicPlaceShow(usize),
     SchematicPlaceRemove(usize),
     SchematicFriendShow(usize),
-    MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
@@ -1034,13 +1042,14 @@ pub struct Menu {
     pub construct_floor: bool,
     pub baritone_mode: BaritoneMode,
     /// Selected mining targets, one bit per `mining::target` index.
-    pub mining_targets: u32,
-    pub mining_page: usize,
     pub navigation_player: Option<u128>,
     pub navigation_x: String,
     pub navigation_y: String,
     pub navigation_z: String,
     pub baritone_block: String,
+    pub baritone_mine_page: usize,
+    /// The blocks chosen in Mining as of the last snapshot (the action keys use them, menu closed).
+    pub baritone_mine_cache: Vec<String>,
     /// The player chosen in Navigation (its name, for `follow player`).
     pub navigation_player_name: Option<String>,
     /// The action keys act on the Baritone tab (the last of it and Automation on screen).
@@ -1113,6 +1122,8 @@ impl Default for Menu {
             navigation_y: String::new(),
             navigation_z: String::new(),
             baritone_block: String::new(),
+            baritone_mine_page: 0,
+            baritone_mine_cache: Vec::new(),
             navigation_player_name: None,
             keys_for_baritone_tab: false,
             baritone_tunnel: String::new(),
@@ -1127,8 +1138,6 @@ impl Default for Menu {
             farm_plot_page: 0,
             navigation_player: None,
             baritone_mode: BaritoneMode::Farm,
-            mining_targets: 1,
-            mining_page: 0,
             construct_direction: super::claim_borders_construction::Direction::North,
             construct_length: 16,
             construct_width: 1,
@@ -1292,14 +1301,14 @@ impl Menu {
         self.construct_height = from.construct_height;
         self.construct_floor = from.construct_floor;
         self.baritone_mode = from.baritone_mode;
-        self.mining_targets = from.mining_targets;
-        self.mining_page = from.mining_page;
         self.navigation_player = from.navigation_player;
         self.navigation_waypoint = from.navigation_waypoint;
         self.navigation_x = from.navigation_x.clone();
         self.navigation_y = from.navigation_y.clone();
         self.navigation_z = from.navigation_z.clone();
         self.baritone_block = from.baritone_block.clone();
+        self.baritone_mine_page = from.baritone_mine_page;
+        self.baritone_mine_cache = from.baritone_mine_cache.clone();
         self.navigation_player_name = from.navigation_player_name.clone();
         self.keys_for_baritone_tab = from.keys_for_baritone_tab;
         self.baritone_tunnel = from.baritone_tunnel.clone();
@@ -1372,10 +1381,15 @@ impl Menu {
                     )
                     .to_owned()
             }),
-            BaritoneSection::Mining => self
-                .baritone_line(BaritoneCmd::Mine)
-                .map(Action::Baritone)
-                .ok_or_else(missing),
+            BaritoneSection::Mining => {
+                if self.baritone_mine_cache.is_empty() {
+                    Err(language
+                        .text("Выберите, что добывать", "Choose what to mine")
+                        .to_owned())
+                } else {
+                    Ok(Action::BaritoneMine(self.baritone_mine_cache.clone()))
+                }
+            }
             BaritoneSection::Tunnel => self
                 .baritone_line(BaritoneCmd::Tunnel)
                 .map(Action::Baritone)
@@ -1409,29 +1423,6 @@ impl Menu {
             return self.baritone_tab_request(running);
         }
         match self.baritone_mode {
-            BaritoneMode::Mining => {
-                use super::claim_borders_mining as mining;
-                let targets = self.mining_targets & mining::ALL;
-                if targets == 0 {
-                    return Err(language
-                        .text("Выберите, что добывать", "Choose what to mine")
-                        .into());
-                }
-                let ore = if targets.count_ones() == 1 {
-                    targets.trailing_zeros() as u8
-                } else {
-                    mining::ANY
-                };
-                Ok(Action::Navigate {
-                    goal: Goal::Mine {
-                        ore,
-                        targets,
-                        // Mining has no block limit: start and stop with the action keys.
-                        limit: 0,
-                    },
-                    running,
-                })
-            }
             BaritoneMode::Tunnel | BaritoneMode::Bridge => {
                 let bridge = self.baritone_mode == BaritoneMode::Bridge;
                 Ok(Action::Navigate {
@@ -1496,6 +1487,7 @@ impl Menu {
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
+        self.baritone_mine_cache.clone_from(&next.baritone.mine);
         self.selected = self.selected.and_then(|index| match self.tab {
             Tab::Waypoints => previous
                 .waypoints
@@ -3778,11 +3770,7 @@ impl Menu {
                 )
             }
             BaritoneCmd::Mine => {
-                let blocks: Vec<&str> = self.baritone_block.split_whitespace().collect();
-                if blocks.is_empty() {
-                    return None;
-                }
-                format!("mine {}", blocks.join(" "))
+                super::claim_borders_mine_picker::mine_line(&self.baritone_mine_cache)?
             }
             BaritoneCmd::Build => return None,
             BaritoneCmd::Tunnel => {
@@ -3983,18 +3971,101 @@ impl Menu {
                 );
             }
             BaritoneSection::Mining => {
+                use super::claim_borders_mine_picker as picker;
+                // The filter, the page arrows and Mine.
+                let arrow = 22.0;
+                let filter_w = (w - arrow * 2.0 - cw - gap * 3.0).max(40.0);
                 out.push(widget(
-                    [x, 80.0, w - cw - gap, 20.0],
-                    localized!(l, "Блок: {}", "Block: {}", self.baritone_block),
+                    [x, 80.0, filter_w, 20.0],
+                    localized!(l, "Поиск: {}", "Find: {}", self.baritone_block),
                     Some(Control::Field(Field::BaritoneBlock)),
                     self.focus == Some(Field::BaritoneBlock),
                 ));
+                for (k, (text, next)) in [("<", false), (">", true)].into_iter().enumerate() {
+                    out.push(widget(
+                        [
+                            x + filter_w + gap + k as f32 * (arrow + 2.0),
+                            80.0,
+                            arrow,
+                            20.0,
+                        ],
+                        text,
+                        Some(Control::BaritoneMinePage(next)),
+                        false,
+                    ));
+                }
                 button(
                     &mut out,
                     [x + w - cw, 80.0, cw, 20.0],
                     l.text("Копать", "Mine"),
                     BaritoneCmd::Mine,
                 );
+                // The rows: our presets first, then every block; a chosen row is highlighted.
+                let rows = picker::entries(&model.blocks, l, &self.baritone_block);
+                let page = picker::clamp_page(self.baritone_mine_page, rows.len());
+                let col_w = (w - gap) / 2.0;
+                for (i, (index, row)) in rows
+                    .iter()
+                    .enumerate()
+                    .skip(page * picker::PER_PAGE)
+                    .take(picker::PER_PAGE)
+                    .enumerate()
+                {
+                    let _ = index;
+                    out.push(widget(
+                        [
+                            x + (i % 2) as f32 * (col_w + gap),
+                            104.0 + (i / 2) as f32 * 19.0,
+                            col_w,
+                            17.0,
+                        ],
+                        picker::label(row, l),
+                        Some(Control::BaritoneMineRow(page * picker::PER_PAGE + i)),
+                        picker::chosen(row, &model.baritone.mine),
+                    ));
+                }
+                if rows.is_empty() {
+                    hint(
+                        &mut out,
+                        104.0,
+                        l.text("Ничего не найдено", "Nothing found"),
+                    );
+                }
+                // The count, the storage and a reset, under the rows.
+                let third = (w - gap * 2.0) / 3.0;
+                let mut count = widget(
+                    [x, 161.0, third, 15.0],
+                    localized!(
+                        l,
+                        "Выбрано: {}  стр. {}/{}",
+                        "Chosen: {}  page {}/{}",
+                        model.baritone.mine.len(),
+                        page + 1,
+                        picker::pages(rows.len())
+                    ),
+                    None,
+                    false,
+                );
+                count.muted = true;
+                out.push(count);
+                out.push(widget(
+                    [x + third + gap, 161.0, third, 15.0],
+                    if model.farm_storage[0].is_some() {
+                        l.text("Склад: задан", "Storage: set")
+                    } else {
+                        l.text("Склад: нет", "Storage: none")
+                    },
+                    Some(Control::FarmStorage(
+                        super::claim_borders_farm_storage::Role::Harvest,
+                    )),
+                    model.farm_storage[0].is_some(),
+                ));
+                out.push(widget(
+                    [x + (third + gap) * 2.0, 161.0, third, 15.0],
+                    l.text("Сбросить", "Clear"),
+                    Some(Control::BaritoneMineClear),
+                    false,
+                ));
             }
             BaritoneSection::Tunnel => {
                 out.push(widget(
@@ -4209,31 +4280,26 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 20.0) / 6.0;
+            let mode_width = (w - 16.0) / 5.0;
             for (i, mode, label) in [
                 (
                     0,
-                    BaritoneMode::Mining,
-                    self.language.text("Добыча", "Mining"),
-                ),
-                (
-                    1,
                     BaritoneMode::Tunnel,
                     self.language.text("Тоннель", "Tunnel"),
                 ),
                 (
-                    2,
+                    1,
                     BaritoneMode::Bridge,
                     self.language.text("Мост", "Bridge"),
                 ),
-                (3, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (2, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
-                    4,
+                    3,
                     BaritoneMode::Drain,
                     self.language.text("Осушение", "Drain"),
                 ),
                 (
-                    5,
+                    4,
                     BaritoneMode::Schematic,
                     self.language.text("Схемы", "Schematics"),
                 ),
@@ -4598,112 +4664,10 @@ impl Menu {
                     None,
                     false,
                 ));
-            } else {
-                // A chip per target, toggled like the structure filters on the map.
-                use super::claim_borders_mining as mining;
-                let top = 100.0 + step;
-                // Icon tiles: the name is the tooltip. Square, so many fit in a row.
-                let tile = 22.0;
-                let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
-                let rows = (((height - 66.0 - top) / (tile + 2.0)).floor() as usize).max(1);
-                let per_page = rows * cols;
-                let pages = mining::COUNT.div_ceil(per_page);
-                let page = self.mining_page % pages;
-                out.push(widget(
-                    [x, 100.0, w, h],
-                    if pages > 1 {
-                        localized!(
-                            self.language,
-                            "Выбрано: {} · стр. {}/{} →",
-                            "Selected: {} · page {}/{} →",
-                            (self.mining_targets & mining::ALL).count_ones(),
-                            page + 1,
-                            pages
-                        )
-                    } else {
-                        localized!(
-                            self.language,
-                            "Выбрано: {}",
-                            "Selected: {}",
-                            (self.mining_targets & mining::ALL).count_ones()
-                        )
-                    },
-                    Some(Control::MiningPage),
-                    false,
-                ));
-                for slot in 0..per_page {
-                    let index = page * per_page + slot;
-                    let Some((ru, en, _)) = mining::target(index as u8) else {
-                        break;
-                    };
-                    out.push(widget(
-                        [
-                            x + (slot % cols) as f32 * (tile + 2.0),
-                            top + (slot / cols) as f32 * (tile + 2.0),
-                            tile,
-                            tile,
-                        ],
-                        self.language.text(ru, en),
-                        Some(Control::MiningTarget(index as u8)),
-                        self.mining_targets & (1 << index) != 0,
-                    ));
-                }
-                // Any block of the world: aim at it and press (again to take it out).
-                let half = (w - 4.0) / 2.0;
-                let names: Vec<&str> = model
-                    .mining_custom
-                    .iter()
-                    .map(|n| n.strip_prefix("minecraft:").unwrap_or(n))
-                    .collect();
-                out.push(widget(
-                    [x + half + 4.0, height - 64.0, half, 18.0],
-                    if names.is_empty() {
-                        self.language
-                            .text("Свой блок: прицел на блок", "Own block: aim at a block")
-                            .to_owned()
-                    } else {
-                        localized!(
-                            self.language,
-                            "Свой блок: {}",
-                            "Own block: {}",
-                            names.join(", ")
-                        )
-                    },
-                    Some(Control::MiningCustom),
-                    !names.is_empty(),
-                ));
-                // The storage the miner unloads into when the inventory is full (the farm's).
-                out.push(widget(
-                    [x, height - 64.0, half, 18.0],
-                    match model.farm_storage[0] {
-                        Some([sx, sy, sz]) => localized!(
-                            self.language,
-                            "Склад: {} {} {}",
-                            "Storage: {} {} {}",
-                            sx,
-                            sy,
-                            sz
-                        ),
-                        None => self
-                            .language
-                            .text(
-                                "Склад: не задан (прицел на сундук)",
-                                "Storage: not set (aim at a chest)",
-                            )
-                            .into(),
-                    },
-                    Some(Control::FarmStorage(
-                        super::claim_borders_farm_storage::Role::Harvest,
-                    )),
-                    model.farm_storage[0].is_some(),
-                ));
             }
             // The status line, and the switch for eating on its own beside it.
             let eat_w = 92.0_f32.min(w * 0.4);
-            let extra_footer = matches!(
-                self.baritone_mode,
-                BaritoneMode::Mining | BaritoneMode::Schematic
-            );
+            let extra_footer = matches!(self.baritone_mode, BaritoneMode::Schematic);
             let status_y = height - if extra_footer { 44.0 } else { 48.0 };
             let status_h = if extra_footer { 18.0 } else { 14.0 };
             out.push(widget(
@@ -5616,6 +5580,31 @@ impl Menu {
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
             Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
+            Control::BaritoneCmd(BaritoneCmd::Mine) => (!model.baritone.mine.is_empty())
+                .then(|| Action::BaritoneMine(model.baritone.mine.clone())),
+            Control::BaritoneMineRow(index) => {
+                use super::claim_borders_mine_picker as picker;
+                let rows = picker::entries(&model.blocks, self.language, &self.baritone_block);
+                let row = rows.get(index)?;
+                Some(Action::BaritoneMineSet(picker::toggled(
+                    row,
+                    &model.baritone.mine,
+                )))
+            }
+            Control::BaritoneMinePage(next) => {
+                use super::claim_borders_mine_picker as picker;
+                let count =
+                    picker::entries(&model.blocks, self.language, &self.baritone_block).len();
+                let pages = picker::pages(count);
+                let now = picker::clamp_page(self.baritone_mine_page, count);
+                self.baritone_mine_page = if next {
+                    (now + 1) % pages
+                } else {
+                    (now + pages - 1) % pages
+                };
+                None
+            }
+            Control::BaritoneMineClear => Some(Action::BaritoneMineSet(Vec::new())),
             Control::BaritoneCmd(cmd) => self.baritone_line(cmd).map(Action::Baritone),
             Control::BaritoneSection(section) => {
                 self.baritone_section = section;
@@ -5732,12 +5721,6 @@ impl Menu {
                 // The schematics folder is read again whenever its tab is opened.
                 (mode == BaritoneMode::Schematic).then_some(Action::RefreshSchematics)
             }
-            Control::MiningTarget(index) => {
-                if usize::from(index) < super::claim_borders_mining::COUNT {
-                    self.mining_targets ^= 1 << index;
-                }
-                None
-            }
             Control::SchematicEdit(edit) => Some(Action::SchematicEdit(edit)),
             Control::SchematicPreviewHere => {
                 let file = self.schematic_file.clone()?;
@@ -5779,15 +5762,6 @@ impl Menu {
             Control::FarmPlotFarm(i) => Some(Action::FarmPlotFarm(i)),
             Control::FarmPlotShow(i) => Some(Action::FarmPlotShow(i)),
             Control::FarmPlotRemove(i) => Some(Action::FarmPlotRemove(i)),
-            Control::MiningCustom => {
-                // Picking a block selects the target too.
-                self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;
-                Some(Action::MiningCustom)
-            }
-            Control::MiningPage => {
-                self.mining_page = self.mining_page.wrapping_add(1);
-                None
-            }
             Control::NavigationPlayer => {
                 self.navigation_choices = if self.navigation_choices == Some(true) {
                     None
@@ -7418,7 +7392,6 @@ mod tests {
                         ExperimentalSection::Helpers,
                     ] {
                         for baritone_mode in [
-                            BaritoneMode::Mining,
                             BaritoneMode::Tunnel,
                             BaritoneMode::Bridge,
                             BaritoneMode::Farm,
@@ -8193,6 +8166,90 @@ mod tests {
     }
 
     #[test]
+    fn mining_picker_lists_every_block_pages_filters_and_starts_the_choice() {
+        use super::super::claim_borders_mine_picker as picker;
+        let mut model = ViewModel {
+            baritone_enabled: true,
+            blocks: std::sync::Arc::new(picker::catalogue(
+                (0..40)
+                    .map(|i| format!("minecraft:block_{i:02}"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(String::as_str),
+            )),
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Mining,
+            ..Menu::default()
+        };
+        let rows = |menu: &Menu, model: &ViewModel| -> Vec<(usize, String, bool)> {
+            menu.layout(model, 360.0, 200.0)
+                .into_iter()
+                .filter_map(|r| match r.control {
+                    Some(Control::BaritoneMineRow(i)) => Some((i, r.text, r.selected)),
+                    _ => None,
+                })
+                .collect()
+        };
+        // First page: our presets lead the list, six rows to a page.
+        let first = rows(&menu, &model);
+        assert_eq!(first.len(), picker::PER_PAGE);
+        assert!(first[0].1.starts_with("Набор:") || first[0].1.starts_with("Set:"));
+        // The page buttons move through presets and the forty blocks and wrap around.
+        let total = picker::entries(&model.blocks, menu.language, "").len();
+        for _ in 0..picker::pages(total) {
+            menu.activate(&model, 200.0, Control::BaritoneMinePage(true));
+        }
+        assert_eq!(menu.baritone_mine_page, 0);
+        menu.activate(&model, 200.0, Control::BaritoneMinePage(false));
+        assert_eq!(menu.baritone_mine_page, picker::pages(total) - 1);
+        // The filter narrows to blocks, and a click asks for the block to be chosen.
+        menu.baritone_mine_page = 0;
+        menu.baritone_block = "block_07".into();
+        let found = rows(&menu, &model);
+        assert_eq!(found.len(), 1);
+        let Some(Action::BaritoneMineSet(list)) =
+            menu.activate(&model, 200.0, Control::BaritoneMineRow(found[0].0))
+        else {
+            panic!("a row must toggle the choice");
+        };
+        assert_eq!(list, ["minecraft:block_07"]);
+        // The choice comes back in the model: the row is highlighted and Mine starts it.
+        model.baritone.mine = list;
+        assert!(rows(&menu, &model)[0].2);
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Mine)),
+            Some(Action::BaritoneMine(l)) if l == ["minecraft:block_07"]
+        ));
+        // The action keys use the last choice seen, with the menu closed.
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneMine(l)) if l == ["minecraft:block_07"]
+        ));
+        // Clear empties it, and with nothing chosen Mine starts nothing.
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneMineClear),
+            Some(Action::BaritoneMineSet(l)) if l.is_empty()
+        ));
+        model.baritone.mine.clear();
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Mine))
+                .is_none()
+        );
+        // A filter that matches nothing says so instead of an empty gap.
+        menu.baritone_block = "zzzz".into();
+        assert!(rows(&menu, &model).is_empty());
+        assert!(
+            menu.layout(&model, 360.0, 200.0)
+                .iter()
+                .any(|r| r.text == "Ничего не найдено")
+        );
+    }
+
+    #[test]
     fn baritone_buttons_build_commands_only_from_valid_input() {
         let model = ViewModel::default();
         let mut menu = Menu {
@@ -8225,10 +8282,13 @@ mod tests {
         );
         menu.navigation_y = "x".into();
         assert_eq!(menu.baritone_line(BaritoneCmd::Goto), None);
-        menu.baritone_block = "  diamond_ore   minecraft:ancient_debris ".into();
+        menu.baritone_mine_cache = vec![
+            "minecraft:diamond_ore".into(),
+            "minecraft:ancient_debris".into(),
+        ];
         assert_eq!(
             menu.baritone_line(BaritoneCmd::Mine).as_deref(),
-            Some("mine diamond_ore minecraft:ancient_debris")
+            Some("mine diamond_ore ancient_debris")
         );
         // The block field takes names only: no '#', no ';', no control characters.
         menu.baritone_block.clear();
@@ -8666,66 +8726,6 @@ mod tests {
     }
 
     #[test]
-    fn mining_controls_are_explicit_and_fit_compact_panels() {
-        for language in [Language::Russian, Language::English] {
-            let menu = Menu {
-                tab: Tab::Experimental,
-                experimental_section: ExperimentalSection::Baritone,
-                baritone_mode: BaritoneMode::Mining,
-                language,
-                ..Menu::default()
-            };
-            let mut model = ViewModel {
-                navigation_status: "Mining status".into(),
-                experiments_accepted: true,
-                ..ViewModel::default()
-            };
-            assert!(matches!(
-                menu.baritone_request(false),
-                Ok(Action::Navigate {
-                    goal: super::super::claim_borders_navigation::Goal::Mine {
-                        ore: 0,
-                        targets: 1,
-                        limit: 0
-                    },
-                    running: false
-                })
-            ));
-            for height in [200.0, 216.0, 300.0, 500.0] {
-                let rows = menu.layout(&model, 360.0, height);
-                let controls: Vec<_> = rows
-                    .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.control,
-                            Some(
-                                Control::MiningTarget(_)
-                                    | Control::MiningPage
-                                    | Control::BaritoneMode(_)
-                            )
-                        )
-                    })
-                    .collect();
-                assert!(controls.len() >= 8);
-                let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
-                for (i, a) in controls.iter().enumerate() {
-                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
-                    for b in controls.iter().skip(i + 1) {
-                        assert!(
-                            a.rect[0] + a.rect[2] <= b.rect[0]
-                                || b.rect[0] + b.rect[2] <= a.rect[0]
-                                || a.rect[1] + a.rect[3] <= b.rect[1]
-                                || b.rect[1] + b.rect[3] <= a.rect[1]
-                        );
-                    }
-                }
-            }
-            model.experiments_accepted = false;
-            assert!(!model.experiments_accepted);
-        }
-    }
-
-    #[test]
     fn construction_modes_validate_consent_and_compact_geometry() {
         for language in [Language::Russian, Language::English] {
             for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
@@ -8770,7 +8770,7 @@ mod tests {
                             )
                         })
                         .collect();
-                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 10 } else { 6 });
+                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 9 } else { 5 });
                     if mode == BaritoneMode::Tunnel && height < 320.0 {
                         let control_rect = |control| {
                             controls
@@ -9746,53 +9746,6 @@ mod tests {
                 assert!(!menu.auto_eat_food_picker);
             }
         }
-    }
-    #[test]
-    fn mining_targets_toggle_like_filters_and_several_mine_together() {
-        use super::super::claim_borders_mining as mining;
-        let model = ViewModel::default();
-        let mut menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
-            baritone_mode: BaritoneMode::Mining,
-            ..Menu::default()
-        };
-        menu.activate(&model, 300.0, Control::MiningTarget(0));
-        assert!(menu.baritone_request(false).is_err());
-        menu.activate(&model, 300.0, Control::MiningTarget(3));
-        assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Mine {
-                    ore: 3,
-                    targets: 8,
-                    ..
-                },
-                ..
-            })
-        ));
-        menu.activate(&model, 300.0, Control::MiningTarget(12));
-        assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Mine {
-                    ore: mining::ANY,
-                    ..
-                },
-                ..
-            })
-        ));
-        // Every target is reachable through the pages at the smallest panel.
-        let mut seen = std::collections::BTreeSet::new();
-        for _ in 0..mining::COUNT {
-            for w in menu.layout(&model, 360.0, 200.0) {
-                if let Some(Control::MiningTarget(i)) = w.control {
-                    seen.insert(i);
-                }
-            }
-            menu.activate(&model, 200.0, Control::MiningPage);
-        }
-        assert_eq!(seen.len(), mining::COUNT);
     }
     #[test]
     fn action_keys_reach_the_baritone_tab_unless_a_field_is_being_edited() {

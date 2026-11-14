@@ -39,7 +39,15 @@ pub struct Snapshot {
     /// The value of each of `walk::SETTINGS` (a flag is 0 or 1); empty until the port has run.
     pub values: Vec<i32>,
 }
+/// A mining task started from the Baritone tab, watched for a full inventory.
+struct MineTask {
+    names: Vec<String>,
+    phase: walk::MinePhase,
+    idle: u32,
+    age: u32,
+}
 struct State {
+    mine: Option<MineTask>,
     /// Who asked for the walk under way ("farm", "mining").
     owner: &'static str,
     request: Option<Request>,
@@ -52,6 +60,7 @@ struct State {
 }
 thread_local! {
     static STATE: RefCell<State> = const { RefCell::new(State {
+        mine: None,
         owner: "",
         request: None,
         active: None,
@@ -173,6 +182,7 @@ fn tick_inner(game: &mut Game<'_>) {
                 s.status = walk::Walk::Failed;
             }
             s.cancel = false;
+            s.mine = None;
             s.snapshot = Snapshot::default();
             s.since_snapshot = u32::MAX;
             active.map(|a| a.saved)
@@ -182,6 +192,7 @@ fn tick_inner(game: &mut Game<'_>) {
         }
         return;
     }
+    mine_tick(game);
     let (request, cancel) = state(|s| (s.request.take(), std::mem::take(&mut s.cancel)));
     if cancel {
         let saved = state(|s| s.active.take().map(|a| a.saved));
@@ -295,6 +306,90 @@ fn tick_inner(game: &mut Game<'_>) {
                 s.snapshot = read;
                 s.since_snapshot = 0;
             });
+        }
+    }
+}
+
+fn say(game: &mut Game<'_>, ru: &str, en: &str) {
+    let text = crate::game::claim_borders_chat_view::current_language().text(ru, en);
+    game.native_chat(text);
+}
+
+/// Starts mining the chosen blocks with the port (`mine a b c`) and watches the inventory: when
+/// there is no room left the port is stopped, the bot unloads (a shulker box carried is put down,
+/// filled, broken and picked up, or the set container is visited, `haul_view`) and the port mines
+/// again. `names` are block ids; they also become the "own block" target, which tells the haul
+/// what to keep one stack of.
+pub fn mine_start(game: &mut Game<'_>, names: Vec<String>) -> Result<(), String> {
+    use super::claim_borders_mine_picker as picker;
+    if !baritone::enabled(game) {
+        return Err("Baritone is off".into());
+    }
+    let line = picker::mine_line(&names).ok_or("Choose what to mine")?;
+    super::claim_borders_mining::set_custom(names.clone());
+    state(|s| {
+        s.mine = Some(MineTask {
+            names,
+            phase: walk::MinePhase::Mining,
+            idle: 0,
+            age: 0,
+        });
+        s.since_snapshot = u32::MAX;
+    });
+    baritone::run_line(game, &line);
+    Ok(())
+}
+/// The task is over or was cancelled: nothing watches the inventory any more.
+pub fn mine_stop() {
+    state(|s| s.mine = None);
+}
+pub fn mine_active() -> bool {
+    state(|s| s.mine.is_some())
+}
+fn mine_tick(game: &mut Game<'_>) {
+    use super::claim_borders_haul_view as haul;
+    let Some((phase, idle, age, names)) = state(|s| {
+        s.mine
+            .as_ref()
+            .map(|m| (m.phase, m.idle, m.age, m.names.clone()))
+    }) else {
+        return;
+    };
+    let full = super::claim_borders_navigation_view::inventory_full_for(
+        game,
+        super::claim_borders_mining::CUSTOM,
+    );
+    let busy = state(|s| s.snapshot.process.is_some());
+    let (next, step, idle) = walk::mine_step(phase, full, haul::active(), busy, idle, age);
+    state(|s| {
+        if let Some(m) = s.mine.as_mut() {
+            m.phase = next;
+            m.idle = idle;
+            m.age = age.saturating_add(1);
+        }
+    });
+    match step {
+        walk::MineStep::Wait => {}
+        walk::MineStep::StartHaul => {
+            with(game, |b, game| b.force_cancel(game));
+            if !haul::begin(game, super::claim_borders_mining::CUSTOM) {
+                mine_stop();
+                say(
+                    game,
+                    "Инвентарь полон: задайте контейнер (Добыча → Склад) или носите шалкер.",
+                    "The inventory is full: set a container (Mining → Storage) or carry a shulker box.",
+                );
+            }
+        }
+        walk::MineStep::Resume => {
+            if let Some(line) = super::claim_borders_mine_picker::mine_line(&names) {
+                baritone::run_line(game, &line);
+                state(|s| s.since_snapshot = u32::MAX);
+            }
+        }
+        walk::MineStep::Finished => {
+            mine_stop();
+            say(game, "Добыча завершена.", "Mining finished.");
         }
     }
 }

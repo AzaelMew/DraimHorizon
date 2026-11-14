@@ -113,6 +113,7 @@ fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, 
         }
         model::Hotkey::Stop => {
             line(game, "cancel");
+            crate::game::claim_borders_baritone_bridge::mine_stop();
             crate::game::claim_borders_baritone_bridge::walk_cancel();
             Ok(false)
         }
@@ -134,6 +135,7 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
         action @ (Action::Baritone(_)
         | Action::BaritoneWaypoint(_)
+        | Action::BaritoneMine(_)
         | Action::BaritoneBuild { .. }) => {
             crate::game::claim_borders_client::run_menu_action(game, action)
         }
@@ -917,14 +919,26 @@ fn leg_point(
         leg_cell(game, near, from_y, want_y).map(|at| (at, false, attempt))
     })
 }
-/// The farm's current walk was handed to the port (so a lost walk is a failed one, and the old
-/// walk's state is not read for it).
-static FARM_BRIDGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Who the current workshop walk was handed to the port for ("farm", "haul"), or None when it is
+/// our own walk (so a lost walk of the port is a failed one, and the old walk's state is not
+/// read for it).
+static WALK_OWNER: Mutex<Option<&'static str>> = Mutex::new(None);
 pub(super) fn workshop_walk(
     game: &Game<'_>,
     goal: model::Pos,
     flat: bool,
     level: bool,
+) -> Result<(), String> {
+    workshop_walk_for(game, goal, flat, level, "farm")
+}
+/// `workshop_walk` for another job: `owner` names who the walk is the port's for, so one job's
+/// walk is not cancelled by another's bookkeeping (a trip to the storage is the "haul").
+pub(super) fn workshop_walk_for(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+    owner: &'static str,
 ) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
     let here = model::block(from);
@@ -940,18 +954,18 @@ pub(super) fn workshop_walk(
             .hypot(g[2] - from[2]);
         if crate::game::claim_borders_baritone_bridge::walk_to(
             game,
-            "farm",
+            owner,
             goal,
             &crate::game::claim_borders_baritone_walk::FARM_WALK,
             far,
         )
         .is_ok()
         {
-            FARM_BRIDGED.store(true, std::sync::atomic::Ordering::Relaxed);
+            *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(owner);
             return Ok(());
         }
     }
-    FARM_BRIDGED.store(false, std::sync::atomic::Ordering::Relaxed);
+    *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     begin_trail(game, here, goal);
     // A way walked before between here and there is followed point by point.
     let via = remembered_via(game, here, goal);
@@ -1071,15 +1085,16 @@ fn walk_to(game: &Game<'_>, goal: model::Pos, flat: bool, level: bool) -> Result
     })
 }
 pub(super) fn workshop_walk_result() -> Option<bool> {
-    if FARM_BRIDGED.load(std::sync::atomic::Ordering::Relaxed) {
-        if crate::game::claim_borders_baritone_bridge::walking_for("farm") {
+    let owner = *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(owner) = owner {
+        if crate::game::claim_borders_baritone_bridge::walking_for(owner) {
             return None;
         }
-        // Over: it arrived or failed, or it was cancelled or replaced (the engine switched off,
+        // Over: it arrived or failed, or it was cancelled or replaced (the port switched off,
         // another task's walk): then it did not arrive, and nothing of the old walk is read.
-        FARM_BRIDGED.store(false, std::sync::atomic::Ordering::Relaxed);
+        *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = None;
         return Some(
-            crate::game::claim_borders_baritone_bridge::take_result("farm").unwrap_or(false),
+            crate::game::claim_borders_baritone_bridge::take_result(owner).unwrap_or(false),
         );
     }
     let more = LEGS
@@ -1212,6 +1227,11 @@ fn free_slot(game: &Game<'_>) -> bool {
 /// Whether what a mining job breaks can still be picked up: a free slot, or a stack of the same
 /// kind that is not full (sand laid one by one across the inventory still has room). The
 /// inventory is full only when every slot is taken and every stack of the kind is at its limit.
+/// Whether the inventory has no room for what is mined (`ore` is a target, `mining::CUSTOM` for the
+/// blocks chosen in the Baritone tab): every slot taken, or no free one for the other drops.
+pub(super) fn inventory_full_for(game: &Game<'_>, ore: u8) -> bool {
+    !room_for_mining(game, ore) || !free_slot(game)
+}
 fn room_for_mining(game: &Game<'_>, ore: u8) -> bool {
     free_slot(game)
         || (0..36).any(|slot| {

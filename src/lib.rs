@@ -169,6 +169,10 @@ pub use baritone_walk as claim_borders_baritone_walk;
 pub mod baritone_profile;
 pub use baritone_profile as claim_borders_baritone_profile;
 
+#[path = "../mixins/draimhorizon/mine_picker.rs"]
+pub mod mine_picker;
+pub use mine_picker as claim_borders_mine_picker;
+
 // Baritone navigation (LGPL-3.0, see mixins/draimhorizon/baritone/NOTICE.md).
 #[rustfmt::skip]
 #[allow(clippy::all, dead_code, unused_mut)]

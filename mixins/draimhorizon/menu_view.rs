@@ -490,7 +490,6 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && w < 56.0
             {
                 let icon = match mode {
-                    model::BaritoneMode::Mining => ui::Icon::Search,
                     model::BaritoneMode::Tunnel => ui::Icon::Layers,
                     model::BaritoneMode::Bridge => ui::Icon::Fill,
                     model::BaritoneMode::Farm => ui::Icon::Restock,
@@ -686,8 +685,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
             // Mining targets are item icons; the name is shown as a tooltip.
             if let Some(
-                control @ (model::Control::MiningTarget(_)
-                | model::Control::FarmCropPick(_)
+                control @ (model::Control::FarmCropPick(_)
                 | model::Control::AutoEatFood(_)
                 | model::Control::ExperimentalOreToggle(_)),
             ) = widget.control
@@ -696,8 +694,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     request_tip = Some(widget.text.clone());
                 }
                 let icon = match control {
-                    model::Control::MiningTarget(index)
-                    | model::Control::ExperimentalOreToggle(index) => {
+                    model::Control::ExperimentalOreToggle(index) => {
                         crate::game::claim_borders_mining::icon(index)
                     }
                     model::Control::FarmCropPick(crop) => Some(crop.icon()),

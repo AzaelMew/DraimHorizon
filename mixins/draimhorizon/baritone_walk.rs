@@ -166,6 +166,57 @@ pub fn status_text(
     format!("{process} · {eta} {}", format_ticks(goal.or(segment)))
 }
 
+/// Where a mining task started from the Baritone tab stands: the port mines, or the bot is on a
+/// trip to unload (a shulker box put down and picked up again, or the set container).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MinePhase {
+    Mining,
+    Hauling,
+}
+/// What the watcher does next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MineStep {
+    Wait,
+    /// The inventory is full: stop the port's mining and start the trip.
+    StartHaul,
+    /// The trip is over: ask the port to mine again.
+    Resume,
+    /// The port has nothing left to do: the task is over.
+    Finished,
+}
+/// Ticks after the start in which an idle port does not yet mean the task is over (it needs a few
+/// ticks to take the command), and the idle ticks after which it does.
+pub const MINE_START_GRACE: u32 = 60;
+pub const MINE_IDLE_TICKS: u32 = 60;
+
+/// One tick of the watcher. `full` is whether the inventory has no room for the mined kind,
+/// `haul_active` whether a trip is under way, `port_busy` whether the port has a process in
+/// control, `idle` the ticks it has had none in a row, `age` the ticks since the task started.
+/// Returns the new phase, the step and the new idle count.
+pub fn mine_step(
+    phase: MinePhase,
+    full: bool,
+    haul_active: bool,
+    port_busy: bool,
+    idle: u32,
+    age: u32,
+) -> (MinePhase, MineStep, u32) {
+    match phase {
+        MinePhase::Hauling if haul_active => (MinePhase::Hauling, MineStep::Wait, 0),
+        MinePhase::Hauling => (MinePhase::Mining, MineStep::Resume, 0),
+        MinePhase::Mining if full => (MinePhase::Hauling, MineStep::StartHaul, 0),
+        MinePhase::Mining if port_busy => (MinePhase::Mining, MineStep::Wait, 0),
+        MinePhase::Mining => {
+            let idle = idle.saturating_add(1);
+            if age >= MINE_START_GRACE && idle >= MINE_IDLE_TICKS {
+                (MinePhase::Mining, MineStep::Finished, idle)
+            } else {
+                (MinePhase::Mining, MineStep::Wait, idle)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +294,62 @@ mod tests {
             assert!(walk.contains(&("allowBreak", "false")));
             assert!(walk.contains(&("allowPlace", "false")));
         }
+    }
+
+    #[test]
+    fn a_full_inventory_stops_mining_for_a_trip_and_mining_resumes_after_it() {
+        use MinePhase::*;
+        use MineStep::*;
+        // Mining with room: nothing to do while the port works.
+        assert_eq!(
+            mine_step(Mining, false, false, true, 5, 100),
+            (Mining, Wait, 0)
+        );
+        // Full: the trip starts (even when the port is still busy).
+        assert_eq!(
+            mine_step(Mining, true, false, true, 0, 100),
+            (Hauling, StartHaul, 0)
+        );
+        // On the trip: wait, however full the inventory is.
+        assert_eq!(
+            mine_step(Hauling, true, true, false, 0, 200),
+            (Hauling, Wait, 0)
+        );
+        // The trip is over: mine again, the idle count starts over.
+        assert_eq!(
+            mine_step(Hauling, false, false, false, 9, 300),
+            (Mining, Resume, 0)
+        );
+    }
+
+    #[test]
+    fn a_port_with_nothing_to_do_ends_the_task_only_after_the_start_grace_and_a_pause() {
+        use MinePhase::*;
+        use MineStep::*;
+        // Just started: the port has not taken the command yet.
+        let mut idle = 0;
+        for age in 0..MINE_START_GRACE {
+            let (phase, step, now) = mine_step(Mining, false, false, false, idle, age);
+            assert_eq!((phase, step), (Mining, Wait), "age {age}");
+            idle = now;
+        }
+        // After the grace, an idle port for long enough is the end of the task.
+        let mut idle = 0;
+        let mut ended = None;
+        for tick in 0..MINE_IDLE_TICKS + 2 {
+            let (_, step, now) =
+                mine_step(Mining, false, false, false, idle, MINE_START_GRACE + tick);
+            idle = now;
+            if step == Finished {
+                ended = Some(tick);
+                break;
+            }
+        }
+        assert_eq!(ended, Some(MINE_IDLE_TICKS - 1));
+        // A busy tick in between starts the pause over.
+        assert_eq!(
+            mine_step(Mining, false, false, true, MINE_IDLE_TICKS - 1, 500),
+            (Mining, Wait, 0)
+        );
     }
 }
