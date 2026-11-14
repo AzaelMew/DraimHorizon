@@ -613,6 +613,10 @@ impl Process for ElytraProcess {
             Some(p) => (p.fall_flying, p.ground.on_ground, [p.velocity.x, p.velocity.y, p.velocity.z]),
             None => return PathingCommand::Defer,
         };
+        if flying {
+            // DraimHorizon: a later take-off (after a landing) gets its own jump budget.
+            self.ground_jump_ticks = 0;
+        }
         let position = gw::player_pos(game).unwrap_or([0.0; 3]);
         let feet = core.player_feet(game).unwrap_or([0, 0, 0]);
 

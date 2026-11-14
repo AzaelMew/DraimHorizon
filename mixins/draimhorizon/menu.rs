@@ -4266,7 +4266,7 @@ impl Menu {
                 let rows = picker::entries(&model.blocks, l, &self.baritone_block);
                 let page = picker::clamp_page(self.baritone_mine_page, rows.len());
                 let tile = ((w - (picker::COLUMNS - 1) as f32 * 2.0) / picker::COLUMNS as f32)
-                    .clamp(10.0, 22.0);
+                    .clamp(6.0, 22.0);
                 let below = 104.0 + picker::ROWS as f32 * (tile + 2.0) + 3.0;
                 for (i, row) in rows
                     .iter()
