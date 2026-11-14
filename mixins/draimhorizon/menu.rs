@@ -167,6 +167,8 @@ pub struct ViewModel {
     pub schematic_layers: (super::claim_borders_schematic_places::LayerMode, i32),
     /// The verifier of the selected preview: `None` off; on, the name of the type it draws.
     pub schematic_verify: Option<String>,
+    /// The area selection's size and regions, or what the save is doing.
+    pub schematic_selection: String,
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
@@ -263,6 +265,18 @@ impl PlayerRequest {
             })?;
         self.command(current, language)
     }
+}
+/// What a button of the area selection does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionEdit {
+    /// The first corner of the current region: the block aimed at, or the one stood on.
+    Corner1,
+    Corner2,
+    /// A region of its own beside the others.
+    NewBox,
+    /// Read the area and write it as a schematic file.
+    Save,
+    Clear,
 }
 /// What a schematic editor button does to the selected preview.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,6 +380,8 @@ pub enum Action {
     SchematicVerify,
     SchematicVerifyKind,
     SchematicVerifyReport,
+    /// The area selection: corners, a region, save, clear.
+    SchematicSelection(SelectionEdit),
     /// Keeps this player's choice of preview layers (mode and layer).
     SchematicLayers(super::claim_borders_schematic_places::LayerMode, i32),
     LoadSchematic {
@@ -541,6 +557,7 @@ impl std::fmt::Debug for Action {
             Self::SchematicVerify => f.write_str("SchematicVerify"),
             Self::SchematicVerifyKind => f.write_str("SchematicVerifyKind"),
             Self::SchematicVerifyReport => f.write_str("SchematicVerifyReport"),
+            Self::SchematicSelection(e) => f.debug_tuple("SchematicSelection").field(e).finish(),
             Self::SchematicLayers(mode, layer) => f
                 .debug_tuple("SchematicLayers")
                 .field(mode)
@@ -950,6 +967,7 @@ pub enum Control {
     SchematicVerify,
     SchematicVerifyKind,
     SchematicVerifyReport,
+    SchematicSelect(SelectionEdit),
     SchematicFolder,
     ConstructDirection,
     ConstructLength,
@@ -2334,35 +2352,6 @@ impl Menu {
             ));
             y += row;
         }
-        // The verifier (Litematica's): compares the preview with the world and marks the
-        // differences by type.
-        if y + row <= limit {
-            out.push(widget(
-                cells(3, 0, y),
-                if model.schematic_verify.is_some() {
-                    l.text("Проверка: вкл", "Verify: on")
-                } else {
-                    l.text("Проверка: выкл", "Verify: off")
-                },
-                Some(Control::SchematicVerify),
-                model.schematic_verify.is_some(),
-            ));
-            if let Some(kind) = &model.schematic_verify {
-                out.push(widget(
-                    cells(3, 1, y),
-                    localized!(l, "Тип: {}", "Type: {}", kind),
-                    Some(Control::SchematicVerifyKind),
-                    false,
-                ));
-                out.push(widget(
-                    cells(3, 2, y),
-                    l.text("Отчёт", "Report"),
-                    Some(Control::SchematicVerifyReport),
-                    false,
-                ));
-            }
-            y += row;
-        }
         // Layers: this player's own view of every preview (all, one layer, up to a layer).
         if y + row <= limit {
             use super::claim_borders_schematic_places::LayerMode;
@@ -2394,6 +2383,69 @@ impl Menu {
                 ));
             }
             y += row + 3.0;
+        }
+        // Litematica's tools, on one row: the verifier of the preview against the world, the
+        // corners of an area of the world, and saving it as a schematic. A second row has the
+        // rest of them while they are in use.
+        if y + row <= limit {
+            out.push(widget(
+                cells(4, 0, y),
+                if model.schematic_verify.is_some() {
+                    l.text("Проверка: вкл", "Verify: on")
+                } else {
+                    l.text("Проверка", "Verify")
+                },
+                Some(Control::SchematicVerify),
+                model.schematic_verify.is_some(),
+            ));
+            for (i, (label, edit)) in [
+                (l.text("Угол 1", "Corner 1"), SelectionEdit::Corner1),
+                (l.text("Угол 2", "Corner 2"), SelectionEdit::Corner2),
+                (l.text("Сохранить", "Save area"), SelectionEdit::Save),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    cells(4, i + 1, y),
+                    label,
+                    Some(Control::SchematicSelect(edit)),
+                    false,
+                ));
+            }
+            y += row;
+            let in_use = model.schematic_verify.is_some() || !model.schematic_selection.is_empty();
+            if in_use && y + row <= limit {
+                if let Some(kind) = &model.schematic_verify {
+                    out.push(widget(
+                        cells(4, 0, y),
+                        localized!(l, "Тип: {}", "Type: {}", kind),
+                        Some(Control::SchematicVerifyKind),
+                        false,
+                    ));
+                    out.push(widget(
+                        cells(4, 1, y),
+                        l.text("Отчёт", "Report"),
+                        Some(Control::SchematicVerifyReport),
+                        false,
+                    ));
+                }
+                if !model.schematic_selection.is_empty() {
+                    out.push(widget(
+                        cells(4, 2, y),
+                        l.text("Регион +", "Region +"),
+                        Some(Control::SchematicSelect(SelectionEdit::NewBox)),
+                        false,
+                    ));
+                    out.push(widget(
+                        cells(4, 3, y),
+                        l.text("Сбросить", "Clear"),
+                        Some(Control::SchematicSelect(SelectionEdit::Clear)),
+                        false,
+                    ));
+                }
+                y += row;
+            }
         }
         // The previews of this world: the player's own, then friends' (show or hide only), a
         // page at a time with the pager on the last line when they do not fit.
@@ -6032,6 +6084,7 @@ impl Menu {
             Control::SchematicVerify => Some(Action::SchematicVerify),
             Control::SchematicVerifyKind => Some(Action::SchematicVerifyKind),
             Control::SchematicVerifyReport => Some(Action::SchematicVerifyReport),
+            Control::SchematicSelect(e) => Some(Action::SchematicSelection(e)),
             Control::SchematicFolder => Some(Action::OpenSchematicFolder),
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
@@ -8869,6 +8922,53 @@ mod tests {
         assert_eq!(menu.tab, Tab::Baritone);
     }
 
+    #[test]
+    fn the_schematic_tools_send_their_actions_and_show_the_second_row_only_in_use() {
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Schematics,
+            ..Menu::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerify),
+            Some(Action::SchematicVerify)
+        ));
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerifyKind),
+            Some(Action::SchematicVerifyKind)
+        ));
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerifyReport),
+            Some(Action::SchematicVerifyReport)
+        ));
+        for edit in [
+            SelectionEdit::Corner1,
+            SelectionEdit::Corner2,
+            SelectionEdit::NewBox,
+            SelectionEdit::Save,
+            SelectionEdit::Clear,
+        ] {
+            assert!(matches!(
+                menu.activate(&model, 400.0, Control::SchematicSelect(edit)),
+                Some(Action::SchematicSelection(e)) if e == edit
+            ));
+        }
+        let has = |model: &ViewModel, control: Control| {
+            menu.layout(model, 800.0, 500.0)
+                .iter()
+                .any(|w| w.control == Some(control))
+        };
+        assert!(has(&model, Control::SchematicVerify));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::Save)));
+        assert!(!has(&model, Control::SchematicVerifyKind));
+        assert!(!has(&model, Control::SchematicSelect(SelectionEdit::Clear)));
+        model.schematic_verify = Some("All".into());
+        model.schematic_selection = "3x3x3 · 1 reg.".into();
+        assert!(has(&model, Control::SchematicVerifyKind));
+        assert!(has(&model, Control::SchematicVerifyReport));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::NewBox)));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::Clear)));
+    }
     #[test]
     fn the_elytra_switch_makes_go_and_start_fly_to_the_place_or_the_waypoint() {
         let model = ViewModel {

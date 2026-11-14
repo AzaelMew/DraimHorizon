@@ -323,6 +323,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
         return;
     }
     crate::game::claim_borders_schematic_verify::render(game, g);
+    crate::game::claim_borders_schematic_capture::render(game, g);
     let (mode, layer) = layers(game);
     for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);

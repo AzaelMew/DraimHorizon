@@ -224,3 +224,56 @@ mod items_tests {
         assert!(st("minecraft:oak_stairs[waterlogged=true]").waterlogged());
     }
 }
+#[cfg(test)]
+mod writer_tests {
+    use claim_borders::litematica_writer as w;
+    use claim_borders::schematic::decode;
+    use std::collections::BTreeMap;
+    #[test]
+    fn a_written_litematic_is_read_back_block_for_block() {
+        let state = |name: &str, props: &[(&str, &str)]| w::State {
+            name: name.into(),
+            properties: props
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect::<BTreeMap<_, _>>(),
+        };
+        let mut a = w::Region::new("one", [0, 0, 0], [3, 2, 4]).unwrap();
+        a.set(0, 0, 0, &state("minecraft:stone", &[]));
+        a.set(
+            2,
+            1,
+            3,
+            &state(
+                "minecraft:oak_stairs",
+                &[("facing", "east"), ("half", "top")],
+            ),
+        );
+        a.set(1, 1, 2, &state("minecraft:dirt", &[]));
+        let mut b = w::Region::new("two", [5, 0, 1], [2, 2, 2]).unwrap();
+        b.set(1, 1, 1, &state("minecraft:glass", &[]));
+        let meta = w::Metadata {
+            name: "t".into(),
+            author: "me".into(),
+            description: String::new(),
+            time_ms: 1_700_000_000_000,
+            data_version: 4000,
+        };
+        let bytes = w::write(&meta, &[a, b]);
+        let blueprint = decode(&bytes).expect("our reader reads what the writer wrote");
+        assert_eq!(blueprint.format, "litematic");
+        assert_eq!(blueprint.data_version, 4000);
+        let blocks: BTreeMap<[i32; 3], String> = blueprint
+            .blocks
+            .iter()
+            .filter(|(_, s)| !s.air())
+            .map(|(p, s)| (*p, format!("{}{:?}", s.name, s.properties)))
+            .collect();
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[&[0, 0, 0]], "minecraft:stone{}");
+        assert!(blocks[&[2, 1, 3]].starts_with("minecraft:oak_stairs"));
+        assert!(blocks[&[2, 1, 3]].contains("\"east\""));
+        assert_eq!(blocks[&[1, 1, 2]], "minecraft:dirt{}");
+        assert_eq!(blocks[&[6, 1, 2]], "minecraft:glass{}");
+    }
+}

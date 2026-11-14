@@ -46,6 +46,9 @@ def package():
     manifest = dict(schema=1, id=mod["id"], version=mod["version"], game=GAME,
                     horizon=compat["horizon_revision"], mixins=compat["horizon_mixins_revision"])
     files = {"horizon-native.json": (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()}
+    missing = sorted(name for name in LICENSE_FILES if not (bundle / name).is_file())
+    if missing:
+        raise ValueError(f"the licence files of the ported code are missing from the bundle: {', '.join(missing)}")
     for path in sorted(bundle.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"bundle must not contain symbolic links: {path.relative_to(ROOT)}")

@@ -1636,6 +1636,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames_read(game),
             schematic_layers: crate::game::claim_borders_schematic_view::layers(game),
+            schematic_selection: crate::game::claim_borders_schematic_capture::status(),
             schematic_verify: crate::game::claim_borders_schematic_verify::active().then(|| {
                 crate::game::claim_borders_schematic_verify::kind_name(
                     crate::game::claim_borders_schematic_verify::kind(),
@@ -1876,6 +1877,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "Папка схем открыта (путь скопирован). Положите .schem / .litematic и выберите файл.",
                 "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
             )])
+        }
+        Action::SchematicSelection(edit) => {
+            let message = crate::game::claim_borders_schematic_capture::edit(game, edit)?;
+            Ok(if message.is_empty() {
+                Vec::new()
+            } else {
+                vec![message]
+            })
         }
         Action::SchematicVerify => {
             crate::game::claim_borders_schematic_verify::toggle(game)?;

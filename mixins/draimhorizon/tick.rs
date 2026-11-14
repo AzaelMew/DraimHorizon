@@ -18,6 +18,9 @@ fn claim_borders_tick(game: &mut crate::game::Game<'_>) {
     time("mod tick: ghosts", || {
         crate::game::claim_borders_schematic_ghosts::tick(game)
     });
+    time("mod tick: capture", || {
+        crate::game::claim_borders_schematic_capture::tick(game)
+    });
     time("mod tick: verifier", || {
         crate::game::claim_borders_schematic_verify::tick(game)
     });

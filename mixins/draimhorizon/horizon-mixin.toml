@@ -119,6 +119,18 @@ name = "claim_borders_litematica_materials"
 source = "litematica/materials.rs"
 
 [[module]]
+id = "litematica-writer"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_litematica_writer"
+source = "litematica/writer.rs"
+
+[[module]]
+id = "litematica-selection"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_litematica_selection"
+source = "litematica/selection.rs"
+
+[[module]]
 id = "litematica-verifier"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_litematica_verifier"
@@ -135,6 +147,12 @@ id = "schematic-materials"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_schematic_materials"
 source = "schematic_materials.rs"
+
+[[module]]
+id = "schematic-capture"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_capture"
+source = "schematic_capture.rs"
 
 [[module]]
 id = "schematic-places"
