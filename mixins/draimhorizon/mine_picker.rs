@@ -6,8 +6,8 @@ use claim_borders_relay_client::translation::Language;
 use std::collections::BTreeSet;
 
 /// Tiles in a row of the picker, and rows to a page.
-pub const COLUMNS: usize = 12;
-pub const ROWS: usize = 2;
+pub const COLUMNS: usize = 24;
+pub const ROWS: usize = 4;
 /// Entries per page of the list.
 pub const PER_PAGE: usize = COLUMNS * ROWS;
 /// The most blocks one `mine` command carries.

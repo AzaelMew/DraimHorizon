@@ -1108,6 +1108,8 @@ pub struct Menu {
     pub navigation_z: String,
     pub baritone_block: String,
     pub baritone_mine_page: usize,
+    /// Navigation flies (the elytra) instead of walking: Go and the Start key then fly.
+    pub navigation_elytra: bool,
     pub farm_section: FarmSection,
     /// The blocks chosen in Mining as of the last snapshot (the action keys use them, menu closed).
     pub baritone_mine_cache: Vec<String>,
@@ -1185,6 +1187,7 @@ impl Default for Menu {
             navigation_z: String::new(),
             baritone_block: String::new(),
             baritone_mine_page: 0,
+            navigation_elytra: false,
             farm_section: FarmSection::Crops,
             baritone_mine_cache: Vec::new(),
             baritone_files_cache: Vec::new(),
@@ -1677,6 +1680,9 @@ impl Menu {
         if self.navigation_player.is_some() {
             let name = self.navigation_player_name.as_ref()?;
             return Some(Action::Baritone(format!("follow player {name}")));
+        }
+        if self.navigation_elytra {
+            return self.baritone_elytra();
         }
         if let Some(id) = self.navigation_waypoint {
             return Some(Action::BaritoneWaypoint(id));
@@ -4206,18 +4212,22 @@ impl Menu {
                     Some(Control::NavigationPlayer),
                     self.navigation_player.is_some(),
                 ));
-                button(
-                    &mut out,
+                out.push(widget(
                     [x, 128.0, half, 20.0],
-                    l.text("Элитры", "Elytra"),
-                    BaritoneCmd::Elytra,
-                );
+                    if self.navigation_elytra {
+                        l.text("Элитры: вкл", "Elytra: on")
+                    } else {
+                        l.text("Элитры: выкл", "Elytra: off")
+                    },
+                    Some(Control::BaritoneCmd(BaritoneCmd::Elytra)),
+                    self.navigation_elytra,
+                ));
                 hint(
                     &mut out,
                     152.0,
                     l.text(
-                        "Метка: идти. Игрок: следовать. Элитры: лететь к X Y Z или метке (нужны элитры и фейерверки).",
-                        "Waypoint: walk. Player: follow. Elytra: fly to X Y Z or a waypoint (needs elytra and fireworks).",
+                        "Метка: идти. Игрок: следовать. Элитры (вкл): Go и клавиша Старт летят к X Y Z или метке; с земли взлетает сам (нужны элитры и фейерверки).",
+                        "Waypoint: walk. Player: follow. Elytra (on): Go and the Start key fly to X Y Z or a waypoint, taking off by themselves (needs elytra and fireworks).",
                     ),
                 );
             }
@@ -4252,11 +4262,12 @@ impl Menu {
                     BaritoneCmd::Mine,
                 );
                 // Icon tiles, our presets first and then every block; the name is the tooltip and a
-                // chosen tile is highlighted. Twelve to a row, two rows to a page.
+                // chosen tile is highlighted. The whole width: 24 to a row, four rows to a page.
                 let rows = picker::entries(&model.blocks, l, &self.baritone_block);
                 let page = picker::clamp_page(self.baritone_mine_page, rows.len());
                 let tile = ((w - (picker::COLUMNS - 1) as f32 * 2.0) / picker::COLUMNS as f32)
-                    .clamp(12.0, 22.0);
+                    .clamp(10.0, 22.0);
+                let below = 104.0 + picker::ROWS as f32 * (tile + 2.0) + 3.0;
                 for (i, row) in rows
                     .iter()
                     .skip(page * picker::PER_PAGE)
@@ -4285,7 +4296,7 @@ impl Menu {
                 // The count, the storage and a reset, under the rows.
                 let third = (w - gap * 2.0) / 3.0;
                 let mut count = widget(
-                    [x, 161.0, third, 15.0],
+                    [x, below, third, 15.0],
                     localized!(
                         l,
                         "Выбрано: {}  стр. {}/{}",
@@ -4300,7 +4311,7 @@ impl Menu {
                 count.muted = true;
                 out.push(count);
                 out.push(widget(
-                    [x + third + gap, 161.0, third, 15.0],
+                    [x + third + gap, below, third, 15.0],
                     if model.farm_storage[0].is_some() {
                         l.text("Склад: задан", "Storage: set")
                     } else {
@@ -4312,7 +4323,7 @@ impl Menu {
                     model.farm_storage[0].is_some(),
                 ));
                 out.push(widget(
-                    [x + (third + gap) * 2.0, 161.0, third, 15.0],
+                    [x + (third + gap) * 2.0, below, third, 15.0],
                     l.text("Сбросить", "Clear"),
                     Some(Control::BaritoneMineClear),
                     false,
@@ -5777,7 +5788,10 @@ impl Menu {
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
             Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
-            Control::BaritoneCmd(BaritoneCmd::Elytra) => self.baritone_elytra(),
+            Control::BaritoneCmd(BaritoneCmd::Elytra) => {
+                self.navigation_elytra = !self.navigation_elytra;
+                None
+            }
             Control::BaritoneCmd(BaritoneCmd::Tunnel) => Some(self.baritone_tunnel()),
             Control::BaritoneCmd(BaritoneCmd::Bridge) => Some(self.baritone_bridge()),
             Control::BaritoneCmd(BaritoneCmd::Mine) => (!model.baritone.mine.is_empty())
@@ -8370,7 +8384,7 @@ mod tests {
             baritone_enabled: true,
             experiments_accepted: true,
             blocks: std::sync::Arc::new(picker::catalogue(
-                (0..40)
+                (0..140)
                     .map(|i| format!("minecraft:block_{i:02}"))
                     .collect::<Vec<_>>()
                     .iter()
@@ -8392,7 +8406,7 @@ mod tests {
                 })
                 .collect()
         };
-        // First page: our presets lead the list, six rows to a page.
+        // First page: our presets lead the list, a page of tiles.
         let first = rows(&menu, &model);
         assert_eq!(first.len(), picker::PER_PAGE);
         assert!(first[0].1.starts_with("Набор:") || first[0].1.starts_with("Set:"));
@@ -8765,7 +8779,7 @@ mod tests {
     }
 
     #[test]
-    fn the_elytra_button_flies_to_the_typed_place_or_the_waypoint_and_not_to_a_player() {
+    fn the_elytra_switch_makes_go_and_start_fly_to_the_place_or_the_waypoint() {
         let model = ViewModel {
             navigation_waypoints: vec![WaypointRow {
                 id: 7,
@@ -8781,33 +8795,34 @@ mod tests {
             baritone_section: BaritoneSection::Navigation,
             ..Menu::default()
         };
-        // Nothing typed, nothing chosen: nothing starts.
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("100.5".into(), "70".into(), "-300".into());
+        // Off: Start walks.
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::Baritone(_))
+        ));
+        // The switch itself starts nothing and turns on.
         assert!(
             menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra))
                 .is_none()
         );
-        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
-            ("100.5".into(), "70".into(), "-300".into());
+        assert!(menu.navigation_elytra);
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra)),
+            menu.baritone_request(true),
+            Ok(Action::BaritoneElytra([100, 70, -300]))
+        ));
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Goto)),
             Some(Action::BaritoneElytra([100, 70, -300]))
         ));
         menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
         assert!(matches!(
-            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra)),
-            Some(Action::BaritoneElytraWaypoint(7))
-        ));
-        // A player is followed on foot; the elytra does not go to one.
-        menu.activate(&model, 200.0, Control::NavigationPlayerChoice(0));
-        assert!(
-            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra))
-                .is_none()
-        );
-        // The hotkeys do not fly: Start still goes on foot.
-        assert!(matches!(
             menu.baritone_request(true),
-            Ok(Action::Baritone(l)) if l == "follow player Alex"
+            Ok(Action::BaritoneElytraWaypoint(7))
         ));
+        menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra));
+        assert!(!menu.navigation_elytra);
     }
 
     #[test]

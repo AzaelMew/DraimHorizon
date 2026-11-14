@@ -215,6 +215,8 @@ pub struct ElytraProcess {
     bad_landing_spots: HashSet<Pos>,
     landing_search: Option<LandingSearch>,
     dimension: String,
+    /// DraimHorizon: the ticks spent jumping from the ground to take off (see `StartFlying`).
+    ground_jump_ticks: u32,
 }
 
 impl ElytraProcess {
@@ -235,6 +237,7 @@ impl ElytraProcess {
             bad_landing_spots: HashSet::new(),
             landing_search: None,
             dimension: String::new(),
+            ground_jump_ticks: 0,
         }
     }
 
@@ -265,6 +268,7 @@ impl ElytraProcess {
         self.landing_spot = None;
         self.landing_search = None;
         self.reached_goal = false;
+        self.ground_jump_ticks = 0;
         self.goal = None;
         if let Some(mut b) = self.behavior.take() {
             b.destroy();
@@ -783,7 +787,14 @@ impl Process for ElytraProcess {
                 core.drive(game, |pathing, ctx, _s| pathing.secret_internal_segment_cancel(ctx));
             }
             core.input.clear_all_keys();
-            if motion[1] < -0.377 {
+            // DraimHorizon: with elytraAutoJump off and the player on the ground, upstream waits for a fall
+            // that never comes. Here it jumps (for a few seconds at most) and starts gliding on the way down,
+            // as a player does with the jump key pressed twice.
+            let jumped = self.ground_jump_ticks > 0;
+            if on_ground && self.ground_jump_ticks < 60 {
+                self.ground_jump_ticks += 1;
+                core.input.set_input_force_state(Input::Jump, true);
+            } else if motion[1] < if jumped { -0.05 } else { -0.377 } {
                 core.input.set_input_force_state(Input::Jump, true);
             }
         }

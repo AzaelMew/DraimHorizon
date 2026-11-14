@@ -484,6 +484,10 @@ pub fn elytra(game: &mut Game<'_>, at: [i32; 3]) -> Result<(), String> {
         if !b.core.settings.flag("elytraTermsAccepted") {
             let _ = b.core.set_setting(game, "elytraTermsAccepted", "true");
         }
+        // No walk to a ledge to jump off: from the ground the port jumps and glides by itself.
+        if b.core.settings.flag("elytraAutoJump") {
+            let _ = b.core.set_setting(game, "elytraAutoJump", "false");
+        }
     });
     let [x, y, z] = at;
     baritone::run_line(game, &format!("goal {x} {y} {z}"));
