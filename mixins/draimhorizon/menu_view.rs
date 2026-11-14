@@ -75,7 +75,7 @@ pub(super) fn baritone_scope() -> bool {
 }
 /// Whether the Baritone tab last on screen is Schematics.
 pub(super) fn schematic_mode() -> bool {
-    state(|s| s.menu.baritone_mode == model::BaritoneMode::Schematic)
+    state(|s| s.menu.tab == model::Tab::Schematics)
 }
 pub(super) fn open() {
     state(|s| {
@@ -344,6 +344,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Навигация Baritone: маршруты, обходы, прыжки и подъёмы",
                         "Baritone navigation: routes, detours, jumps and climbs",
                     ),
+                    model::Tab::Schematics => (
+                        "Схемы: показ, друзья, слои и постройка",
+                        "Schematics: preview, friends, layers and building",
+                    ),
                     model::Tab::Settings => (
                         "Оформление, связь, список игроков и боковая панель",
                         "Appearance, network, player list and sidebar",
@@ -510,7 +514,6 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 let icon = match mode {
                     model::BaritoneMode::Farm => ui::Icon::Restock,
                     model::BaritoneMode::Drain => ui::Icon::Grid,
-                    model::BaritoneMode::Schematic => ui::Icon::Home,
                 };
                 ui::icon(
                     game,
@@ -603,7 +606,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         || matches!(
                             widget.control,
                             Some(model::Control::Tab(
-                                model::Tab::Experimental | model::Tab::Baritone
+                                model::Tab::Experimental
+                                    | model::Tab::Baritone
+                                    | model::Tab::Schematics
                             ))
                         ))
                 {
@@ -899,6 +904,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                                 model::Tab::Chat => ("Чат", "Chat"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
                                 model::Tab::Baritone => ("Baritone", "Baritone"),
+                                model::Tab::Schematics => ("Схемы", "Schematics"),
                                 model::Tab::Settings => ("Настройки", "Settings"),
                                 model::Tab::Trading => ("Торговля", "Trading"),
                             };

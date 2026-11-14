@@ -60,13 +60,11 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                 [800.0, 500.0],
                 [1280.0, 720.0],
             ] {
-                for mode in [BaritoneMode::Schematic] {
+                {
                     for page in 0..4 {
                         let mut menu = Menu::default();
                         menu.language = language;
-                        menu.tab = Tab::Experimental;
-                        menu.experimental_section = ExperimentalSection::Baritone;
-                        menu.baritone_mode = mode;
+                        menu.tab = Tab::Schematics;
                         let _ = page;
                         let widgets = menu.layout(&model, size[0], size[1]);
                         let mut footer_count = 0;
@@ -90,7 +88,7 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 if i != j && !other.text.is_empty() {
                                     assert!(
                                         separate(widget.rect, other.rect),
-                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {mode:?}, {language:?}",
+                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {language:?}",
                                         widget.control,
                                         widget.text,
                                         other.control,
@@ -671,9 +669,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
         ] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             for (i, w) in widgets.iter().enumerate() {
                 if !matches!(
@@ -728,9 +724,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert_eq!(own.len(), 2, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // No select or delete for a friend's preview: only show or hide.
                 let mut label = false;
                 for _ in 0..8 {
@@ -750,9 +744,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert!(label, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // Paged to the friend's row, its button acts on it.
                 while !menu
                     .layout(&model, size[0], size[1])
@@ -782,9 +774,7 @@ fn schematics_tab_lists_files_and_keeps_the_preview_controls_beside_them() {
         for size in [[536.0, 300.0], [800.0, 500.0], [1280.0, 720.0]] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             let find = |c: Control| widgets.iter().find(|w| w.control == Some(c));
             for c in [

@@ -630,6 +630,8 @@ pub enum Tab {
     Experimental,
     /// The Baritone navigation port (LGPL), a tab of its own under Experiments.
     Baritone,
+    /// Schematics (Litematica-style), a tab of its own under Baritone.
+    Schematics,
     Trading,
     Settings,
 }
@@ -642,6 +644,7 @@ impl Tab {
             Self::Chat => language.text("Чат", "Chat"),
             Self::Experimental => language.text("Эксперименты", "Experiments"),
             Self::Baritone => "Baritone",
+            Self::Schematics => language.text("Схемы", "Schematics"),
             Self::Trading => language.text("Торговля", "Trading"),
             Self::Settings => language.text("Настройки", "Settings"),
         }
@@ -850,7 +853,6 @@ pub enum BaritoneMode {
     #[default]
     Farm,
     Drain,
-    Schematic,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -1247,7 +1249,7 @@ impl Default for Menu {
     }
 }
 /// Where the Schematics tab's panel starts, and the room kept below it (status and key hint).
-const SCHEMATIC_TOP: f32 = 100.0;
+const SCHEMATIC_TOP: f32 = 60.0;
 const SCHEMATIC_BOTTOM: f32 = 48.0;
 /// The files the Schematics tab's list shows at once, below its header row.
 fn schematic_list_rows(top: f32, limit: f32) -> usize {
@@ -1352,6 +1354,7 @@ impl Menu {
             Tab::Chat => "chat",
             Tab::Experimental => "experimental",
             Tab::Baritone => "baritone",
+            Tab::Schematics => "schematics",
             Tab::Trading => "trading",
             Tab::Settings => "settings",
         };
@@ -1372,7 +1375,6 @@ impl Menu {
         let bm = match self.baritone_mode {
             BaritoneMode::Farm => "farm",
             BaritoneMode::Drain => "drain",
-            BaritoneMode::Schematic => "schematic",
         };
         let fs = match self.farm_section {
             FarmSection::Crops => "crops",
@@ -1405,13 +1407,14 @@ impl Menu {
                         "chat" => Tab::Chat,
                         "experimental" => Tab::Experimental,
                         "baritone" => Tab::Baritone,
+                        "schematics" => Tab::Schematics,
                         "trading" => Tab::Trading,
                         "settings" => Tab::Settings,
                         _ => self.tab,
                     };
                     self.keys_for_baritone_tab = match self.tab {
                         Tab::Baritone => true,
-                        Tab::Experimental => false,
+                        Tab::Experimental | Tab::Schematics => false,
                         _ => self.keys_for_baritone_tab,
                     };
                 }
@@ -1436,7 +1439,6 @@ impl Menu {
                     self.baritone_mode = match value {
                         "farm" => BaritoneMode::Farm,
                         "drain" => BaritoneMode::Drain,
-                        "schematic" => BaritoneMode::Schematic,
                         _ => self.baritone_mode,
                     }
                 }
@@ -1553,7 +1555,7 @@ impl Menu {
     /// Footer line of the Baritone tabs: what each action key is bound to.
     /// Whether the Baritone tab is on screen with no text field taking the keys.
     pub fn baritone_keys_active(&self) -> bool {
-        (self.tab == Tab::Baritone
+        (matches!(self.tab, Tab::Baritone | Tab::Schematics)
             || (self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone))
             && self.focus.is_none()
@@ -1695,6 +1697,9 @@ impl Menu {
     pub fn baritone_request(&self, running: bool) -> Result<Action, String> {
         use super::claim_borders_navigation::Goal;
         let language = self.language;
+        if self.tab == Tab::Schematics {
+            return self.schematic_request(running);
+        }
         if self.keys_scope_is_baritone_tab() {
             return self.baritone_tab_request(running);
         }
@@ -1726,33 +1731,39 @@ impl Menu {
                     spacing: self.drain_spacing,
                 },
             )),
-            BaritoneMode::Schematic => {
-                let filename = self.schematic_file.clone().ok_or_else(|| {
-                    language
-                        .text("Сначала выберите файл", "Select a file first")
-                        .to_owned()
-                })?;
-                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
-                let origin = <[&str; 3]>::try_from(values.as_slice())
-                    .ok()
-                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
-                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
-                    .map(|p| p.map(|v| v as i32))
-                    .ok_or_else(|| language.text("Введите X Y Z", "Enter X Y Z").to_owned())?;
-                Ok(Action::LoadSchematic {
-                    filename,
-                    origin,
-                    rotation: self.schematic_rotation,
-                    running,
-                })
-            }
         }
+    }
+    /// Start on the Schematics tab: build the chosen file at the typed place.
+    fn schematic_request(&self, running: bool) -> Result<Action, String> {
+        let language = self.language;
+        let filename = self.schematic_file.clone().ok_or_else(|| {
+            language
+                .text("Сначала выберите файл", "Select a file first")
+                .to_owned()
+        })?;
+        let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+        let origin = <[&str; 3]>::try_from(values.as_slice())
+            .ok()
+            .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+            .filter(|p| p.iter().all(|v| v.fract() == 0.0))
+            .map(|p| p.map(|v| v as i32))
+            .ok_or_else(|| language.text("Введите X Y Z", "Enter X Y Z").to_owned())?;
+        Ok(Action::LoadSchematic {
+            filename,
+            origin,
+            rotation: self.schematic_rotation,
+            running,
+        })
     }
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
         // A restored tab that needs the experiments consent is not shown without it.
-        if matches!(self.tab, Tab::Experimental | Tab::Baritone) && !next.experiments_accepted {
+        if matches!(
+            self.tab,
+            Tab::Experimental | Tab::Baritone | Tab::Schematics
+        ) && !next.experiments_accepted
+        {
             self.tab = Tab::Waypoints;
             self.keys_for_baritone_tab = false;
         }
@@ -1776,6 +1787,7 @@ impl Menu {
             | Tab::Chat
             | Tab::Experimental
             | Tab::Baritone
+            | Tab::Schematics
             | Tab::Trading
             | Tab::Settings => None,
         });
@@ -1861,6 +1873,7 @@ impl Menu {
             | Tab::Chat
             | Tab::Experimental
             | Tab::Baritone
+            | Tab::Schematics
             | Tab::Trading
             | Tab::Settings => 0,
         }
@@ -1885,13 +1898,13 @@ impl Menu {
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = rail_width(panel_w, panel_h);
-        let nav_step = ((panel_h - 104.0) / 7.0).min(28.0);
+        let nav_step = ((panel_h - 104.0) / 8.0).min(28.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
         for widget in &mut widgets {
             if sidebar > 0.0
-                && (self.tab == Tab::Baritone
+                && (matches!(self.tab, Tab::Baritone | Tab::Schematics)
                     || (self.tab == Tab::Experimental
                         && self.experimental_section == ExperimentalSection::Baritone))
                 && widget.control.is_none()
@@ -1917,7 +1930,8 @@ impl Menu {
                     Tab::Trading => 4,
                     Tab::Experimental => 5,
                     Tab::Baritone => 6,
-                    Tab::Settings => 7,
+                    Tab::Schematics => 7,
+                    Tab::Settings => 8,
                 };
                 widget.rect = [
                     x + 6.0,
@@ -2059,6 +2073,55 @@ impl Menu {
             }
         }
         widgets
+    }
+    /// The Schematics tab: the panel below, the status line and the key hint.
+    fn schematics_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        self.schematic_panel(
+            model,
+            x,
+            w,
+            SCHEMATIC_TOP,
+            height - SCHEMATIC_BOTTOM,
+            &mut out,
+        );
+        let eat_w = 92.0_f32.min(w * 0.4);
+        out.push(widget(
+            [x, height - 44.0, w - eat_w - 4.0, 18.0],
+            &model.navigation_status,
+            None,
+            false,
+        ));
+        out.push(widget(
+            [x + w - eat_w, height - 44.0, eat_w, 18.0],
+            localized!(
+                self.language,
+                "Еда: {}",
+                "Eat: {}",
+                if model.auto_eat {
+                    self.language.text("вкл", "on")
+                } else {
+                    self.language.text("выкл", "off")
+                }
+            ),
+            Some(Control::AutoEat),
+            model.auto_eat,
+        ));
+        let mut hint = widget(
+            [x, height - 24.0, (w - 100.0).max(1.0), 18.0],
+            self.hotkey_hint(model),
+            None,
+            false,
+        );
+        hint.muted = true;
+        out.push(hint);
+        out
     }
     /// The Schematics tab, in two columns. Left: the files of the schematics folder as a list
     /// (the mouse wheel scrolls it; a click chooses one), with Refresh and Open folder above it.
@@ -2557,6 +2620,10 @@ impl Menu {
             ),
             (Control::Tab(Tab::Baritone), "Baritone"),
             (
+                Control::Tab(Tab::Schematics),
+                self.language.text("Схемы", "Schematics"),
+            ),
+            (
                 Control::Tab(Tab::Trading),
                 self.language.text("Торговля", "Trading"),
             ),
@@ -2594,6 +2661,9 @@ impl Menu {
         }
         if self.tab == Tab::Baritone {
             return self.baritone_layout(model, x, w, out, height);
+        }
+        if self.tab == Tab::Schematics {
+            return self.schematics_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -4792,18 +4862,13 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 8.0) / 3.0;
+            let mode_width = (w - 4.0) / 2.0;
             for (i, mode, label) in [
                 (0, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
                     1,
                     BaritoneMode::Drain,
                     self.language.text("Осушение", "Drain"),
-                ),
-                (
-                    2,
-                    BaritoneMode::Schematic,
-                    self.language.text("Схемы", "Schematics"),
                 ),
             ] {
                 out.push(widget(
@@ -4817,16 +4882,6 @@ impl Menu {
             let h = (step - 2.0).min(22.0);
             if self.baritone_mode == BaritoneMode::Farm {
                 self.farm_layout(model, x, w, height, step, h, &mut out);
-            } else if self.baritone_mode == BaritoneMode::Schematic {
-                // The Schematics tab lays itself out (`schematic_panel`).
-                self.schematic_panel(
-                    model,
-                    x,
-                    w,
-                    SCHEMATIC_TOP,
-                    height - SCHEMATIC_BOTTOM,
-                    &mut out,
-                );
             } else if self.baritone_mode == BaritoneMode::Drain {
                 use super::claim_borders_draining::Pattern;
                 out.push(widget(
@@ -4875,9 +4930,8 @@ impl Menu {
             }
             // The status line, and the switch for eating on its own beside it.
             let eat_w = 92.0_f32.min(w * 0.4);
-            let extra_footer = matches!(self.baritone_mode, BaritoneMode::Schematic);
-            let status_y = height - if extra_footer { 44.0 } else { 48.0 };
-            let status_h = if extra_footer { 18.0 } else { 14.0 };
+            let status_y = height - 48.0;
+            let status_h = 14.0;
             out.push(widget(
                 [x, status_y, w - eat_w - 4.0, status_h],
                 &model.navigation_status,
@@ -5936,8 +5990,7 @@ impl Menu {
                 self.baritone_mode = mode;
                 self.navigation_choices = None;
                 self.focus = None;
-                // The schematics folder is read again whenever its tab is opened.
-                (mode == BaritoneMode::Schematic).then_some(Action::RefreshSchematics)
+                None
             }
             Control::SchematicEdit(edit) => Some(Action::SchematicEdit(edit)),
             Control::SchematicPreviewHere => {
@@ -6535,7 +6588,9 @@ impl Menu {
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
             Control::ConfirmExperiments | Control::DeclineExperiments => None,
-            Control::Tab(Tab::Experimental | Tab::Baritone) if !model.experiments_accepted => {
+            Control::Tab(Tab::Experimental | Tab::Baritone | Tab::Schematics)
+                if !model.experiments_accepted =>
+            {
                 self.navigation_menu = false;
                 self.experiments_prompt = true;
                 self.focus = None;
@@ -6547,7 +6602,7 @@ impl Menu {
                 self.tab = t;
                 match t {
                     Tab::Baritone => self.keys_for_baritone_tab = true,
-                    Tab::Experimental => self.keys_for_baritone_tab = false,
+                    Tab::Experimental | Tab::Schematics => self.keys_for_baritone_tab = false,
                     _ => {}
                 }
                 if t == Tab::Settings && matches!(self.settings_section, 2..=4) {
@@ -6558,7 +6613,8 @@ impl Menu {
                 self.focus = None;
                 self.relay_setup = false;
                 self.access_token.clear();
-                None
+                // The schematics folder is read again whenever its tab is opened.
+                (t == Tab::Schematics).then_some(Action::RefreshSchematics)
             }
             Control::Field(f) => {
                 self.focus = Some(f);
@@ -6773,10 +6829,7 @@ impl Menu {
             return;
         }
         // The Schematics tab: the wheel scrolls the file list a row at a time.
-        if self.tab == Tab::Experimental
-            && self.experimental_section == ExperimentalSection::Baritone
-            && self.baritone_mode == BaritoneMode::Schematic
-        {
+        if self.tab == Tab::Schematics {
             let rows = schematic_list_rows(SCHEMATIC_TOP, height - SCHEMATIC_BOTTOM);
             let last = model.schematic_files.len().saturating_sub(rows.max(1));
             self.schematic_catalog_page = if delta > 0.0 {
@@ -6985,7 +7038,6 @@ impl Menu {
         if key == "key.keyboard.tab" {
             if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
-                && !matches!(self.baritone_mode, BaritoneMode::Schematic)
             {
                 self.focus = None;
                 return true;
@@ -6996,32 +7048,28 @@ impl Menu {
                 self.anchor = None;
                 return true;
             }
-            self.focus = Some(
-                if self.tab == Tab::Experimental
-                    && self.experimental_section == ExperimentalSection::Baritone
-                {
-                    Field::SchematicOrigin
-                } else if self.relay_setup || self.section() == 1 {
-                    if self.focus == Some(Field::RelayUrl) {
-                        Field::RelayToken
-                    } else {
-                        Field::RelayUrl
-                    }
-                } else if self.section() == 2 && self.claims_section == ClaimsSection::Colours {
-                    if self.focus == Some(Field::OwnClaimColor) {
-                        Field::FriendClaimColor
-                    } else {
-                        Field::OwnClaimColor
-                    }
-                } else if self.tab == Tab::Party {
-                    self.focus = None;
-                    return true;
-                } else if self.focus == Some(Field::Name) {
-                    Field::Color
+            self.focus = Some(if self.tab == Tab::Schematics {
+                Field::SchematicOrigin
+            } else if self.relay_setup || self.section() == 1 {
+                if self.focus == Some(Field::RelayUrl) {
+                    Field::RelayToken
                 } else {
-                    Field::Name
-                },
-            );
+                    Field::RelayUrl
+                }
+            } else if self.section() == 2 && self.claims_section == ClaimsSection::Colours {
+                if self.focus == Some(Field::OwnClaimColor) {
+                    Field::FriendClaimColor
+                } else {
+                    Field::OwnClaimColor
+                }
+            } else if self.tab == Tab::Party {
+                self.focus = None;
+                return true;
+            } else if self.focus == Some(Field::Name) {
+                Field::Color
+            } else {
+                Field::Name
+            });
             self.caret = usize::MAX;
             self.anchor = None;
             return true;
@@ -7605,11 +7653,7 @@ mod tests {
                         ExperimentalSection::Baritone,
                         ExperimentalSection::Helpers,
                     ] {
-                        for baritone_mode in [
-                            BaritoneMode::Farm,
-                            BaritoneMode::Drain,
-                            BaritoneMode::Schematic,
-                        ] {
+                        for baritone_mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
                             let ru = Menu {
                                 tab,
                                 settings_section: section,
@@ -10274,7 +10318,7 @@ mod tests {
             menu.activate(&model, 200.0, Control::DrainRadius);
         }
         assert_eq!(menu.drain_radius, 6);
-        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.tab = Tab::Schematics;
         menu.activate(&model, 200.0, Control::SchematicChoice(0));
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
         for value in ["", "1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
@@ -10292,11 +10336,7 @@ mod tests {
                 ..
             })
         ));
-        for mode in [
-            BaritoneMode::Farm,
-            BaritoneMode::Drain,
-            BaritoneMode::Schematic,
-        ] {
+        for mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
             menu.baritone_mode = mode;
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
@@ -10343,7 +10383,7 @@ mod tests {
                 }
             }
         }
-        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.tab = Tab::Schematics;
         menu.key("key.keyboard.tab", 0);
         assert_eq!(menu.focus, Some(Field::SchematicOrigin));
         model.experiments_accepted = false;
