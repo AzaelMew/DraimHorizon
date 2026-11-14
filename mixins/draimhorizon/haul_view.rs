@@ -115,6 +115,13 @@ fn text(russian: &'static str, english: &'static str) -> &'static str {
     crate::game::claim_borders_chat_view::current_language().text(russian, english)
 }
 /// Whether a trip is under way (mining then stands still).
+/// Ends a trip at once, for a task that was cancelled: the window is closed and nothing more is
+/// clicked, put down or broken.
+pub(super) fn abort(game: &mut Game<'_>) {
+    if active() {
+        end(game, false, 0);
+    }
+}
 pub(super) fn active() -> bool {
     TRIP.lock().unwrap_or_else(|e| e.into_inner()).is_some()
 }

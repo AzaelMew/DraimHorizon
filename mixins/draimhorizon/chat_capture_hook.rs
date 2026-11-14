@@ -8,10 +8,9 @@ fn horizon_chat_capture(
         || !game.settings.file.bool("onlyShowSecureChat");
     if allowed && game.ui.chat.shows(source) {
         let text = content.plain();
-        // "Global chat off": public chat of anyone but friends and important players is dropped.
-        if source == horizon_client::chat::ChatSource::Player
-            && crate::game::claim_borders_chat_view::global_hidden(game, &text)
-        {
+        // "Global chat off": public chat of anyone but friends and important players is dropped,
+        // whether a player's signed chat or a line a server plugin sends as plain text.
+        if crate::game::claim_borders_chat_view::global_hidden(game, &text) {
             return core::ops::ControlFlow::Break(false);
         }
         if game.native_on(crate::game::claim_borders::ID)

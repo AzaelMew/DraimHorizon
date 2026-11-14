@@ -217,6 +217,32 @@ pub fn mine_step(
     }
 }
 
+/// What the Start key does on the Baritone tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartKey {
+    /// A paused task is taken up again (a new `goto` would change the goal but leave the port
+    /// paused: it would not move).
+    Resume,
+    /// Run the task of the section on screen.
+    Run,
+}
+pub fn start_key(paused: bool) -> StartKey {
+    if paused {
+        StartKey::Resume
+    } else {
+        StartKey::Run
+    }
+}
+
+/// Whether a port command line ends the task for good: `cancel`, `stop` or `forcecancel`. The
+/// mining watch and its unloading end with it.
+pub fn cancels_task(line: &str) -> bool {
+    matches!(
+        line.split_whitespace().next(),
+        Some(word) if ["cancel", "stop", "forcecancel"].iter().any(|c| word.eq_ignore_ascii_case(c))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +377,43 @@ mod tests {
             mine_step(Mining, false, false, true, MINE_IDLE_TICKS - 1, 500),
             (Mining, Wait, 0)
         );
+    }
+
+    #[test]
+    fn start_after_pause_resumes_instead_of_starting_again() {
+        // The port's pause flag: `pause` sets it, `resume` and `cancel` clear it.
+        let mut paused = false;
+        let mut ran = Vec::new();
+        for key in ["start", "pause", "start", "start"] {
+            match key {
+                "pause" => paused = true,
+                _ => match start_key(paused) {
+                    StartKey::Resume => {
+                        paused = false;
+                        ran.push("resume");
+                    }
+                    StartKey::Run => ran.push("run"),
+                },
+            }
+        }
+        assert_eq!(ran, ["run", "resume", "run"]);
+    }
+
+    #[test]
+    fn only_cancel_stop_and_forcecancel_end_a_task() {
+        for line in ["cancel", "stop", "forcecancel", "  CANCEL  ", "cancel now"] {
+            assert!(cancels_task(line), "{line}");
+        }
+        for line in [
+            "",
+            "mine stone",
+            "goto 1 2 3",
+            "pause",
+            "resume",
+            "cancelled",
+            "build stop",
+        ] {
+            assert!(!cancels_task(line), "{line}");
+        }
     }
 }

@@ -1969,9 +1969,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             // The port reads one word from its own schematics folder: the file is copied there
             // (a path with spaces, as in a Windows user folder, could not be given to it).
             let from = workshop::folder(game).join(&file);
-            let into = game
-                .native_data_dir(crate::game::baritone::ID)
-                .join("schematics");
+            let into = crate::game::baritone::data_dir(game).join("schematics");
             // A small file, copied only when the copy is missing, of another size or older: the game
             // thread must not stall on a big one.
             const MAX_COPY: u64 = 4 << 20;
@@ -1998,13 +1996,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 Some([x, y, z]) => format!("build {file} {x} {y} {z}"),
                 None => format!("build {file}"),
             };
-            // Cancelling ends the mining watch too.
-            if matches!(
-                line.split_whitespace().next(),
-                Some("cancel" | "stop" | "forcecancel")
-            ) {
-                crate::game::claim_borders_baritone_bridge::mine_stop();
-            }
             crate::game::baritone::run_line(game, &line);
             Ok(Vec::new())
         }

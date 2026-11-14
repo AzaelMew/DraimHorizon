@@ -106,14 +106,23 @@ fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, 
     };
     match action {
         model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
-        model::Hotkey::Start => start_from_menu(game, true).map(|()| true),
+        model::Hotkey::Start => {
+            // After Pause the same task goes on; a new start would leave the port paused.
+            if crate::game::claim_borders_baritone_walk::start_key(
+                crate::game::claim_borders_baritone_bridge::paused(game),
+            ) == crate::game::claim_borders_baritone_walk::StartKey::Resume
+            {
+                line(game, "resume");
+                return Ok(true);
+            }
+            start_from_menu(game, true).map(|()| true)
+        }
         model::Hotkey::Pause => {
             line(game, "pause");
             Ok(false)
         }
         model::Hotkey::Stop => {
             line(game, "cancel");
-            crate::game::claim_borders_baritone_bridge::mine_stop();
             crate::game::claim_borders_baritone_bridge::walk_cancel();
             Ok(false)
         }

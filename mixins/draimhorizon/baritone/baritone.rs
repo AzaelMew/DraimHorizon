@@ -30,6 +30,53 @@ use horizon_client::{
 use std::cell::{Cell as FlagCell, RefCell};
 
 pub const ID: &str = "baritone";
+
+thread_local! {
+    /// The settings a walk holds at another value for its time, with the value the player has for
+    /// them (what is written to the file and put back when the walk ends).
+    static PERSIST: RefCell<Vec<(&'static str, String)>> = const { RefCell::new(Vec::new()) };
+}
+/// A walk starts: these are the player's values of what it changes.
+pub fn persist_hold(list: Vec<(&'static str, String)>) {
+    PERSIST.with_borrow_mut(|held| *held = list);
+}
+/// The walk ends: the player's values to put back (their latest choice), and nothing is held.
+pub fn persist_release() -> Vec<(&'static str, String)> {
+    PERSIST.with_borrow_mut(std::mem::take)
+}
+/// The player changed `name` while a walk holds it: their value is the one to keep.
+fn persist_update(name: &str, value: &str) {
+    PERSIST.with_borrow_mut(|held| {
+        if let Some(entry) = held.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+            entry.1 = value.to_owned();
+        }
+    });
+}
+/// The folder of the port's files (settings, cached world, waypoints, schematics): a subfolder of
+/// the mod's own data folder, whose name (`claim_borders`) is fixed for all of DraimHorizon's
+/// storage. A first build kept them in a folder of their own beside it; that folder is moved in
+/// once, so nothing the player had is lost.
+pub fn data_dir(game: &Game<'_>) -> std::path::PathBuf {
+    use super::claim_borders as claims;
+    static MOVED: std::sync::Once = std::sync::Once::new();
+    let own = game.native_data_dir(claims::SETTINGS_ID);
+    let dir = own.join("baritone");
+    MOVED.call_once(|| {
+        let Some(old) = own.parent().map(|p| p.join("baritone")) else {
+            return;
+        };
+        if old.is_dir() && !dir.exists() {
+            if let Err(e) = std::fs::create_dir_all(&own).and_then(|()| std::fs::rename(&old, &dir)) {
+                eprintln!("[Baritone] could not move {} into {}: {e}", old.display(), dir.display());
+            }
+        }
+    });
+    dir
+}
+/// A setting an older layout kept as a file of its own, one per name, in the port's folder.
+fn legacy_setting(game: &Game<'_>, name: &str) -> Option<String> {
+    std::fs::read_to_string(data_dir(game).join(name)).ok().map(|v| v.trim().to_owned())
+}
 /// DraimHorizon: the port runs only with the experiments consent given and the Baritone tab's
 /// switch on (an unregistered mod id is always "on" for `native_on`, so it cannot be used).
 pub const ENABLED_SETTING: &str = "baritone_enabled";
@@ -182,6 +229,8 @@ impl Core {
     /// Set a setting and keep it for the next game.
     pub fn set_setting(&mut self, game: &mut Game<'_>, name: &str, value: &str) -> Result<(&'static settings::Def, String), String> {
         let (def, canonical) = self.settings.set(name, value)?;
+        // A setting a walk holds at another value keeps the player's choice for when the walk ends.
+        persist_update(name, &canonical);
         self.save_settings(game);
         self.refresh();
         Ok((def, canonical))
@@ -189,12 +238,13 @@ impl Core {
 
     pub fn reset_setting(&mut self, game: &mut Game<'_>, def: &'static settings::Def) {
         self.settings.reset(def);
+        persist_update(def.name, def.default);
         self.save_settings(game);
         self.refresh();
     }
 
     fn settings_file(game: &Game<'_>) -> std::path::PathBuf {
-        game.native_data_dir(ID).join(SETTINGS_DEFAULT_NAME)
+        data_dir(game).join(SETTINGS_DEFAULT_NAME)
     }
 
     /// The settings on disk, and what could not be read of them. Versions before 1.1.26 kept one file for each
@@ -207,10 +257,10 @@ impl Core {
                 (settings, notes)
             }
             Err(_) => {
-                let settings = Settings::load(|name| game.native_setting(ID, name));
+                let settings = Settings::load(|name| legacy_setting(game, name));
                 if Self::write_settings(game, &settings).is_ok() {
                     for d in settings::DEFS {
-                        let _ = std::fs::remove_file(game.native_data_dir(ID).join(d.name));
+                        let _ = std::fs::remove_file(data_dir(game).join(d.name));
                     }
                 }
                 (settings, Vec::new())
@@ -219,8 +269,16 @@ impl Core {
     }
 
     fn write_settings(game: &Game<'_>, settings: &Settings) -> std::io::Result<()> {
-        std::fs::create_dir_all(game.native_data_dir(ID))?;
-        std::fs::write(Self::settings_file(game), settings.to_file_text())
+        std::fs::create_dir_all(data_dir(game))?;
+        // What a walk of the farm or mining changed for its time is never written: the player's
+        // own values go to the file, whatever command saves.
+        let mut kept = settings.clone();
+        PERSIST.with_borrow(|held| {
+            for (name, value) in held {
+                let _ = kept.set(name, value);
+            }
+        });
+        std::fs::write(Self::settings_file(game), kept.to_file_text())
     }
 
     /// `SettingsUtil.save`.
@@ -233,7 +291,7 @@ impl Core {
     /// `#set load`: everything back to its default, then the file. The lines to say come back.
     pub fn load_settings(&mut self, game: &Game<'_>, file: &str) -> Vec<String> {
         self.settings = Settings::load(|_| None);
-        let notes = match std::fs::read_to_string(game.native_data_dir(ID).join(file)) {
+        let notes = match std::fs::read_to_string(data_dir(game).join(file)) {
             Ok(text) => self.settings.apply_file_text(&text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec!["Baritone settings file not found, resetting.".to_owned()],
             Err(_) => vec!["Exception while reading Baritone settings, some settings may be reset to default values!".to_owned()],
@@ -245,7 +303,7 @@ impl Core {
     /// The waypoints file of the world being played in. The Java keeps them with each world; one global list would show a
     /// bed or a death of another world, and #home or #wp goto would walk to coordinates that mean nothing here.
     fn waypoints_file(game: &Game<'_>) -> std::path::PathBuf {
-        game.native_data_dir(ID).join("cache").join(super::baritone_world_data::world_name(game)).join("waypoints.txt")
+        data_dir(game).join("cache").join(super::baritone_world_data::world_name(game)).join("waypoints.txt")
     }
 
     pub fn save_waypoints(&self, game: &Game<'_>) {
@@ -269,10 +327,10 @@ impl Core {
             Ok(t) => t,
             Err(_) => {
                 // A file marks the move as done: a setting that is not one of Baritone's own is not kept between runs.
-                let legacy = game.native_setting(ID, "waypoints").unwrap_or_default();
-                let marker = game.native_data_dir(ID).join("waypoints_moved");
+                let legacy = legacy_setting(game, "waypoints").unwrap_or_default();
+                let marker = data_dir(game).join("waypoints_moved");
                 if !legacy.trim().is_empty() && !marker.exists() {
-                    let _ = std::fs::create_dir_all(game.native_data_dir(ID));
+                    let _ = std::fs::create_dir_all(data_dir(game));
                     let _ = std::fs::write(&marker, "The waypoints older versions kept for every world were moved to the first world opened after that.
 ");
                     legacy
@@ -1081,7 +1139,7 @@ fn publish_tab(b: &mut Baritone, game: &mut Game<'_>) {
         let mobs = game.res.mob_types().keys().cloned().collect();
         let items = game.res.items().order.iter().map(|id| id.to_string()).collect();
         let properties = block_properties(game);
-        let settings_dir = game.native_data_dir(ID);
+        let settings_dir = data_dir(game);
         let schematics_dir = super::baritone_cmd_build::schematics_dir(game);
         super::baritone_tab::publish(|d| {
             d.blocks = blocks;
@@ -1150,6 +1208,7 @@ pub fn chat(game: &mut Game<'_>, message: &str) -> bool {
         }
         game.ui.chat.add_recent(message);
         commands::run(b, game, line.trim());
+        watch_cancel(game, line);
         true
     })
     .unwrap_or(false)
@@ -1158,7 +1217,17 @@ pub fn chat(game: &mut Game<'_>, message: &str) -> bool {
 /// DraimHorizon: a command line (without the prefix) from a button of the Baritone tab.
 pub fn run_line(game: &mut Game<'_>, line: &str) {
     let line = line.trim().to_owned();
-    with(game, |b, game| commands::run(b, game, &line));
+    with(game, |b, game| {
+        commands::run(b, game, &line);
+        watch_cancel(game, &line);
+    });
+}
+/// DraimHorizon: a line that cancels the task (`cancel`, `stop`, `forcecancel`), from the tab's
+/// buttons, the Stop key or typed in chat, ends the mining watch and its unloading as well.
+fn watch_cancel(game: &mut Game<'_>, line: &str) {
+    if super::claim_borders_baritone_walk::cancels_task(line) {
+        super::claim_borders_baritone_bridge::mine_cancel(game);
+    }
 }
 
 /// `@baritone <line>` from a clicked chat line, and `/baritone <line>` typed with a slash.
@@ -1170,7 +1239,10 @@ pub fn command(game: &mut Game<'_>, command: &str, ran: &mut bool) {
     }
     *ran = true;
     let line = words.next().unwrap_or("").trim().to_owned();
-    with(game, |b, game| commands::run(b, game, &line));
+    with(game, |b, game| {
+        commands::run(b, game, &line);
+        watch_cancel(game, &line);
+    });
 }
 
 // ---------------------------------------------------------------------------------------

@@ -32,6 +32,15 @@ file layout, module names (`baritone_*`) and authorship.
   `behavior/pathing.rs`) waits after a tick that took over 4 ms, so that it uses a tenth of the time at
   most (it always packs at least one chunk, which is slow in an unoptimized build). The chunk packer and search
   budgets are upstream's again (4 and 6 ms, 25 ms): shortening them made it slower in a game.
+- Storage: the port's files live in `<claim_borders data folder>/baritone` (`data_dir()` in `baritone.rs`, the
+  one place that names it; a folder `baritone` beside the mod's own, left by the first build, is moved in once).
+  `legacy_setting()` reads the old one-file-per-setting layout from there. Every storage call uses the
+  `claim_borders::SETTINGS_ID` namespace, as `tools/tests/test_bundle_identity.py` requires.
+- Settings held by a walk: `persist_hold/release/update` and `write_settings()` in `baritone.rs` write the
+  player's values for the settings a farm or mining walk changes for its time, for every way of saving
+  (`#set`, `#set save`, the tab), and `set_setting`/`reset_setting` keep the player's latest choice.
+- `watch_cancel()` in `baritone.rs` tells the bridge when a `cancel`, `stop` or `forcecancel` line was run (tab
+  button, Stop key or typed), which ends the mining watch and its unloading.
 - DraimHorizon's own glue is MIT and lives outside this directory: `baritone_bridge.rs` (walks for the
   farm and mining, the tab's settings and status) and `baritone_walk.rs` (its pure logic). They call
   the port only through `crate::game::baritone::with` and its public API.

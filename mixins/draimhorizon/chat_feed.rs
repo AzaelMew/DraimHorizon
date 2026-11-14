@@ -11,6 +11,21 @@ pub fn hidden_by_global_off(preferences: Preferences, kind: Kind, important: boo
     preferences.hide_global && kind == Kind::Message && !important
 }
 
+/// The same for a raw line of chat, whoever delivered it (a player's signed chat, or a server
+/// plugin that sends `<name> message` as a plain line): the line is classified and, when it is a
+/// public message, the sender asked about. Whispers come as components and are never text here.
+pub fn line_hidden_by_global_off(
+    preferences: Preferences,
+    line: &str,
+    important: impl Fn(&str) -> bool,
+) -> bool {
+    if !preferences.hide_global {
+        return false;
+    }
+    let (kind, name, _, _) = classify(line);
+    hidden_by_global_off(preferences, kind, important(&name))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Message,
@@ -1821,5 +1836,33 @@ mod tests {
         // from their components, not from text.
         assert_eq!(classify("<Steve> hello").0, Kind::Message);
         assert_eq!(classify("Steve joined the game").0, Kind::Presence);
+    }
+
+    #[test]
+    fn global_chat_off_acts_on_a_raw_line_whoever_delivered_it() {
+        let off = Preferences {
+            hide_global: true,
+            ..Preferences::default()
+        };
+        let friends = |name: &str| name.eq_ignore_ascii_case("Alex");
+        // A stranger's public line is hidden, a friend's is not, and the switch must be on.
+        assert!(line_hidden_by_global_off(off, "<Steve> hello", friends));
+        assert!(!line_hidden_by_global_off(off, "<Alex> hello", friends));
+        assert!(!line_hidden_by_global_off(
+            Preferences::default(),
+            "<Steve> hello",
+            friends
+        ));
+        // Joins and plain server lines are not public chat.
+        assert!(!line_hidden_by_global_off(
+            off,
+            "Steve joined the game",
+            friends
+        ));
+        assert!(!line_hidden_by_global_off(
+            off,
+            "Server restarts in 5 minutes",
+            friends
+        ));
     }
 }

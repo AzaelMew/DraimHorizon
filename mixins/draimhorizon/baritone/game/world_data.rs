@@ -270,7 +270,7 @@ impl WorldProvider {
             return;
         }
         self.save(game, settings);
-        let dir = game.native_data_dir(super::baritone::ID).join("cache").join(&world).join(sanitize(dimension));
+        let dir = super::baritone::data_dir(game).join("cache").join(&world).join(sanitize(dimension));
         let cache = CachedWorld::new(dimension_of(dimension), Box::new(FileStore { dir: dir.clone() }));
         self.current = Some(WorldData { key, dir, cache, seen: HashSet::new(), revision: 0, last_save: game.ticks, last_requeue: game.ticks });
     }

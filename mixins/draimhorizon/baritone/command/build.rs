@@ -1,6 +1,6 @@
 // baritone.command.defaults: build, litematica, tunnel and sel. Names, aliases, descriptions and
 // messages are Baritone 1.21.4's (BuildCommand, LitematicaCommand, TunnelCommand, SelCommand).
-use super::baritone::{Baritone, ID};
+use super::baritone::Baritone;
 use super::baritone_argument::{Args, CommandError, CommandResult};
 use super::baritone_command::{feet, relative_pos, Command};
 use super::baritone_format as format;
@@ -94,7 +94,7 @@ pub const COMMANDS: &[Command] = &[
 
 /// The folder schematics are read from.
 pub fn schematics_dir(game: &Game<'_>) -> PathBuf {
-    game.native_data_dir(ID).join("schematics")
+    super::baritone::data_dir(game).join("schematics")
 }
 
 /// RelativeFile: a path as given if it is absolute, else inside the schematics folder.

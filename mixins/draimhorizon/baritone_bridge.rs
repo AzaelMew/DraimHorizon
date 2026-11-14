@@ -36,6 +36,8 @@ pub struct Snapshot {
     pub process: Option<String>,
     pub segment: Option<f64>,
     pub goal: Option<f64>,
+    /// `#pause` holds the port.
+    pub paused: bool,
     /// The value of each of `walk::SETTINGS` (a flag is 0 or 1); empty until the port has run.
     pub values: Vec<i32>,
 }
@@ -66,7 +68,7 @@ thread_local! {
         active: None,
         cancel: false,
         status: walk::Walk::Idle,
-        snapshot: Snapshot { process: None, segment: None, goal: None, values: Vec::new() },
+        snapshot: Snapshot { process: None, segment: None, goal: None, paused: false, values: Vec::new() },
         since_snapshot: u32::MAX,
     }) };
 }
@@ -144,8 +146,9 @@ pub fn walk_cancel() {
     });
 }
 
-fn restore(b: &mut baritone::Baritone, saved: Saved) {
-    for (name, value) in saved {
+fn restore(b: &mut baritone::Baritone, _saved: Saved) {
+    // The player's values (their latest choice, kept by the port while the walk held its own).
+    for (name, value) in baritone::persist_release() {
         let _ = b.core.settings.set(name, &value);
     }
     b.core.refresh();
@@ -164,7 +167,7 @@ pub fn tick(game: &mut Game<'_>) {
         thread_local! {
             static WORST: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
         }
-        let dir = game.native_data_dir(baritone::ID);
+        let dir = baritone::data_dir(game);
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join("profile.txt"), &report.text);
         if report.worst_frame_ms > WORST.with(std::cell::Cell::get) {
@@ -182,7 +185,6 @@ fn tick_inner(game: &mut Game<'_>) {
                 s.status = walk::Walk::Failed;
             }
             s.cancel = false;
-            s.mine = None;
             s.snapshot = Snapshot::default();
             s.since_snapshot = u32::MAX;
             active.map(|a| a.saved)
@@ -190,6 +192,8 @@ fn tick_inner(game: &mut Game<'_>) {
         if let Some(saved) = left {
             with(game, |b, _| restore(b, saved));
         }
+        // The port is off: the mining watch and its unloading end with it.
+        mine_cancel(game);
         return;
     }
     mine_tick(game);
@@ -221,6 +225,7 @@ fn tick_inner(game: &mut Game<'_>) {
                 }
             }
             b.core.refresh();
+            baritone::persist_hold(saved.clone());
             b.procs.goal.set_goal_and_path(rc(GoalBlock(request.goal)));
             saved
         });
@@ -298,6 +303,7 @@ fn tick_inner(game: &mut Game<'_>) {
                 process,
                 segment,
                 goal,
+                paused: b.procs.pause.paused,
                 values,
             }
         });
@@ -339,9 +345,19 @@ pub fn mine_start(game: &mut Game<'_>, names: Vec<String>) -> Result<(), String>
     baritone::run_line(game, &line);
     Ok(())
 }
-/// The task is over or was cancelled: nothing watches the inventory any more.
+/// The task is over: nothing watches the inventory any more.
 pub fn mine_stop() {
     state(|s| s.mine = None);
+}
+/// The mining task was cancelled (the tab's Cancel, the Stop key, `#cancel`, the port switched
+/// off): the watch ends, and so does the unloading that belongs to it, so that nothing is clicked,
+/// placed, broken or walked to afterwards and nothing mines again. A trip of another job (the old
+/// mining, the farm) is not touched.
+pub fn mine_cancel(game: &mut Game<'_>) {
+    if state(|s| s.mine.take().is_some()) {
+        super::claim_borders_haul_view::abort(game);
+        walk_cancel();
+    }
 }
 pub fn mine_active() -> bool {
     state(|s| s.mine.is_some())
@@ -394,6 +410,11 @@ fn mine_tick(game: &mut Game<'_>) {
     }
 }
 
+/// Whether `#pause` holds the port right now (not the half second old snapshot).
+pub fn paused(game: &mut Game<'_>) -> bool {
+    with(game, |b, _| b.procs.pause.paused).unwrap_or(false)
+}
+
 /// What the tab shows, as last read (at most half a second old).
 pub fn snapshot() -> Snapshot {
     state(|s| s.snapshot.clone())
@@ -407,27 +428,11 @@ pub fn set_setting(game: &mut Game<'_>, index: usize, value: i32) -> Result<(), 
         walk::Kind::Int { min, max, .. } => value.clamp(min, max).to_string(),
     };
     with(game, |b, game| {
-        // A walk's temporary values must not reach the file: the player's choice is kept as the
-        // value to restore, the saved values are put in for the write and the walk's come back.
-        let held = state(|s| {
-            s.active.as_mut().map(|a| {
-                for entry in a.saved.iter_mut().filter(|(n, _)| *n == setting.name) {
-                    entry.1.clone_from(&text);
-                }
-                (a.saved.clone(), a.overrides)
-            })
-        });
-        if let Some((saved, _)) = &held {
-            for (name, value) in saved {
-                let _ = b.core.settings.set(name, value);
-            }
-        }
+        // The port keeps the player's value for a setting a walk holds (and writes that to the
+        // file); the walk's own values stay in force in memory.
         let result = b.core.set_setting(game, setting.name, &text).map(|_| ());
-        if let Some((saved, overrides)) = held {
-            for (name, value) in overrides
-                .iter()
-                .filter(|(n, _)| saved.iter().any(|(m, _)| m == n))
-            {
+        if let Some(overrides) = state(|s| s.active.as_ref().map(|a| a.overrides)) {
+            for (name, value) in overrides {
                 let _ = b.core.settings.set(name, value);
             }
             b.core.refresh();
