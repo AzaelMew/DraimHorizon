@@ -9,7 +9,7 @@ use super::{
 use claim_borders_relay_client::translation::Language;
 use std::{
     borrow::Cow,
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -78,6 +78,16 @@ pub struct Inputs<'a> {
     name: &'a str,
     original: &'a str,
     translated: Option<&'a str>,
+    /// Digest of the three strings above, prepared once per card query and shared by every
+    /// variant: it only selects a bucket, the strings themselves are compared on a lookup.
+    content: u64,
+}
+fn content_digest(name: &str, original: &str, translated: Option<&str>) -> u64 {
+    #[cfg(test)]
+    content_hashes::count();
+    let mut h = DefaultHasher::new();
+    (name, original, translated).hash(&mut h);
+    h.finish()
 }
 fn kind_code(kind: Kind) -> u8 {
     match kind {
@@ -91,6 +101,7 @@ fn kind_code(kind: Kind) -> u8 {
 }
 impl<'a> Inputs<'a> {
     pub fn new(e: &'a Entry, ctx: &Context, font: FontId, width: f32, variant: Variant) -> Self {
+        let translated = e.translated.as_deref();
         Self {
             font,
             variant,
@@ -108,7 +119,8 @@ impl<'a> Inputs<'a> {
             auction: e.auction,
             name: &e.name,
             original: &e.original,
-            translated: e.translated.as_deref(),
+            translated,
+            content: content_digest(&e.name, &e.original, translated),
         }
     }
     /// The same inputs for another variant of the same card.
@@ -127,7 +139,7 @@ impl<'a> Inputs<'a> {
             auction,
         )
             .hash(&mut h);
-        (self.name, self.original, self.translated).hash(&mut h);
+        self.content.hash(&mut h);
         h.finish()
     }
     fn matches(&self, key: &Key) -> bool {
@@ -173,11 +185,22 @@ impl Clone for Inputs<'_> {
 }
 impl Copy for Inputs<'_> {}
 
-type Slot = (Key, Arc<Vec<String>>);
+struct Slot {
+    key: Key,
+    rows: Arc<Vec<String>>,
+    size: usize,
+    /// Position in `Cache::order`: the tick of the last hit or insert.
+    used: u64,
+}
 /// Rows kept until an input changes, bounded by count and by characters (rows and key text).
+/// Pressure evicts the least recently used rows one by one, so rows that are still painted
+/// survive a burst of one-off layouts (e.g. every width of a resize drag).
 #[derive(Default)]
 pub struct Cache {
     buckets: HashMap<u64, Vec<Slot>>,
+    /// Slots by last use (tick -> bucket hash): the oldest is evicted first in O(log n).
+    order: BTreeMap<u64, u64>,
+    tick: u64,
     entries: usize,
     chars: usize,
     pub hits: u64,
@@ -191,36 +214,64 @@ impl Cache {
         self.insert_in(inputs.hash(), inputs, rows);
     }
     fn get_in(&mut self, hash: u64, inputs: &Inputs) -> Option<Arc<Vec<String>>> {
-        let found = self
+        let rows = self.touch(hash, inputs)?;
+        self.hits += 1;
+        Some(rows)
+    }
+    /// Marks the matching slot as just used and returns its rows.
+    fn touch(&mut self, hash: u64, inputs: &Inputs) -> Option<Arc<Vec<String>>> {
+        let slot = self
             .buckets
-            .get(&hash)?
-            .iter()
-            .find(|(key, _)| inputs.matches(key))
-            .map(|(_, rows)| rows.clone());
-        if found.is_some() {
-            self.hits += 1;
-        }
-        found
+            .get_mut(&hash)?
+            .iter_mut()
+            .find(|slot| inputs.matches(&slot.key))?;
+        self.tick += 1;
+        self.order.remove(&slot.used);
+        self.order.insert(self.tick, hash);
+        slot.used = self.tick;
+        Some(slot.rows.clone())
     }
     fn insert_in(&mut self, hash: u64, inputs: &Inputs, rows: Arc<Vec<String>>) {
         self.misses += 1;
         let size = rows.iter().map(String::len).sum::<usize>() + inputs.size();
-        if size > MAX_ENTRY_CHARS {
+        if size > MAX_ENTRY_CHARS || self.touch(hash, inputs).is_some() {
             return;
         }
-        if self.entries >= MAX_ENTRIES || self.chars + size > MAX_CHARS {
-            self.clear();
+        while self.entries >= MAX_ENTRIES || self.chars + size > MAX_CHARS {
+            if !self.evict_oldest() {
+                break;
+            }
         }
-        let bucket = self.buckets.entry(hash).or_default();
-        if bucket.iter().any(|(key, _)| inputs.matches(key)) {
-            return;
-        }
-        bucket.push(((*inputs).into_key(), rows));
+        self.tick += 1;
+        self.order.insert(self.tick, hash);
+        self.buckets.entry(hash).or_default().push(Slot {
+            key: (*inputs).into_key(),
+            rows,
+            size,
+            used: self.tick,
+        });
         self.entries += 1;
         self.chars += size;
     }
+    fn evict_oldest(&mut self) -> bool {
+        let Some((used, hash)) = self.order.pop_first() else {
+            return false;
+        };
+        if let Some(bucket) = self.buckets.get_mut(&hash) {
+            if let Some(at) = bucket.iter().position(|slot| slot.used == used) {
+                let slot = bucket.swap_remove(at);
+                self.entries -= 1;
+                self.chars -= slot.size;
+            }
+            if bucket.is_empty() {
+                self.buckets.remove(&hash);
+            }
+        }
+        true
+    }
     pub fn clear(&mut self) {
         self.buckets.clear();
+        self.order.clear();
         self.entries = 0;
         self.chars = 0;
     }
@@ -232,6 +283,26 @@ impl Cache {
     pub fn is_empty(&self) -> bool {
         self.entries == 0
     }
+    /// Every counter and index recomputed from the stored slots; panics when any has drifted.
+    #[cfg(test)]
+    fn audit(&self) {
+        let (mut entries, mut chars) = (0, 0);
+        for slot in self.buckets.values().flatten() {
+            entries += 1;
+            chars += slot.size;
+            assert_eq!(slot.size, chars_of(slot));
+        }
+        assert_eq!((self.entries, self.chars), (entries, chars));
+        assert_eq!(self.order.len(), entries);
+        assert!(entries <= MAX_ENTRIES && chars <= MAX_CHARS);
+    }
+}
+#[cfg(test)]
+fn chars_of(slot: &Slot) -> usize {
+    slot.key.name.len()
+        + slot.key.original.len()
+        + slot.key.translated.as_ref().map_or(0, String::len)
+        + slot.rows.iter().map(String::len).sum::<usize>()
 }
 
 /// The name shown before a chat body.
@@ -293,6 +364,18 @@ pub fn cut(
         *last = model::single_line(&format!("{last}…"), width, measure);
     }
     rows
+}
+
+#[cfg(test)]
+mod content_hashes {
+    use std::cell::Cell;
+    thread_local!(static COUNT: Cell<u32> = const { Cell::new(0) });
+    pub fn count() {
+        COUNT.with(|c| c.set(c.get() + 1));
+    }
+    pub fn take() -> u32 {
+        COUNT.with(|c| c.replace(0))
+    }
 }
 
 #[cfg(test)]
@@ -546,5 +629,146 @@ mod tests {
         let big = Inputs::new(e, &ctx(), FONT, 1.0, Variant::Full);
         cache.insert(&big, Arc::new(vec!["x".repeat(MAX_ENTRY_CHARS + 1)]));
         assert!(cache.get(&big).is_none(), "oversized rows are not retained");
+    }
+
+    fn at(e: &Entry, i: u32) -> Inputs<'_> {
+        // Neighbouring widths differ by one ulp: exact bits, never rounded.
+        let width = f32::from_bits(120.0f32.to_bits() + i);
+        Inputs::new(e, &ctx(), FONT, width, Variant::Full)
+    }
+    fn small(tag: &str) -> Arc<Vec<String>> {
+        Arc::new(vec![tag.to_owned()])
+    }
+
+    #[test]
+    fn hot_rows_survive_count_pressure_from_a_resize_sweep() {
+        let feed = feed();
+        let (hot, sweeping) = (&feed.entries[1], &feed.entries[0]);
+        let mut cache = Cache::default();
+        let hot_rows: Vec<_> = (0..16)
+            .map(|i| {
+                let rows = small("hot");
+                cache.insert(&at(hot, i), rows.clone());
+                rows
+            })
+            .collect();
+        for i in 0..3 * MAX_ENTRIES as u32 {
+            cache.insert(&at(sweeping, i), small("sweep"));
+            for (n, rows) in hot_rows.iter().enumerate() {
+                let found = cache.get(&at(hot, n as u32));
+                assert!(
+                    found.is_some_and(|f| Arc::ptr_eq(&f, rows)),
+                    "hot {n} @ {i}"
+                );
+            }
+            cache.audit();
+        }
+        assert_eq!(cache.len(), MAX_ENTRIES, "only cold rows are evicted");
+        // The newest sweep widths are kept, the oldest are gone; widths stay exact.
+        assert!(
+            cache
+                .get(&at(sweeping, 3 * MAX_ENTRIES as u32 - 1))
+                .is_some()
+        );
+        assert!(cache.get(&at(sweeping, 0)).is_none());
+    }
+
+    #[test]
+    fn hot_rows_survive_byte_pressure_and_budgets_stay_exact() {
+        let feed = feed();
+        let (hot, sweeping) = (&feed.entries[1], &feed.entries[0]);
+        let mut cache = Cache::default();
+        let kept = Arc::new(vec!["h".repeat(3000)]);
+        cache.insert(&at(hot, 0), kept.clone());
+        for i in 0..200 {
+            // Sizes vary so replacements of the budget are never aligned.
+            cache.insert(
+                &at(sweeping, i),
+                Arc::new(vec!["x".repeat(2000 + i as usize * 7)]),
+            );
+            let found = cache.get(&at(hot, 0));
+            assert!(found.is_some_and(|f| Arc::ptr_eq(&f, &kept)), "hot @ {i}");
+            cache.audit();
+        }
+        assert!(cache.len() > 10, "eviction is individual, not a flush");
+        assert!(cache.get(&at(sweeping, 199)).is_some());
+        assert!(cache.get(&at(sweeping, 0)).is_none());
+    }
+
+    #[test]
+    fn evicting_one_colliding_entry_keeps_the_other_and_the_namespaces() {
+        let feed = feed();
+        let (a, b) = (&feed.entries[0], &feed.entries[1]);
+        let (ia, ib) = (at(a, 0), at(b, 0));
+        let mut cache = Cache::default();
+        let (rb, cut) = (small("b"), small("cut"));
+        cache.insert_in(42, &ia, small("a"));
+        cache.insert_in(42, &ib, rb.clone());
+        cache.insert_in(43, &ia.variant(Variant::Cut(1)), cut.clone());
+        for i in 1..MAX_ENTRIES as u32 {
+            // `b` and the cut rows stay hot while `a` (the oldest) ages out.
+            cache.insert(&at(&feed.entries[2], i), small("fill"));
+            assert!(cache.get_in(42, &ib).is_some());
+            assert!(cache.get_in(43, &ia.variant(Variant::Cut(1))).is_some());
+        }
+        assert!(
+            cache.get_in(42, &ia).is_none(),
+            "the cold collider is evicted"
+        );
+        assert!(Arc::ptr_eq(&cache.get_in(42, &ib).unwrap(), &rb));
+        assert!(Arc::ptr_eq(
+            &cache.get_in(43, &ia.variant(Variant::Cut(1))).unwrap(),
+            &cut
+        ));
+        assert!(
+            cache.get_in(43, &ia).is_none(),
+            "full is not the cut namespace"
+        );
+        cache.audit();
+    }
+
+    #[test]
+    fn oversized_rows_never_flush_valid_entries() {
+        let feed = feed();
+        let e = &feed.entries[0];
+        let mut cache = Cache::default();
+        for i in 0..MAX_ENTRIES as u32 {
+            cache.insert(&at(e, i), Arc::new(vec!["row".repeat(40)]));
+        }
+        cache.insert(
+            &at(e, 10_000),
+            Arc::new(vec!["x".repeat(MAX_ENTRY_CHARS + 1)]),
+        );
+        assert_eq!(cache.len(), MAX_ENTRIES);
+        assert!(cache.get(&at(e, 0)).is_some());
+        assert!(cache.get(&at(e, 10_000)).is_none());
+        cache.audit();
+    }
+
+    #[test]
+    fn content_is_hashed_once_per_card_query_across_full_and_cut() {
+        let feed = feed();
+        let e = &feed.entries[0];
+        let mut cache = Cache::default();
+        content_hashes::take();
+        // Cold: get + insert of Full, then get + insert of Cut.
+        let full = Inputs::new(e, &ctx(), FONT, 120.0, Variant::Full);
+        assert!(cache.get(&full).is_none());
+        cache.insert(&full, small("full"));
+        let cut = full.variant(Variant::Cut(1));
+        assert!(cache.get(&cut).is_none());
+        cache.insert(&cut, small("cut"));
+        assert_eq!(content_hashes::take(), 1, "cold full + cut");
+        // Warm: both variants are hits.
+        let full = Inputs::new(e, &ctx(), FONT, 120.0, Variant::Full);
+        assert!(cache.get(&full).is_some());
+        assert!(cache.get(&full.variant(Variant::Cut(1))).is_some());
+        assert_eq!(content_hashes::take(), 1, "warm full + cut");
+        assert!(cache.get(&full.variant(Variant::Cut(2))).is_none());
+        assert_ne!(
+            full.hash(),
+            full.variant(Variant::Cut(1)).hash(),
+            "variants own different buckets"
+        );
     }
 }

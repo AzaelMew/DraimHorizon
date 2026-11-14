@@ -57,6 +57,11 @@ impl<V: Copy> Shapes<V> {
     }
     pub fn insert(&mut self, key: Key, run: &[V]) {
         self.misses += 1;
+        // The old run of this key leaves the budget first, whatever the new length is, so a
+        // replacement is never counted as a new run and never leaves a stale run behind.
+        if let Some(old) = self.runs.remove(&key) {
+            self.vertices -= old.len();
+        }
         if run.is_empty() || run.len() > MAX_VERTICES / 4 {
             return;
         }
@@ -64,9 +69,8 @@ impl<V: Copy> Shapes<V> {
             self.runs.clear();
             self.vertices = 0;
         }
-        if self.runs.insert(key, run.into()).is_none() {
-            self.vertices += run.len();
-        }
+        self.runs.insert(key, run.into());
+        self.vertices += run.len();
     }
     #[cfg(test)]
     pub fn len(&self) -> usize {
@@ -181,5 +185,72 @@ mod tests {
             &vec![V([0.0; 2], 0); MAX_VERTICES],
         );
         assert!(cache.get(&Key::new(1, 1, [0.0; 4], 0, 0)).is_none());
+    }
+
+    fn key(i: u32) -> Key {
+        Key::new(1, i, [0.0; 4], 0, 0)
+    }
+    fn counted(cache: &Shapes<V>) -> usize {
+        cache.runs.values().map(|run| run.len()).sum()
+    }
+
+    #[test]
+    fn replacing_a_run_adjusts_the_budget_for_growth_and_shrinkage() {
+        let mut cache = Shapes::default();
+        cache.insert(key(1), &[V([0.0; 2], 1); 10]);
+        cache.insert(key(2), &[V([0.0; 2], 2); 5]);
+        cache.insert(key(1), &[V([0.0; 2], 3); 30]);
+        assert_eq!((cache.vertices, counted(&cache)), (35, 35));
+        cache.insert(key(1), &[V([0.0; 2], 4); 4]);
+        assert_eq!((cache.vertices, counted(&cache)), (9, 9));
+        // Identical replacement: no drift, the new vertices are the stored ones.
+        for _ in 0..1000 {
+            cache.insert(key(1), &[V([0.0; 2], 4); 4]);
+        }
+        assert_eq!((cache.vertices, counted(&cache), cache.len()), (9, 9, 2));
+        assert_eq!(&*cache.get(&key(1)).unwrap(), &[V([0.0; 2], 4); 4]);
+        assert_eq!(&*cache.get(&key(2)).unwrap(), &[V([0.0; 2], 2); 5]);
+    }
+
+    #[test]
+    fn shrinking_replacements_never_underflow_the_budget() {
+        let mut cache = Shapes::default();
+        cache.insert(key(1), &[V([0.0; 2], 0); 100]);
+        for len in [90, 50, 1, 70, 2] {
+            cache.insert(key(1), &vec![V([0.0; 2], 0); len]);
+            assert_eq!((cache.vertices, counted(&cache)), (len, len));
+        }
+    }
+
+    #[test]
+    fn replacement_at_the_count_limit_keeps_the_other_runs() {
+        let mut cache = Shapes::default();
+        for i in 0..MAX_RUNS as u32 {
+            cache.insert(key(i), &[V([0.0; 2], 0); 3]);
+        }
+        cache.insert(key(7), &[V([0.0; 2], 9); 5]);
+        assert_eq!(cache.len(), MAX_RUNS, "a replacement is not a new run");
+        assert_eq!(cache.vertices, MAX_RUNS * 3 + 2);
+        assert!(cache.get(&key(0)).is_some() && cache.get(&key(255)).is_some());
+        assert_eq!(&*cache.get(&key(7)).unwrap(), &[V([0.0; 2], 9); 5]);
+    }
+
+    #[test]
+    fn growth_beyond_the_remaining_budget_evicts_instead_of_overflowing() {
+        let mut cache = Shapes::default();
+        let part = MAX_VERTICES / 4;
+        for i in 1..4 {
+            cache.insert(key(i), &vec![V([0.0; 2], 0); part]);
+        }
+        cache.insert(key(0), &[V([0.0; 2], 0); 10]);
+        cache.insert(key(4), &[V([0.0; 2], 0); 10]);
+        // Growing key 0 to a full part no longer fits next to the others.
+        cache.insert(key(0), &vec![V([0.0; 2], 1); part]);
+        assert!(cache.vertices <= MAX_VERTICES);
+        assert_eq!(cache.vertices, counted(&cache));
+        assert_eq!(
+            &*cache.get(&key(0)).unwrap(),
+            &vec![V([0.0; 2], 1); part][..]
+        );
     }
 }
