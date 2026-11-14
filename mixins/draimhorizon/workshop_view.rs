@@ -130,7 +130,6 @@ struct State {
     scope: String,
     task: Option<Task>,
     pending: Option<Pending>,
-    files: Vec<String>,
     active: bool,
     preview: bool,
     phase: Phase,
@@ -212,7 +211,6 @@ impl Default for State {
             scope: String::new(),
             task: None,
             pending: None,
-            files: Vec::new(),
             active: false,
             preview: false,
             phase: Phase::Ready,
@@ -302,19 +300,50 @@ pub(super) fn manual_movement(f: f32, s: f32, j: bool, c: bool) {
 pub(super) fn folder(game: &Game<'_>) -> PathBuf {
     game.native_data_dir(claims::SETTINGS_ID).join("schematics")
 }
-pub(super) fn filenames() -> Vec<String> {
-    state(|s| s.files.clone())
+/// The files of the schematics folder as last read. Kept apart from the job state: that is
+/// dropped whenever the world's scope changes or a task starts, and the list used to vanish a
+/// moment after it was read.
+struct Listing {
+    files: Vec<String>,
+    rx: Option<std::sync::mpsc::Receiver<Result<files::Response, String>>>,
+    last: Option<Instant>,
+}
+static LISTING: Mutex<Listing> = Mutex::new(Listing {
+    files: Vec::new(),
+    rx: None,
+    last: None,
+});
+fn listing_start(listing: &mut Listing, game: &Game<'_>) -> Result<(), String> {
+    listing.rx = Some(files::spawn(folder(game), None, [0; 3], 0)?);
+    listing.last = Some(Instant::now());
+    Ok(())
+}
+fn listing_poll(listing: &mut Listing) {
+    let Some(rx) = &listing.rx else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(Ok(files::Response::Files(names))) => {
+            listing.files = names;
+            listing.rx = None;
+        }
+        Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => listing.rx = None,
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    }
 }
 /// The files of the schematics folder, read again every few seconds while they are asked for
-/// (the menu is open): a list that was read in another world (a server, then single player)
-/// was dropped with that world's state, and the tab said the folder was empty until Refresh.
+/// (the menu is open).
 pub(super) fn filenames_read(game: &Game<'_>) -> Vec<String> {
-    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if last.is_none_or(|t| t.elapsed() > Duration::from_secs(4)) && refresh(game).is_ok() {
-        *last = Some(Instant::now());
+    let mut listing = LISTING.lock().unwrap_or_else(|e| e.into_inner());
+    listing_poll(&mut listing);
+    if listing.rx.is_none()
+        && listing
+            .last
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(4))
+    {
+        let _ = listing_start(&mut listing, game);
     }
-    filenames()
+    listing.files.clone()
 }
 fn guard(game: &Game<'_>) -> Result<String, String> {
     if !game.native_on(claims::ID)
@@ -342,19 +371,8 @@ fn guard(game: &Game<'_>) -> Result<String, String> {
     driver::scope(game).ok_or_else(|| "Join a world first".into())
 }
 pub(super) fn refresh(game: &Game<'_>) -> Result<(), String> {
-    let scope = driver::scope(game).ok_or("Join a world first")?;
-    if state(|s| s.pending.is_some()) {
-        return Err(text("Загрузка уже выполняется", "Import already running").into());
-    }
-    let rx = files::spawn(folder(game), None, [0; 3], 0)?;
-    state(|s| {
-        if s.scope != scope {
-            *s = State::default();
-        }
-        s.scope = scope;
-        s.pending = Some(Pending { rx, run: false });
-    });
-    Ok(())
+    let mut listing = LISTING.lock().unwrap_or_else(|e| e.into_inner());
+    listing_start(&mut listing, game)
 }
 pub(super) fn load(
     game: &Game<'_>,
@@ -375,9 +393,7 @@ pub(super) fn load(
     driver::clear_construction_driver();
     placement::reset();
     state(|s| {
-        let names = std::mem::take(&mut s.files);
         *s = State::default();
-        s.files = names;
         s.scope = scope;
         s.pending = Some(Pending { rx, run });
         s.message = text("Загрузка", "Loading").into();
@@ -2297,7 +2313,7 @@ pub(super) fn tick(game: &Game<'_>) {
         if let Some(answer) = answer {
             let pending = s.pending.take().unwrap();
             match answer {
-                Ok(files::Response::Files(names)) => s.files = names,
+                Ok(files::Response::Files(_)) => {}
                 Ok(files::Response::Loaded(document)) => {
                     let ignored = document.ignored_data;
                     s.task = Some(Task::Build {
