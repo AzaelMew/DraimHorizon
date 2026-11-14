@@ -15,6 +15,8 @@ type Pos = [i32; 3];
 type Saved = Vec<(&'static str, String)>;
 
 struct Request {
+    /// Ticks the port was busy when the request tried to start.
+    tries: u32,
     owner: &'static str,
     goal: Pos,
     overrides: &'static [(&'static str, &'static str)],
@@ -25,6 +27,8 @@ struct Active {
     ticks: u32,
     timeout: u32,
     saved: Saved,
+    /// The values the walk put in place of `saved`, to put in again after a save.
+    overrides: &'static [(&'static str, &'static str)],
 }
 /// What the Baritone tab shows: the process in control and how long it expects to take.
 #[derive(Clone, Debug, Default)]
@@ -85,6 +89,7 @@ pub fn walk_to(
     state(|s| {
         s.owner = owner;
         s.request = Some(Request {
+            tries: 0,
             owner,
             goal,
             overrides,
@@ -145,14 +150,20 @@ fn restore(b: &mut baritone::Baritone, saved: Saved) {
 /// keeps the snapshot of the tab fresh.
 pub fn tick(game: &mut Game<'_>) {
     if !baritone::enabled(game) {
-        state(|s| {
-            if s.request.take().is_some() || s.active.take().is_some() {
+        // The settings a walk changed go back even though the port is off now.
+        let left = state(|s| {
+            let active = s.active.take();
+            if s.request.take().is_some() || active.is_some() {
                 s.status = walk::Walk::Failed;
             }
             s.cancel = false;
             s.snapshot = Snapshot::default();
             s.since_snapshot = u32::MAX;
+            active.map(|a| a.saved)
         });
+        if let Some(saved) = left {
+            with(game, |b, _| restore(b, saved));
+        }
         return;
     }
     let (request, cancel) = state(|s| (s.request.take(), std::mem::take(&mut s.cancel)));
@@ -193,11 +204,19 @@ pub fn tick(game: &mut Game<'_>) {
                     ticks: 0,
                     timeout: request.timeout,
                     saved,
+                    overrides: request.overrides,
                 });
                 s.status = walk::Walk::Walking;
             }
-            // The port was busy this tick: ask again on the next.
-            None => s.request = Some(request),
+            // The port was busy this tick: ask again on the next, a few times; then the walk
+            // failed (the old movement must not stay out of the way for good).
+            None if request.tries < 40 => {
+                s.request = Some(Request {
+                    tries: request.tries + 1,
+                    ..request
+                });
+            }
+            None => s.status = walk::Walk::Failed,
         });
     }
     if let Some((goal, ticks, timeout)) = state(|s| {
@@ -277,7 +296,32 @@ pub fn set_setting(game: &mut Game<'_>, index: usize, value: i32) -> Result<(), 
         walk::Kind::Int { min, max, .. } => value.clamp(min, max).to_string(),
     };
     with(game, |b, game| {
-        b.core.set_setting(game, setting.name, &text).map(|_| ())
+        // A walk's temporary values must not reach the file: the player's choice is kept as the
+        // value to restore, the saved values are put in for the write and the walk's come back.
+        let held = state(|s| {
+            s.active.as_mut().map(|a| {
+                for entry in a.saved.iter_mut().filter(|(n, _)| *n == setting.name) {
+                    entry.1.clone_from(&text);
+                }
+                (a.saved.clone(), a.overrides)
+            })
+        });
+        if let Some((saved, _)) = &held {
+            for (name, value) in saved {
+                let _ = b.core.settings.set(name, value);
+            }
+        }
+        let result = b.core.set_setting(game, setting.name, &text).map(|_| ());
+        if let Some((saved, overrides)) = held {
+            for (name, value) in overrides
+                .iter()
+                .filter(|(n, _)| saved.iter().any(|(m, _)| m == n))
+            {
+                let _ = b.core.settings.set(name, value);
+            }
+            b.core.refresh();
+        }
+        result
     })
     .unwrap_or_else(|| Err("Baritone is busy".into()))?;
     state(|s| s.since_snapshot = u32::MAX);

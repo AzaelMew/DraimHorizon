@@ -43,7 +43,7 @@ pub fn decide(started: bool, active: bool, at_goal: bool, elapsed: u32, timeout:
 /// walking). Both are put back when the walk ends; neither is saved.
 pub const FARM_WALK: [(&str, &str); 2] = [("allowBreak", "false"), ("allowPlace", "false")];
 /// Mining approaches may not place blocks; our own job breaks the ore.
-pub const MINING_WALK: [(&str, &str); 2] = [("allowBreak", "false"), ("allowPlace", "false")];
+pub const MINING_WALK: [(&str, &str); 2] = FARM_WALK;
 
 /// A setting the Baritone tab shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

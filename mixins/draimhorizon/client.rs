@@ -1882,9 +1882,28 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             let into = game
                 .native_data_dir(crate::game::baritone::ID)
                 .join("schematics");
-            std::fs::create_dir_all(&into)
-                .and_then(|()| std::fs::copy(&from, into.join(&file)))
-                .map_err(|e| format!("{file}: {e}"))?;
+            // A small file, copied only when the copy is missing, of another size or older: the game
+            // thread must not stall on a big one.
+            const MAX_COPY: u64 = 4 << 20;
+            let source = std::fs::metadata(&from).map_err(|e| format!("{file}: {e}"))?;
+            let size = source.len();
+            if size > MAX_COPY {
+                return Err(format!(
+                    "{file}: {}",
+                    crate::game::claim_borders_chat_view::current_language()
+                        .text("файл больше 4 МБ", "the file is over 4 MB")
+                ));
+            }
+            let target = into.join(&file);
+            let fresh = std::fs::metadata(&target).is_ok_and(|t| {
+                t.len() == size
+                    && matches!((t.modified(), source.modified()), (Ok(a), Ok(b)) if a >= b)
+            });
+            if !fresh {
+                std::fs::create_dir_all(&into)
+                    .and_then(|()| std::fs::copy(&from, &target))
+                    .map_err(|e| format!("{file}: {e}"))?;
+            }
             let line = match origin {
                 Some([x, y, z]) => format!("build {file} {x} {y} {z}"),
                 None => format!("build {file}"),

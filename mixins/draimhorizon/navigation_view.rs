@@ -885,6 +885,9 @@ fn leg_point(
         leg_cell(game, near, from_y, want_y).map(|at| (at, false, attempt))
     })
 }
+/// The farm's current walk was handed to the port (so a lost walk is a failed one, and the old
+/// walk's state is not read for it).
+static FARM_BRIDGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub(super) fn workshop_walk(
     game: &Game<'_>,
     goal: model::Pos,
@@ -912,9 +915,11 @@ pub(super) fn workshop_walk(
         )
         .is_ok()
         {
+            FARM_BRIDGED.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
     }
+    FARM_BRIDGED.store(false, std::sync::atomic::Ordering::Relaxed);
     begin_trail(game, here, goal);
     // A way walked before between here and there is followed point by point.
     let via = remembered_via(game, here, goal);
@@ -1034,11 +1039,16 @@ fn walk_to(game: &Game<'_>, goal: model::Pos, flat: bool, level: bool) -> Result
     })
 }
 pub(super) fn workshop_walk_result() -> Option<bool> {
-    if crate::game::claim_borders_baritone_bridge::walking_for("farm") {
-        return None;
-    }
-    if let Some(done) = crate::game::claim_borders_baritone_bridge::take_result("farm") {
-        return Some(done);
+    if FARM_BRIDGED.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::game::claim_borders_baritone_bridge::walking_for("farm") {
+            return None;
+        }
+        // Over: it arrived or failed, or it was cancelled or replaced (the engine switched off,
+        // another task's walk): then it did not arrive, and nothing of the old walk is read.
+        FARM_BRIDGED.store(false, std::sync::atomic::Ordering::Relaxed);
+        return Some(
+            crate::game::claim_borders_baritone_bridge::take_result("farm").unwrap_or(false),
+        );
     }
     let more = LEGS
         .lock()
@@ -1413,6 +1423,14 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
                 } else {
                     model::Status::NoPath
                 };
+            }
+            // A walk the port was given that is gone without an answer (the engine switched off,
+            // the port turned off) did not arrive: the route has no way.
+            if s.nav.status == model::Status::Walking
+                && s.nav.path.is_empty()
+                && !crate::game::claim_borders_baritone_bridge::walking_for("mining")
+            {
+                s.nav.status = model::Status::NoPath;
             }
             if matches!(s.nav.status, model::Status::NoPath | model::Status::Stuck)
                 || job
