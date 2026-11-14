@@ -55,6 +55,9 @@ pub use shulker_peek as claim_borders_shulker_peek;
 #[path = "../mixins/draimhorizon/auto_eat.rs"]
 pub mod auto_eat;
 pub use auto_eat as claim_borders_auto_eat;
+#[path = "../mixins/draimhorizon/auto_tools.rs"]
+pub mod auto_tools;
+pub use auto_tools as claim_borders_auto_tools;
 #[path = "../mixins/draimhorizon/farm_storage.rs"]
 pub mod farm_storage;
 pub use farm_storage as claim_borders_farm_storage;

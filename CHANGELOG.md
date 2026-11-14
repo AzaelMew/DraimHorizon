@@ -1,5 +1,12 @@
 # История версий
 
+## 0.40.4
+
+- Auto Tools has an optional **Trigger only when holding tool** toggle (Experiments → Helpers, directly under Auto Tools; Russian: «Только с инструментом в руке»), saved as `auto_tools_only_holding_tool` and off by default, so existing behavior is unchanged. When on, hotbar switching runs only while the selected main-hand stack is a nonempty pickaxe, axe or shovel; swords, food, hoes, shears, an empty hand and off-hand tools do not trigger it. The held stack is re-evaluated each tick. Only the item category is tested, not block suitability or wear; mining/farming/construction tool selection is unchanged.
+- Tests: pure rule tests (all materials and categories, rejected items, zero-count stack, unsuited or worn held tool, setting default) and an English/Russian menu test (row position, bounds across menu sizes, toggle action).
+- Auto Eat has an optional **Eat to heal** toggle (Experiments → Helpers, directly under Auto Eat; Russian: «Есть для лечения»), saved as `auto_eat_to_heal` and off by default. With Auto Eat and the toggle on and the living player below their actual maximum health (the `minecraft:max_health` attribute, not a fixed 20), a selected safe food may be eaten even when it overfills the missing hunger. A food that fits in full is still chosen first; otherwise the smallest positive-nutrition allowed food is used (lowest slot on ties). It never eats at a full hunger bar, and invalid, non-finite or zero health, full health or the toggle off give the old no-waste behavior. It only permits wasting hunger while injured: it is not a custom HP target, does not heal instantly or directly, and healing still depends on the server's natural regeneration. Pending meals re-check health and the toggle every tick and stop if overfilling no longer applies. The allowlist, risky-food exclusion, stack food overrides/removals, attack/use interruption, slot restoration and farm supply rules are unchanged.
+- Tests: pure rules (setting default, injury with custom max/zero/NaN/dead, eligibility, ranking and ties, risky foods), native stack-component healing and pending-meal tests, and an English/Russian menu test.
+
 ## 0.40.3
 
 - Auto Eat now has a saved allowed-food filter under Experiments → Helpers. Select food-item icon tiles like mining targets, with highlighted selection, hover names and hunger values, and paging for small menus. The list starts empty; only explicitly selected safe foods can be consumed. English and Russian controls are included.

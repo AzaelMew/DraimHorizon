@@ -1789,6 +1789,36 @@ pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
         .as_deref()
         != Some("false")
 }
+pub(super) fn auto_tools_only_holding(game: &Game<'_>) -> bool {
+    crate::game::claim_borders_auto_tools::only_holding(
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_tools::ONLY_HOLDING_KEY,
+        )
+        .as_deref(),
+    )
+}
+pub(super) fn auto_eat_to_heal(game: &Game<'_>) -> bool {
+    crate::game::claim_borders_auto_eat::heal_enabled(
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_eat::HEAL_KEY,
+        )
+        .as_deref(),
+    )
+}
+/// Whether eating may overfill the bar right now: "Eat to heal" is on and the living player is
+/// below their actual maximum health.
+fn healing(game: &mut Game<'_>) -> bool {
+    if !auto_eat_to_heal(game) {
+        return false;
+    }
+    game.player.as_mut().is_some_and(|body| {
+        let health = f64::from(body.health.health());
+        let max = body.attribute("minecraft:max_health").unwrap_or(20.0);
+        crate::game::claim_borders_auto_eat::injured(health, max)
+    })
+}
 pub(super) fn auto_eat_foods(game: &Game<'_>) -> Vec<String> {
     crate::game::claim_borders_auto_eat::allowed_foods(
         game.native_setting(claims::SETTINGS_ID, "auto_eat_foods")
@@ -1808,7 +1838,7 @@ pub(super) fn stack_nutrition(
 #[cfg(test)]
 mod auto_eat_stack_tests {
     use super::stack_nutrition;
-    use crate::game::claim_borders_auto_eat::{Food, choose};
+    use crate::game::claim_borders_auto_eat::{Food, choose, choose_healing, eligible};
     use horizon_client::items::ItemStack;
     use horizon_world::nbt::Tag;
 
@@ -1859,6 +1889,39 @@ mod auto_eat_stack_tests {
         assert!(candidate(&bread(-1)).is_empty());
     }
     #[test]
+    fn healing_uses_stack_overrides_and_removals() {
+        // Bread overridden to 8 points: waits normally, eaten as an overfill while healing.
+        let foods = candidate(&bread(8));
+        assert_eq!(choose_healing(&foods, 15, false), None);
+        assert_eq!(choose_healing(&foods, 15, true).unwrap().nutrition, 8);
+        assert_eq!(choose_healing(&foods, 20, true), None);
+        // Smaller override still fits first and is the same choice with healing on.
+        let small = candidate(&bread(2));
+        assert_eq!(choose_healing(&small, 18, true), choose(&small, 18));
+        // Removed or zero food is never a candidate, healing or not.
+        let mut stack = bread(8);
+        stack.data_mut().set_other(
+            "!minecraft:food",
+            Some(Tag::compound(Vec::<(&str, Tag)>::new())),
+        );
+        assert!(candidate(&stack).is_empty());
+        assert_eq!(choose_healing(&candidate(&bread(0)), 10, true), None);
+    }
+    #[test]
+    fn pending_meal_stops_when_healing_no_longer_applies() {
+        // The same pending-meal test the loop uses: overfilling bread is valid only while healing.
+        let stack = bread(8);
+        let nutrition = stack_nutrition(&stack, Some((5, 6.0))).unwrap();
+        assert!(eligible(nutrition, 15, true));
+        assert!(
+            !eligible(nutrition, 15, false),
+            "health recovered or toggle off"
+        );
+        assert!(!eligible(nutrition, 20, true));
+        // A component change to zero/removed ends it even while healing.
+        assert_eq!(stack_nutrition(&bread(0), Some((5, 6.0))), None);
+    }
+    #[test]
     fn pending_meal_rechecks_component_changes_on_the_same_item() {
         let mut stack = ItemStack::new("minecraft:bread", 1);
         assert_eq!(stack_nutrition(&stack, Some((5, 6.0))), Some(5));
@@ -1869,12 +1932,14 @@ mod auto_eat_stack_tests {
         assert!(stack_nutrition(&stack, Some((5, 6.0))).is_some_and(|n| n <= 5));
     }
 }
-/// Eats selected food only when every hunger point fits, during tasks or manual play. Holds
-/// the use button until the bar rises, then takes the old slot back.
+/// Eats selected food only when every hunger point fits, during tasks or manual play; with
+/// "Eat to heal" on and the player injured, a food that overfills the bar is accepted too
+/// (never at a full bar). Holds the use button until the bar rises, then takes the old slot back.
 fn auto_eat(game: &mut Game<'_>) -> bool {
     use crate::game::claim_borders_auto_eat as eat;
     let level = game.player.as_ref().map(|p| p.health.food.food as i32);
     let allowed = auto_eat_foods(game);
+    let heal = healing(game);
     // Eating is not only for tasks: by hand it waits while the attack or the use button is held
     // (a fight, a block being broken, a bow drawn) and gives way if one is pressed during a meal.
     let running = level.is_some()
@@ -1899,7 +1964,7 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
                     .items()
                     .get(&stack.item)
                     .and_then(|item| stack_nutrition(stack, item.food))
-                    .is_some_and(|nutrition| nutrition <= 20 - level)
+                    .is_some_and(|nutrition| eat::eligible(nutrition, level, heal))
         });
         let done = level > m.level
             || level >= 20
@@ -1941,7 +2006,7 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
             })
         })
         .collect();
-    let Some(food) = eat::choose(&foods, level).cloned() else {
+    let Some(food) = eat::choose_healing(&foods, level, heal).cloned() else {
         return false;
     };
     if food.slot >= 9 {
@@ -2102,9 +2167,16 @@ fn merge_bottles(game: &mut Game<'_>) {
     ]);
 }
 /// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
-/// fits the block under the crosshair is selected (the held one stays if it fits).
+/// fits the block under the crosshair is selected (the held one stays if it fits). With the
+/// held-tool trigger on, it only acts while the main hand holds a pickaxe, axe or shovel.
 pub(super) fn auto_tool(game: &mut Game<'_>) {
     if !game.left || game.right || control().0 || !game.native_playing() {
+        return;
+    }
+    if !crate::game::claim_borders_auto_tools::may_switch(
+        auto_tools_only_holding(game),
+        slot_stack(game, game.selected).map(|stack| (&*stack.item, stack.count > 0)),
+    ) {
         return;
     }
     let Some(at) = game.pick().map(|hit| hit.pos) else {

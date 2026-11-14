@@ -1571,6 +1571,9 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 crate::game::claim_borders_mining::custom()
             },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            auto_tools_only_holding:
+                crate::game::claim_borders_navigation_view::auto_tools_only_holding(game),
+            auto_eat_to_heal: crate::game::claim_borders_navigation_view::auto_eat_to_heal(game),
             auto_eat_foods: crate::game::claim_borders_navigation_view::auto_eat_foods(game),
             auto_eat_options: {
                 let mut foods: Vec<_> = game
@@ -1841,6 +1844,22 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 "auto_eat",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoToolsOnlyHolding(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_tools::ONLY_HOLDING_KEY,
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoEatToHeal(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_eat::HEAL_KEY,
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())

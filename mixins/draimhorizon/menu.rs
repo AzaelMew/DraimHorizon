@@ -133,6 +133,10 @@ pub struct ViewModel {
     pub shulker_peek: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// Auto Eat may overfill the bar while below maximum health (off by default).
+    pub auto_eat_to_heal: bool,
+    /// Auto Tools switches only while a pickaxe, axe or shovel is held (off by default).
+    pub auto_tools_only_holding: bool,
     /// Explicit item ids allowed for Auto Eat; empty means nothing may be eaten.
     pub auto_eat_foods: Vec<String>,
     /// Safe foods from the live item registry: id, display name, hunger restored.
@@ -280,6 +284,8 @@ pub enum SchematicEdit {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetAutoEatToHeal(bool),
+    SetAutoToolsOnlyHolding(bool),
     SetAutoEatFood(String, bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
@@ -432,6 +438,10 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetAutoEatToHeal(on) => f.debug_tuple("SetAutoEatToHeal").field(on).finish(),
+            Self::SetAutoToolsOnlyHolding(on) => {
+                f.debug_tuple("SetAutoToolsOnlyHolding").field(on).finish()
+            }
             Self::SetAutoEatFood(item, on) => f
                 .debug_tuple("SetAutoEatFood")
                 .field(item)
@@ -715,6 +725,10 @@ pub enum Control {
     FarmLevels,
     /// Switches eating on its own.
     AutoEat,
+    /// Switches eating to recover health even when the food overfills the bar.
+    AutoEatToHeal,
+    /// Switches the held-tool trigger of Auto Tools.
+    AutoToolsOnlyHolding,
     AutoEatFoods,
     AutoEatFood(usize),
     AutoEatFoodPage(usize),
@@ -4359,6 +4373,17 @@ impl Menu {
                 ),
             ),
             (
+                self.language
+                    .text("Есть для лечения", "Eat to heal")
+                    .to_string(),
+                Control::AutoEatToHeal,
+                model.auto_eat_to_heal,
+                self.language.text(
+                    "Если здоровье не полное, еда ест и с излишком голода; без мгновенного лечения",
+                    "While injured, eats even if hunger overfills; no instant healing",
+                ),
+            ),
+            (
                 localized!(
                     self.language,
                     "Авто-тотем: {}",
@@ -4400,10 +4425,24 @@ impl Menu {
                     "The right tool is picked for the block being broken",
                 ),
             ),
+            (
+                self.language
+                    .text(
+                        "Только с инструментом в руке",
+                        "Trigger only when holding tool",
+                    )
+                    .to_string(),
+                Control::AutoToolsOnlyHolding,
+                model.auto_tools_only_holding,
+                self.language.text(
+                    "Только кирка, топор или лопата в основной руке",
+                    "Only a pickaxe, axe or shovel in the main hand qualifies",
+                ),
+            ),
         ];
         let mut rows: Vec<_> = rows.into_iter().collect();
         rows.insert(
-            1,
+            2,
             (
                 localized!(
                     self.language,
@@ -5015,6 +5054,10 @@ impl Menu {
                 None
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
+            Control::AutoEatToHeal => Some(Action::SetAutoEatToHeal(!model.auto_eat_to_heal)),
+            Control::AutoToolsOnlyHolding => Some(Action::SetAutoToolsOnlyHolding(
+                !model.auto_tools_only_holding,
+            )),
             Control::AutoEatFoods => {
                 self.auto_eat_food_picker = !self.auto_eat_food_picker;
                 self.auto_eat_food_page = 0;
@@ -8601,10 +8644,15 @@ mod tests {
                     ..Default::default()
                 };
                 assert!(
-                    menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new())
-                        .iter()
-                        .any(|w| w.control == Some(Control::AutoEatFoods))
+                    (0..3).any(|page| {
+                        menu.helper_page = page;
+                        menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new())
+                            .iter()
+                            .any(|w| w.control == Some(Control::AutoEatFoods))
+                    }),
+                    "the filter row is reachable within the first pages"
                 );
+                menu.helper_page = 0;
                 menu.activate(&model, height, Control::AutoEatFoods);
                 let mut seen = std::collections::BTreeSet::new();
                 for page in 0..45 {
@@ -8649,6 +8697,115 @@ mod tests {
                 assert!(!menu.auto_eat_food_picker);
             }
         }
+    }
+    #[test]
+    fn auto_tools_held_tool_toggle_sits_under_auto_tools_and_flips_the_setting() {
+        for language in [Language::English, Language::Russian] {
+            for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
+                for on in [false, true] {
+                    let model = ViewModel {
+                        auto_tools_only_holding: on,
+                        ..Default::default()
+                    };
+                    let mut menu = Menu {
+                        tab: Tab::Experimental,
+                        experimental_section: ExperimentalSection::Helpers,
+                        language,
+                        ..Default::default()
+                    };
+                    let mut found = None;
+                    for page in 0..40 {
+                        menu.helper_page = page;
+                        let widgets =
+                            menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new());
+                        let tools = widgets
+                            .iter()
+                            .position(|w| w.control == Some(Control::Helper(Helper::Tools)));
+                        let held = widgets
+                            .iter()
+                            .position(|w| w.control == Some(Control::AutoToolsOnlyHolding));
+                        if let Some(held) = held {
+                            let w = &widgets[held];
+                            assert!(w.rect[0] >= 100.0 && w.rect[0] + w.rect[2] <= width);
+                            assert!(w.rect[1] >= 0.0 && w.rect[1] + w.rect[3] <= height);
+                            assert_eq!(w.selected, on);
+                            if let Some(tools) = tools {
+                                assert!(widgets[tools].rect[1] < w.rect[1], "row order");
+                            }
+                            found = Some(w.text.clone());
+                            break;
+                        }
+                    }
+                    let label = found.expect("held-tool row is reachable on some page");
+                    assert_eq!(
+                        label,
+                        match language {
+                            Language::English => "Trigger only when holding tool",
+                            Language::Russian => "Только с инструментом в руке",
+                        }
+                    );
+                    assert_eq!(
+                        menu.activate(&model, height, Control::AutoToolsOnlyHolding),
+                        Some(Action::SetAutoToolsOnlyHolding(!on))
+                    );
+                }
+            }
+        }
+        assert!(!ViewModel::default().auto_tools_only_holding);
+    }
+    #[test]
+    fn eat_to_heal_toggle_sits_under_auto_eat_and_flips_the_setting() {
+        for language in [Language::English, Language::Russian] {
+            for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
+                for on in [false, true] {
+                    let model = ViewModel {
+                        auto_eat_to_heal: on,
+                        ..Default::default()
+                    };
+                    let mut menu = Menu {
+                        tab: Tab::Experimental,
+                        experimental_section: ExperimentalSection::Helpers,
+                        language,
+                        ..Default::default()
+                    };
+                    let mut found = None;
+                    for page in 0..40 {
+                        menu.helper_page = page;
+                        let widgets =
+                            menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new());
+                        let eat = widgets
+                            .iter()
+                            .position(|w| w.control == Some(Control::AutoEat));
+                        if let Some(at) = widgets
+                            .iter()
+                            .position(|w| w.control == Some(Control::AutoEatToHeal))
+                        {
+                            let w = &widgets[at];
+                            assert!(w.rect[0] >= 100.0 && w.rect[0] + w.rect[2] <= width);
+                            assert!(w.rect[1] >= 0.0 && w.rect[1] + w.rect[3] <= height);
+                            assert_eq!(w.selected, on);
+                            if let Some(eat) = eat {
+                                assert!(widgets[eat].rect[1] < w.rect[1], "row order");
+                            }
+                            found = Some(w.text.clone());
+                            break;
+                        }
+                    }
+                    assert_eq!(
+                        found.expect("row reachable"),
+                        match language {
+                            Language::English => "Eat to heal",
+                            Language::Russian => "Есть для лечения",
+                        }
+                    );
+                    assert_eq!(
+                        menu.activate(&model, height, Control::AutoEatToHeal),
+                        Some(Action::SetAutoEatToHeal(!on))
+                    );
+                }
+            }
+        }
+        assert!(!ViewModel::default().auto_eat_to_heal);
     }
     #[test]
     fn mining_targets_toggle_like_filters_and_several_mine_together() {
