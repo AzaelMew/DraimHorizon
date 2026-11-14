@@ -47,6 +47,8 @@ pub use autoclick as claim_borders_autoclick;
 pub mod schematic_share;
 pub use schematic_share as claim_borders_schematic_share;
 // Litematica ports (LGPL-3.0, see mixins/draimhorizon/litematica/NOTICE.md).
+#[path = "../mixins/draimhorizon/litematica/materials.rs"]
+pub mod litematica_materials;
 #[path = "../mixins/draimhorizon/litematica/verifier.rs"]
 pub mod litematica_verifier;
 #[path = "../mixins/draimhorizon/schematic_places.rs"]

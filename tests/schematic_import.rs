@@ -175,3 +175,52 @@ mod tests {
         assert_eq!(place([3, 0, 2], [0, 0, 0], 8), [-3, 0, 2]);
     }
 }
+#[cfg(test)]
+mod items_tests {
+    use claim_borders::schematic::BlockState;
+    #[test]
+    fn blocks_become_the_items_that_place_them() {
+        let st = |t: &str| BlockState::parse(t).unwrap();
+        let one = |t: &str| st(t).items();
+        assert_eq!(
+            one("minecraft:oak_slab[type=double]"),
+            [("minecraft:oak_slab".to_owned(), 2)]
+        );
+        assert_eq!(
+            one("minecraft:oak_slab[type=top]"),
+            [("minecraft:oak_slab".to_owned(), 1)]
+        );
+        assert!(one("minecraft:oak_door[half=upper]").is_empty());
+        assert!(one("minecraft:red_bed[part=head]").is_empty());
+        assert_eq!(
+            one("minecraft:wall_torch[facing=north]"),
+            [("minecraft:torch".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:oak_wall_sign[facing=north]"),
+            [("minecraft:oak_sign".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:redstone_wire[power=0]"),
+            [("minecraft:redstone".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:sea_pickle[pickles=3]"),
+            [("minecraft:sea_pickle".to_owned(), 3)]
+        );
+        assert_eq!(
+            one("minecraft:potted_poppy"),
+            [
+                ("minecraft:flower_pot".to_owned(), 1),
+                ("minecraft:poppy".to_owned(), 1)
+            ]
+        );
+        assert_eq!(
+            one("minecraft:water[level=0]"),
+            [("minecraft:water_bucket".to_owned(), 1)]
+        );
+        assert!(one("minecraft:water[level=3]").is_empty());
+        assert!(one("minecraft:air").is_empty());
+        assert!(st("minecraft:oak_stairs[waterlogged=true]").waterlogged());
+    }
+}

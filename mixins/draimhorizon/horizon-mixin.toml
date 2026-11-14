@@ -113,6 +113,12 @@ name = "claim_borders_autoclick"
 source = "autoclick.rs"
 
 [[module]]
+id = "litematica-materials"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_litematica_materials"
+source = "litematica/materials.rs"
+
+[[module]]
 id = "litematica-verifier"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_litematica_verifier"
@@ -123,6 +129,12 @@ id = "schematic-verify"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_schematic_verify"
 source = "schematic_verify.rs"
+
+[[module]]
+id = "schematic-materials"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_materials"
+source = "schematic_materials.rs"
 
 [[module]]
 id = "schematic-places"

@@ -1899,7 +1899,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                     .display()
                     .to_string()
             } else {
-                crate::game::claim_borders_workshop_view::materials()
+                // The selected preview's list (with what is missing and what you hold); a
+                // loaded build's own totals when there is no preview.
+                crate::game::claim_borders_schematic_materials::report(game)
+                    .unwrap_or_else(|_| crate::game::claim_borders_workshop_view::materials())
             };
             game.clipboard.set(&text);
             Ok(Vec::new())

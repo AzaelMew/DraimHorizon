@@ -230,6 +230,103 @@ impl BlockState {
         }
         state
     }
+    /// The items one block of this state takes to place, `(item id, count)`; none for a block no
+    /// item places (the other half of a door, a bed's head, fluids that are not placed, fire).
+    pub fn items(&self) -> Vec<(String, usize)> {
+        let bare = self.name.strip_prefix("minecraft:").unwrap_or(&self.name);
+        let prop = |k: &str| self.properties.get(k).map(String::as_str);
+        if self.air()
+            || prop("half") == Some("upper")
+            || prop("part") == Some("head")
+            || matches!(
+                bare,
+                "water"
+                    | "lava"
+                    | "fire"
+                    | "soul_fire"
+                    | "bubble_column"
+                    | "nether_portal"
+                    | "end_portal"
+                    | "end_gateway"
+                    | "moving_piston"
+                    | "piston_head"
+                    | "frosted_ice"
+                    | "light"
+                    | "void_air"
+            )
+        {
+            // Water and lava stand for a bucket of each where they are placed as sources.
+            return match (bare, prop("level")) {
+                ("water", Some("0")) => vec![("minecraft:water_bucket".into(), 1)],
+                ("lava", Some("0")) => vec![("minecraft:lava_bucket".into(), 1)],
+                _ => Vec::new(),
+            };
+        }
+        let mut item = bare.to_owned();
+        let mut out: Vec<(String, usize)> = Vec::new();
+        if let Some(rest) = bare.strip_prefix("potted_") {
+            out.push(("minecraft:flower_pot".into(), 1));
+            item = rest.to_owned();
+        }
+        // A block on a wall is placed by the item of the free-standing one.
+        for (from, to) in [
+            ("_wall_torch", "_torch"),
+            ("wall_torch", "torch"),
+            ("_wall_sign", "_sign"),
+            ("_wall_hanging_sign", "_hanging_sign"),
+            ("_wall_banner", "_banner"),
+            ("_wall_head", "_head"),
+            ("_wall_skull", "_skull"),
+            ("_wall_fan", "_fan"),
+        ] {
+            if let Some(stem) = item.strip_suffix(from) {
+                item = format!("{stem}{to}");
+                break;
+            }
+        }
+        item = match item.as_str() {
+            "redstone_wire" => "redstone",
+            "tripwire" => "string",
+            "carrots" => "carrot",
+            "potatoes" => "potato",
+            "beetroots" => "beetroot_seeds",
+            "wheat" => "wheat_seeds",
+            "melon_stem" | "attached_melon_stem" => "melon_seeds",
+            "pumpkin_stem" | "attached_pumpkin_stem" => "pumpkin_seeds",
+            "sweet_berry_bush" => "sweet_berries",
+            "cocoa" => "cocoa_beans",
+            "kelp_plant" => "kelp",
+            "tall_seagrass" => "seagrass",
+            "bamboo_sapling" => "bamboo",
+            "water_cauldron" | "lava_cauldron" | "powder_snow_cauldron" => "cauldron",
+            "big_dripleaf_stem" => "big_dripleaf",
+            "cave_vines" | "cave_vines_plant" => "glow_berries",
+            "weeping_vines_plant" => "weeping_vines",
+            "twisting_vines_plant" => "twisting_vines",
+            other => other,
+        }
+        .to_owned();
+        // Blocks that stand for several of an item: a double slab, pickles, candles, eggs.
+        let count = if prop("type") == Some("double") {
+            2
+        } else if let Some(n) = ["pickles", "candles", "eggs"]
+            .iter()
+            .find_map(|k| prop(k))
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            n.max(1)
+        } else {
+            1
+        };
+        out.push((format!("minecraft:{item}"), count));
+        out
+    }
+    /// Whether the state holds water (a waterlogged block).
+    pub fn waterlogged(&self) -> bool {
+        self.properties
+            .get("waterlogged")
+            .is_some_and(|v| v == "true")
+    }
     /// The state as a preview turned by `code` shows it: mirrored first (`code / 4`), then turned
     /// `code % 4` quarters clockwise.
     pub fn transformed(&self, code: u8) -> Self {
