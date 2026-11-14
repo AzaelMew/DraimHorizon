@@ -1,31 +1,10 @@
-// Exact shortcuts and bounded caches for text that is measured and wrapped every frame.
+// Exact prefix-based fitting and bounded caches for text measured every frame.
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
-
-/// True when no prefix of `text` can measure wider than `text` itself.
-///
-/// The client measures a string as its reordered glyph advances, rounded up. Without right-to-left
-/// text, bidi controls or legacy `§` formatting nothing is reordered, so a prefix is a prefix of the
-/// glyph sequence and widths only grow. Anything else must be measured prefix by prefix.
-pub fn prefixes_never_wider(text: &str) -> bool {
-    text.chars().all(|c| {
-        !matches!(c,
-            '§'
-            | '\u{0590}'..='\u{08ff}'
-            | '\u{200e}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{fb1d}'..='\u{fdff}'
-            | '\u{fe70}'..='\u{feff}'
-            | '\u{10800}'..='\u{10fff}'
-            | '\u{1e800}'..='\u{1efff}')
-    })
-}
 
 /// `text` cut with an ellipsis once a prefix is wider than `limit` (sidebar labels).
 pub fn clip_label<'a>(text: &'a str, limit: f32, measure: impl Fn(&str) -> f32) -> Cow<'a, str> {
-    if prefixes_never_wider(text) && measure(text) <= limit {
-        return Cow::Borrowed(text);
-    }
+    // Even ASCII may have negative advances in a resource pack. Only the prefix loop preserves
+    // the original overflow boundary; LabelCache makes unchanged labels cheap after this miss.
     let mut shown = String::new();
     for c in text.chars() {
         shown.push(c);
@@ -130,22 +109,36 @@ mod tests {
     }
 
     #[test]
-    fn a_label_that_fits_is_measured_once_and_borrowed() {
-        let calls = Cell::new(0);
-        let measure = |s: &str| {
-            calls.set(calls.get() + 1);
-            s.chars().count() as f32
-        };
+    fn negative_font_advances_do_not_hide_an_overflowing_label_prefix() {
+        for spacing in ['\u{e000}', 'b'] {
+            let text = format!("xxx{spacing}");
+            let measure = |s: &str| {
+                s.chars()
+                    .map(|c| if c == spacing { -20.0 } else { 10.0 })
+                    .sum::<f32>()
+            };
+            assert_eq!(measure(&text), 10.0);
+            assert_eq!(clip_label(&text, 20.0, measure), "xx…");
+            for width in [0.0, 12.0, 20.0, 30.0, 40.0] {
+                assert_eq!(
+                    clip_label(&text, width, measure),
+                    growing(&text, width, measure)
+                );
+            }
+            let mut cache = LabelCache::default();
+            assert_eq!(&*cache.clip((1, 1), &text, 20.0, measure), "xx…");
+            assert_eq!(&*cache.clip((1, 1), &text, 20.0, measure), "xx…");
+        }
+    }
+    #[test]
+    fn a_label_that_fits_keeps_every_character() {
+        let measure = |s: &str| s.chars().count() as f32;
         let shown = clip_label("Online players", 40.0, measure);
-        assert!(matches!(shown, Cow::Borrowed("Online players")));
-        assert_eq!(calls.get(), 1);
+        assert_eq!(shown, "Online players");
     }
 
     #[test]
     fn right_to_left_and_formatted_text_keeps_prefix_measurement() {
-        for text in ["שלום עולם", "mix عربى text", "§aGreen", "a\u{202e}b"] {
-            assert!(!prefixes_never_wider(text), "{text}");
-        }
         // A measurement where the whole is narrower than a prefix, as reordering can produce.
         let measure = |s: &str| {
             if s.chars().count() == 4 {
@@ -159,6 +152,9 @@ mod tests {
             growing("שלום", 7.0, measure)
         );
         assert_eq!(clip_label("שלום", 7.0, measure), "של…");
+        for text in ["שלום עולם", "mix عربى text", "§aGreen", "a\u{202e}b"] {
+            assert_eq!(clip_label(text, 7.0, measure), growing(text, 7.0, measure));
+        }
     }
 
     #[test]

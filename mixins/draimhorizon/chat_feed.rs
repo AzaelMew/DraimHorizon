@@ -914,15 +914,9 @@ pub fn fade(entry: &Entry, now: u64, focused: bool, duration: u16) -> f32 {
     ((life - age) / 1500.0).clamp(0.0, 1.0)
 }
 pub fn wrap(text: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
-    // Text that fits on one line is measured once, not once per prefix. Without reordering text no
-    // prefix is wider than the whole, so the per-character loop below could not have wrapped it.
-    let bounded: String = text.chars().take(2048).collect();
-    if !bounded.contains('\n')
-        && super::claim_borders_text_layout::prefixes_never_wider(&bounded)
-        && measure(&bounded) <= width.max(12.0)
-    {
-        return vec![bounded];
-    }
+    // Preserve prefix overflow checks: resource packs can give any glyph a negative advance, so
+    // the width of the whole string does not establish that every prefix fits. The card cache
+    // avoids repeating this work for unchanged text without making assumptions about font metrics.
     let mut rows = Vec::new();
     let mut line = String::new();
     for c in text.chars().take(2048) {
@@ -1690,18 +1684,33 @@ mod tests {
         }
     }
     #[test]
-    fn text_that_fits_is_measured_once_and_long_text_is_unchanged() {
-        let calls = std::cell::Cell::new(0);
-        let counted = |s: &str| {
-            calls.set(calls.get() + 1);
-            s.chars().count() as f32
-        };
+    fn negative_font_advances_do_not_hide_an_overflowing_prefix() {
+        for spacing in ['\u{e000}', 'b'] {
+            // A resource pack may override private-use OR ordinary ASCII glyph advances.
+            let text = format!("xxx{spacing}");
+            let measure = |s: &str| {
+                s.chars()
+                    .map(|c| if c == spacing { -20.0 } else { 10.0 })
+                    .sum::<f32>()
+            };
+            assert_eq!(measure(&text), 10.0);
+            assert_eq!(wrap(&text, 20.0, measure), ["xx", &format!("x{spacing}")]);
+            for width in [0.0, 12.0, 20.0, 30.0, 40.0] {
+                assert_eq!(
+                    wrap(&text, width, measure),
+                    wrap_reference(&text, width, measure)
+                );
+            }
+        }
+    }
+    #[test]
+    fn fitting_text_preserves_content_and_the_minimum_line_width() {
+        let measure = |s: &str| s.chars().count() as f32;
         assert_eq!(
-            wrap("Steve: hello world", 40.0, counted),
+            wrap("Steve: hello world", 40.0, measure),
             ["Steve: hello world"]
         );
-        assert_eq!(calls.get(), 1);
-        assert_eq!(wrap("", 40.0, counted), [""]);
+        assert_eq!(wrap("", 40.0, measure), [""]);
         // The 12 px minimum line width still applies.
         assert_eq!(wrap("a b", 0.0, |s| s.chars().count() as f32), ["a b"]);
     }
