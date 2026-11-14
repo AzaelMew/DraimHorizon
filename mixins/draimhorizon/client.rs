@@ -1790,12 +1790,25 @@ pub(super) fn open_trades(game: &mut Game<'_>) {
     }
 }
 
+/// The first opening of a session shows the tab the menu was left on last time.
+fn restore_view_once(game: &Game<'_>) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !DONE.swap(true, std::sync::atomic::Ordering::Relaxed)
+        && let Some(text) = game.native_setting(claims::SETTINGS_ID, "menu_view")
+    {
+        menu_view::restore_view(&text);
+        *SAVED_VIEW.lock().unwrap_or_else(|e| e.into_inner()) = text;
+    }
+}
+/// The view last written to the settings (so it is written only when it changes).
+static SAVED_VIEW: Mutex<String> = Mutex::new(String::new());
 pub(super) fn open_menu(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) || !ensure(game) {
         return;
     }
     if game.native_mod_screen_open(claims::ID) {
         menu_view::open();
+        restore_view_once(game);
         menu_view::sync(menu_snapshot(game));
     }
 }
@@ -2520,6 +2533,15 @@ pub(super) fn service_menu(game: &mut Game<'_>) {
     }
     if !ensure(game) {
         return;
+    }
+    // The tab and its pages are kept for the next opening, and for the next session.
+    let view = menu_view::view_state();
+    {
+        let mut saved = SAVED_VIEW.lock().unwrap_or_else(|e| e.into_inner());
+        if *saved != view {
+            game.native_set_setting(claims::SETTINGS_ID, "menu_view", &view);
+            *saved = view;
+        }
     }
     for action in menu_view::drain_actions() {
         if game.native_mod_screen() != Some(claims::ID) {

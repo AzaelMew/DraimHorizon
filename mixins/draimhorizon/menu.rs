@@ -1329,6 +1329,161 @@ impl Menu {
         menu
     }
 }
+/// What the J menu shows, kept between openings and between sessions: the tab and the page of each
+/// tab that has pages, as `tab=baritone;bs=mining;...`. Unknown or missing keys are ignored.
+impl Menu {
+    pub fn view_state(&self) -> String {
+        let tab = match self.tab {
+            Tab::Waypoints => "waypoints",
+            Tab::Party => "party",
+            Tab::Claims => "claims",
+            Tab::Chat => "chat",
+            Tab::Experimental => "experimental",
+            Tab::Baritone => "baritone",
+            Tab::Trading => "trading",
+            Tab::Settings => "settings",
+        };
+        let exp = match self.experimental_section {
+            ExperimentalSection::Ores => "ores",
+            ExperimentalSection::Baritone => "automation",
+            ExperimentalSection::Helpers => "helpers",
+        };
+        let bs = match self.baritone_section {
+            BaritoneSection::Tasks => "tasks",
+            BaritoneSection::Navigation => "navigation",
+            BaritoneSection::Mining => "mining",
+            BaritoneSection::Tunnel => "tunnel",
+            BaritoneSection::Bridge => "bridge",
+            BaritoneSection::Build => "build",
+            BaritoneSection::Settings => "settings",
+        };
+        let bm = match self.baritone_mode {
+            BaritoneMode::Farm => "farm",
+            BaritoneMode::Drain => "drain",
+            BaritoneMode::Schematic => "schematic",
+        };
+        let fs = match self.farm_section {
+            FarmSection::Crops => "crops",
+            FarmSection::Options => "options",
+            FarmSection::Chests => "chests",
+            FarmSection::Plots => "plots",
+        };
+        format!(
+            "tab={tab};exp={exp};bs={bs};bm={bm};fs={fs};set={};chat={};claims={};party={};trade={}",
+            self.settings_section,
+            self.chat_section as u8,
+            self.claims_section as u8,
+            self.party_filter as u8,
+            self.trading_group,
+        )
+    }
+    /// Puts back what `view_state` kept.
+    pub fn restore_view(&mut self, text: &str) {
+        for pair in text.split(';') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            let number = || value.parse::<u8>().ok();
+            match key {
+                "tab" => {
+                    self.tab = match value {
+                        "waypoints" => Tab::Waypoints,
+                        "party" => Tab::Party,
+                        "claims" => Tab::Claims,
+                        "chat" => Tab::Chat,
+                        "experimental" => Tab::Experimental,
+                        "baritone" => Tab::Baritone,
+                        "trading" => Tab::Trading,
+                        "settings" => Tab::Settings,
+                        _ => self.tab,
+                    };
+                    self.keys_for_baritone_tab = match self.tab {
+                        Tab::Baritone => true,
+                        Tab::Experimental => false,
+                        _ => self.keys_for_baritone_tab,
+                    };
+                }
+                "exp" => {
+                    self.experimental_section = match value {
+                        "ores" => ExperimentalSection::Ores,
+                        "automation" => ExperimentalSection::Baritone,
+                        "helpers" => ExperimentalSection::Helpers,
+                        _ => self.experimental_section,
+                    }
+                }
+                "bs" => {
+                    if let Some(section) = BaritoneSection::ALL
+                        .into_iter()
+                        .find(|s| format!("{s:?}").eq_ignore_ascii_case(value))
+                    {
+                        self.baritone_section = section;
+                        self.baritone_section_page = section.page();
+                    }
+                }
+                "bm" => {
+                    self.baritone_mode = match value {
+                        "farm" => BaritoneMode::Farm,
+                        "drain" => BaritoneMode::Drain,
+                        "schematic" => BaritoneMode::Schematic,
+                        _ => self.baritone_mode,
+                    }
+                }
+                "fs" => {
+                    if let Some(section) = FarmSection::ALL
+                        .into_iter()
+                        .find(|s| format!("{s:?}").eq_ignore_ascii_case(value))
+                    {
+                        self.farm_section = section;
+                    }
+                }
+                "set" => {
+                    if let Some(n) = number().filter(|n| *n < 8) {
+                        self.settings_section = n;
+                    }
+                }
+                "chat" => {
+                    self.chat_section = match number() {
+                        Some(0) => ChatSection::Appearance,
+                        Some(1) => ChatSection::Notifications,
+                        Some(2) => ChatSection::Spam,
+                        Some(3) => ChatSection::DeepL,
+                        Some(4) => ChatSection::Priority,
+                        _ => self.chat_section,
+                    }
+                }
+                "claims" => {
+                    self.claims_section = match number() {
+                        Some(0) => ClaimsSection::List,
+                        Some(1) => ClaimsSection::Map,
+                        Some(2) => ClaimsSection::Borders,
+                        Some(3) => ClaimsSection::Colours,
+                        Some(4) => ClaimsSection::Storage,
+                        _ => self.claims_section,
+                    }
+                }
+                "party" => {
+                    self.party_filter = match number() {
+                        Some(0) => PartyFilter::Friends,
+                        Some(1) => PartyFilter::Users,
+                        Some(2) => PartyFilter::Invitations,
+                        Some(3) => PartyFilter::Important,
+                        _ => self.party_filter,
+                    }
+                }
+                "trade" => {
+                    if let Some(n) = number().filter(|n| *n < 16) {
+                        self.trading_group = n;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    /// Carries the tab and its pages over to a fresh menu, as `keep_baritone` does the settings.
+    pub fn keep_view(&mut self, from: &Menu) {
+        self.restore_view(&from.view_state());
+    }
+}
 impl Menu {
     pub fn clear_navigation_coordinates(&mut self) {
         self.navigation_x.clear();
@@ -1381,6 +1536,7 @@ impl Menu {
         self.baritone_section = from.baritone_section;
         self.baritone_section_page = from.baritone_section_page;
         self.baritone_file = from.baritone_file;
+        self.keep_view(from);
     }
     /// Footer line of the Baritone tabs: what each action key is bound to.
     /// Whether the Baritone tab is on screen with no text field taking the keys.
@@ -1564,6 +1720,11 @@ impl Menu {
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
+        // A restored tab that needs the experiments consent is not shown without it.
+        if matches!(self.tab, Tab::Experimental | Tab::Baritone) && !next.experiments_accepted {
+            self.tab = Tab::Waypoints;
+            self.keys_for_baritone_tab = false;
+        }
         self.baritone_mine_cache.clone_from(&next.baritone.mine);
         self.baritone_files_cache.clone_from(&next.schematic_files);
         self.selected = self.selected.and_then(|index| match self.tab {
@@ -8175,6 +8336,7 @@ mod tests {
         use super::super::claim_borders_mine_picker as picker;
         let mut model = ViewModel {
             baritone_enabled: true,
+            experiments_accepted: true,
             blocks: std::sync::Arc::new(picker::catalogue(
                 (0..40)
                     .map(|i| format!("minecraft:block_{i:02}"))
@@ -8497,6 +8659,77 @@ mod tests {
         assert!(menu.keys_scope_is_baritone_tab());
         menu.activate(&model, 200.0, Control::Tab(Tab::Experimental));
         assert!(!menu.keys_scope_is_baritone_tab());
+    }
+
+    #[test]
+    fn the_open_tab_and_its_pages_are_kept_and_put_back() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Mining,
+            experimental_section: ExperimentalSection::Helpers,
+            baritone_mode: BaritoneMode::Drain,
+            farm_section: FarmSection::Chests,
+            settings_section: 3,
+            chat_section: ChatSection::Spam,
+            claims_section: ClaimsSection::Colours,
+            party_filter: PartyFilter::Important,
+            trading_group: 2,
+            ..Menu::default()
+        };
+        menu.baritone_section_page = BaritoneSection::Mining.page();
+        let kept = menu.view_state();
+        // A fresh menu (the next opening, or the next session) shows the same.
+        let mut fresh = Menu::default();
+        fresh.restore_view(&kept);
+        assert_eq!(fresh.view_state(), kept);
+        assert_eq!(fresh.tab, Tab::Baritone);
+        assert_eq!(fresh.baritone_section, BaritoneSection::Mining);
+        assert_eq!(fresh.farm_section, FarmSection::Chests);
+        assert_eq!(fresh.chat_section, ChatSection::Spam);
+        assert!(fresh.keys_scope_is_baritone_tab());
+        // Reopening carries it over like the settings.
+        let mut next = Menu::default();
+        next.keep_baritone(&menu);
+        assert_eq!(next.view_state(), kept);
+        // Every tab survives the round trip.
+        for tab in [
+            Tab::Waypoints,
+            Tab::Party,
+            Tab::Claims,
+            Tab::Chat,
+            Tab::Experimental,
+            Tab::Baritone,
+            Tab::Trading,
+            Tab::Settings,
+        ] {
+            let menu = Menu {
+                tab,
+                ..Menu::default()
+            };
+            let mut back = Menu::default();
+            back.restore_view(&menu.view_state());
+            assert_eq!(back.tab, tab);
+        }
+        // Junk is ignored and leaves what was there.
+        let mut menu = Menu::default();
+        menu.restore_view("tab=nowhere;bs=;set=999;chat=x;;=;novalue;fs=chests;claims=9");
+        assert_eq!(menu.tab, Tab::Waypoints);
+        assert_eq!(menu.farm_section, FarmSection::Chests);
+        assert_eq!(menu.settings_section, Menu::default().settings_section);
+        menu.restore_view("");
+        // A tab that needs the experiments consent is not shown without it.
+        let mut menu = Menu::default();
+        menu.restore_view("tab=baritone");
+        menu.reconcile(&ViewModel::default(), &ViewModel::default(), 200.0);
+        assert_eq!(menu.tab, Tab::Waypoints);
+        let mut menu = Menu::default();
+        menu.restore_view("tab=baritone");
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        assert_eq!(menu.tab, Tab::Baritone);
     }
 
     #[test]

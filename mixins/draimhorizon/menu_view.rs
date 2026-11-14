@@ -26,6 +26,14 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|p| p.into_inner());
     f(&mut state)
 }
+/// What the menu shows, to be kept (tab and pages).
+pub(super) fn view_state() -> String {
+    state(|s| s.menu.view_state())
+}
+/// Puts back a kept view (the first opening of a session).
+pub(super) fn restore_view(text: &str) {
+    state(|s| s.menu.restore_view(text));
+}
 pub(super) fn claims_settings() {
     state(|s| {
         s.menu.tab = model::Tab::Claims;
