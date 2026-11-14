@@ -1778,6 +1778,14 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
     }
 }
 
+/// An action of the menu run from outside it (the action keys, with the menu closed): what it
+/// says goes to the chat.
+pub(super) fn run_menu_action(game: &mut Game<'_>, action: menu::Action) -> Result<(), String> {
+    for line in execute_menu(game, action)? {
+        game.native_chat(&line);
+    }
+    Ok(())
+}
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
@@ -1962,6 +1970,32 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 return Err(baritone_off());
             }
             crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneWaypoint(id) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let dimension = game
+                .native_player()
+                .map(|p| p.dimension.to_owned())
+                .ok_or_else(|| {
+                    l.text("Сначала зайдите в мир", "Join a world first")
+                        .to_owned()
+                })?;
+            let waypoint = own_waypoints()
+                .into_iter()
+                .find(|w| w.id == id && w.dimension == dimension)
+                .ok_or_else(|| {
+                    l.text(
+                        "Метка недоступна в этом измерении",
+                        "Waypoint unavailable in this dimension",
+                    )
+                    .to_owned()
+                })?;
+            let [x, y, z] = crate::game::claim_borders_navigation::block(waypoint.position);
+            crate::game::baritone::run_line(game, &format!("goto {x} {y} {z}"));
             Ok(Vec::new())
         }
         Action::SetBaritoneProfile(on) => {

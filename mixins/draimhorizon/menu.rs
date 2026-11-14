@@ -282,6 +282,8 @@ pub enum Action {
     SetBaritone(bool),
     /// A Baritone command line (without the prefix) to run, built by a Baritone tab button.
     Baritone(String),
+    /// Walk to the saved waypoint with this id (resolved where the waypoints are kept).
+    BaritoneWaypoint(u64),
     /// Build the schematic file (a name in the schematics folder), at `origin` or at the player.
     BaritoneBuild {
         file: String,
@@ -443,6 +445,7 @@ impl std::fmt::Debug for Action {
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetBaritone(on) => f.debug_tuple("SetBaritone").field(on).finish(),
             Self::Baritone(line) => f.debug_tuple("Baritone").field(line).finish(),
+            Self::BaritoneWaypoint(id) => f.debug_tuple("BaritoneWaypoint").field(id).finish(),
             Self::BaritoneBuild { file, origin } => f
                 .debug_struct("BaritoneBuild")
                 .field("file", file)
@@ -766,11 +769,10 @@ pub enum BaritoneCmd {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BaritoneMode {
-    #[default]
-    Navigation,
     Mining,
     Tunnel,
     Bridge,
+    #[default]
     Farm,
     Drain,
     Schematic,
@@ -1024,6 +1026,10 @@ pub struct Menu {
     pub navigation_y: String,
     pub navigation_z: String,
     pub baritone_block: String,
+    /// The player chosen in Navigation (its name, for `follow player`).
+    pub navigation_player_name: Option<String>,
+    /// The action keys act on the Baritone tab (the last of it and Automation on screen).
+    pub keys_for_baritone_tab: bool,
     pub baritone_tunnel: String,
     pub baritone_section: BaritoneSection,
     pub baritone_section_page: usize,
@@ -1090,6 +1096,8 @@ impl Default for Menu {
             navigation_y: String::new(),
             navigation_z: String::new(),
             baritone_block: String::new(),
+            navigation_player_name: None,
+            keys_for_baritone_tab: false,
             baritone_tunnel: String::new(),
             baritone_section: BaritoneSection::Tasks,
             baritone_section_page: 0,
@@ -1101,7 +1109,7 @@ impl Default for Menu {
             schematic_place_page: 0,
             farm_plot_page: 0,
             navigation_player: None,
-            baritone_mode: BaritoneMode::Navigation,
+            baritone_mode: BaritoneMode::Farm,
             mining_targets: 1,
             mining_page: 0,
             construct_direction: super::claim_borders_construction::Direction::North,
@@ -1273,6 +1281,8 @@ impl Menu {
         self.navigation_y = from.navigation_y.clone();
         self.navigation_z = from.navigation_z.clone();
         self.baritone_block = from.baritone_block.clone();
+        self.navigation_player_name = from.navigation_player_name.clone();
+        self.keys_for_baritone_tab = from.keys_for_baritone_tab;
         self.baritone_tunnel = from.baritone_tunnel.clone();
         self.baritone_section = from.baritone_section;
         self.baritone_section_page = from.baritone_section_page;
@@ -1281,8 +1291,9 @@ impl Menu {
     /// Footer line of the Baritone tabs: what each action key is bound to.
     /// Whether the Baritone tab is on screen with no text field taking the keys.
     pub fn baritone_keys_active(&self) -> bool {
-        self.tab == Tab::Experimental
-            && self.experimental_section == ExperimentalSection::Baritone
+        (self.tab == Tab::Baritone
+            || (self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Baritone))
             && self.focus.is_none()
             && self.navigation_choices.is_none()
             && !self.experiments_prompt
@@ -1309,6 +1320,65 @@ impl Menu {
         .collect::<Vec<_>>()
         .join(" · ")
     }
+    /// Whether the action keys act on the Baritone tab (the last of it and Automation on screen).
+    pub fn keys_scope_is_baritone_tab(&self) -> bool {
+        self.tab == Tab::Baritone || (self.tab != Tab::Experimental && self.keys_for_baritone_tab)
+    }
+    /// What Start does on the Baritone tab: the section on screen runs its own task. Preview does
+    /// nothing there (the port draws its path itself, see Settings).
+    fn baritone_tab_request(&self, running: bool) -> Result<Action, String> {
+        let language = self.language;
+        if !running {
+            return Err(language
+                .text(
+                    "Предпросмотра нет: Baritone рисует путь сам (Настройки → Рисовать путь)",
+                    "No preview: Baritone draws its path itself (Settings → Draw the path)",
+                )
+                .into());
+        }
+        let missing = || {
+            language
+                .text(
+                    "Заполните раздел или нажмите его кнопку",
+                    "Fill in the section or press its button",
+                )
+                .to_owned()
+        };
+        match self.baritone_section {
+            BaritoneSection::Navigation => self.baritone_goto().ok_or_else(|| {
+                language
+                    .text(
+                        "Введите X, Y, Z или выберите метку или игрока",
+                        "Enter X, Y, Z or choose a waypoint or a player",
+                    )
+                    .to_owned()
+            }),
+            BaritoneSection::Mining => self
+                .baritone_line(BaritoneCmd::Mine)
+                .map(Action::Baritone)
+                .ok_or_else(missing),
+            BaritoneSection::Tunnel => self
+                .baritone_line(BaritoneCmd::Tunnel)
+                .map(Action::Baritone)
+                .ok_or_else(missing),
+            BaritoneSection::Tasks
+            | BaritoneSection::Bridge
+            | BaritoneSection::Build
+            | BaritoneSection::Settings => Err(missing()),
+        }
+    }
+    /// The Go button of Navigation: a chosen player is followed, a chosen waypoint is walked to,
+    /// otherwise the typed X/Y/Z.
+    fn baritone_goto(&self) -> Option<Action> {
+        if self.navigation_player.is_some() {
+            let name = self.navigation_player_name.as_ref()?;
+            return Some(Action::Baritone(format!("follow player {name}")));
+        }
+        if let Some(id) = self.navigation_waypoint {
+            return Some(Action::BaritoneWaypoint(id));
+        }
+        self.baritone_line(BaritoneCmd::Goto).map(Action::Baritone)
+    }
     /// The task the Baritone tab on screen describes, built from its current
     /// settings. The action keys call this, so they work with the menu closed;
     /// the consent, world and tool checks stay in the drivers that run it.
@@ -1316,25 +1386,10 @@ impl Menu {
         use super::claim_borders_construction as construction;
         use super::claim_borders_navigation::Goal;
         let language = self.language;
+        if self.keys_scope_is_baritone_tab() {
+            return self.baritone_tab_request(running);
+        }
         match self.baritone_mode {
-            BaritoneMode::Navigation => {
-                let goal = if let Some(id) = self.navigation_player {
-                    Goal::Follow(id)
-                } else if let Some(id) = self.navigation_waypoint {
-                    Goal::Waypoint(id)
-                } else {
-                    let position = self.navigation_position().ok_or_else(|| {
-                        language
-                            .text(
-                                "Введите X, Y, Z, например: 120 64 -350",
-                                "Enter X, Y, Z, for example: 120 64 -350",
-                            )
-                            .to_owned()
-                    })?;
-                    Goal::Coordinates(super::claim_borders_navigation::block(position))
-                };
-                Ok(Action::Navigate { goal, running })
-            }
             BaritoneMode::Mining => {
                 use super::claim_borders_mining as mining;
                 let targets = self.mining_targets & mining::ALL;
@@ -1458,6 +1513,7 @@ impl Menu {
             .is_some_and(|id| !next.navigation_players.iter().any(|(uuid, _)| *uuid == id))
         {
             self.navigation_player = None;
+            self.navigation_player_name = None;
             target_missing = true;
         }
         if self
@@ -1639,8 +1695,8 @@ impl Menu {
                 return widgets;
             }
         }
-        if self.tab == Tab::Experimental
-            && self.baritone_mode == BaritoneMode::Navigation
+        if self.tab == Tab::Baritone
+            && self.baritone_section == BaritoneSection::Navigation
             && let Some(players) = self.navigation_choices
         {
             let anchor = widgets.iter().find(|w| {
@@ -3854,6 +3910,43 @@ impl Menu {
                     l.text("Идти", "Go"),
                     BaritoneCmd::Goto,
                 );
+                // A saved waypoint or a player instead of the coordinates.
+                let waypoint = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+                let half = (w - gap) / 2.0;
+                out.push(widget(
+                    [x, 104.0, half, 20.0],
+                    localized!(
+                        l,
+                        "Метка: {}",
+                        "Waypoint: {}",
+                        waypoint.map_or(l.text("выбрать", "select"), |w| w.name.as_str())
+                    ),
+                    Some(Control::NavigationWaypoint),
+                    waypoint.is_some(),
+                ));
+                out.push(widget(
+                    [x + half + gap, 104.0, half, 20.0],
+                    localized!(
+                        l,
+                        "Игрок: {}",
+                        "Player: {}",
+                        self.navigation_player_name
+                            .as_deref()
+                            .unwrap_or(l.text("выбрать", "select"))
+                    ),
+                    Some(Control::NavigationPlayer),
+                    self.navigation_player.is_some(),
+                ));
+                hint(
+                    &mut out,
+                    128.0,
+                    l.text(
+                        "Метка: идти к ней. Игрок: следовать за ним.",
+                        "Waypoint: walk to it. Player: follow them.",
+                    ),
+                );
             }
             BaritoneSection::Mining => {
                 out.push(widget(
@@ -4082,36 +4175,31 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 24.0) / 7.0;
+            let mode_width = (w - 20.0) / 6.0;
             for (i, mode, label) in [
                 (
                     0,
-                    BaritoneMode::Navigation,
-                    self.language.text("Навигация", "Navigation"),
-                ),
-                (
-                    1,
                     BaritoneMode::Mining,
                     self.language.text("Добыча", "Mining"),
                 ),
                 (
-                    2,
+                    1,
                     BaritoneMode::Tunnel,
                     self.language.text("Тоннель", "Tunnel"),
                 ),
                 (
-                    3,
+                    2,
                     BaritoneMode::Bridge,
                     self.language.text("Мост", "Bridge"),
                 ),
-                (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
+                (3, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
-                    5,
+                    4,
                     BaritoneMode::Drain,
                     self.language.text("Осушение", "Drain"),
                 ),
                 (
-                    6,
+                    5,
                     BaritoneMode::Schematic,
                     self.language.text("Схемы", "Schematics"),
                 ),
@@ -4476,7 +4564,7 @@ impl Menu {
                     None,
                     false,
                 ));
-            } else if self.baritone_mode == BaritoneMode::Mining {
+            } else {
                 // A chip per target, toggled like the structure filters on the map.
                 use super::claim_borders_mining as mining;
                 let top = 100.0 + step;
@@ -4574,59 +4662,6 @@ impl Menu {
                         super::claim_borders_farm_storage::Role::Harvest,
                     )),
                     model.farm_storage[0].is_some(),
-                ));
-            } else {
-                let waypoint = self
-                    .navigation_waypoint
-                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
-                let player = self.navigation_player.and_then(|id| {
-                    model
-                        .navigation_players
-                        .iter()
-                        .find(|(uuid, _)| *uuid == id)
-                });
-                let field_width = (w - 8.0) / 3.0;
-                for (i, (label, field, value)) in [
-                    ("X", Field::NavigationX, &self.navigation_x),
-                    ("Y", Field::NavigationY, &self.navigation_y),
-                    ("Z", Field::NavigationZ, &self.navigation_z),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    out.push(widget(
-                        [x + i as f32 * (field_width + 4.0), 100.0, field_width, h],
-                        format!("{label}: {value}"),
-                        Some(Control::Field(field)),
-                        self.focus == Some(field),
-                    ));
-                }
-                out.push(widget(
-                    [x, 100.0 + step, tab_width, h],
-                    localized!(
-                        self.language,
-                        "Метка: {}",
-                        "Waypoint: {}",
-                        waypoint.map_or(self.language.text("выбрать", "select"), |w| w
-                            .name
-                            .as_str())
-                    ),
-                    Some(Control::NavigationWaypoint),
-                    waypoint.is_some(),
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, 100.0 + step, tab_width, h],
-                    localized!(
-                        self.language,
-                        "Игрок: {}",
-                        "Player: {}",
-                        player.map_or(
-                            self.language.text("выбрать", "select"),
-                            |(_, name)| name.as_str()
-                        )
-                    ),
-                    Some(Control::NavigationPlayer),
-                    player.is_some(),
                 ));
             }
             // The status line, and the switch for eating on its own beside it.
@@ -5444,6 +5479,7 @@ impl Menu {
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
+            Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
             Control::BaritoneCmd(cmd) => self.baritone_line(cmd).map(Action::Baritone),
             Control::BaritoneSection(section) => {
                 self.baritone_section = section;
@@ -5639,8 +5675,9 @@ impl Menu {
                 None
             }
             Control::NavigationPlayerChoice(index) => {
-                if let Some((uuid, _)) = model.navigation_players.get(index) {
+                if let Some((uuid, name)) = model.navigation_players.get(index) {
                     self.navigation_player = Some(*uuid);
+                    self.navigation_player_name = Some(name.clone());
                     self.navigation_waypoint = None;
                 }
                 self.navigation_choices = None;
@@ -5651,6 +5688,7 @@ impl Menu {
                 if let Some(waypoint) = model.navigation_waypoints.get(index) {
                     self.navigation_waypoint = Some(waypoint.id);
                     self.navigation_player = None;
+                    self.navigation_player_name = None;
                 }
                 self.navigation_choices = None;
                 self.focus = None;
@@ -6162,6 +6200,11 @@ impl Menu {
                 self.navigation_menu = false;
                 self.deepl_key.clear();
                 self.tab = t;
+                match t {
+                    Tab::Baritone => self.keys_for_baritone_tab = true,
+                    Tab::Experimental => self.keys_for_baritone_tab = false,
+                    _ => {}
+                }
                 if t == Tab::Settings && matches!(self.settings_section, 2..=4) {
                     self.settings_section = 0;
                 }
@@ -6416,16 +6459,19 @@ impl Menu {
             Field::NavigationX => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_x
             }
             Field::NavigationY => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_y
             }
             Field::NavigationZ => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_z
             }
             Field::BaritoneBlock => &mut self.baritone_block,
@@ -6598,10 +6644,7 @@ impl Menu {
         if key == "key.keyboard.tab" {
             if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
-                && !matches!(
-                    self.baritone_mode,
-                    BaritoneMode::Navigation | BaritoneMode::Schematic
-                )
+                && !matches!(self.baritone_mode, BaritoneMode::Schematic)
             {
                 self.focus = None;
                 return true;
@@ -6616,15 +6659,7 @@ impl Menu {
                 if self.tab == Tab::Experimental
                     && self.experimental_section == ExperimentalSection::Baritone
                 {
-                    if self.baritone_mode == BaritoneMode::Schematic {
-                        Field::SchematicOrigin
-                    } else {
-                        match self.focus {
-                            Some(Field::NavigationX) => Field::NavigationY,
-                            Some(Field::NavigationY) => Field::NavigationZ,
-                            _ => Field::NavigationX,
-                        }
-                    }
+                    Field::SchematicOrigin
                 } else if self.relay_setup || self.section() == 1 {
                     if self.focus == Some(Field::RelayUrl) {
                         Field::RelayToken
@@ -7223,7 +7258,6 @@ mod tests {
                         ExperimentalSection::Helpers,
                     ] {
                         for baritone_mode in [
-                            BaritoneMode::Navigation,
                             BaritoneMode::Mining,
                             BaritoneMode::Tunnel,
                             BaritoneMode::Bridge,
@@ -8295,22 +8329,20 @@ mod tests {
 
     #[test]
     fn navigation_validates_coordinates_from_three_fields() {
-        use super::super::claim_borders_navigation::Goal;
         let mut menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_x: "-0.2".into(),
             navigation_y: "64".into(),
             navigation_z: "120".into(),
             ..Menu::default()
         };
         assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: Goal::Coordinates([-1, 64, 120]),
-                running: false
-            })
+            menu.baritone_request(true),
+            Ok(Action::Baritone(line)) if line == "goto -1 64 120"
         ));
+        // There is no preview on the Baritone tab.
+        assert!(menu.baritone_request(false).is_err());
         for (x, y, z) in [
             ("", "64", "1"),
             ("1", "", "1"),
@@ -8353,7 +8385,11 @@ mod tests {
             }],
             ..ViewModel::default()
         };
-        let mut menu = Menu::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
+            ..Menu::default()
+        };
         assert!(
             menu.activate(&model, 200.0, Control::NavigationWaypoint)
                 .is_none()
@@ -8362,10 +8398,7 @@ mod tests {
         menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
         assert!(matches!(
             menu.baritone_request(true),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Waypoint(41),
-                running: true
-            })
+            Ok(Action::BaritoneWaypoint(41))
         ));
         menu.focus = Some(Field::NavigationX);
         menu.character('1');
@@ -8377,15 +8410,16 @@ mod tests {
     fn navigation_controls_fit_both_languages_in_compact_panels() {
         for language in [Language::Russian, Language::English] {
             let menu = Menu {
-                tab: Tab::Experimental,
-                experimental_section: ExperimentalSection::Baritone,
+                tab: Tab::Baritone,
+                baritone_section: BaritoneSection::Navigation,
                 language,
                 ..Menu::default()
             };
-            let model = ViewModel {
-                navigation_status: "Navigation status".into(),
+            let mut model = ViewModel {
+                baritone_enabled: true,
                 ..ViewModel::default()
             };
+            model.baritone.process = Some("Navigation status".into());
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
                 let controls: Vec<_> = rows
@@ -8403,7 +8437,10 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(controls.len(), 5);
-                let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
+                let status = rows
+                    .iter()
+                    .find(|w| w.text.starts_with("Navigation status ·"))
+                    .unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
                     for b in controls.iter().skip(i + 1) {
@@ -8524,7 +8561,7 @@ mod tests {
                             )
                         })
                         .collect();
-                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 11 } else { 7 });
+                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 10 } else { 6 });
                     if mode == BaritoneMode::Tunnel && height < 320.0 {
                         let control_rect = |control| {
                             controls
@@ -8570,6 +8607,8 @@ mod tests {
             ..ViewModel::default()
         };
         let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_waypoint: Some(7),
             ..Menu::default()
         };
@@ -8580,17 +8619,16 @@ mod tests {
         assert_eq!(menu.navigation_player, Some(71));
         assert!(matches!(
             menu.baritone_request(true),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Follow(71),
-                running: true
-            })
+            Ok(Action::Baritone(line)) if line == "follow player Alice"
         ));
         menu.activate(&model, 200.0, Control::NavigationPlayer);
         menu.activate(&model, 200.0, Control::NavigationPlayerChoice(1));
         assert_eq!(menu.navigation_player, Some(82));
+        assert_eq!(menu.navigation_player_name.as_deref(), Some("Bob"));
         menu.focus = Some(Field::NavigationY);
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
+        assert_eq!(menu.navigation_player_name, None);
         assert_eq!(menu.navigation_y, "2");
     }
 
@@ -8624,7 +8662,10 @@ mod tests {
             for player in [false, true] {
                 let mut menu = Menu {
                     language,
+                    tab: Tab::Baritone,
+                    baritone_section: BaritoneSection::Navigation,
                     navigation_player: player.then_some(117),
+                    navigation_player_name: player.then(|| "Gone".to_owned()),
                     navigation_waypoint: (!player).then_some(41),
                     navigation_x: "120".into(),
                     navigation_y: "64".into(),
@@ -8648,9 +8689,8 @@ mod tests {
     fn empty_navigation_dropdown_shows_non_actionable_placeholder() {
         let model = ViewModel::default();
         let menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
-            baritone_mode: BaritoneMode::Navigation,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_choices: Some(true),
             ..Menu::default()
         };
@@ -8687,8 +8727,8 @@ mod tests {
             ..ViewModel::default()
         };
         let mut menu = Menu {
-            tab: Tab::Experimental,
-            baritone_mode: BaritoneMode::Navigation,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             ..Menu::default()
         };
         menu.activate(&model, 200.0, Control::NavigationWaypoint);

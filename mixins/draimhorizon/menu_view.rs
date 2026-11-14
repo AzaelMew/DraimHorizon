@@ -61,6 +61,10 @@ pub(super) fn reset() {
 pub(super) fn baritone_request(running: bool) -> Result<model::Action, String> {
     state(|s| s.menu.baritone_request(running))
 }
+/// Whether the action keys act on the Baritone tab (rather than on Automation).
+pub(super) fn baritone_scope() -> bool {
+    state(|s| s.menu.keys_scope_is_baritone_tab())
+}
 /// Whether the Baritone tab last on screen is Schematics.
 pub(super) fn schematic_mode() -> bool {
     state(|s| s.menu.baritone_mode == model::BaritoneMode::Schematic)
@@ -486,7 +490,6 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && w < 56.0
             {
                 let icon = match mode {
-                    model::BaritoneMode::Navigation => ui::Icon::Map,
                     model::BaritoneMode::Mining => ui::Icon::Search,
                     model::BaritoneMode::Tunnel => ui::Icon::Layers,
                     model::BaritoneMode::Bridge => ui::Icon::Fill,

@@ -65,6 +65,11 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
 /// server-confirmation gates, and a press while a task is running does nothing, so an
 /// active dig never loses its ACK state.
 pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    // On the Baritone tab the keys drive the port: Start runs the section on screen, Pause and
+    // Stop pause and cancel its task.
+    if crate::game::claim_borders_menu_view::baritone_scope() {
+        return run_baritone_key(game, action);
+    }
     match action {
         model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
         model::Hotkey::Start => {
@@ -92,6 +97,27 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
         }
     }
 }
+/// The action keys while the Baritone tab is the one they belong to.
+fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    let line = |game: &mut Game<'_>, line: &str| {
+        if crate::game::baritone::enabled(game) {
+            crate::game::baritone::run_line(game, line);
+        }
+    };
+    match action {
+        model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
+        model::Hotkey::Start => start_from_menu(game, true).map(|()| true),
+        model::Hotkey::Pause => {
+            line(game, "pause");
+            Ok(false)
+        }
+        model::Hotkey::Stop => {
+            line(game, "cancel");
+            crate::game::claim_borders_baritone_bridge::walk_cancel();
+            Ok(false)
+        }
+    }
+}
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
@@ -99,12 +125,18 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     // Schematics: Start builds the selected preview of this world as it stands (moved and
     // turned with the editor keys); with none, the file and place chosen in the menu.
     if running
+        && !crate::game::claim_borders_menu_view::baritone_scope()
         && crate::game::claim_borders_menu_view::schematic_mode()
         && let Some((file, origin, rotation)) = preview::build_target(game)
     {
         return crate::game::claim_borders_workshop_view::load(game, file, origin, rotation, true);
     }
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
+        action @ (Action::Baritone(_)
+        | Action::BaritoneWaypoint(_)
+        | Action::BaritoneBuild { .. }) => {
+            crate::game::claim_borders_client::run_menu_action(game, action)
+        }
         Action::Navigate { goal, running } => start(game, goal, running),
         Action::LoadSchematic {
             filename,
