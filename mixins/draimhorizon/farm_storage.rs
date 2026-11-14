@@ -335,8 +335,77 @@ pub fn withdraw(container: &[Stack], inventory: &[Stack], seed: &str, want: u32)
     }
     slots
 }
+/// Containers kept at most (all worlds together), newest last.
+pub const MAX_SAVED: usize = 96;
+/// One saved container: the world it is in, its role and position.
+pub type Saved = (String, Role, [i32; 3]);
+impl Role {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Harvest => "harvest",
+            Self::Seeds => "seeds",
+            Self::Meal => "meal",
+        }
+    }
+}
+/// One container a line: world, role, x, y, z; tab-separated.
+pub fn encode_saved(list: &[Saved]) -> String {
+    list.iter()
+        .rev()
+        .take(MAX_SAVED)
+        .rev()
+        .map(|(scope, role, [x, y, z])| {
+            let scope: String = scope
+                .chars()
+                .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+                .collect();
+            format!("{scope}\t{}\t{x}\t{y}\t{z}", role.key())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+/// The containers kept by `encode_saved`; a line that does not read is left out and a role
+/// of a world appearing twice keeps its last line.
+pub fn decode_saved(text: &str) -> Vec<Saved> {
+    let mut out: Vec<Saved> = Vec::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        let [scope, role, x, y, z] = parts[..] else {
+            continue;
+        };
+        let Some(role) = Role::ALL.into_iter().find(|r| r.key() == role) else {
+            continue;
+        };
+        let n = |s: &str| s.parse::<i32>().ok();
+        let (Some(x), Some(y), Some(z)) = (n(x), n(y), n(z)) else {
+            continue;
+        };
+        out.retain(|(s, r, _)| !(s == scope && *r == role));
+        out.push((scope.to_owned(), role, [x, y, z]));
+    }
+    let extra = out.len().saturating_sub(MAX_SAVED);
+    out.drain(..extra);
+    out
+}
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chosen_containers_are_kept_and_read_back_and_bad_lines_are_dropped() {
+        use super::*;
+        let list = vec![
+            ("w\ta".to_owned(), Role::Harvest, [1, 64, -3]),
+            ("w".to_owned(), Role::Seeds, [4, 70, 5]),
+        ];
+        let back = decode_saved(&encode_saved(&list));
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0], ("wa".to_owned(), Role::Harvest, [1, 64, -3]));
+        assert_eq!(back[1], list[1]);
+        let text = "w\tmeal\t1\t2\t3\nbad\nw\tnope\t1\t2\t3\nw\tmeal\tx\t2\t3\nw\tmeal\t9\t9\t9";
+        assert_eq!(
+            decode_saved(text),
+            vec![("w".to_owned(), Role::Meal, [9, 9, 9])]
+        );
+    }
     #[test]
     fn carrots_and_potatoes_are_shared_between_the_two_containers() {
         use super::super::claim_borders_farming::Crop;

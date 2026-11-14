@@ -3,6 +3,7 @@
 ## 0.40.3
 
 - Map: the last death point can now be removed like a regular waypoint. Double-clicking it with the left mouse button hides it from the map, the Death button and the status line. The game's own last-death state (used by the recovery compass) is not changed, and a new death shows the point again.
+- Farm (Experiments → Baritone): the harvest, seeds and bone-meal containers the player points at are now remembered. They are saved per world and role in the settings, so they survive a restart and a reconnect instead of having to be set again. Aiming at nothing useful while one is set still clears it. Encoding and decoding live in `farm_storage` with a round-trip test (bad lines dropped, a role of a world keeps its last line, bounded to 96 entries).
 
 ## 0.40.2
 
