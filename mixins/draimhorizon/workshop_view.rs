@@ -1129,11 +1129,25 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                 || t.since.elapsed() > Duration::from_millis(2500)
             {
                 if t.tries >= 3 {
+                    // Where the container is, and what the aim met instead of it: with the
+                    // block it hit named, a neighbour in the way (a composter beside or below
+                    // it) can be told from a crop or a wall.
+                    let at = state(|s| s.target)
+                        .map_or_else(String::new, |c| format!("{} {} {}", c[0], c[1], c[2]));
+                    let detail = format!(
+                        "{}: {at}; {}: {}",
+                        text("склад", "container"),
+                        text("прицел попал в", "the aim hit"),
+                        placement::container_hit()
+                    );
                     end_store(
                         game,
-                        Some(text(
-                            "Не удалось открыть склад: к нему нет свободного пути взгляда",
-                            "Could not open the storage: no clear line of sight to it",
+                        Some(&format!(
+                            "{} ({detail})",
+                            text(
+                                "Не удалось открыть склад: к нему нет свободного пути взгляда",
+                                "Could not open the storage: no clear line of sight to it",
+                            )
                         )),
                     );
                 } else {
