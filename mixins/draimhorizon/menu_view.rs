@@ -835,6 +835,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Some(model::Field::NavigationX) => ("X: ", "X: "),
                         Some(model::Field::NavigationY) => ("Y: ", "Y: "),
                         Some(model::Field::NavigationZ) => ("Z: ", "Z: "),
+                        Some(model::Field::BaritoneBlock) => ("Блок: ", "Block: "),
                         Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
                         Some(model::Field::Name) => ("Имя: ", "Name: "),
                         Some(model::Field::Color | model::Field::PriorityColor) => {

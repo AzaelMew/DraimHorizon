@@ -279,6 +279,8 @@ pub enum SchematicEdit {
 pub enum Action {
     SetAutoEat(bool),
     SetBaritone(bool),
+    /// A Baritone command line (without the prefix) to run, built by a Baritone tab button.
+    Baritone(String),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
@@ -431,6 +433,7 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
             Self::SetBaritone(on) => f.debug_tuple("SetBaritone").field(on).finish(),
+            Self::Baritone(line) => f.debug_tuple("Baritone").field(line).finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
@@ -573,6 +576,8 @@ pub enum Field {
     NavigationX,
     NavigationY,
     NavigationZ,
+    /// Block name(s) for the Baritone tab's Mine button.
+    BaritoneBlock,
     Name,
     Color,
     PeerCode,
@@ -672,6 +677,19 @@ impl Helper {
         }
     }
 }
+/// What the buttons of the Baritone tab ask the port to do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BaritoneCmd {
+    Goto,
+    Mine,
+    Farm,
+    Explore,
+    Follow,
+    Come,
+    Pause,
+    Resume,
+    Cancel,
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BaritoneMode {
     #[default]
@@ -714,6 +732,8 @@ pub enum Control {
     AutoEat,
     /// The switch on the Baritone tab.
     BaritoneEnable,
+    /// A command button on the Baritone tab.
+    BaritoneCmd(BaritoneCmd),
     /// Switches one of the helpers of the Helpers tab.
     Helper(Helper),
     /// Cycles the auto-clicker's button: left or right.
@@ -921,6 +941,7 @@ pub struct Menu {
     pub navigation_x: String,
     pub navigation_y: String,
     pub navigation_z: String,
+    pub baritone_block: String,
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub navigation_choices_page: usize,
@@ -982,6 +1003,7 @@ impl Default for Menu {
             navigation_x: String::new(),
             navigation_y: String::new(),
             navigation_z: String::new(),
+            baritone_block: String::new(),
             navigation_waypoint: None,
             navigation_choices: None,
             navigation_choices_page: 0,
@@ -1160,6 +1182,7 @@ impl Menu {
         self.navigation_x = from.navigation_x.clone();
         self.navigation_y = from.navigation_y.clone();
         self.navigation_z = from.navigation_z.clone();
+        self.baritone_block = from.baritone_block.clone();
     }
     /// Footer line of the Baritone tabs: what each action key is bound to.
     /// Whether the Baritone tab is on screen with no text field taking the keys.
@@ -3534,6 +3557,35 @@ impl Menu {
         }
         out
     }
+    /// The command line (without the `#`) a Baritone tab button runs; None when its input is
+    /// missing or malformed, so a half-typed destination or block never starts anything.
+    pub fn baritone_line(&self, cmd: BaritoneCmd) -> Option<String> {
+        Some(match cmd {
+            BaritoneCmd::Goto => {
+                let [x, y, z] = self.navigation_position()?;
+                format!(
+                    "goto {} {} {}",
+                    x.floor() as i32,
+                    y.floor() as i32,
+                    z.floor() as i32
+                )
+            }
+            BaritoneCmd::Mine => {
+                let blocks: Vec<&str> = self.baritone_block.split_whitespace().collect();
+                if blocks.is_empty() {
+                    return None;
+                }
+                format!("mine {}", blocks.join(" "))
+            }
+            BaritoneCmd::Farm => "farm".into(),
+            BaritoneCmd::Explore => "explore".into(),
+            BaritoneCmd::Follow => "follow players".into(),
+            BaritoneCmd::Come => "come".into(),
+            BaritoneCmd::Pause => "pause".into(),
+            BaritoneCmd::Resume => "resume".into(),
+            BaritoneCmd::Cancel => "cancel".into(),
+        })
+    }
     /// The Baritone tab: the navigation port taken from the Baritone project (LGPL-3.0).
     fn baritone_layout(
         &self,
@@ -3542,43 +3594,107 @@ impl Menu {
         w: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let lines = [
-            self.language.text(
-                "Навигация Baritone: полный расчёт маршрутов, обходов, прыжков и подъёмов.",
-                "Baritone navigation: full route, detour, jump and climb planning.",
-            ),
-            self.language.text(
-                "Порт Baritone 1.21.4 (LGPL-3.0), см. mixins/draimhorizon/baritone/NOTICE.md.",
-                "Port of Baritone 1.21.4 (LGPL-3.0), see mixins/draimhorizon/baritone/NOTICE.md.",
-            ),
-            self.language.text(
-                "Команды начинаются с #: #goto, #mine, #farm, #build, #stop, #help.",
-                "Commands start with #: #goto, #mine, #farm, #build, #stop, #help.",
-            ),
-        ];
+        let l = self.language;
+        let gap = 4.0;
+        let button = |out: &mut Vec<Widget>, rect: [f32; 4], text: &str, cmd: BaritoneCmd| {
+            out.push(widget(rect, text, Some(Control::BaritoneCmd(cmd)), false));
+        };
+        // Row 1: the switch and the task controls.
+        let cw = (w - gap * 3.0) / 4.0;
         out.push(widget(
-            [x, 56.0, (w * 0.5).min(180.0), 22.0],
+            [x, 56.0, cw, 20.0],
             localized!(
-                self.language,
-                "Baritone: {}",
-                "Baritone: {}",
+                l,
+                "Вкл: {}",
+                "On: {}",
                 if model.baritone_enabled {
-                    self.language.text("вкл", "on")
+                    l.text("да", "yes")
                 } else {
-                    self.language.text("выкл", "off")
+                    l.text("нет", "no")
                 }
             ),
             Some(Control::BaritoneEnable),
             model.baritone_enabled,
         ));
-        for (i, line) in lines.into_iter().enumerate() {
+        for (i, (text, cmd)) in [
+            (l.text("Пауза", "Pause"), BaritoneCmd::Pause),
+            (l.text("Далее", "Resume"), BaritoneCmd::Resume),
+            (l.text("Отмена", "Cancel"), BaritoneCmd::Cancel),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            button(
+                &mut out,
+                [x + (i + 1) as f32 * (cw + gap), 56.0, cw, 20.0],
+                text,
+                cmd,
+            );
+        }
+        // Row 2: go to X Y Z.
+        let fw = (w - gap * 3.0) / 4.0;
+        for (i, (label, field, value)) in [
+            ("X", Field::NavigationX, &self.navigation_x),
+            ("Y", Field::NavigationY, &self.navigation_y),
+            ("Z", Field::NavigationZ, &self.navigation_z),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             out.push(widget(
-                [x, 88.0 + i as f32 * 16.0, w, 14.0],
-                line,
-                None,
-                false,
+                [x + i as f32 * (fw + gap), 80.0, fw, 20.0],
+                format!("{label}: {value}"),
+                Some(Control::Field(field)),
+                self.focus == Some(field),
             ));
         }
+        button(
+            &mut out,
+            [x + 3.0 * (fw + gap), 80.0, fw, 20.0],
+            l.text("Идти", "Go"),
+            BaritoneCmd::Goto,
+        );
+        // Row 3: mine a block.
+        out.push(widget(
+            [x, 104.0, w - fw - gap, 20.0],
+            localized!(l, "Блок: {}", "Block: {}", self.baritone_block),
+            Some(Control::Field(Field::BaritoneBlock)),
+            self.focus == Some(Field::BaritoneBlock),
+        ));
+        button(
+            &mut out,
+            [x + w - fw, 104.0, fw, 20.0],
+            l.text("Копать", "Mine"),
+            BaritoneCmd::Mine,
+        );
+        // Row 4: tasks without input.
+        for (i, (text, cmd)) in [
+            (l.text("Ферма", "Farm"), BaritoneCmd::Farm),
+            (l.text("Исследовать", "Explore"), BaritoneCmd::Explore),
+            (l.text("За игроком", "Follow"), BaritoneCmd::Follow),
+            (l.text("Ко мне", "Come"), BaritoneCmd::Come),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            button(
+                &mut out,
+                [x + i as f32 * (cw + gap), 128.0, cw, 20.0],
+                text,
+                cmd,
+            );
+        }
+        let mut hint = widget(
+            [x, 152.0, w, 14.0],
+            l.text(
+                "Baritone (LGPL-3.0): путь с обходами, прыжками и подъёмами",
+                "Baritone (LGPL-3.0): paths with detours, jumps and climbs",
+            ),
+            None,
+            false,
+        );
+        hint.muted = true;
+        out.push(hint);
         out
     }
     fn experimental_layout(
@@ -4972,6 +5088,7 @@ impl Menu {
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
+            Control::BaritoneCmd(cmd) => self.baritone_line(cmd).map(Action::Baritone),
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
             }
@@ -5918,6 +6035,7 @@ impl Menu {
                 self.navigation_player = None;
                 &mut self.navigation_z
             }
+            Field::BaritoneBlock => &mut self.baritone_block,
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
@@ -5937,6 +6055,7 @@ impl Menu {
             Some(Field::NavigationX) => &self.navigation_x,
             Some(Field::NavigationY) => &self.navigation_y,
             Some(Field::NavigationZ) => &self.navigation_z,
+            Some(Field::BaritoneBlock) => &self.baritone_block,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -6014,6 +6133,7 @@ impl Menu {
         let limit = match field {
             Field::SchematicOrigin => 80,
             Field::NavigationX | Field::NavigationY | Field::NavigationZ => 12,
+            Field::BaritoneBlock => 64,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -6031,6 +6151,8 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
+            || (field == Field::BaritoneBlock
+                && !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | ' ')))
             || (field == Field::SchematicOrigin
                 && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
             || (matches!(
@@ -7426,6 +7548,68 @@ mod tests {
                     Some(Action::SetBaritone(false))
                 ));
                 model.baritone_enabled = false;
+            }
+        }
+    }
+
+    #[test]
+    fn baritone_buttons_build_commands_only_from_valid_input() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        // No input yet: Goto and Mine start nothing, the rest are fixed commands.
+        assert_eq!(menu.baritone_line(BaritoneCmd::Goto), None);
+        assert_eq!(menu.baritone_line(BaritoneCmd::Mine), None);
+        for (cmd, line) in [
+            (BaritoneCmd::Farm, "farm"),
+            (BaritoneCmd::Explore, "explore"),
+            (BaritoneCmd::Follow, "follow players"),
+            (BaritoneCmd::Come, "come"),
+            (BaritoneCmd::Pause, "pause"),
+            (BaritoneCmd::Resume, "resume"),
+            (BaritoneCmd::Cancel, "cancel"),
+        ] {
+            assert_eq!(menu.baritone_line(cmd).as_deref(), Some(line));
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::BaritoneCmd(cmd)),
+                Some(Action::Baritone(l)) if l == line
+            ));
+        }
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("-0.2".into(), "64".into(), "120".into());
+        assert_eq!(
+            menu.baritone_line(BaritoneCmd::Goto).as_deref(),
+            Some("goto -1 64 120")
+        );
+        menu.navigation_y = "x".into();
+        assert_eq!(menu.baritone_line(BaritoneCmd::Goto), None);
+        menu.baritone_block = "  diamond_ore   minecraft:ancient_debris ".into();
+        assert_eq!(
+            menu.baritone_line(BaritoneCmd::Mine).as_deref(),
+            Some("mine diamond_ore minecraft:ancient_debris")
+        );
+        // The block field takes names only: no '#', no ';', no control characters.
+        menu.baritone_block.clear();
+        menu.focus = Some(Field::BaritoneBlock);
+        for c in "iron_ore#;\n x".chars() {
+            menu.character(c);
+        }
+        assert_eq!(menu.baritone_block, "iron_ore x");
+        // Every button and field is on the tab, inside it, at compact and wide sizes.
+        for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+            menu.navigation_menu = false;
+            let rows = menu.layout(&model, width, height);
+            for control in [
+                Control::BaritoneEnable,
+                Control::Field(Field::BaritoneBlock),
+                Control::BaritoneCmd(BaritoneCmd::Goto),
+                Control::BaritoneCmd(BaritoneCmd::Come),
+            ] {
+                let r = rows.iter().find(|r| r.control == Some(control));
+                let r = r.unwrap_or_else(|| panic!("{control:?} missing at {width}"));
+                assert!(r.rect[2] > 20.0 && r.rect[0] + r.rect[2] <= width + 1.0);
             }
         }
     }

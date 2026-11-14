@@ -1088,6 +1088,12 @@ pub fn chat(game: &mut Game<'_>, message: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// DraimHorizon: a command line (without the prefix) from a button of the Baritone tab.
+pub fn run_line(game: &mut Game<'_>, line: &str) {
+    let line = line.trim().to_owned();
+    with(game, |b, game| commands::run(b, game, &line));
+}
+
 /// `@baritone <line>` from a clicked chat line, and `/baritone <line>` typed with a slash.
 pub fn command(game: &mut Game<'_>, command: &str, ran: &mut bool) {
     let mut words = command.splitn(2, char::is_whitespace);

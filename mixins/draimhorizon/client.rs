@@ -1842,6 +1842,18 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             }
             Ok(Vec::new())
         }
+        Action::Baritone(line) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(crate::game::claim_borders_chat_view::current_language()
+                    .text(
+                        "Сначала включите Baritone на его вкладке",
+                        "Turn Baritone on in its tab first",
+                    )
+                    .into());
+            }
+            crate::game::baritone::run_line(game, &line);
+            Ok(Vec::new())
+        }
         Action::SchematicEdit(edit) => {
             use crate::game::claim_borders_menu::SchematicEdit;
             if edit == SchematicEdit::Build {
