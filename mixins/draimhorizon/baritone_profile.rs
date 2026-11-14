@@ -107,8 +107,14 @@ pub fn format(seconds: f64, entries: &[Entry]) -> String {
     out
 }
 
+/// A second's report and its slowest frame in milliseconds (0 when no frame was timed).
+pub struct Report {
+    pub text: String,
+    pub worst_frame_ms: f64,
+}
+
 /// When a second has passed since the window began: its report, and the window starts again.
-pub fn take_report(now: Instant) -> Option<String> {
+pub fn take_report(now: Instant) -> Option<Report> {
     WINDOW.with(|w| {
         let mut w = w.borrow_mut();
         let since = w.since?;
@@ -118,7 +124,14 @@ pub fn take_report(now: Instant) -> Option<String> {
         }
         let entries = std::mem::take(&mut w.entries);
         w.since = None;
-        Some(format(seconds, &entries))
+        let worst_frame_ms = entries
+            .iter()
+            .find(|e| e.name.starts_with("frame ("))
+            .map_or(0.0, |e| e.max.as_secs_f64() * 1000.0);
+        Some(Report {
+            text: format(seconds, &entries),
+            worst_frame_ms,
+        })
     })
 }
 
@@ -157,7 +170,8 @@ mod tests {
         assert!(take_report(Instant::now()).is_none());
         let later = Instant::now() + Duration::from_millis(1100);
         let report = take_report(later).expect("a second has passed");
-        assert!(report.contains("tick"));
+        assert!(report.text.contains("tick"));
+        assert_eq!(report.worst_frame_ms, 0.0);
         assert!(take_report(later).is_none());
     }
 

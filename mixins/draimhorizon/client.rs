@@ -153,6 +153,8 @@ enum Relay {
 }
 
 struct Client {
+    /// The game tick the map's source was last rebuilt at (see `frame`).
+    map_tick: u64,
     reconnect_initialized: bool,
     scope: String,
     own: u128,
@@ -199,6 +201,7 @@ struct Client {
 impl Default for Client {
     fn default() -> Self {
         Self {
+            map_tick: u64::MAX,
             reconnect_initialized: false,
             scope: String::new(),
             own: 0,
@@ -392,20 +395,46 @@ pub(super) fn frame(game: &mut Game<'_>) {
             game.native_set_setting(claims::SETTINGS_ID, "auto_reconnect_initialized", "true");
         }
     }
-    crate::game::claim_borders_chat_view::frame(game);
-    crate::game::claim_borders_ore_view::frame(game);
-    crate::game::claim_borders_auto_trust_view::frame(game);
-    crate::game::claim_borders_economy_client::frame(game);
-    crate::game::claim_borders_outgoing_view::frame(game);
-    crate::game::claim_borders_teleport_view::frame(game);
-    crate::game::claim_borders_claim_memory::frame(game);
-    crate::game::claim_borders_claim_observations_view::frame(game);
-    crate::game::claim_borders_seed_found_view::frame(game);
-    crate::game::claim_borders_schematic_share_view::frame(game);
-    service_menu(game);
-    crate::game::claim_borders_waypoint_view::frame(game);
-    crate::game::claim_borders_inventory_search_view::frame(game);
-    crate::game::claim_borders_inventory_sort_view::frame(game);
+    crate::game::claim_borders_baritone_profile::time("frame: chat_view", || {
+        crate::game::claim_borders_chat_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: ore_view", || {
+        crate::game::claim_borders_ore_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: auto_trust_view", || {
+        crate::game::claim_borders_auto_trust_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: economy_client", || {
+        crate::game::claim_borders_economy_client::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: outgoing_view", || {
+        crate::game::claim_borders_outgoing_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: teleport_view", || {
+        crate::game::claim_borders_teleport_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: claim_memory", || {
+        crate::game::claim_borders_claim_memory::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: claim_observations_view", || {
+        crate::game::claim_borders_claim_observations_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: seed_found_view", || {
+        crate::game::claim_borders_seed_found_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: schematic_share_view", || {
+        crate::game::claim_borders_schematic_share_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: service_menu", || service_menu(game));
+    crate::game::claim_borders_baritone_profile::time("frame: waypoint_view", || {
+        crate::game::claim_borders_waypoint_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: inventory_search_view", || {
+        crate::game::claim_borders_inventory_search_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: inventory_sort_view", || {
+        crate::game::claim_borders_inventory_sort_view::frame(game)
+    });
     if !game.native_on(claims::ID) {
         crate::game::claim_borders_map_view::reset();
         return;
@@ -429,9 +458,26 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
             poll_network(game);
         }
-        prepare_avatars(game);
-        let source = map_snapshot(game);
-        crate::game::claim_borders_map_view::sync(game, source);
+        // The map's source (every claim, mark and mob, the avatars) is built again a tick at a
+        // time, not every frame: it was a quarter of a frame at 300 frames a second. While the mod's
+        // screen is open it follows every frame, and the player's own place on the minimap always does.
+        let ticks = game.ticks as u64;
+        let rebuild = game.native_mod_screen() == Some(claims::ID)
+            || state(|c| std::mem::replace(&mut c.map_tick, ticks) != ticks);
+        if rebuild {
+            crate::game::claim_borders_baritone_profile::time("frame: avatars", || {
+                prepare_avatars(game)
+            });
+            let source =
+                crate::game::claim_borders_baritone_profile::time("frame: map snapshot", || {
+                    map_snapshot(game)
+                });
+            crate::game::claim_borders_baritone_profile::time("frame: map sync", || {
+                crate::game::claim_borders_map_view::sync(game, source)
+            });
+        } else if let Some(p) = game.native_player() {
+            crate::game::claim_borders_map_view::pose([p.x, p.y, p.z], game.yaw);
+        }
     }
     for (dimension, position) in crate::game::claim_borders_map_view::take_points() {
         if let Err(e) = add_map_waypoint(game, &dimension, position) {

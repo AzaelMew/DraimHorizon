@@ -150,14 +150,22 @@ fn restore(b: &mut baritone::Baritone, saved: Saved) {
 /// keeps the snapshot of the tab fresh.
 pub fn tick(game: &mut Game<'_>) {
     super::claim_borders_baritone_profile::time("bridge tick", || tick_inner(game));
-    // With the profiler on, what the last second of the port's work cost goes to `profile.txt`.
+    // With the profiler on, what the last second of the port's work cost goes to `profile.txt`, and
+    // the second with the slowest frame so far to `profile-peak.txt`.
     if super::claim_borders_baritone_profile::enabled()
         && let Some(report) =
             super::claim_borders_baritone_profile::take_report(std::time::Instant::now())
     {
+        thread_local! {
+            static WORST: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+        }
         let dir = game.native_data_dir(baritone::ID);
-        let _ = std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(dir.join("profile.txt"), report));
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("profile.txt"), &report.text);
+        if report.worst_frame_ms > WORST.with(std::cell::Cell::get) {
+            WORST.with(|w| w.set(report.worst_frame_ms));
+            let _ = std::fs::write(dir.join("profile-peak.txt"), &report.text);
+        }
     }
 }
 fn tick_inner(game: &mut Game<'_>) {

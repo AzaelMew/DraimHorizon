@@ -146,6 +146,19 @@ pub(super) fn sync(game: &Game<'_>, source: model::Snapshot) {
         s.source = Some(source);
     });
 }
+/// Between two rebuilds of the source (`sync`, once a tick): the player's place and heading,
+/// which the minimap and a map that follows the player show every frame.
+pub(super) fn pose(position: [f64; 3], yaw: f32) {
+    state(|s| {
+        if let Some(source) = s.source.as_mut() {
+            source.player = position;
+            source.yaw = yaw;
+        }
+        if s.follow {
+            s.view.center = [position[0], position[2]];
+        }
+    });
+}
 /// Where the full map's mode and worlds chosen last are kept.
 const SELECTION: &str = "map_selection";
 pub(super) fn selection(game: &Game<'_>) -> model::Selection {
