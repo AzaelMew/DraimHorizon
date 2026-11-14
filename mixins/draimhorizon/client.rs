@@ -1636,6 +1636,12 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames_read(game),
             schematic_layers: crate::game::claim_borders_schematic_view::layers(game),
+            schematic_verify: crate::game::claim_borders_schematic_verify::active().then(|| {
+                crate::game::claim_borders_schematic_verify::kind_name(
+                    crate::game::claim_borders_schematic_verify::kind(),
+                )
+                .to_owned()
+            }),
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
@@ -1870,6 +1876,21 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "Папка схем открыта (путь скопирован). Положите .schem / .litematic и выберите файл.",
                 "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
             )])
+        }
+        Action::SchematicVerify => {
+            crate::game::claim_borders_schematic_verify::toggle(game)?;
+            Ok(Vec::new())
+        }
+        Action::SchematicVerifyKind => {
+            crate::game::claim_borders_schematic_verify::cycle_kind();
+            Ok(Vec::new())
+        }
+        Action::SchematicVerifyReport => {
+            use horizon_client::clipboard::Clipboard;
+            let report = crate::game::claim_borders_schematic_verify::report(game)
+                .ok_or_else(|| tr!("Проверка не включена", "The verifier is off").to_string())?;
+            game.clipboard.set(&report);
+            Ok(Vec::new())
         }
         Action::SchematicInfo(folder) => {
             use horizon_client::clipboard::Clipboard;

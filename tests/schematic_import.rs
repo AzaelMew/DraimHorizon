@@ -109,4 +109,69 @@ mod tests {
         }
         assert!(safe_filename("Дом.litematic"));
     }
+    #[test]
+    fn a_mirrored_preview_flips_cells_and_states_the_way_the_game_mirrors_them() {
+        use claim_borders::schematic_places::{place, unplace};
+        let st = |t: &str| BlockState::parse(t).unwrap();
+        // Across Z: north and south change places, east and west stay.
+        let across_z = st("minecraft:furnace[facing=north]").mirrored(1);
+        assert_eq!(across_z.properties["facing"], "south");
+        assert_eq!(
+            st("minecraft:furnace[facing=east]").mirrored(1).properties["facing"],
+            "east"
+        );
+        assert_eq!(
+            st("minecraft:furnace[facing=east]").mirrored(2).properties["facing"],
+            "west"
+        );
+        // A sign's 16 steps: 0 (south) stays across X, 8 (north) goes to 0 across Z.
+        assert_eq!(
+            st("minecraft:oak_sign[rotation=4]").mirrored(1).properties["rotation"],
+            "4"
+        );
+        assert_eq!(
+            st("minecraft:oak_sign[rotation=4]").mirrored(2).properties["rotation"],
+            "12"
+        );
+        // Doors swap their hinge, stairs corners their side, rails their slope.
+        assert_eq!(
+            st("minecraft:oak_door[facing=east,hinge=left]")
+                .mirrored(1)
+                .properties["hinge"],
+            "right"
+        );
+        let stair = st("minecraft:oak_stairs[facing=north,shape=inner_left]").mirrored(1);
+        assert_eq!(
+            (
+                stair.properties["facing"].as_str(),
+                stair.properties["shape"].as_str()
+            ),
+            ("south", "inner_right")
+        );
+        assert_eq!(
+            st("minecraft:oak_stairs[facing=east,shape=inner_left]")
+                .mirrored(1)
+                .properties["shape"],
+            "inner_left"
+        );
+        assert_eq!(
+            st("minecraft:rail[shape=ascending_north]")
+                .mirrored(1)
+                .properties["shape"],
+            "ascending_south"
+        );
+        // A mirror twice is no mirror, and a turn comes after it.
+        let s = st("minecraft:furnace[facing=north]");
+        assert_eq!(s.mirrored(1).mirrored(1), s);
+        assert_eq!(s.transformed(4 + 1).properties["facing"], "west");
+        // Cells: place and unplace undo each other for every turn and mirror.
+        for code in 0..12 {
+            for at in [[3, 1, -2], [0, 5, 7], [-4, 0, 0]] {
+                let w = place(at, [10, 64, -20], code);
+                assert_eq!(unplace(w, [10, 64, -20], code), at, "{code}");
+            }
+        }
+        assert_eq!(place([3, 0, 2], [0, 0, 0], 4), [3, 0, -2]);
+        assert_eq!(place([3, 0, 2], [0, 0, 0], 8), [-3, 0, 2]);
+    }
 }

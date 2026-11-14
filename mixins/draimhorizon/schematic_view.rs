@@ -121,7 +121,7 @@ pub(super) fn preview(game: &Game<'_>, file: String, origin: places::Pos, rotati
         };
         if let Some(pl) = p.list.get_mut(index) {
             pl.origin = origin;
-            pl.rotation = rotation % 4;
+            pl.rotation = rotation % 12;
             pl.visible = true;
         }
         p.active = Some(index);
@@ -191,7 +191,7 @@ pub(super) fn remove(game: &Game<'_>, index: usize) {
     });
 }
 /// The file's blocks for drawing, read in the background the first time.
-fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
+pub(super) fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
     shape_in(workshop::folder(game), file, file)
 }
 /// A file of `folder` read for drawing, kept under `key` (a friend's file is kept apart from the
@@ -322,6 +322,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    crate::game::claim_borders_schematic_verify::render(game, g);
     let (mode, layer) = layers(game);
     for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);
@@ -454,7 +455,7 @@ pub(super) fn keys(game: &mut Game<'_>) {
             }
             if shown {
                 if fresh[2] {
-                    pl.rotation = (pl.rotation + 1) % 4;
+                    pl.rotation = pl.rotation / 4 * 4 + (pl.rotation % 4 + 1) % 4;
                 }
                 if fresh[3]
                     && let Some(feet) = feet
@@ -523,7 +524,15 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         (places::LayerMode::Single, n) => format!(" · {} {}", text("слой", "layer"), n + 1),
         (places::LayerMode::Below, n) => format!(" · {} 1–{}", text("слои", "layers"), n + 1),
     };
-    let place = format!("XYZ {x} {y} {z} · {}°{layer}", u16::from(pl.rotation) * 90);
+    let mirror = match pl.rotation / 4 {
+        1 => format!(" · {}", text("зеркало Z", "mirror Z")),
+        2 => format!(" · {}", text("зеркало X", "mirror X")),
+        _ => String::new(),
+    };
+    let place = format!(
+        "XYZ {x} {y} {z} · {}°{mirror}{layer}",
+        u16::from(pl.rotation % 4) * 90
+    );
     // Status chips: (colour, text).
     let mut chips: Vec<(u32, String)> = Vec::new();
     match (&error, blocks) {
@@ -557,6 +566,36 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
                     chips.push((style::BAD, format!("{} {wrong}", text("Неверных", "Wrong"))));
                 }
             }
+        }
+    }
+    // The verifier's numbers, when it is on (Litematica's types and colours).
+    if let Some((percent, last)) = crate::game::claim_borders_schematic_verify::summary() {
+        match last {
+            Some(t) => {
+                let names = [
+                    (0x00ffffu32, text("нет", "missing")),
+                    (0xff00cf, text("лишних", "extra")),
+                    (0xff0000, text("не тот блок", "wrong block")),
+                    (0xffaf00, text("не то сост.", "wrong state")),
+                    (0xfaf000, text("другой блок", "different")),
+                ];
+                chips.push((
+                    style::GOOD,
+                    format!("{} {}/{}", text("Верно", "Right"), t.correct, t.wanted),
+                ));
+                for (i, (color, name)) in names.into_iter().enumerate() {
+                    if t.counts[i] > 0 {
+                        chips.push((0xff00_0000 | color, format!("{} {}", name, t.counts[i])));
+                    }
+                }
+                if percent < 100 {
+                    chips.push((style::MUTED, format!("{percent}%")));
+                }
+            }
+            None => chips.push((
+                style::MUTED,
+                format!("{} {percent}%", text("Проверка", "Verifying")),
+            )),
         }
     }
     // The four move keys get a row of their own; the rest sit in two columns below.
@@ -762,7 +801,13 @@ pub(super) fn edit_active(
             }
             E::Rotate => {
                 let pl = &mut p.list[index];
-                pl.rotation = (pl.rotation + 1) % 4;
+                // The turn is the low two bits, the mirror above them.
+                pl.rotation = pl.rotation / 4 * 4 + (pl.rotation % 4 + 1) % 4;
+                pl.visible = true;
+            }
+            E::Mirror => {
+                let pl = &mut p.list[index];
+                pl.rotation = (pl.rotation / 4 + 1) % 3 * 4 + pl.rotation % 4;
                 pl.visible = true;
             }
             E::Here => {

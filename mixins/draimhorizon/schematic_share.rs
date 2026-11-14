@@ -148,7 +148,7 @@ impl Frame {
                             int(&r[5]).ok_or("invalid preview origin")?,
                         ],
                         rotation: small(&r[6])
-                            .filter(|t| *t < 4)
+                            .filter(|t| *t < 12)
                             .ok_or("invalid preview rotation")?
                             as u8,
                         hash: unhex(&r[7]).ok_or("invalid preview hash")?,
@@ -360,7 +360,7 @@ mod tests {
         }
         bad.push(Frame::List(vec![good.clone(), good.clone()]).encode());
         bad.push(Frame::List(vec![good.clone(); MAX_LISTED + 1]).encode());
-        bad.push(format!(r#"{PREFIX}["l",[[1,"a.litematic","minecraft:overworld",0,0,0,4,"0000000000000005",10]]]"#));
+        bad.push(format!(r#"{PREFIX}["l",[[1,"a.litematic","minecraft:overworld",0,0,0,12,"0000000000000005",10]]]"#));
         bad.push(format!(r#"{PREFIX}["w","05",0]"#));
         bad.push(format!(r#"{PREFIX}["p","0000000000000005",3,3,"AAAA"]"#));
         bad.push(format!(r#"{PREFIX}["p","0000000000000005",0,1,"A==="]"#));

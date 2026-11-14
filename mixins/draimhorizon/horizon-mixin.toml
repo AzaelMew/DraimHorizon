@@ -113,6 +113,18 @@ name = "claim_borders_autoclick"
 source = "autoclick.rs"
 
 [[module]]
+id = "litematica-verifier"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_litematica_verifier"
+source = "litematica/verifier.rs"
+
+[[module]]
+id = "schematic-verify"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_schematic_verify"
+source = "schematic_verify.rs"
+
+[[module]]
 id = "schematic-places"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_schematic_places"

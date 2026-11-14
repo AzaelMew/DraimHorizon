@@ -165,6 +165,8 @@ pub struct ViewModel {
     pub schematic_friend_places: Vec<(String, bool)>,
     /// This player's choice of preview layers to draw, and the chosen layer.
     pub schematic_layers: (super::claim_borders_schematic_places::LayerMode, i32),
+    /// The verifier of the selected preview: `None` off; on, the name of the type it draws.
+    pub schematic_verify: Option<String>,
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
@@ -269,6 +271,8 @@ pub enum SchematicEdit {
     Move([i32; 3]),
     /// Turn it a quarter clockwise.
     Rotate,
+    /// Mirror it: across Z, across X, as it was.
+    Mirror,
     /// Bring its origin to where the player stands.
     Here,
     /// Show or hide it.
@@ -358,6 +362,10 @@ pub enum Action {
     FarmPlotRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
+    /// The verifier: on or off, the next type to draw, the report to the clipboard.
+    SchematicVerify,
+    SchematicVerifyKind,
+    SchematicVerifyReport,
     /// Keeps this player's choice of preview layers (mode and layer).
     SchematicLayers(super::claim_borders_schematic_places::LayerMode, i32),
     LoadSchematic {
@@ -530,6 +538,9 @@ impl std::fmt::Debug for Action {
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
+            Self::SchematicVerify => f.write_str("SchematicVerify"),
+            Self::SchematicVerifyKind => f.write_str("SchematicVerifyKind"),
+            Self::SchematicVerifyReport => f.write_str("SchematicVerifyReport"),
             Self::SchematicLayers(mode, layer) => f
                 .debug_tuple("SchematicLayers")
                 .field(mode)
@@ -936,6 +947,9 @@ pub enum Control {
     SchematicRefresh,
     SchematicRotation,
     SchematicMaterials,
+    SchematicVerify,
+    SchematicVerifyKind,
+    SchematicVerifyReport,
     SchematicFolder,
     ConstructDirection,
     ConstructLength,
@@ -2281,12 +2295,13 @@ impl Menu {
         if y + row <= limit {
             let edits = [
                 (l.text("Повернуть", "Turn"), SchematicEdit::Rotate),
+                (l.text("Отразить", "Mirror"), SchematicEdit::Mirror),
                 (l.text("Ко мне", "To me"), SchematicEdit::Here),
                 (l.text("Вид", "View"), SchematicEdit::Look),
             ];
             for (i, (label, edit)) in edits.into_iter().enumerate() {
                 out.push(widget(
-                    cells(3, i, y),
+                    cells(4, i, y),
                     label,
                     Some(Control::SchematicEdit(edit)),
                     false,
@@ -2317,6 +2332,35 @@ impl Menu {
                 Some(Control::SchematicMaterials),
                 false,
             ));
+            y += row;
+        }
+        // The verifier (Litematica's): compares the preview with the world and marks the
+        // differences by type.
+        if y + row <= limit {
+            out.push(widget(
+                cells(3, 0, y),
+                if model.schematic_verify.is_some() {
+                    l.text("Проверка: вкл", "Verify: on")
+                } else {
+                    l.text("Проверка: выкл", "Verify: off")
+                },
+                Some(Control::SchematicVerify),
+                model.schematic_verify.is_some(),
+            ));
+            if let Some(kind) = &model.schematic_verify {
+                out.push(widget(
+                    cells(3, 1, y),
+                    localized!(l, "Тип: {}", "Type: {}", kind),
+                    Some(Control::SchematicVerifyKind),
+                    false,
+                ));
+                out.push(widget(
+                    cells(3, 2, y),
+                    l.text("Отчёт", "Report"),
+                    Some(Control::SchematicVerifyReport),
+                    false,
+                ));
+            }
             y += row;
         }
         // Layers: this player's own view of every preview (all, one layer, up to a layer).
@@ -5985,6 +6029,9 @@ impl Menu {
                 None
             }
             Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
+            Control::SchematicVerify => Some(Action::SchematicVerify),
+            Control::SchematicVerifyKind => Some(Action::SchematicVerifyKind),
+            Control::SchematicVerifyReport => Some(Action::SchematicVerifyReport),
             Control::SchematicFolder => Some(Action::OpenSchematicFolder),
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;

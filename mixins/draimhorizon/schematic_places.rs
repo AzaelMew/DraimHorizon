@@ -30,7 +30,7 @@ pub fn encode(list: &[Placement]) -> String {
                 p.origin[0],
                 p.origin[1],
                 p.origin[2],
-                p.rotation % 4,
+                p.rotation % 12,
                 u8::from(p.visible)
             )
         })
@@ -49,7 +49,7 @@ pub fn decode(text: &str) -> Vec<Placement> {
                 scope: scope.to_owned(),
                 file: file.to_owned(),
                 origin: [x.parse().ok()?, y.parse().ok()?, z.parse().ok()?],
-                rotation: rotation.parse::<u8>().ok()? % 4,
+                rotation: rotation.parse::<u8>().ok()? % 12,
                 visible: visible == "1",
             })
         })
@@ -84,6 +84,11 @@ pub fn stable_world(scope: &str) -> String {
 /// builder turns it (`Blueprint::transformed`).
 pub fn place(relative: Pos, origin: Pos, rotation: u8) -> Pos {
     let mut at = relative;
+    match rotation / 4 % 3 {
+        1 => at[2] = -at[2],
+        2 => at[0] = -at[0],
+        _ => {}
+    }
     for _ in 0..rotation % 4 {
         at = [-at[2], at[1], at[0]];
     }
@@ -103,6 +108,11 @@ pub fn unplace(world: Pos, origin: Pos, rotation: u8) -> Pos {
     ];
     for _ in 0..rotation % 4 {
         at = [at[2], at[1], -at[0]];
+    }
+    match rotation / 4 % 3 {
+        1 => at[2] = -at[2],
+        2 => at[0] = -at[0],
+        _ => {}
     }
     at
 }
