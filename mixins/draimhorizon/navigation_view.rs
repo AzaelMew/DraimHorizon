@@ -3720,7 +3720,7 @@ fn swim_steer(game: &Game<'_>, position: [f64; 3], target: [f64; 3], yaw: f32) -
         crate::game::claim_borders_construction::steer(position, target, yaw)
     }
 }
-/// "Human look" is on unless the player switched it off (Experiments → Helpers).
+/// "Human look" is on unless the player switched it off (QOL → Automation).
 pub(super) fn human_look_enabled(game: &Game<'_>) -> bool {
     game.native_setting(claims::SETTINGS_ID, "human_look")
         .as_deref()

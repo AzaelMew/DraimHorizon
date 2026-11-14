@@ -30,6 +30,10 @@ fn preview(menu: &menu::Menu, size: [f32; 2]) -> String {
     let model = menu::ViewModel {
         language: menu.language,
         auto_eat: true,
+        shulker_peek: true,
+        auto_reconnect: true,
+        show_invisible_entities: true,
+        helpers: [false, false, true, false, true, true],
         navigation_status: menu
             .language
             .text(
@@ -247,11 +251,39 @@ fn main() -> std::io::Result<()> {
                 [800.0, 500.0],
             ),
             (
-                "helpers",
-                menu::Tab::Experimental,
+                "qol-survival",
+                menu::Tab::Helpers,
                 0,
-                menu::ExperimentalSection::Helpers,
+                menu::ExperimentalSection::Ores,
                 [800.0, 500.0],
+            ),
+            (
+                "qol-gear",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "qol-automation",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "qol-survival-compact",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [360.0, 280.0],
+            ),
+            (
+                "qol-gear-minimum",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [240.0, 216.0],
             ),
             (
                 "compact",
@@ -266,6 +298,15 @@ fn main() -> std::io::Result<()> {
             menu.tab = tab;
             menu.settings_section = section;
             menu.experimental_section = experimental_section;
+            if let Some(category) = name.strip_prefix("qol-") {
+                menu.helper_category = if category.starts_with("gear") {
+                    menu::HelperCategory::Gear
+                } else if category.starts_with("automation") {
+                    menu::HelperCategory::Automation
+                } else {
+                    menu::HelperCategory::Survival
+                };
+            }
             if name.starts_with("mining-") {
                 menu.baritone_mode = menu::BaritoneMode::Mining;
             }

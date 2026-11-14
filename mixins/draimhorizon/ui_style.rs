@@ -1856,6 +1856,7 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Пати" | "Друзья" | "Friends" => Some(People),
         "Клеймы" | "Приваты" | "Claims" => Some(Shield),
         "Чат" | "Chat" => Some(Chat),
+        "Помощники" | "QOL" => Some(Activity),
         "Эксперименты" | "Experiments" => Some(Star),
         "Торги" | "Торговля" | "Trading" | "AH" | "Аукц." => Some(Market),
         "Цены" | "Prices" => Some(Wallet),

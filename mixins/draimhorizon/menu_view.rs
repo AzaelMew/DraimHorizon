@@ -15,6 +15,7 @@ struct State {
     // Release is consumed only if this screen consumed the matching press.
     pressed: Vec<i32>,
     height: f32,
+    screen_size: [f32; 2],
     suppress_shortcut: Option<(char, std::time::Instant)>,
     paste_fields: VecDeque<model::Field>,
 }
@@ -202,6 +203,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     });
     state(|s| {
         s.height = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
+        s.screen_size = size(screen);
         s.menu.clamp_page(&s.model, s.height);
         if s.menu.experiments_prompt {
             ui::fill(game, batch, screen.rect, 0xcc080b12);
@@ -314,9 +316,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Вид, уведомления, антиспам и перевод",
                         "Style, notifications, anti-spam and translation",
                     ),
+                    model::Tab::Helpers => (
+                        "Выживание, предметы, автоматика и удобства",
+                        "Survival, gear, automation and conveniences",
+                    ),
                     model::Tab::Experimental => (
-                        "Автоматизация, помощники и расширенные инструменты",
-                        "Automation, helpers and advanced tools",
+                        "Подсветка руд и инструменты Baritone",
+                        "Ore highlighting and Baritone tools",
                     ),
                     model::Tab::Settings => (
                         "Оформление, связь, список игроков и боковая панель",
@@ -509,6 +515,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         model::Control::SettingsTab(_)
                             | model::Control::TradingGroup(_)
                             | model::Control::ExperimentalTab(_)
+                            | model::Control::HelperCategory(_)
                             | model::Control::BaritoneMode(_)
                             | model::Control::ClaimsSection(_)
                             | model::Control::ChatSection(_)
@@ -862,6 +869,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                                 model::Tab::Party => ("Друзья и игроки", "Friends and players"),
                                 model::Tab::Claims => ("Карта и приваты", "Map and claims"),
                                 model::Tab::Chat => ("Чат", "Chat"),
+                                model::Tab::Helpers => ("Помощники", "QOL"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
                                 model::Tab::Settings => ("Настройки", "Settings"),
                                 model::Tab::Trading => ("Торговля", "Trading"),
@@ -1026,6 +1034,14 @@ pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut boo
                 enqueue(s, model::Action::BaritoneKey(action));
                 return;
             }
+        }
+        if modifiers == 0
+            && matches!(key, "key.keyboard.page_up" | "key.keyboard.page_down")
+            && s.menu
+                .helper_page_key(&s.model, s.screen_size, key.ends_with("down"))
+        {
+            *canceled = true;
+            return;
         }
         if s.menu.key(key, modifiers) {
             *canceled = true;

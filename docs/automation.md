@@ -39,7 +39,7 @@ A job does not stop because something is missing or went wrong. It stays up, sho
 
 ## Shulker box preview
 
-Not a Baritone feature. Hover a shulker box that holds something (inventory, chest, creative tabs, recipe book, chat) and its tooltip shows the contents as a 9x3 grid, tinted with the dye colour of the box. Switch it off in J > Settings > General ("Shulker preview").
+Not a Baritone feature. Hover a shulker box that holds something (inventory, chest, creative tabs, recipe book, chat) and its tooltip shows the contents as a 9x3 grid, tinted with the dye colour of the box. Switch it off in J > QOL > Gear ("Shulker preview").
 
 ## Drain
 

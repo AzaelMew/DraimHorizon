@@ -7,7 +7,8 @@
 - **Friends**: friends, online mod users, invitations and important players. Identity verification and consent are unchanged.
 - **Chat**: Style / position (including the translation switches), Notifications, Anti-spam and DeepL.
 - **Trading**: a dedicated navigation destination. General, economy overlay, updates, profit and fees preferences are grouped here; **Open trading workspace** opens prices, auction observations, estimates and sale planning. Trading is not duplicated as a normal Settings category.
-- **Experiments**: ore overlay, automation tasks and helpers. Explicit experimental consent is preserved; opening a page does not start a task.
+- **QOL** (Russian: Помощники): its own tab, grouped as Survival, Gear and Automation; each switch sits with the choices that depend on it and shows a localized on/off state. It also holds Protect glow berry vines, Show invisible entities, Shulker preview and Auto reconnect, which left Settings → General. Switching a helper on, or Show invisible entities on, before the experimental warning is accepted still shows it.
+- **Experiments**: ore overlay and automation tasks. Explicit experimental consent is preserved; opening a page does not start a task.
 - **Settings**: General, Network, Player list and Sidebar. Existing persistence keys and defaults are unchanged.
 
 Wide, sufficiently tall GUIs use the labelled rail. Smaller GUIs use a labelled Section selector with a two-column destination chooser, rather than six truncated tab captions. Settings and language remain available outside the chooser.
@@ -34,7 +35,7 @@ Wide, sufficiently tall GUIs use the labelled rail. Smaller GUIs use a labelled 
 | Inventory tools | Sorting, Buttons and Safety categories. Each movement direction has its own visible control; right-click reversal remains an optional shortcut. Template, reset, exclusions and virtual-menu protection remain available. Save/Cancel stay fixed while settings paginate. |
 | Translation language editor | Centred card: My messages (I write in → Send as) and Chat messages (Chat is in → Show as), all languages at once with a check on the choice, common-language switch, Cancel/Save. Paging only when the GUI is too small. |
 | Appearance | Full-size control rows and fixed Save/Cancel. Small GUIs paginate instead of shrinking rows; keyboard focus reveals the appropriate page. |
-| Helpers | Full-height toggles and explicit click-button/rate controls. Small GUIs paginate while larger GUIs retain explanatory text. |
+| QOL | Tab with Survival, Gear and Automation categories; full-height toggles, dependent choices indented under their switch, explicit click-button/rate controls. Small GUIs paginate whole switch groups while larger GUIs retain explanatory text; Tab / Page Up / Page Down / Escape work from the keyboard. |
 | Remaining automation forms | Existing task choices, preview/start/stop controls, material requirements and server acknowledgement gates are retained. Shared control styling and tooltips apply; no gameplay driver was rewritten for this review. |
 | Friend, claim and chat settings | Existing filters, explicit player actions, editable colors, provider fields and per-section paging are retained. Secrets stay masked and are not disclosed by hover hints. |
 

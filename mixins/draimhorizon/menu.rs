@@ -564,12 +564,26 @@ impl std::fmt::Debug for Action {
         }
     }
 }
+/// One row of a Helpers category: a switch with its hint, or the auto-clicker's pair of choices.
+#[derive(Clone, Debug)]
+enum HelperRow {
+    Toggle {
+        label: String,
+        control: Control,
+        on: bool,
+        hint: String,
+        /// `Some(active)` for a choice that depends on the switch above it.
+        parent: Option<bool>,
+    },
+    Click,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tab {
     Waypoints,
     Party,
     Claims,
     Chat,
+    Helpers,
     Experimental,
     Trading,
     Settings,
@@ -581,6 +595,7 @@ impl Tab {
             Self::Party => language.text("Друзья", "Friends"),
             Self::Claims => language.text("Карта и приваты", "Map and claims"),
             Self::Chat => language.text("Чат", "Chat"),
+            Self::Helpers => language.text("Помощники", "QOL"),
             Self::Experimental => language.text("Эксперименты", "Experiments"),
             Self::Trading => language.text("Торговля", "Trading"),
             Self::Settings => language.text("Настройки", "Settings"),
@@ -628,8 +643,10 @@ const CLAIMS_SELECTOR: f32 = 24.0;
 pub const RAIL_WIDTH: f32 = 128.0;
 /// A labelled rail must leave enough room for the editors, not just fit beside them.
 pub const RAIL_BREAKPOINT: f32 = 520.0;
+/// Seven destinations above Settings keep the targets they had with six at 244.
+pub const RAIL_MIN_HEIGHT: f32 = 268.0;
 pub fn rail_width(panel_width: f32, panel_height: f32) -> f32 {
-    if panel_width >= RAIL_BREAKPOINT && panel_height >= 244.0 {
+    if panel_width >= RAIL_BREAKPOINT && panel_height >= RAIL_MIN_HEIGHT {
         RAIL_WIDTH
     } else {
         0.0
@@ -640,8 +657,31 @@ pub enum ExperimentalSection {
     #[default]
     Ores,
     Baritone,
-    /// Switches for the helpers that work on their own: eating, totem, refill, tools.
-    Helpers,
+}
+/// The task groups of the Helpers tab, in the order they are offered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HelperCategory {
+    /// Staying alive: eating, the allowed foods, healing and the totem.
+    #[default]
+    Survival,
+    /// Keeping the hands equipped: hotbar refill and tool choice.
+    Gear,
+    /// Things the bot or the client does on its own: resume, camera and clicking.
+    Automation,
+}
+impl HelperCategory {
+    pub const ALL: [HelperCategory; 3] = [Self::Survival, Self::Gear, Self::Automation];
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Survival => language.text("Выживание", "Survival"),
+            Self::Gear => language.text("Снаряжение", "Gear"),
+            Self::Automation => language.text("Автоматика", "Automation"),
+        }
+    }
+    pub fn next(self, forward: bool) -> Self {
+        let at = Self::ALL.iter().position(|c| *c == self).unwrap_or(0);
+        Self::ALL[(at + if forward { 1 } else { Self::ALL.len() - 1 }) % Self::ALL.len()]
+    }
 }
 /// A helper that works while the player plays by hand (eating is separate: `Control::AutoEat`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -806,6 +846,7 @@ pub enum Control {
     NavigationChoicesPage(i8),
     SchematicChoice(usize),
     ExperimentalTab(ExperimentalSection),
+    HelperCategory(HelperCategory),
     HelperPage(usize),
     ToggleReconnect,
     SettingsTab(u8),
@@ -958,7 +999,10 @@ pub struct Menu {
     pub farm_plot_page: usize,
     pub experiments_prompt: bool,
     pub experimental_section: ExperimentalSection,
+    pub helper_category: HelperCategory,
     pub helper_page: usize,
+    /// The tab to show once the experiments warning is confirmed.
+    pub experiments_return: Tab,
     pub auto_eat_food_picker: bool,
     pub auto_eat_food_page: usize,
     deepl_key: String,
@@ -1027,7 +1071,9 @@ impl Default for Menu {
             construct_height: 2,
             construct_floor: true,
             experimental_section: ExperimentalSection::default(),
+            helper_category: HelperCategory::default(),
             helper_page: 0,
+            experiments_return: Tab::Experimental,
             auto_eat_food_picker: false,
             auto_eat_food_page: 0,
             deepl_key: String::new(),
@@ -1350,7 +1396,12 @@ impl Menu {
                     }
                 })
             }),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => None,
+            Tab::Claims
+            | Tab::Chat
+            | Tab::Helpers
+            | Tab::Experimental
+            | Tab::Trading
+            | Tab::Settings => None,
         });
         if self.tab == Tab::Party
             && self
@@ -1405,6 +1456,11 @@ impl Menu {
     pub fn clamp_page(&mut self, model: &ViewModel, height: f32) {
         let pages = self.count(model).div_ceil(self.page_size(height)).max(1);
         self.page = self.page.min(pages - 1);
+        if self.tab == Tab::Helpers {
+            self.helper_page = self
+                .helper_page
+                .min(self.helper_page_count(model, height) - 1);
+        }
     }
     /// Claims per page of the list, from the panel height: rendering and Next share it.
     pub fn claims_per_page(height: f32) -> usize {
@@ -1429,7 +1485,12 @@ impl Menu {
                 self.important_names(model).len()
             }
             Tab::Party => self.party_indices(model).len(),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => 0,
+            Tab::Claims
+            | Tab::Chat
+            | Tab::Helpers
+            | Tab::Experimental
+            | Tab::Trading
+            | Tab::Settings => 0,
         }
     }
     /// The preferences page on screen: Settings shows its own category, while Map and claims,
@@ -1452,7 +1513,7 @@ impl Menu {
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = rail_width(panel_w, panel_h);
-        let nav_step = ((panel_h - 104.0) / 6.0).min(28.0);
+        let nav_step = ((panel_h - 104.0) / 7.0).min(28.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
@@ -1481,8 +1542,9 @@ impl Menu {
                     Tab::Party => 2,
                     Tab::Chat => 3,
                     Tab::Trading => 4,
-                    Tab::Experimental => 5,
-                    Tab::Settings => 6,
+                    Tab::Helpers => 5,
+                    Tab::Experimental => 6,
+                    Tab::Settings => 7,
                 };
                 widget.rect = [
                     x + 6.0,
@@ -2117,6 +2179,10 @@ impl Menu {
             (Control::Tab(Tab::Claims), Tab::Claims.label(self.language)),
             (Control::Tab(Tab::Chat), self.language.text("Чат", "Chat")),
             (
+                Control::Tab(Tab::Helpers),
+                Tab::Helpers.label(self.language),
+            ),
+            (
                 Control::Tab(Tab::Experimental),
                 self.language.text("Эксперименты", "Experiments"),
             ),
@@ -2129,7 +2195,7 @@ impl Menu {
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 6.0, y + 22.0, w / 6.0 - 3.0, 20.0],
+                [x + i as f32 * w / 7.0, y + 22.0, w / 7.0 - 3.0, 20.0],
                 label,
                 Some(control),
                 matches!(control,Control::Tab(tab)if self.tab==tab),
@@ -2152,6 +2218,9 @@ impl Menu {
             Tab::Settings | Tab::Trading | Tab::Chat | Tab::Claims
         ) {
             return self.settings_layout(model, x, w, height, out);
+        }
+        if self.tab == Tab::Helpers {
+            return self.helpers_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Experimental {
             return self.experimental_layout(model, x, w, height, out);
@@ -2497,34 +2566,6 @@ impl Menu {
                     (
                         localized!(
                             self.language,
-                            "Авто-реконнект: {}",
-                            "Auto reconnect: {}",
-                            self.on(model.auto_reconnect)
-                        ),
-                        Control::ToggleReconnect,
-                        model.auto_reconnect,
-                        self.language.text(
-                            "Вернуться на сервер после потери соединения",
-                            "Rejoin the server after a lost connection",
-                        ),
-                    ),
-                    (
-                        localized!(
-                            self.language,
-                            "Содержимое шалкеров: {}",
-                            "Shulker preview: {}",
-                            self.on(model.shulker_peek)
-                        ),
-                        Control::ToggleShulkerPeek,
-                        model.shulker_peek,
-                        self.language.text(
-                            "Показывать предметы шалкера в подсказке",
-                            "Show the items inside a shulker in its tooltip",
-                        ),
-                    ),
-                    (
-                        localized!(
-                            self.language,
                             "Кто может гладить: {}",
                             "Who can pat you: {}",
                             model.pat_policy.label(self.language)
@@ -2550,34 +2591,6 @@ impl Menu {
                             "A line above the hotbar when someone pats you",
                         ),
                     ),
-                    (
-                        localized!(
-                            self.language,
-                            "Защита светящихся ягод: {}",
-                            "Protect glow berry vines: {}",
-                            self.on(model.protect_glow_berries)
-                        ),
-                        Control::ProtectGlowBerries,
-                        model.protect_glow_berries,
-                        self.language.text(
-                            "Не ломать лианы и не собирать ягоды; приседайте для обхода",
-                            "Prevent breaking vines and harvesting berries; sneak to bypass",
-                        ),
-                    ),
-                    (
-                        localized!(
-                            self.language,
-                            "Показывать невидимых: {}",
-                            "Show invisible entities: {}",
-                            self.on(model.show_invisible_entities)
-                        ),
-                        Control::ShowInvisibleEntities,
-                        model.show_invisible_entities,
-                        self.language.text(
-                            "Требует согласия на эксперименты; на серверах возможен бан",
-                            "Requires experimental consent; servers may ban this feature",
-                        ),
-                    ),
                 ];
                 // Hints show under the switches when every row and its hint fit.
                 let detailed = height >= 54.0 + rows.len() as f32 * 52.0;
@@ -2586,7 +2599,7 @@ impl Menu {
                 for (index, (label, control, selected, hint)) in rows.into_iter().enumerate() {
                     let y = 54.0 + index as f32 * step;
                     v.push(widget([x, y, w, 22.0], label, Some(control), selected));
-                    if detailed || control == Control::ShowInvisibleEntities {
+                    if detailed {
                         let mut hint =
                             widget([x + 6.0, y + 26.0, w - 12.0, 14.0], hint, None, false);
                         hint.muted = true;
@@ -3558,7 +3571,7 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let tab_width = (w - 8.0) / 3.0;
+        let tab_width = (w - 4.0) / 2.0;
         for (index, section, label) in [
             (
                 0,
@@ -3566,11 +3579,6 @@ impl Menu {
                 self.language.text("Руды", "Ores"),
             ),
             (1, ExperimentalSection::Baritone, "Baritone"),
-            (
-                2,
-                ExperimentalSection::Helpers,
-                self.language.text("Вспомогательные", "Helpers"),
-            ),
         ] {
             out.push(widget(
                 [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
@@ -4162,9 +4170,6 @@ impl Menu {
             out.push(hint);
             return out;
         }
-        if self.experimental_section == ExperimentalSection::Helpers {
-            return self.helpers_layout(model, x, w, height, out);
-        }
         let p = model.experimental;
         for (index, (label, control, on)) in [
             (
@@ -4347,7 +4352,320 @@ impl Menu {
         }
         out
     }
-    /// The Helpers tab: a switch per helper, with a line under it saying what it does.
+    /// The rows of one Helpers category, grouped so that a switch and the choices that depend
+    /// on it stay together: each inner list is a parent followed by its children.
+    fn helper_blocks(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
+        let language = self.language;
+        let state = |on: bool| {
+            if on {
+                language.text("вкл", "on")
+            } else {
+                language.text("выкл", "off")
+            }
+        };
+        let toggle = |label: String, control, on, hint: &str| HelperRow::Toggle {
+            label,
+            control,
+            on,
+            hint: hint.to_owned(),
+            parent: None,
+        };
+        // A choice that depends on a switch above it. Its own on/off state is shown like any
+        // switch; while that parent is off it is idle (still savable) and says what it needs.
+        let child = |label: &str,
+                     control,
+                     on,
+                     hint: &str,
+                     parent: bool,
+                     needs: &'static str,
+                     needs_en: &'static str| HelperRow::Toggle {
+            label: if parent {
+                format!("{label}: {}", state(on))
+            } else {
+                format!(
+                    "{label} · {}: {}",
+                    language.text(needs, needs_en),
+                    state(on)
+                )
+            },
+            control,
+            on,
+            hint: hint.to_owned(),
+            parent: Some(parent),
+        };
+        let helper = |helper: Helper| model.helpers[helper.index()];
+        match self.helper_category {
+            HelperCategory::Survival => vec![
+                vec![
+                    toggle(
+                        localized!(language, "Авто-еда: {}", "Auto Eat: {}", state(model.auto_eat)),
+                        Control::AutoEat,
+                        model.auto_eat,
+                        language.text(
+                            "Только выбранная еда, без потери очков голода",
+                            "Only selected foods, without wasting hunger points",
+                        ),
+                    ),
+                    HelperRow::Toggle {
+                        label: localized!(
+                            language,
+                            "Разрешённая еда: {}",
+                            "Allowed foods: {}",
+                            model.auto_eat_foods.len()
+                        ),
+                        control: Control::AutoEatFoods,
+                        on: !model.auto_eat_foods.is_empty(),
+                        hint: language
+                            .text(
+                                "Выберите, что может есть авто-еда",
+                                "Choose which foods Auto Eat may consume",
+                            )
+                            .to_owned(),
+                        parent: Some(true),
+                    },
+                    child(
+                        language.text("Есть для лечения", "Eat to heal"),
+                        Control::AutoEatToHeal,
+                        model.auto_eat_to_heal,
+                        language.text(
+                            "Если здоровье не полное, еда ест и с излишком голода; без мгновенного лечения",
+                            "While injured, eats even if hunger overfills; no instant healing",
+                        ),
+                        model.auto_eat,
+                        "нужна Авто-еда",
+                        "needs Auto Eat",
+                    ),
+                ],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Авто-тотем: {}",
+                        "Auto Totem: {}",
+                        state(helper(Helper::Totem))
+                    ),
+                    Control::Helper(Helper::Totem),
+                    helper(Helper::Totem),
+                    language.text(
+                        "Пустая вторая рука: тотем берётся из инвентаря",
+                        "Empty off hand: a totem is taken from the inventory",
+                    ),
+                )],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Защита светящихся ягод: {}",
+                        "Protect glow berry vines: {}",
+                        state(model.protect_glow_berries)
+                    ),
+                    Control::ProtectGlowBerries,
+                    model.protect_glow_berries,
+                    language.text(
+                        "Не ломать лианы и не собирать ягоды; приседайте для обхода",
+                        "Prevent breaking vines and harvesting berries; sneak to bypass",
+                    ),
+                )],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Показывать невидимых (риск бана): {}",
+                        "Show invisible entities (ban risk): {}",
+                        state(model.show_invisible_entities)
+                    ),
+                    Control::ShowInvisibleEntities,
+                    model.show_invisible_entities,
+                    if model.show_invisible_entities && !model.experiments_accepted {
+                        language.text(
+                            "Не работает без согласия на эксперименты; на серверах возможен бан",
+                            "Inactive without experimental consent; servers may ban this feature",
+                        )
+                    } else {
+                        language.text(
+                            "Требует согласия на эксперименты; на серверах возможен бан",
+                            "Requires experimental consent; servers may ban this feature",
+                        )
+                    },
+                )],
+            ],
+            HelperCategory::Gear => vec![
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Авто-пополнение: {}",
+                        "Auto Fill: {}",
+                        state(helper(Helper::Fill))
+                    ),
+                    Control::Helper(Helper::Fill),
+                    helper(Helper::Fill),
+                    language.text(
+                        "Стак закончился: тот же предмет встаёт в тот же слот",
+                        "A stack ran out: the same item goes into the same slot",
+                    ),
+                )],
+                vec![
+                    toggle(
+                        localized!(
+                            language,
+                            "Авто-инструменты: {}",
+                            "Auto Tools: {}",
+                            state(helper(Helper::Tools))
+                        ),
+                        Control::Helper(Helper::Tools),
+                        helper(Helper::Tools),
+                        language.text(
+                            "Для ломаемого блока берётся нужный инструмент",
+                            "The right tool is picked for the block being broken",
+                        ),
+                    ),
+                    child(
+                        language.text(
+                            "Только с инструментом в руке",
+                            "Trigger only when holding tool",
+                        ),
+                        Control::AutoToolsOnlyHolding,
+                        model.auto_tools_only_holding,
+                        language.text(
+                            "Только кирка, топор или лопата в основной руке",
+                            "Only a pickaxe, axe or shovel in the main hand qualifies",
+                        ),
+                        helper(Helper::Tools),
+                        "нужны Авто-инстр.",
+                        "needs Auto Tools",
+                    ),
+                    child(
+                        language.text("Разрешить из инвентаря", "Allow from inventory"),
+                        Control::AutoToolsFromInventory,
+                        model.auto_tools_from_inventory,
+                        language.text(
+                            "Выкл: только хотбар. Вкл: инструмент из инвентаря меняется в хотбар",
+                            "Off: hotbar only. On: an inventory tool is swapped into the hotbar",
+                        ),
+                        helper(Helper::Tools),
+                        "нужны Авто-инстр.",
+                        "needs Auto Tools",
+                    ),
+                ],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Содержимое шалкеров: {}",
+                        "Shulker preview: {}",
+                        state(model.shulker_peek)
+                    ),
+                    Control::ToggleShulkerPeek,
+                    model.shulker_peek,
+                    language.text(
+                        "Показывать предметы шалкера в подсказке",
+                        "Show the items inside a shulker in its tooltip",
+                    ),
+                )],
+            ],
+            HelperCategory::Automation => vec![
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Авто-возобновление: {}",
+                        "Auto Resume: {}",
+                        state(helper(Helper::Resume))
+                    ),
+                    Control::Helper(Helper::Resume),
+                    helper(Helper::Resume),
+                    language.text(
+                        "После рестарта сервера задача бота продолжается сама",
+                        "After a server restart the bot's task carries on by itself",
+                    ),
+                )],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Человеческий взгляд: {}",
+                        "Human Look: {}",
+                        state(helper(Helper::HumanLook))
+                    ),
+                    Control::Helper(Helper::HumanLook),
+                    helper(Helper::HumanLook),
+                    language.text(
+                        "Бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
+                        "The bot looks where it walks; moving the mouse takes the camera back",
+                    ),
+                )],
+                vec![
+                    toggle(
+                        localized!(
+                            language,
+                            "Авто-клик: {}",
+                            "Auto Click: {}",
+                            state(helper(Helper::AutoClick))
+                        ),
+                        Control::Helper(Helper::AutoClick),
+                        helper(Helper::AutoClick),
+                        language.text(
+                            "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
+                            "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
+                        ),
+                    ),
+                    HelperRow::Click,
+                ],
+                vec![toggle(
+                    localized!(
+                        language,
+                        "Авто-реконнект: {}",
+                        "Auto reconnect: {}",
+                        state(model.auto_reconnect)
+                    ),
+                    Control::ToggleReconnect,
+                    model.auto_reconnect,
+                    language.text(
+                        "Вернуться на сервер после потери соединения",
+                        "Rejoin the server after a lost connection",
+                    ),
+                )],
+            ],
+        }
+    }
+    /// How many helper rows fit above the page buttons, and whether each gets a hint line.
+    fn helper_page_rows(height: f32) -> (usize, f32, bool) {
+        let note = height >= 340.0;
+        let step = if note { 34.0 } else { 24.0 };
+        (
+            (((height - 136.0) / step).floor() as usize).max(1),
+            step,
+            note,
+        )
+    }
+    /// Pages of whole blocks: a block starts a fresh page when it does not fit, so a parent is
+    /// never left at the foot of a page away from its choices; a block taller than a page
+    /// continues over the next pages. Each page is a range of flattened row indices.
+    pub fn helper_pages(blocks: &[usize], per: usize) -> Vec<std::ops::Range<usize>> {
+        let per = per.max(1);
+        let mut pages = Vec::new();
+        let (mut start, mut end) = (0, 0);
+        for &len in blocks {
+            if end - start + len > per && end > start {
+                pages.push(start..end);
+                start = end;
+            }
+            let mut left = len;
+            while left > 0 {
+                if end - start == per {
+                    pages.push(start..end);
+                    start = end;
+                }
+                let take = left.min(per - (end - start));
+                end += take;
+                left -= take;
+            }
+        }
+        if end > start || pages.is_empty() {
+            pages.push(start..end);
+        }
+        pages
+    }
+    /// The number of pages the current Helpers category has at this height.
+    pub fn helper_page_count(&self, model: &ViewModel, height: f32) -> usize {
+        let blocks: Vec<usize> = self.helper_blocks(model).iter().map(Vec::len).collect();
+        Self::helper_pages(&blocks, Self::helper_page_rows(height).0).len()
+    }
+    /// The Helpers tab: a category row, then a switch per helper with a line saying what it does.
     fn helpers_layout(
         &self,
         model: &ViewModel,
@@ -4359,218 +4677,90 @@ impl Menu {
         if self.auto_eat_food_picker {
             return self.auto_eat_food_layout(model, x, w, height, out);
         }
-        let state = |on: bool| {
-            if on {
-                self.language.text("вкл", "on")
-            } else {
-                self.language.text("выкл", "off")
-            }
-        };
-        let rows = [
-            (
-                localized!(
-                    self.language,
-                    "Авто-еда: {}",
-                    "Auto Eat: {}",
-                    state(model.auto_eat)
-                ),
-                Control::AutoEat,
-                model.auto_eat,
-                self.language.text(
-                    "Только выбранная еда, без потери очков голода",
-                    "Only selected foods, without wasting hunger points",
-                ),
-            ),
-            (
-                self.language
-                    .text("Есть для лечения", "Eat to heal")
-                    .to_string(),
-                Control::AutoEatToHeal,
-                model.auto_eat_to_heal,
-                self.language.text(
-                    "Если здоровье не полное, еда ест и с излишком голода; без мгновенного лечения",
-                    "While injured, eats even if hunger overfills; no instant healing",
-                ),
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Авто-тотем: {}",
-                    "Auto Totem: {}",
-                    state(model.helpers[Helper::Totem.index()])
-                ),
-                Control::Helper(Helper::Totem),
-                model.helpers[Helper::Totem.index()],
-                self.language.text(
-                    "Пустая вторая рука: тотем берётся из инвентаря",
-                    "Empty off hand: a totem is taken from the inventory",
-                ),
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Авто-пополнение: {}",
-                    "Auto Fill: {}",
-                    state(model.helpers[Helper::Fill.index()])
-                ),
-                Control::Helper(Helper::Fill),
-                model.helpers[Helper::Fill.index()],
-                self.language.text(
-                    "Стак закончился: тот же предмет встаёт в тот же слот",
-                    "A stack ran out: the same item goes into the same slot",
-                ),
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Авто-инструменты: {}",
-                    "Auto Tools: {}",
-                    state(model.helpers[Helper::Tools.index()])
-                ),
-                Control::Helper(Helper::Tools),
-                model.helpers[Helper::Tools.index()],
-                self.language.text(
-                    "Для ломаемого блока берётся нужный инструмент",
-                    "The right tool is picked for the block being broken",
-                ),
-            ),
-            (
-                self.language
-                    .text(
-                        "Только с инструментом в руке",
-                        "Trigger only when holding tool",
-                    )
-                    .to_string(),
-                Control::AutoToolsOnlyHolding,
-                model.auto_tools_only_holding,
-                self.language.text(
-                    "Только кирка, топор или лопата в основной руке",
-                    "Only a pickaxe, axe or shovel in the main hand qualifies",
-                ),
-            ),
-            (
-                self.language
-                    .text("Разрешить из инвентаря", "Allow from inventory")
-                    .to_string(),
-                Control::AutoToolsFromInventory,
-                model.auto_tools_from_inventory,
-                self.language.text(
-                    "Выкл: только хотбар. Вкл: инструмент из инвентаря меняется в хотбар",
-                    "Off: hotbar only. On: an inventory tool is swapped into the hotbar",
-                ),
-            ),
-        ];
-        let mut rows: Vec<_> = rows.into_iter().collect();
-        rows.insert(
-            2,
-            (
-                localized!(
-                    self.language,
-                    "Разрешённая еда: {}",
-                    "Allowed foods: {}",
-                    model.auto_eat_foods.len()
-                ),
-                Control::AutoEatFoods,
-                !model.auto_eat_foods.is_empty(),
-                self.language.text(
-                    "Выберите, что может есть авто-еда",
-                    "Choose which foods Auto Eat may consume",
-                ),
-            ),
-        );
-        let rows = rows.into_iter().chain([
-            (
-                localized!(
-                    self.language,
-                    "Авто-возобновление: {}",
-                    "Auto Resume: {}",
-                    state(model.helpers[Helper::Resume.index()])
-                ),
-                Control::Helper(Helper::Resume),
-                model.helpers[Helper::Resume.index()],
-                self.language.text(
-                    "После рестарта сервера задача бота продолжается сама",
-                    "After a server restart the bot's task carries on by itself",
-                ),
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Человеческий взгляд: {}",
-                    "Human Look: {}",
-                    state(model.helpers[Helper::HumanLook.index()])
-                ),
-                Control::Helper(Helper::HumanLook),
-                model.helpers[Helper::HumanLook.index()],
-                self.language.text(
-                    "Бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
-                    "The bot looks where it walks; moving the mouse takes the camera back",
-                ),
-            ),
-            (
-                localized!(
-                    self.language,
-                    "Авто-клик: {}",
-                    "Auto Click: {}",
-                    state(model.helpers[Helper::AutoClick.index()])
-                ),
-                Control::Helper(Helper::AutoClick),
-                model.helpers[Helper::AutoClick.index()],
-                self.language.text(
-                    "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
-                    "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
-                ),
-            ),
-        ]);
-        let rows: Vec<_> = rows.collect();
-        let click_options = rows.len();
-        let note = height >= 340.0;
-        let step = if note { 34.0 } else { 24.0 };
-        let per = (((height - 136.0) / step).floor() as usize).max(1);
-        let pages = (click_options + 1).div_ceil(per);
-        let page = self.helper_page.min(pages - 1);
-        for (index, (label, control, on, hint)) in
-            rows.into_iter().enumerate().skip(page * per).take(per)
-        {
-            let y = 84.0 + (index - page * per) as f32 * step;
-            out.push(widget([x, y, w, 20.0], label, Some(control), on));
-            if note {
-                let mut hint = widget([x + 4.0, y + 21.0, w - 8.0, 11.0], hint, None, false);
-                hint.muted = true;
-                out.push(hint);
-            }
+        let tab_width = (w - 8.0) / 3.0;
+        for (index, category) in HelperCategory::ALL.into_iter().enumerate() {
+            out.push(widget(
+                [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
+                category.label(self.language),
+                Some(Control::HelperCategory(category)),
+                self.helper_category == category,
+            ));
         }
-        if page * per <= click_options && click_options < (page + 1) * per {
-            let y = 84.0 + (click_options - page * per) as f32 * step;
-            let half = (w - 4.0) * 0.5;
-            let row_h = 20.0;
-            let russian = self.language == Language::Russian;
-            out.push(widget(
-                [x, y, half, row_h],
-                localized!(
-                    self.language,
-                    "Кнопка: {}",
-                    "Button: {}",
-                    if model.click_right {
-                        self.language.text("ПКМ", "right")
-                    } else {
-                        self.language.text("ЛКМ", "left")
+        let blocks = self.helper_blocks(model);
+        let rows: Vec<HelperRow> = blocks.iter().flatten().cloned().collect();
+        let lengths: Vec<usize> = blocks.iter().map(Vec::len).collect();
+        let (per, step, note) = Self::helper_page_rows(height);
+        let ranges = Self::helper_pages(&lengths, per);
+        let pages = ranges.len();
+        let page = self.helper_page.min(pages - 1);
+        for (slot, row) in rows[ranges[page].clone()].iter().enumerate() {
+            let y = 84.0 + slot as f32 * step;
+            match row {
+                HelperRow::Toggle {
+                    label,
+                    control,
+                    on,
+                    hint,
+                    parent,
+                } => {
+                    let indent = if parent.is_some() { 10.0 } else { 0.0 };
+                    let idle = *parent == Some(false);
+                    let mut item = widget(
+                        [x + indent, y, w - indent, 20.0],
+                        label.as_str(),
+                        Some(*control),
+                        *on,
+                    );
+                    item.muted = idle;
+                    out.push(item);
+                    if note {
+                        let mut hint = widget(
+                            [x + indent + 4.0, y + 21.0, w - indent - 8.0, 11.0],
+                            hint.as_str(),
+                            None,
+                            false,
+                        );
+                        hint.muted = true;
+                        out.push(hint);
                     }
-                ),
-                Some(Control::AutoClickButton),
-                false,
-            ));
-            out.push(widget(
-                [x + half + 4.0, y, half, row_h],
-                localized!(
-                    self.language,
-                    "Частота: {}",
-                    "Rate: {}",
-                    super::claim_borders_autoclick::label(model.click_rate, russian)
-                ),
-                Some(Control::AutoClickRate),
-                false,
-            ));
+                }
+                HelperRow::Click => {
+                    let indent = 10.0;
+                    let half = (w - indent - 4.0) * 0.5;
+                    let russian = self.language == Language::Russian;
+                    let idle = !model.helpers[Helper::AutoClick.index()];
+                    let mut button = widget(
+                        [x + indent, y, half, 20.0],
+                        localized!(
+                            self.language,
+                            "Кнопка: {}",
+                            "Button: {}",
+                            if model.click_right {
+                                self.language.text("ПКМ", "right")
+                            } else {
+                                self.language.text("ЛКМ", "left")
+                            }
+                        ),
+                        Some(Control::AutoClickButton),
+                        false,
+                    );
+                    button.muted = idle;
+                    out.push(button);
+                    let mut rate = widget(
+                        [x + indent + half + 4.0, y, half, 20.0],
+                        localized!(
+                            self.language,
+                            "Частота: {}",
+                            "Rate: {}",
+                            super::claim_borders_autoclick::label(model.click_rate, russian)
+                        ),
+                        Some(Control::AutoClickRate),
+                        false,
+                    );
+                    rate.muted = idle;
+                    out.push(rate);
+                }
+            }
         }
         if pages > 1 {
             for (column, target, text) in [
@@ -4604,7 +4794,6 @@ impl Menu {
                 ));
             }
         }
-
         out
     }
     fn important_names(&self, model: &ViewModel) -> Vec<String> {
@@ -4985,12 +5174,23 @@ impl Menu {
         }
         self.activate(model, (size[1] - 16.0).clamp(200.0, 400.0), control)
     }
+    /// Whether a Helpers switch would go from off to on.
+    fn helper_turns_on(model: &ViewModel, control: Control) -> bool {
+        !match control {
+            Control::AutoEat => model.auto_eat,
+            Control::AutoEatToHeal => model.auto_eat_to_heal,
+            Control::AutoToolsOnlyHolding => model.auto_tools_only_holding,
+            Control::AutoToolsFromInventory => model.auto_tools_from_inventory,
+            Control::Helper(helper) => model.helpers[helper.index()],
+            _ => true,
+        }
+    }
     fn activate(&mut self, model: &ViewModel, height: f32, control: Control) -> Option<Action> {
         if self.experiments_prompt {
             match control {
                 Control::ConfirmExperiments => {
                     self.experiments_prompt = false;
-                    self.tab = Tab::Experimental;
+                    self.tab = std::mem::replace(&mut self.experiments_return, Tab::Experimental);
                     return Some(Action::AcceptExperiments);
                 }
                 Control::DeclineExperiments | Control::Close => self.experiments_prompt = false,
@@ -5073,6 +5273,20 @@ impl Menu {
                 self.farm_levels = LEVELS[(at + 1) % LEVELS.len()];
                 None
             }
+            Control::AutoEat
+            | Control::AutoEatToHeal
+            | Control::AutoToolsOnlyHolding
+            | Control::AutoToolsFromInventory
+            | Control::Helper(_)
+                if !model.experiments_accepted && Self::helper_turns_on(model, control) =>
+            {
+                // Helpers used to sit behind the Experiments warning: switching one on
+                // still asks for it, switching off and configuring never does.
+                self.experiments_return = Tab::Helpers;
+                self.experiments_prompt = true;
+                self.focus = None;
+                None
+            }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::AutoEatToHeal => Some(Action::SetAutoEatToHeal(!model.auto_eat_to_heal)),
             Control::AutoToolsFromInventory => Some(Action::SetAutoToolsFromInventory(
@@ -5109,6 +5323,7 @@ impl Menu {
             Control::ShowInvisibleEntities
                 if !model.show_invisible_entities && !model.experiments_accepted =>
             {
+                self.experiments_return = Tab::Helpers;
                 self.experiments_prompt = true;
                 self.focus = None;
                 None
@@ -5269,7 +5484,13 @@ impl Menu {
             }
             Control::ExperimentalTab(section) => {
                 self.experimental_section = section;
+                self.focus = None;
+                None
+            }
+            Control::HelperCategory(category) => {
+                self.helper_category = category;
                 self.helper_page = 0;
+                self.auto_eat_food_picker = false;
                 self.focus = None;
                 None
             }
@@ -5764,6 +5985,7 @@ impl Menu {
             Control::Close => Some(Action::Close),
             Control::ConfirmExperiments | Control::DeclineExperiments => None,
             Control::Tab(Tab::Experimental) if !model.experiments_accepted => {
+                self.experiments_return = Tab::Experimental;
                 self.navigation_menu = false;
                 self.experiments_prompt = true;
                 self.focus = None;
@@ -5773,6 +5995,7 @@ impl Menu {
                 self.navigation_menu = false;
                 self.deepl_key.clear();
                 self.tab = t;
+                self.auto_eat_food_picker = false;
                 if t == Tab::Settings && matches!(self.settings_section, 2..=4) {
                     self.settings_section = 0;
                 }
@@ -5983,8 +6206,53 @@ impl Menu {
             }
         }
     }
+    /// Page Up / Page Down on the Helpers tab: the same step as the Back and Next buttons,
+    /// for the category rows or for the food picker, whichever is on screen.
+    pub fn helper_page_key(&mut self, model: &ViewModel, size: [f32; 2], forward: bool) -> bool {
+        if self.tab != Tab::Helpers || self.experiments_prompt {
+            return false;
+        }
+        let current = if self.auto_eat_food_picker {
+            self.auto_eat_food_page
+        } else {
+            self.helper_page
+        };
+        let target = self
+            .layout(model, size[0], size[1])
+            .iter()
+            .filter_map(|w| match w.control {
+                Some(Control::HelperPage(page)) | Some(Control::AutoEatFoodPage(page)) => {
+                    Some(page)
+                }
+                _ => None,
+            })
+            .find(|page| {
+                if forward {
+                    *page > current
+                } else {
+                    *page < current
+                }
+            });
+        let Some(target) = target else { return true };
+        if self.auto_eat_food_picker {
+            self.auto_eat_food_page = target;
+        } else {
+            self.helper_page = target;
+        }
+        self.focus = None;
+        true
+    }
     pub fn scroll(&mut self, model: &ViewModel, height: f32, delta: f64) {
         if !delta.is_finite() || delta == 0.0 {
+            return;
+        }
+        if self.tab == Tab::Helpers && !self.auto_eat_food_picker {
+            let last = self.helper_page_count(model, height) - 1;
+            self.helper_page = if delta > 0.0 {
+                self.helper_page.min(last).saturating_sub(1)
+            } else {
+                (self.helper_page + 1).min(last)
+            };
             return;
         }
         if self.navigation_choices.is_some() {
@@ -6181,6 +6449,9 @@ impl Menu {
             return true;
         }
         if key == "key.keyboard.escape" {
+            if self.tab == Tab::Helpers && std::mem::take(&mut self.auto_eat_food_picker) {
+                return true;
+            }
             if self.navigation_choices.take().is_some() {
                 return true;
             }
@@ -6198,6 +6469,15 @@ impl Menu {
             return false;
         }
         if key == "key.keyboard.tab" {
+            if self.tab == Tab::Helpers {
+                // No text fields here: Tab walks the categories, Shift+Tab walks back.
+                if !self.auto_eat_food_picker {
+                    self.helper_category = self.helper_category.next(modifiers & 1 == 0);
+                    self.helper_page = 0;
+                }
+                self.focus = None;
+                return true;
+            }
             if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
                 && !matches!(
@@ -6737,12 +7017,8 @@ mod tests {
                             let raw = match section {
                                 0 => vec![
                                     Control::Appearance,
-                                    Control::ToggleReconnect,
-                                    Control::ToggleShulkerPeek,
                                     Control::PatPolicy,
                                     Control::PatNotify,
-                                    Control::ProtectGlowBerries,
-                                    Control::ShowInvisibleEntities,
                                 ],
                                 1 => {
                                     menu.relay_setup = true;
@@ -6825,12 +7101,10 @@ mod tests {
         let mut count = 0;
         for section in 0..7 {
             for page in 0..32 {
-                for tab in [Tab::Settings, Tab::Experimental, Tab::Chat] {
-                    for experimental_section in [
-                        ExperimentalSection::Ores,
-                        ExperimentalSection::Baritone,
-                        ExperimentalSection::Helpers,
-                    ] {
+                for tab in [Tab::Settings, Tab::Experimental, Tab::Chat, Tab::Helpers] {
+                    for experimental_section in
+                        [ExperimentalSection::Ores, ExperimentalSection::Baritone]
+                    {
                         for baritone_mode in [
                             BaritoneMode::Navigation,
                             BaritoneMode::Mining,
@@ -6878,7 +7152,10 @@ mod tests {
                                         .any(|c| ('\u{400}'..='\u{4ff}').contains(&c)),
                                     "untranslated: {russian}"
                                 );
-                                assert!(name.is_ascii(), "untranslated: {name}");
+                                assert!(
+                                    !name.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)),
+                                    "untranslated: {name}"
+                                );
                                 count += 1;
                             }
                         }
@@ -7476,11 +7753,7 @@ mod tests {
                 language,
                 ..Menu::default()
             };
-            for section in [
-                ExperimentalSection::Baritone,
-                ExperimentalSection::Ores,
-                ExperimentalSection::Helpers,
-            ] {
+            for section in [ExperimentalSection::Baritone, ExperimentalSection::Ores] {
                 for height in [200.0, 216.0, 500.0] {
                     let rows = menu.layout(&model, 360.0, height);
                     let tab = rows
@@ -8661,8 +8934,7 @@ mod tests {
         for language in [Language::English, Language::Russian] {
             for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
                 let mut menu = Menu {
-                    tab: Tab::Experimental,
-                    experimental_section: ExperimentalSection::Helpers,
+                    tab: Tab::Helpers,
                     language,
                     ..Default::default()
                 };
@@ -8726,13 +8998,16 @@ mod tests {
         for language in [Language::English, Language::Russian] {
             for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
                 for on in [false, true] {
-                    let model = ViewModel {
+                    let mut model = ViewModel {
                         auto_tools_only_holding: on,
+                        experiments_accepted: true,
                         ..Default::default()
                     };
+                    // The choice reads plainly while the switch it depends on is on.
+                    model.helpers[Helper::Tools.index()] = true;
                     let mut menu = Menu {
-                        tab: Tab::Experimental,
-                        experimental_section: ExperimentalSection::Helpers,
+                        tab: Tab::Helpers,
+                        helper_category: HelperCategory::Gear,
                         language,
                         ..Default::default()
                     };
@@ -8761,7 +9036,7 @@ mod tests {
                     }
                     let label = found.expect("held-tool row is reachable on some page");
                     assert_eq!(
-                        label,
+                        switch_name(&label, on),
                         match language {
                             Language::English => "Trigger only when holding tool",
                             Language::Russian => "Только с инструментом в руке",
@@ -8782,12 +9057,13 @@ mod tests {
             for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
                 for on in [false, true] {
                     let model = ViewModel {
+                        auto_eat: true,
                         auto_eat_to_heal: on,
+                        experiments_accepted: true,
                         ..Default::default()
                     };
                     let mut menu = Menu {
-                        tab: Tab::Experimental,
-                        experimental_section: ExperimentalSection::Helpers,
+                        tab: Tab::Helpers,
                         language,
                         ..Default::default()
                     };
@@ -8815,7 +9091,7 @@ mod tests {
                         }
                     }
                     assert_eq!(
-                        found.expect("row reachable"),
+                        switch_name(&found.expect("row reachable"), on),
                         match language {
                             Language::English => "Eat to heal",
                             Language::Russian => "Есть для лечения",
@@ -8837,14 +9113,16 @@ mod tests {
                 for (holding, inventory) in
                     [(false, false), (false, true), (true, false), (true, true)]
                 {
-                    let model = ViewModel {
+                    let mut model = ViewModel {
                         auto_tools_only_holding: holding,
                         auto_tools_from_inventory: inventory,
+                        experiments_accepted: true,
                         ..Default::default()
                     };
+                    model.helpers[Helper::Tools.index()] = true;
                     let mut menu = Menu {
-                        tab: Tab::Experimental,
-                        experimental_section: ExperimentalSection::Helpers,
+                        tab: Tab::Helpers,
+                        helper_category: HelperCategory::Gear,
                         language,
                         ..Default::default()
                     };
@@ -8877,7 +9155,7 @@ mod tests {
                     assert_eq!(rows[0].0, Some(Control::AutoToolsOnlyHolding));
                     assert_eq!(rows[1].0, Some(Control::AutoToolsFromInventory));
                     assert_eq!((rows[0].2, rows[1].2), (holding, inventory));
-                    assert_eq!(rows[1].1, label);
+                    assert_eq!(switch_name(&rows[1].1, inventory), label);
                     assert_eq!(
                         menu.activate(&model, height, Control::AutoToolsFromInventory),
                         Some(Action::SetAutoToolsFromInventory(!inventory))
@@ -8890,6 +9168,93 @@ mod tests {
             }
         }
         assert!(!ViewModel::default().auto_tools_from_inventory);
+    }
+    /// The name of a switch caption such as "Eat to heal: on", checking the state it shows.
+    fn switch_name(text: &str, on: bool) -> String {
+        let (name, shown) = super::super::claim_borders_ui_style::switch_label(text)
+            .unwrap_or_else(|| panic!("not a switch caption: {text}"));
+        assert_eq!(shown, on, "{text}");
+        name.to_owned()
+    }
+    #[test]
+    fn helper_screens_match_by_control_in_both_languages_on_every_page() {
+        for (width, height) in [
+            (240.0, 216.0),
+            (360.0, 280.0),
+            (640.0, 400.0),
+            (800.0, 500.0),
+        ] {
+            for helpers_on in [false, true] {
+                let model = ViewModel {
+                    helpers: [helpers_on; 6],
+                    auto_eat: helpers_on,
+                    ..Default::default()
+                };
+                for category in HelperCategory::ALL {
+                    for page in 0..6 {
+                        let ru = Menu {
+                            tab: Tab::Helpers,
+                            helper_category: category,
+                            helper_page: page,
+                            language: Language::Russian,
+                            ..Menu::default()
+                        };
+                        let en = Menu {
+                            language: Language::English,
+                            ..ru.clone()
+                        };
+                        let (ru, en) = (
+                            ru.layout(&model, width, height),
+                            en.layout(&model, width, height),
+                        );
+                        assert_eq!(ru.len(), en.len());
+                        for (ru, en) in ru.iter().zip(&en) {
+                            assert_eq!(ru.control, en.control);
+                            assert_eq!(ru.rect, en.rect, "{:?}", ru.control);
+                            assert_eq!(ru.selected, en.selected);
+                            assert_eq!(ru.muted, en.muted);
+                            let cyrillic =
+                                |t: &str| t.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c));
+                            assert!(!cyrillic(&en.text), "untranslated: {}", en.text);
+                            if en.text.chars().any(|c| c.is_ascii_alphabetic())
+                                && !matches!(
+                                    en.control,
+                                    Some(Control::Tab(_) | Control::Close | Control::Language)
+                                )
+                                && en.text != "DraimHorizon"
+                                && !en.text.contains("Back")
+                                && !en.text.contains("Next")
+                            {
+                                assert!(cyrillic(&ru.text), "untranslated: {}", ru.text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn rail_keeps_seven_destinations_and_settings_apart_at_its_smallest_height() {
+        let model = ViewModel::default();
+        // The rail is only used where every destination keeps the target height six had.
+        for height in [RAIL_MIN_HEIGHT + 16.0, 400.0 + 16.0] {
+            let rows = Menu::default().layout(&model, 640.0, height);
+            let tabs: Vec<_> = rows
+                .iter()
+                .filter(|w| matches!(w.control, Some(Control::Tab(_))))
+                .collect();
+            assert_eq!(tabs.len(), 8);
+            for (i, a) in tabs.iter().enumerate() {
+                assert!(a.rect[3] >= 19.0, "{:?}", a.rect);
+                for b in &tabs[i + 1..] {
+                    let apart =
+                        a.rect[1] + a.rect[3] <= b.rect[1] || b.rect[1] + b.rect[3] <= a.rect[1];
+                    assert!(apart, "{:?} {:?}", a.control, b.control);
+                }
+            }
+        }
+        assert_eq!(rail_width(640.0, RAIL_MIN_HEIGHT - 1.0), 0.0);
+        assert_eq!(rail_width(640.0, RAIL_MIN_HEIGHT), RAIL_WIDTH);
     }
     #[test]
     fn mining_targets_toggle_like_filters_and_several_mine_together() {
