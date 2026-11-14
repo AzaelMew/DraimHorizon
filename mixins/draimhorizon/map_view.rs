@@ -473,7 +473,7 @@ pub(super) fn map_marks(
         }
     }
     if let Some((_, [x, _, z])) = active_death(game).filter(|(dim, _)| dim == dimension) {
-        let at = xy([f64::from(*x) + 0.5, f64::from(*z) + 0.5]);
+        let at = xy([f64::from(x) + 0.5, f64::from(z) + 0.5]);
         if contains(rect, at) {
             ui::fill(
                 game,
