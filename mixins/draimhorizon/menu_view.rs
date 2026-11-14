@@ -318,6 +318,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Автоматизация, помощники и расширенные инструменты",
                         "Automation, helpers and advanced tools",
                     ),
+                    model::Tab::Baritone => (
+                        "Навигация Baritone: маршруты, обходы, прыжки и подъёмы",
+                        "Baritone navigation: routes, detours, jumps and climbs",
+                    ),
                     model::Tab::Settings => (
                         "Оформление, связь, список игроков и боковая панель",
                         "Appearance, network, player list and sidebar",
@@ -580,7 +584,9 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     && (w >= game.native_text_width(caption) + 22.0
                         || matches!(
                             widget.control,
-                            Some(model::Control::Tab(model::Tab::Experimental))
+                            Some(model::Control::Tab(
+                                model::Tab::Experimental | model::Tab::Baritone
+                            ))
                         ))
                 {
                     ui::icon(
@@ -857,6 +863,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                                 model::Tab::Claims => ("Карта и приваты", "Map and claims"),
                                 model::Tab::Chat => ("Чат", "Chat"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
+                                model::Tab::Baritone => ("Baritone", "Baritone"),
                                 model::Tab::Settings => ("Настройки", "Settings"),
                                 model::Tab::Trading => ("Торговля", "Trading"),
                             };

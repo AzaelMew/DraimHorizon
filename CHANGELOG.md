@@ -3,6 +3,7 @@
 ## 0.40.3
 
 - Baritone navigation, step 1: the pure core of Baritone 1.21.4 (goals, movement costs, the A* search, all movements including parkour and pillar, the movement executor, path executor and pathing behavior) is added under `mixins/draimhorizon/baritone/`, taken with its authorship from luhnox's Horizon port (LGPL-3.0, see `NOTICE.md` there; the rest of DraimHorizon stays MIT). It is compiled and tested in the test crate only (51 upstream pathing tests) and is not wired into the game or the existing navigation yet. The upstream desktop-notification call is not ported.
+- Baritone tab: a tab of its own, Baritone, now sits under Experiments in the J menu (rail and compact top row) and asks for the same experiments consent. It describes the port and its status; the controls arrive with the game integration. The Baritone section inside Experiments is renamed Automation (Автоматизация). Test: the tab's position, labels in both languages at compact and wide sizes, and the consent prompt.
 
 ## 0.40.2
 

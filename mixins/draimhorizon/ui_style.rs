@@ -1857,6 +1857,7 @@ pub fn icon_for(label: &str) -> Option<Icon> {
         "Клеймы" | "Приваты" | "Claims" => Some(Shield),
         "Чат" | "Chat" => Some(Chat),
         "Эксперименты" | "Experiments" => Some(Star),
+        "Baritone" => Some(Locate),
         "Торги" | "Торговля" | "Trading" | "AH" | "Аукц." => Some(Market),
         "Цены" | "Prices" => Some(Wallet),
         "Аукцион" | "Auction" | "Market" | "AH: найти" | "AH: find" => Some(Market),

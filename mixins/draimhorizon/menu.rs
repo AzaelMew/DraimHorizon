@@ -544,6 +544,8 @@ pub enum Tab {
     Claims,
     Chat,
     Experimental,
+    /// The Baritone navigation port (LGPL), a tab of its own under Experiments.
+    Baritone,
     Trading,
     Settings,
 }
@@ -555,6 +557,7 @@ impl Tab {
             Self::Claims => language.text("Карта и приваты", "Map and claims"),
             Self::Chat => language.text("Чат", "Chat"),
             Self::Experimental => language.text("Эксперименты", "Experiments"),
+            Self::Baritone => "Baritone",
             Self::Trading => language.text("Торговля", "Trading"),
             Self::Settings => language.text("Настройки", "Settings"),
         }
@@ -1310,7 +1313,12 @@ impl Menu {
                     }
                 })
             }),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => None,
+            Tab::Claims
+            | Tab::Chat
+            | Tab::Experimental
+            | Tab::Baritone
+            | Tab::Trading
+            | Tab::Settings => None,
         });
         if self.tab == Tab::Party
             && self
@@ -1389,7 +1397,12 @@ impl Menu {
                 self.important_names(model).len()
             }
             Tab::Party => self.party_indices(model).len(),
-            Tab::Claims | Tab::Chat | Tab::Experimental | Tab::Trading | Tab::Settings => 0,
+            Tab::Claims
+            | Tab::Chat
+            | Tab::Experimental
+            | Tab::Baritone
+            | Tab::Trading
+            | Tab::Settings => 0,
         }
     }
     /// The preferences page on screen: Settings shows its own category, while Map and claims,
@@ -1412,7 +1425,7 @@ impl Menu {
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = rail_width(panel_w, panel_h);
-        let nav_step = ((panel_h - 104.0) / 6.0).min(28.0);
+        let nav_step = ((panel_h - 104.0) / 7.0).min(28.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
@@ -1442,7 +1455,8 @@ impl Menu {
                     Tab::Chat => 3,
                     Tab::Trading => 4,
                     Tab::Experimental => 5,
-                    Tab::Settings => 6,
+                    Tab::Baritone => 6,
+                    Tab::Settings => 7,
                 };
                 widget.rect = [
                     x + 6.0,
@@ -2080,6 +2094,7 @@ impl Menu {
                 Control::Tab(Tab::Experimental),
                 self.language.text("Эксперименты", "Experiments"),
             ),
+            (Control::Tab(Tab::Baritone), "Baritone"),
             (
                 Control::Tab(Tab::Trading),
                 self.language.text("Торговля", "Trading"),
@@ -2089,7 +2104,7 @@ impl Menu {
         .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * w / 6.0, y + 22.0, w / 6.0 - 3.0, 20.0],
+                [x + i as f32 * w / 7.0, y + 22.0, w / 7.0 - 3.0, 20.0],
                 label,
                 Some(control),
                 matches!(control,Control::Tab(tab)if self.tab==tab),
@@ -2115,6 +2130,9 @@ impl Menu {
         }
         if self.tab == Tab::Experimental {
             return self.experimental_layout(model, x, w, height, out);
+        }
+        if self.tab == Tab::Baritone {
+            return self.baritone_layout(x, w, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -3510,6 +3528,32 @@ impl Menu {
         }
         out
     }
+    /// The Baritone tab: the navigation port taken from the Baritone project (LGPL-3.0).
+    fn baritone_layout(&self, x: f32, w: f32, mut out: Vec<Widget>) -> Vec<Widget> {
+        let lines = [
+            self.language.text(
+                "Навигация Baritone: полный расчёт маршрутов, обходов, прыжков и подъёмов.",
+                "Baritone navigation: full route, detour, jump and climb planning.",
+            ),
+            self.language.text(
+                "Порт Baritone 1.21.4 (LGPL-3.0), см. mixins/draimhorizon/baritone/NOTICE.md.",
+                "Port of Baritone 1.21.4 (LGPL-3.0), see mixins/draimhorizon/baritone/NOTICE.md.",
+            ),
+            self.language.text(
+                "Статус: ядро добавлено, подключение к игре в работе.",
+                "Status: the core is added, game integration is in progress.",
+            ),
+        ];
+        for (i, line) in lines.into_iter().enumerate() {
+            out.push(widget(
+                [x, 60.0 + i as f32 * 16.0, w, 14.0],
+                line,
+                None,
+                false,
+            ));
+        }
+        out
+    }
     fn experimental_layout(
         &self,
         model: &ViewModel,
@@ -3525,7 +3569,11 @@ impl Menu {
                 ExperimentalSection::Ores,
                 self.language.text("Руды", "Ores"),
             ),
-            (1, ExperimentalSection::Baritone, "Baritone"),
+            (
+                1,
+                ExperimentalSection::Baritone,
+                self.language.text("Автоматизация", "Automation"),
+            ),
             (
                 2,
                 ExperimentalSection::Helpers,
@@ -5566,7 +5614,7 @@ impl Menu {
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
             Control::ConfirmExperiments | Control::DeclineExperiments => None,
-            Control::Tab(Tab::Experimental) if !model.experiments_accepted => {
+            Control::Tab(Tab::Experimental | Tab::Baritone) if !model.experiments_accepted => {
                 self.navigation_menu = false;
                 self.experiments_prompt = true;
                 self.focus = None;
@@ -7298,6 +7346,43 @@ mod tests {
                     );
                     assert!(!model.experimental.allowed && !model.experimental.prediction);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn baritone_tab_sits_under_experiments_with_the_same_consent() {
+        let mut model = ViewModel::default();
+        for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+            for language in [Language::Russian, Language::English] {
+                // Narrow windows keep the tabs behind the navigation button.
+                let mut menu = Menu {
+                    language,
+                    navigation_menu: width < 520.0,
+                    ..Menu::default()
+                };
+                let rows = menu.layout(&model, width, height);
+                let find = |tab| rows.iter().find(|r| r.control == Some(Control::Tab(tab)));
+                let (exp, bar) = (
+                    find(Tab::Experimental).unwrap(),
+                    find(Tab::Baritone).unwrap(),
+                );
+                assert_eq!(bar.text, "Baritone");
+                assert!(bar.rect[2] > 0.0 && bar.rect[3] > 0.0);
+                // In the rail it is the row right under Experiments; in the top row, beside it.
+                assert!(bar.rect[1] > exp.rect[1] || bar.rect[0] > exp.rect[0]);
+                // Without the consent it asks first, like Experiments.
+                model.experiments_accepted = false;
+                assert!(
+                    menu.activate(&model, height, Control::Tab(Tab::Baritone))
+                        .is_none()
+                );
+                assert!(menu.experiments_prompt && menu.tab != Tab::Baritone);
+                menu.experiments_prompt = false;
+                model.experiments_accepted = true;
+                menu.activate(&model, height, Control::Tab(Tab::Baritone));
+                assert_eq!(menu.tab, Tab::Baritone);
+                assert!(!menu.layout(&model, width, height).is_empty());
             }
         }
     }
