@@ -121,6 +121,17 @@ pub mod clickthrough;
 #[path = "../mixins/draimhorizon/inventory_preferences.rs"]
 pub mod inventory_preferences;
 
+#[path = "../mixins/draimhorizon/card_layout.rs"]
+pub mod card_layout;
+pub use card_layout as claim_borders_card_layout;
+#[path = "../mixins/draimhorizon/shape_cache.rs"]
+pub mod shape_cache;
+#[path = "../mixins/draimhorizon/text_layout.rs"]
+pub mod text_layout;
+pub use shape_cache as claim_borders_shape_cache;
+pub use text_layout as claim_borders_text_layout;
+#[path = "../mixins/draimhorizon/translation_plan.rs"]
+pub mod translation_plan;
 #[path = "../mixins/draimhorizon/ui_style.rs"]
 pub mod ui_style;
 

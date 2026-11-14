@@ -169,15 +169,15 @@ pub(super) fn label(
     width: f32,
     color: u32,
 ) {
-    let mut shown = String::new();
-    for c in text.chars() {
-        shown.push(c);
-        if game.native_text_width(&shown) > width - 7.0 {
-            shown.pop();
-            shown.push('…');
-            break;
-        }
-    }
+    static LABELS: std::sync::OnceLock<
+        std::sync::Mutex<crate::game::claim_borders_text_layout::LabelCache>,
+    > = std::sync::OnceLock::new();
+    let font = (game.gui.atlas.revision, game.gui.atlas.font.epoch());
+    let shown = LABELS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clip(font, text, width - 7.0, |s| game.native_text_width(s));
     ui::text(game, batch, &shown, at, color, false);
 }
 fn button(

@@ -65,6 +65,23 @@ fn row(icon: ui::Icon, label: &str, value: String, color: u32) -> Row {
         color,
     }
 }
+/// Sidebar settings read once per frame so no draw call runs under the economy lock.
+#[derive(Clone, Copy)]
+struct Look {
+    scale: i64,
+    width: i64,
+    corner: i64,
+    opacity: i64,
+}
+/// Everything the two cards show, copied out of the economy state.
+struct Facts {
+    look: Look,
+    tps: bool,
+    online: Option<String>,
+    playtime: Option<String>,
+    balance: Option<(i64, u64)>,
+    richest: Vec<(String, String)>,
+}
 const ROW: f32 = 14.0;
 const HEAD: f32 = 21.0;
 #[allow(clippy::too_many_arguments)]
@@ -72,19 +89,19 @@ fn card(
     game: &Game<'_>,
     batch: &mut HudBatch,
     corners: &mut horizon_client::extras_hud::Corners,
-    p: &crate::game::claim_borders_economy::Preferences,
+    look: Look,
     title: &str,
     icon: ui::Icon,
     rows: &[Row],
     key: &str,
 ) {
     let natural_height = HEAD + 6.0 + rows.len() as f32 * ROW;
-    let scale = (p.get("sidebar_scale") as f32 / 100.0)
+    let scale = (look.scale as f32 / 100.0)
         .min((batch.height - 8.0) / natural_height)
         .max(0.25);
-    let width = (p.get("sidebar_width") as f32 * scale).min(batch.width - 12.0);
+    let width = (look.width as f32 * scale).min(batch.width - 12.0);
     let height = natural_height * scale;
-    let preferred = p.get("sidebar_corner") as u8;
+    let preferred = look.corner as u8;
     let (mut x, mut y) = corners.place(
         crate::game::claim_borders_map_view::corner(preferred),
         width,
@@ -104,21 +121,21 @@ fn card(
     let top = y / scale;
     let w = width / scale;
     let accent = ui::preferences(game).accent.color();
-    ui::fill(
+    ui::fill_cached(
         game,
         batch,
         [left, top, w, height / scale],
-        ((p.get("sidebar_opacity") as u32 * 255 / 100) << 24) | 0x101c29,
+        ((look.opacity as u32 * 255 / 100) << 24) | 0x101c29,
     );
     // A short accent bar and a hairline under the title give the card a header.
-    ui::rounded(
+    ui::rounded_cached(
         game,
         batch,
         [left + 5.0, top + 6.0, 2.0, 10.0],
         1.0,
         0xff000000 | accent,
     );
-    ui::icon(
+    ui::icon_cached(
         game,
         batch,
         icon,
@@ -133,7 +150,7 @@ fn card(
         w - 35.0,
         0xbce8d7,
     );
-    ui::fill(
+    ui::fill_cached(
         game,
         batch,
         [left + 6.0, top + HEAD, w - 12.0, 1.0],
@@ -142,7 +159,7 @@ fn card(
     for (i, r) in rows.iter().enumerate() {
         let at = top + HEAD + 6.0 + i as f32 * ROW;
         if i % 2 == 1 {
-            ui::rounded(
+            ui::rounded_cached(
                 game,
                 batch,
                 [left + 4.0, at - 2.0, w - 8.0, ROW],
@@ -152,7 +169,7 @@ fn card(
         }
         let mut text_x = left + 9.0;
         if let Some(icon) = r.icon {
-            ui::icon(game, batch, icon, [left + 8.0, at, 9.0, 9.0], 0x8da5b8);
+            ui::icon_cached(game, batch, icon, [left + 8.0, at, 9.0, 9.0], 0x8da5b8);
             text_x = left + 21.0;
         }
         let value_w = game.native_text_width(&r.value);
@@ -198,9 +215,10 @@ pub(super) fn sidebar(
     {
         return;
     }
-    data::read(|book, p, status, _| {
+    // Copy what is shown and release the economy state before any drawing.
+    let Some(facts) = data::read(|book, p, status, _| {
         if !p.flag("custom_sidebar") {
-            return;
+            return None;
         }
         let value = |keys: &[&str]| {
             status
@@ -212,80 +230,99 @@ pub(super) fn sidebar(
                 })
                 .map(|(_, v)| v.trim().to_owned())
         };
-        let fps = game.fps;
-        let mut performance = vec![row(
-            ui::Icon::Gauge,
-            "FPS",
-            format!("{fps:.0}"),
-            health(fps >= 60.0, fps >= 30.0),
-        )];
-        if p.flag("sidebar_tps") {
-            let label = crate::game::claim_borders_server_tps_view::label();
-            let (value, color) = match tps_value(&label) {
-                Some(t) => (format!("{t:.1}"), health(t >= 19.0, t >= 15.0)),
-                None => (label.trim_start_matches("TPS:").trim().to_owned(), 0x9aacc0),
-            };
-            performance.push(row(ui::Icon::Activity, "TPS", value, color));
-        }
-        performance.push(row(
-            ui::Icon::People,
-            lang().text("Онлайн", "Online"),
-            value(&["Online", "Онлайн"]).unwrap_or_else(|| "—".into()),
-            0xe6edf5,
-        ));
-        performance.push(row(
-            ui::Icon::Clock,
-            lang().text("В игре", "Playtime"),
-            value(&["Playtime", "Время игры"]).unwrap_or("—".into()),
-            0xe6edf5,
-        ));
-        card(
-            game,
-            batch,
-            corners,
-            p,
-            lang().text("СЕРВЕР · КЛИЕНТ", "SERVER · CLIENT"),
-            ui::Icon::Signal,
-            &performance,
-            "performance",
-        );
-        let mut economy = vec![row(
-            ui::Icon::Coins,
-            lang().text("Баланс", "Balance"),
-            money(book.balance),
-            0xf0d68a,
-        )];
-        let richest: Vec<_> = status
-            .sidebar
-            .iter()
-            .filter(|(k, _)| {
-                let k = k.trim();
-                k.starts_with("1.") || k.starts_with("2.") || k.starts_with("3.")
-            })
-            .take(3)
-            .collect();
-        if !richest.is_empty() && batch.height >= 230.0 {
-            for (i, (k, v)) in richest.into_iter().enumerate() {
-                let budget = p.get("sidebar_width") as f32 - 64.0 - game.native_text_width(v);
-                economy.push(Row {
-                    icon: (i == 0).then_some(ui::Icon::Star),
-                    label: ui::clip(game, k.trim(), budget),
-                    value: v.trim().to_owned(),
-                    color: 0xb8c9d7,
-                });
-            }
-        }
-        card(
-            game,
-            batch,
-            corners,
-            p,
-            lang().text("ЭКОНОМИКА", "ECONOMY"),
-            ui::Icon::Wallet,
-            &economy,
-            "economy",
-        );
-    });
+        let richest = if batch.height >= 230.0 {
+            status
+                .sidebar
+                .iter()
+                .filter(|(k, _)| {
+                    let k = k.trim();
+                    k.starts_with("1.") || k.starts_with("2.") || k.starts_with("3.")
+                })
+                .take(3)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Some(Facts {
+            look: Look {
+                scale: p.get("sidebar_scale"),
+                width: p.get("sidebar_width"),
+                corner: p.get("sidebar_corner"),
+                opacity: p.get("sidebar_opacity"),
+            },
+            tps: p.flag("sidebar_tps"),
+            online: value(&["Online", "Онлайн"]),
+            playtime: value(&["Playtime", "Время игры"]),
+            balance: book.balance,
+            richest,
+        })
+    }) else {
+        return;
+    };
+    let look = facts.look;
+    let fps = game.fps;
+    let mut performance = vec![row(
+        ui::Icon::Gauge,
+        "FPS",
+        format!("{fps:.0}"),
+        health(fps >= 60.0, fps >= 30.0),
+    )];
+    if facts.tps {
+        let label = crate::game::claim_borders_server_tps_view::label();
+        let (value, color) = match tps_value(&label) {
+            Some(t) => (format!("{t:.1}"), health(t >= 19.0, t >= 15.0)),
+            None => (label.trim_start_matches("TPS:").trim().to_owned(), 0x9aacc0),
+        };
+        performance.push(row(ui::Icon::Activity, "TPS", value, color));
+    }
+    performance.push(row(
+        ui::Icon::People,
+        lang().text("Онлайн", "Online"),
+        facts.online.unwrap_or_else(|| "—".into()),
+        0xe6edf5,
+    ));
+    performance.push(row(
+        ui::Icon::Clock,
+        lang().text("В игре", "Playtime"),
+        facts.playtime.unwrap_or("—".into()),
+        0xe6edf5,
+    ));
+    card(
+        game,
+        batch,
+        corners,
+        look,
+        lang().text("СЕРВЕР · КЛИЕНТ", "SERVER · CLIENT"),
+        ui::Icon::Signal,
+        &performance,
+        "performance",
+    );
+    let mut economy = vec![row(
+        ui::Icon::Coins,
+        lang().text("Баланс", "Balance"),
+        money(facts.balance),
+        0xf0d68a,
+    )];
+    for (i, (k, v)) in facts.richest.iter().enumerate() {
+        let budget = look.width as f32 - 64.0 - game.native_text_width(v);
+        economy.push(Row {
+            icon: (i == 0).then_some(ui::Icon::Star),
+            label: ui::clip(game, k.trim(), budget),
+            value: v.trim().to_owned(),
+            color: 0xb8c9d7,
+        });
+    }
+    card(
+        game,
+        batch,
+        corners,
+        look,
+        lang().text("ЭКОНОМИКА", "ECONOMY"),
+        ui::Icon::Wallet,
+        &economy,
+        "economy",
+    );
 }
 pub(super) fn tab(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
     if !game.native_on(claims::ID)

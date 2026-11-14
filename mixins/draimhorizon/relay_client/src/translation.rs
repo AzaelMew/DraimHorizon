@@ -445,6 +445,15 @@ impl Language {
         }
     }
 }
+/// What happened to a translation request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Submission {
+    Queued,
+    /// The text needs no translation (or is too long) for this target and source policy.
+    Skipped,
+    /// The worker queue is full or stopped; the same request can succeed later.
+    Busy,
+}
 pub struct Translator {
     requests: SyncSender<Job>,
     results: Receiver<(u64, Option<Translation>)>,
@@ -530,16 +539,25 @@ impl Translator {
         self.enqueue(id, text, Some(deadline))
     }
     fn enqueue(&self, id: u64, text: &str, deadline: Option<Instant>) -> bool {
+        self.enqueue_checked(id, text, deadline) == Submission::Queued
+    }
+    /// Like `submit`, but says why nothing was queued: `Skipped` is permanent for this text,
+    /// target and source policy; `Busy` (the worker queue is full or gone) is worth retrying.
+    pub fn try_submit(&self, id: u64, text: &str) -> Submission {
+        self.enqueue_checked(id, text, None)
+    }
+    fn enqueue_checked(&self, id: u64, text: &str, deadline: Option<Instant>) -> Submission {
         if text.len() > 4096 || !self.target.should_translate(self.source, text) {
-            return false;
+            return Submission::Skipped;
         }
-        self.requests
-            .try_send(Job {
-                id,
-                text: text.into(),
-                deadline,
-            })
-            .is_ok()
+        match self.requests.try_send(Job {
+            id,
+            text: text.into(),
+            deadline,
+        }) {
+            Ok(()) => Submission::Queued,
+            Err(_) => Submission::Busy,
+        }
     }
     pub fn poll(&self) -> Option<(u64, Option<String>)> {
         self.poll_translation()
@@ -809,6 +827,48 @@ mod tests {
             assert_eq!(value["source_lang"], "FI");
             assert_eq!(value["target_lang"], target.deepl_code());
         }
+    }
+    #[test]
+    fn submission_tells_permanent_skips_from_a_full_queue() {
+        let (requests, queue) = mpsc::sync_channel::<Job>(1);
+        let (_done, results) = mpsc::sync_channel(1);
+        let worker = Translator {
+            requests,
+            results,
+            stop: Arc::new(AtomicBool::new(false)),
+            target: TargetLanguage::English,
+            source: None,
+        };
+        // Already in the target language, a command and an oversized text are never queued.
+        assert_eq!(
+            worker.try_submit(1, "hello everyone, how are you doing today"),
+            Submission::Skipped
+        );
+        assert_eq!(
+            worker.try_submit(2, "/msg Alex привет"),
+            Submission::Skipped
+        );
+        assert_eq!(
+            worker.try_submit(3, &"привет ".repeat(1000)),
+            Submission::Skipped
+        );
+        assert_eq!(
+            worker.try_submit(4, "Привет, как твои дела?"),
+            Submission::Queued
+        );
+        assert_eq!(
+            worker.try_submit(5, "Привет, как твои дела?"),
+            Submission::Busy
+        );
+        // The boolean API keeps meaning "queued".
+        assert!(!worker.submit(5, "Привет, как твои дела?"));
+        drop(queue.recv().unwrap());
+        assert!(worker.submit(5, "Привет, как твои дела?"));
+        drop(queue);
+        assert_eq!(
+            worker.try_submit(6, "Привет, как твои дела?"),
+            Submission::Busy
+        );
     }
     #[test]
     fn common_only_skips_unlisted_sources_without_waiting_for_network() {

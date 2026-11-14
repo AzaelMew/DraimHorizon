@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.40.0"
+version = "0.40.1"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -940,6 +940,30 @@ bindings = [
  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
  { name = "hand", ty = "horizon_client::first_person::Hand", value = "hand" },
 ]
+
+[[module]]
+id = "card-layout"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_card_layout"
+source = "card_layout.rs"
+
+[[module]]
+id = "text-layout"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_text_layout"
+source = "text_layout.rs"
+
+[[module]]
+id = "translation-plan"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_translation_plan"
+source = "translation_plan.rs"
+
+[[module]]
+id = "shape-cache"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_shape_cache"
+source = "shape_cache.rs"
 
 [[module]]
 id = "ui-style"
