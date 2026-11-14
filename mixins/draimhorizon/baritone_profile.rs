@@ -53,6 +53,21 @@ pub fn record(name: &'static str, took: Duration) {
     });
 }
 
+/// Called once a frame: with the profiler on, the time since the last call is a "frame" entry, so
+/// the report shows the frame rate beside what the sections cost.
+pub fn mark_frame() {
+    if !enabled() {
+        return;
+    }
+    thread_local! {
+        static LAST: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    }
+    let now = Instant::now();
+    if let Some(last) = LAST.with(|l| l.replace(Some(now))) {
+        record("frame (one per frame)", now.duration_since(last));
+    }
+}
+
 /// Runs `f` and, with the profiler on, times it as `name`.
 #[inline]
 pub fn time<R>(name: &'static str, f: impl FnOnce() -> R) -> R {

@@ -73,9 +73,9 @@ pub fn enabled(game: &Game<'_>) -> bool {
             == Some("true");
     ENABLED_CACHE.with(|c| c.set(Some((std::time::Instant::now(), on))));
     set_port_on(on);
+    // The profiler works with the port off too: it also times the mod's own tick and frame.
     super::claim_borders_baritone_profile::set_enabled(
-        on && game
-            .native_setting(claims::SETTINGS_ID, "baritone_profile")
+        game.native_setting(claims::SETTINGS_ID, "baritone_profile")
             .as_deref()
             == Some("true"),
     );

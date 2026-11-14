@@ -16,6 +16,11 @@ use super::Game;
 pub use super::baritone_pathing_behavior::PathingCommand;
 
 /// baritone.api.process.IBaritoneProcess.
+thread_local! {
+    /// The tick before which no chunk is packed (see `cache_tick`).
+    static PACK_WAIT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 pub trait Process {
     fn name(&self) -> &'static str;
     /// What `#proc` says it is doing.
@@ -90,18 +95,32 @@ impl Core {
             }
         }
         let same_world = world_before == self.world_data.current.as_ref().map(|d| d.key.clone());
+        // DraimHorizon: packing always does at least one chunk, which is many milliseconds in a build
+        // that is not optimized. When it took long, it waits, so that it uses a tenth of the time at most.
+        let may_pack = game.ticks >= PACK_WAIT.with(std::cell::Cell::get);
+        let began = Instant::now();
         if same_world && !unloaded.is_empty() {
-            let factory = self.states.clone();
-            let (done, left) = super::claim_borders_baritone_profile::time("pack_unloaded", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_unloaded(g, calc, &factory, unloaded, 6))));
-            self.world_data.finish_batch(done, Vec::new());
-            self.unloading = left;
+            if may_pack {
+                let factory = self.states.clone();
+                let (done, left) = super::claim_borders_baritone_profile::time("pack_unloaded", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_unloaded(g, calc, &factory, unloaded, 6))));
+                self.world_data.finish_batch(done, Vec::new());
+                self.unloading = left;
+            } else {
+                self.unloading = unloaded;
+            }
         }
         super::claim_borders_baritone_profile::time("queue_chunks", || self.world_data.queue_chunks(game));
-        let batch = self.world_data.take_batch(game, 4, self.settings.int("chunkPackerQueueMaxSize").max(0) as usize);
-        if !batch.is_empty() {
-            let factory = self.states.clone();
-            let (done, left) = super::claim_borders_baritone_profile::time("pack_batch", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_batch(g, calc, &factory, batch, 4))));
-            self.world_data.finish_batch(done, left);
+        if may_pack {
+            let batch = self.world_data.take_batch(game, 4, self.settings.int("chunkPackerQueueMaxSize").max(0) as usize);
+            if !batch.is_empty() {
+                let factory = self.states.clone();
+                let (done, left) = super::claim_borders_baritone_profile::time("pack_batch", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_batch(g, calc, &factory, batch, 4))));
+                self.world_data.finish_batch(done, left);
+            }
+            let took = began.elapsed().as_millis() as u64;
+            if took > 4 {
+                PACK_WAIT.with(|w| w.set(game.ticks + took * 10 / 50 + 1));
+            }
         }
         self.world_data.save_if_due(game, &self.settings);
     }
