@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.3
+
+- Map: the last death point can now be removed like a regular waypoint. Double-clicking it with the left mouse button hides it from the map, the Death button and the status line. The game's own last-death state (used by the recovery compass) is not changed, and a new death shows the point again.
+
 ## 0.40.2
 
 - Chat row cache: pressure no longer flushes the whole cache. Entries are evicted one at a time, least recently used first (a hit or insert refreshes an entry; an ordered index finds the oldest in O(log n), hits stay a bucket lookup), so rows still painted survive a resize drag that produces a new exact-width layout every frame. Widths are still compared as exact `f32` bits: no rounding, throttling or geometry change. Count and character budgets are updated on every insert and eviction. Oversized layouts are rejected without evicting anything; Full/Cut variants and forced hash collisions stay separate entries when one of them is evicted.
