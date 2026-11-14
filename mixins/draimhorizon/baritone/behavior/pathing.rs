@@ -98,7 +98,7 @@ impl Core {
         // DraimHorizon: packing always does at least one chunk, which is many milliseconds in a build
         // that is not optimized. When it took long, it waits, so that it uses a tenth of the time at most.
         let may_pack = game.ticks >= PACK_WAIT.with(std::cell::Cell::get);
-        let began = Instant::now();
+        let began = std::time::Instant::now();
         if same_world && !unloaded.is_empty() {
             if may_pack {
                 let factory = self.states.clone();
