@@ -13,7 +13,8 @@ file layout, module names (`baritone_*`) and authorship.
 - Local changes to the upstream files are listed here:
   - `behavior/pathing_behavior.rs`: the desktop notification on a failed search (it ran an
     external command) is not ported.
-  - `baritone.rs`: `enabled()` is added; `hooks/chat.rs`, `hooks/command.rs` and
+  - `baritone.rs`: `enabled()` (cached for half a second, `invalidate_enabled()` drops the
+    cache) and `run_line()` are added; `hooks/chat.rs`, `hooks/command.rs` and
     `hooks/tick.rs` use it instead of `native_on("baritone")`, which is always true for a mod
     that is not registered. The port runs only with the experiments consent given and the
     switch on the Baritone tab on.
@@ -23,3 +24,8 @@ file layout, module names (`baritone_*`) and authorship.
   The two sort hooks target `horizon_client::game::extras::sorting` (upstream's Nightly had
   them in `tweaks`).
 - Upstream's data folder `baritone` (settings, waypoints, cache, schematics) is kept.
+- DraimHorizon's own glue is MIT and lives outside this directory: `baritone_bridge.rs` (walks for the
+  farm and mining, the tab's settings and status) and `baritone_walk.rs` (its pure logic). They call
+  the port only through `crate::game::baritone::with` and its public API.
+- Upstream's `notification.rs` is still built: `#orderpizza` opens a web page and the
+  notification settings can run a desktop command, both only on the player's own request.

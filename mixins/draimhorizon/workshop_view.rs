@@ -286,6 +286,7 @@ pub(super) fn control() -> Option<(bool, bool)> {
     })
 }
 pub(super) fn pause() {
+    crate::game::claim_borders_baritone_bridge::walk_cancel();
     state(|s| {
         s.active = false;
         if let Some(p) = s.pending.as_mut() {
@@ -2208,6 +2209,10 @@ pub(super) fn tick(game: &Game<'_>) {
     if !game.native_on(claims::ID) {
         reset();
         return;
+    }
+    // A walk the port was given for the farm ends with the job.
+    if crate::game::claim_borders_baritone_bridge::walking_for("farm") && !state(|s| s.active) {
+        crate::game::claim_borders_baritone_bridge::walk_cancel();
     }
     state(|s| {
         if s.scope.is_empty() {

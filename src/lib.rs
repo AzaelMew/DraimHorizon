@@ -160,6 +160,10 @@ pub mod reconnect;
 pub mod patting;
 pub use patting as claim_borders_patting;
 
+#[path = "../mixins/draimhorizon/baritone_walk.rs"]
+pub mod baritone_walk;
+pub use baritone_walk as claim_borders_baritone_walk;
+
 // Baritone navigation (LGPL-3.0, see mixins/draimhorizon/baritone/NOTICE.md).
 #[rustfmt::skip]
 #[allow(clippy::all, dead_code, unused_mut)]

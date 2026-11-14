@@ -252,6 +252,14 @@ fn state<T>(f: impl FnOnce(&mut Client) -> T) -> T {
     f(&mut client)
 }
 
+fn baritone_off() -> String {
+    crate::game::claim_borders_chat_view::current_language()
+        .text(
+            "Сначала включите Baritone на его вкладке",
+            "Turn Baritone on in its tab first",
+        )
+        .into()
+}
 pub(super) fn scope(game: &Game<'_>) -> Option<(String, u128)> {
     game.native_player()?;
     if let Some(remote) = &game.remote {
@@ -1575,6 +1583,19 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 .native_setting(claims::SETTINGS_ID, "baritone_enabled")
                 .as_deref()
                 == Some("true"),
+            baritone: {
+                let read = crate::game::claim_borders_baritone_bridge::snapshot();
+                menu::BaritoneView {
+                    process: read.process,
+                    segment: read.segment,
+                    goal: read.goal,
+                    values: read.values,
+                    engine: game
+                        .native_setting(claims::SETTINGS_ID, "baritone_engine")
+                        .as_deref()
+                        == Some("true"),
+                }
+            },
             pat_policy: crate::game::claim_borders_pat_view::policy(game),
             pat_notify: crate::game::claim_borders_pat_view::notify(game),
             protect_glow_berries: game
@@ -1837,6 +1858,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "baritone_enabled",
                 if on { "true" } else { "false" },
             );
+            crate::game::baritone::invalidate_enabled();
             if !on {
                 crate::game::baritone::stop(game);
             }
@@ -1844,14 +1866,48 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
         }
         Action::Baritone(line) => {
             if !crate::game::baritone::enabled(game) {
-                return Err(crate::game::claim_borders_chat_view::current_language()
-                    .text(
-                        "Сначала включите Baritone на его вкладке",
-                        "Turn Baritone on in its tab first",
-                    )
-                    .into());
+                return Err(baritone_off());
             }
             crate::game::baritone::run_line(game, &line);
+            Ok(Vec::new())
+        }
+        Action::BaritoneBuild { file, origin } => {
+            use crate::game::claim_borders_workshop_view as workshop;
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            // The port reads one word from its own schematics folder: the file is copied there
+            // (a path with spaces, as in a Windows user folder, could not be given to it).
+            let from = workshop::folder(game).join(&file);
+            let into = game
+                .native_data_dir(crate::game::baritone::ID)
+                .join("schematics");
+            std::fs::create_dir_all(&into)
+                .and_then(|()| std::fs::copy(&from, into.join(&file)))
+                .map_err(|e| format!("{file}: {e}"))?;
+            let line = match origin {
+                Some([x, y, z]) => format!("build {file} {x} {y} {z}"),
+                None => format!("build {file}"),
+            };
+            crate::game::baritone::run_line(game, &line);
+            Ok(Vec::new())
+        }
+        Action::BaritoneSetting(index, value) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
+            Ok(Vec::new())
+        }
+        Action::SetBaritoneEngine(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "baritone_engine",
+                if on { "true" } else { "false" },
+            );
+            if !on {
+                crate::game::claim_borders_baritone_bridge::walk_cancel();
+            }
             Ok(Vec::new())
         }
         Action::SchematicEdit(edit) => {

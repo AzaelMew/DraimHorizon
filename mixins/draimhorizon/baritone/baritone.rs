@@ -33,9 +33,22 @@ pub const ID: &str = "baritone";
 /// DraimHorizon: the port runs only with the experiments consent given and the Baritone tab's
 /// switch on (an unregistered mod id is always "on" for `native_on`, so it cannot be used).
 pub const ENABLED_SETTING: &str = "baritone_enabled";
+thread_local! {
+    static ENABLED_CACHE: FlagCell<Option<(std::time::Instant, bool)>> = const { FlagCell::new(None) };
+}
+/// The switch was changed: the next `enabled` reads the files again.
+pub fn invalidate_enabled() {
+    ENABLED_CACHE.with(|c| c.set(None));
+}
 pub fn enabled(game: &Game<'_>) -> bool {
+    // Read from the settings files at most twice a second: this is asked every tick.
+    if let Some((at, on)) = ENABLED_CACHE.with(FlagCell::get)
+        && at.elapsed() < std::time::Duration::from_millis(500)
+    {
+        return on;
+    }
     use super::claim_borders as claims;
-    game.native_on(claims::ID)
+    let on = game.native_on(claims::ID)
         && game
             .native_setting(claims::SETTINGS_ID, "experiments_accepted")
             .as_deref()
@@ -43,7 +56,9 @@ pub fn enabled(game: &Game<'_>) -> bool {
         && game
             .native_setting(claims::SETTINGS_ID, ENABLED_SETTING)
             .as_deref()
-            == Some("true")
+            == Some("true");
+    ENABLED_CACHE.with(|c| c.set(Some((std::time::Instant::now(), on))));
+    on
 }
 /// `SettingsUtil.SETTINGS_DEFAULT_NAME`, in the mod's data folder.
 pub const SETTINGS_DEFAULT_NAME: &str = "settings.txt";

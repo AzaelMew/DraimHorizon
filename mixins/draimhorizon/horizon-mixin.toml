@@ -2047,3 +2047,16 @@ id = "bar-mod_settings_ui"
 file = "crates/horizon-client/src/game.rs"
 name = "baritone_settings_ui"
 source = "baritone/game/settings_ui.rs"
+
+# DraimHorizon's side of the Baritone port (MIT): walks for the farm and mining, tab settings and status.
+[[module]]
+id = "baritone-walk"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_baritone_walk"
+source = "baritone_walk.rs"
+
+[[module]]
+id = "baritone-bridge"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_baritone_bridge"
+source = "baritone_bridge.rs"
