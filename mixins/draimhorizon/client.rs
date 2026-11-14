@@ -1642,6 +1642,24 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         == Some("true"),
                 }
             },
+            auto_eat_foods: crate::game::claim_borders_navigation_view::auto_eat_foods(game),
+            auto_eat_options: {
+                let mut foods: Vec<_> = game
+                    .res
+                    .items()
+                    .items
+                    .iter()
+                    .filter_map(|(id, item)| {
+                        let (nutrition, _) = item.food?;
+                        if nutrition == 0 || crate::game::claim_borders_auto_eat::avoid(id) {
+                            return None;
+                        }
+                        Some((id.to_string(), game.pack.names.display_item(id), nutrition))
+                    })
+                    .collect();
+                foods.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+                foods
+            },
             pat_policy: crate::game::claim_borders_pat_view::policy(game),
             pat_notify: crate::game::claim_borders_pat_view::notify(game),
             protect_glow_berries: game
@@ -2005,6 +2023,26 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 if on { "true" } else { "false" },
             );
             crate::game::baritone::invalidate_enabled();
+            Ok(Vec::new())
+        }
+        Action::SetAutoEatFood(item, on) => {
+            if crate::game::claim_borders_auto_eat::avoid(&item)
+                || !game
+                    .res
+                    .items()
+                    .get(&item)
+                    .is_some_and(|info| info.food.is_some_and(|(n, _)| n > 0))
+            {
+                return Ok(Vec::new());
+            }
+            let mut foods = crate::game::claim_borders_navigation_view::auto_eat_foods(game);
+            foods.retain(|id| id != &item);
+            if on {
+                foods.push(item);
+            }
+            foods.sort();
+            let value = serde_json::to_string(&foods).map_err(|e| e.to_string())?;
+            game.native_set_setting(claims::SETTINGS_ID, "auto_eat_foods", &value);
             Ok(Vec::new())
         }
         Action::SchematicEdit(edit) => {

@@ -48,6 +48,8 @@ Every Baritone job shares one route planner. A task waits instead of stopping wh
 
 ## Helpers and interface
 
+**Auto Eat** — Open **J → Experiments → Helpers → Allowed foods** and select food-item tiles, just like mining targets. Only selected foods may be eaten; the list starts empty. Auto Eat waits until a food's entire hunger value fits (steak restores 8 points, so it waits until hunger is 12/20 or lower). Smaller selected snacks can be eaten sooner. Saturation does not affect this check; risky and reserved foods remain excluded.
+
 ![Auto Eat, Auto Totem, Auto Fill, Auto Tools, Auto Click, Auto Resume, Human Look and shulker peek](docs/showcase/helpers.svg)
 ![Zoom, interface customization and opt-in features](docs/showcase/customize.svg)
 

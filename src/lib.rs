@@ -134,6 +134,7 @@ pub use text_layout as claim_borders_text_layout;
 pub mod translation_plan;
 #[path = "../mixins/draimhorizon/ui_style.rs"]
 pub mod ui_style;
+pub use ui_style as claim_borders_ui_style;
 
 #[path = "../mixins/draimhorizon/input.rs"]
 pub mod input;

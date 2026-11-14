@@ -2,10 +2,6 @@
 
 ## 0.40.4
 
-- Baritone navigation port: step 1, pure core (#55). Replace this line with a concrete entry.
-
-## 0.40.3
-
 - Baritone navigation, step 1: the pure core of Baritone 1.21.4 (goals, movement costs, the A* search, all movements including parkour and pillar, the movement executor, path executor and pathing behavior) is added under `mixins/draimhorizon/baritone/`, taken with its authorship from luhnox's Horizon port (LGPL-3.0, see `NOTICE.md` there; the rest of DraimHorizon stays MIT). The upstream desktop-notification call is not ported.
 - Baritone navigation, step 2: the rest of the port (game bridge, commands, processes, hooks) is merged into the mod manifest and builds against the current official Nightly `9f42064`; the only incompatibility found was that the sort hooks moved to `game::extras::sorting`. The Baritone tab has a switch (off by default, needs the experiments consent) and buttons, so nothing has to be typed with `#`: Pause, Resume and Cancel; X/Y/Z fields with Go; a block field with Mine; Farm, Explore, Follow (players) and Come. A button builds the same command line the `#` command would (`Menu::baritone_line`) and runs it through the port; a destination or block that is missing or malformed starts nothing, and with the switch off a button answers that Baritone must be turned on first. The `#` commands still work when the switch is on. The upstream Options > Mods page is not hooked. The package bundle now carries the LGPL texts (`tools/package.py` allows `baritone/LICENSE`, `COPYING`, `LICENSE-Part-2.jpg`, `NOTICE.md`). The old navigation, mining and farm are untouched; the farm and mining do not use the new planner yet.
 - Baritone tab: a tab of its own, Baritone, now sits under Experiments in the J menu (rail and compact top row) and asks for the same experiments consent. It describes the port and its status; the controls arrive with the game integration. The Baritone section inside Experiments is renamed Automation (Автоматизация). Test: the tab's position, labels in both languages at compact and wide sizes, and the consent prompt.
@@ -23,6 +19,13 @@
 
 - Map: the last death point can now be removed like a regular waypoint. Double-clicking it with the left mouse button hides it from the map, the Death button and the status line. The game's own last-death state (used by the recovery compass) is not changed, and a new death shows the point again.
 - Farm (Experiments → Baritone): the harvest, seeds and bone-meal containers the player points at are now remembered. They are saved per world and role in the settings, so they survive a restart and a reconnect instead of having to be set again. Aiming at nothing useful while one is set still clears it. Encoding and decoding live in `farm_storage` with a round-trip test (bad lines dropped, a role of a world keeps its last line, bounded to 96 entries).
+
+## 0.40.3
+
+- Auto Eat now has a saved allowed-food filter under Experiments → Helpers. Select food-item icon tiles like mining targets, with highlighted selection, hover names and hunger values, and paging for small menus. The list starts empty; only explicitly selected safe foods can be consumed. English and Russian controls are included.
+- Auto Eat never wastes hunger points: it waits until the entire food value fits, with no oversized-food fallback. The old fixed 14/20 trigger no longer delays smaller selected snacks. Saturation is not part of the check. Pending meals recheck the selected item and allowlist before using it, and farm food-availability checks respect the same filter.
+- Review correction: candidate selection, pending meals and farm food availability resolve each stack's effective food component through Horizon's consumption resolver, instead of using registry defaults. Modified bread restoring 8 points waits until 12/20; removed or zero-nutrition food components are not edible supplies. Four native regressions cover larger/smaller overrides, removal/zero nutrition and same-item component changes. Test-only module paths also work inside the injected client.
+
 
 ## 0.40.2
 
