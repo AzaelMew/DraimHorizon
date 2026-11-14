@@ -10,5 +10,6 @@ Target: official Horizon Nightly source `9f42064` (unchanged).
 - Performance: Baritone does no work while it is off,. A profiler switch in the Baritone tab's Settings writes `profile.txt` for diagnosis.
 - Double-click the last death point on the map with the left mouse button to remove it, as with a regular waypoint. A new death shows it again. The game's last-death state and the recovery compass are untouched.
 - Farm: the harvest, seeds and bone-meal containers you point at are remembered per world after a restart or reconnect.
+- Chat: a Global chat switch (Settings → Chat → Spam). Off shows only friends' and important players' public messages; system lines, whispers and events stay.
 
 Verification: Clippy with warnings denied, cargo fmt and the workspace tests pass. The pinned native client was staged and `cargo check`ed against Nightly 9f42064, and the packaged bundle passes `cargo horizon-mod check`. Nothing was tried in a running game.

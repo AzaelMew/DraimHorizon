@@ -966,6 +966,8 @@ pub enum Control {
     ChatPresence,
     ChatPresenceStyle,
     ChatDeaths,
+    /// Global chat off: only friends and important players' public messages are shown.
+    ChatGlobal,
     ChatRepeats,
     ChatPrefix,
     ChatReset,
@@ -3649,6 +3651,21 @@ impl Menu {
                 vec![(
                     localized!(
                         self.language,
+                        "Глобальный чат: {}",
+                        "Global chat: {}",
+                        if p.hide_global {
+                            self.language
+                                .text("выкл (только друзья)", "off (friends only)")
+                        } else {
+                            self.language.text("вкл", "on")
+                        }
+                    ),
+                    Control::ChatGlobal,
+                    p.hide_global,
+                )],
+                vec![(
+                    localized!(
+                        self.language,
                         "Режим: {}",
                         "Mode: {}",
                         p.repeats.label_in(self.language)
@@ -6171,6 +6188,11 @@ impl Menu {
                 p.deaths = !p.deaths;
                 Some(Action::SetChat(p))
             }
+            Control::ChatGlobal => {
+                let mut p = model.chat_preferences;
+                p.hide_global = !p.hide_global;
+                Some(Action::SetChat(p))
+            }
             Control::ChatRepeats => {
                 let mut p = model.chat_preferences;
                 p.repeats = p.repeats.next();
@@ -8123,6 +8145,50 @@ mod tests {
                 ));
                 model.baritone_enabled = false;
             }
+        }
+    }
+
+    #[test]
+    fn global_chat_switch_sits_in_the_spam_section_and_toggles_both_ways() {
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Settings,
+                settings_section: 3,
+                chat_section: ChatSection::Spam,
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel {
+                language,
+                ..ViewModel::default()
+            };
+            for (width, height) in [(320.0, 224.0), (800.0, 480.0)] {
+                let rows = menu.layout(&model, width, height);
+                let switch = rows
+                    .iter()
+                    .find(|r| r.control == Some(Control::ChatGlobal))
+                    .expect("the switch is in the Spam section");
+                assert!(switch.rect[2] > 20.0 && switch.rect[0] + switch.rect[2] <= width);
+                assert!(!switch.selected);
+            }
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
+                panic!("the switch must update the chat preferences");
+            };
+            assert!(p.hide_global);
+            // Nothing else changed.
+            assert_eq!(p.width, model.chat_preferences.width);
+            model.chat_preferences = p;
+            let rows = menu.layout(&model, 320.0, 224.0);
+            let switch = rows
+                .iter()
+                .find(|r| r.control == Some(Control::ChatGlobal))
+                .unwrap();
+            assert!(switch.selected);
+            assert!(switch.text.contains("friends only") || switch.text.contains("только друзья"));
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
+                panic!();
+            };
+            assert!(!p.hide_global);
         }
     }
 

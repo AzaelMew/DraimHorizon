@@ -5,6 +5,12 @@ use std::collections::VecDeque;
 
 pub const MAX_ENTRIES: usize = 500;
 
+/// Whether the "global chat off" switch hides a line: a public message (not a whisper, a system
+/// line or an event) from someone who is neither a friend nor an important player.
+pub fn hidden_by_global_off(preferences: Preferences, kind: Kind, important: bool) -> bool {
+    preferences.hide_global && kind == Kind::Message && !important
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Message,
@@ -1783,5 +1789,37 @@ mod tests {
         }
         refresh_heads(&mut heads, roster(&[("Kim", 2, "skins/k")]));
         assert_eq!(heads.len(), 1);
+    }
+
+    #[test]
+    fn global_chat_off_hides_only_public_messages_of_strangers() {
+        let off = Preferences {
+            hide_global: true,
+            ..Preferences::default()
+        };
+        let on = Preferences::default();
+        for kind in [
+            Kind::Message,
+            Kind::Whisper(Whisper::Incoming),
+            Kind::Whisper(Whisper::Outgoing),
+            Kind::Presence,
+            Kind::Death,
+            Kind::System,
+        ] {
+            // With global chat on nothing is hidden.
+            assert!(!hidden_by_global_off(on, kind, false), "{kind:?}");
+            // A friend or an important player is always shown.
+            assert!(!hidden_by_global_off(off, kind, true), "{kind:?}");
+            // Off: only a stranger's public message goes.
+            assert_eq!(
+                hidden_by_global_off(off, kind, false),
+                kind == Kind::Message,
+                "{kind:?}"
+            );
+        }
+        // A public line classifies as a message and a join as presence; whispers are classified
+        // from their components, not from text.
+        assert_eq!(classify("<Steve> hello").0, Kind::Message);
+        assert_eq!(classify("Steve joined the game").0, Kind::Presence);
     }
 }

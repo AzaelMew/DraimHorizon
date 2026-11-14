@@ -132,6 +132,9 @@ pub struct Preferences {
     pub repeats: RepeatMode,
     pub repeat_window: u16,
     pub ignore_prefix: u8,
+    /// Global chat is off: of the public messages only those of friends and important players
+    /// are shown (system lines, whispers and events always are).
+    pub hide_global: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -153,6 +156,7 @@ impl Default for Preferences {
             repeats: RepeatMode::Recent,
             repeat_window: 10,
             ignore_prefix: 0,
+            hide_global: false,
         }
     }
 }
@@ -183,7 +187,7 @@ impl Preferences {
         json!({"schema":1,"width":p.width,"height":p.height,"scale":p.scale,"compact_messages":p.compact_messages,"placement":p.placement as u8,
             "offset_x":p.offset_x,"offset_y":p.offset_y,"notifications":p.notifications as u8,
             "presence":p.presence,"presence_style":p.presence_style as u8,"deaths":p.deaths,"duration":p.duration,"opacity":p.opacity,
-            "event_width":p.event_width,"repeats":p.repeats as u8,"repeat_window":p.repeat_window,"ignore_prefix":p.ignore_prefix}).to_string()
+            "event_width":p.event_width,"repeats":p.repeats as u8,"repeat_window":p.repeat_window,"ignore_prefix":p.ignore_prefix,"hide_global":p.hide_global}).to_string()
     }
     pub fn decode(text: &str) -> Result<Self, String> {
         if text.len() > 4096 {
@@ -208,6 +212,7 @@ impl Preferences {
         p.ignore_prefix = number("ignore_prefix", 0).min(64) as u8;
         p.scale = v["scale"].as_f64().unwrap_or(1.0) as f32;
         p.compact_messages = v["compact_messages"].as_bool().unwrap_or(false);
+        p.hide_global = v["hide_global"].as_bool().unwrap_or(false);
         p.opacity = v["opacity"].as_f64().unwrap_or(0.86) as f32;
         p.offset_x = v["offset_x"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
         p.offset_y = v["offset_y"].as_i64().unwrap_or(0).clamp(-2048, 2048) as i16;
@@ -521,5 +526,22 @@ mod tests {
         assert!((join >> 8 & 255) > (join >> 16 & 255));
         assert!((leave >> 16 & 255) > (leave >> 8 & 255));
         assert_eq!(CardMetrics::new(false, true, true).max_rows(100.0), 1);
+    }
+
+    #[test]
+    fn global_chat_off_is_kept_and_old_settings_read_as_on() {
+        let off = Preferences {
+            hide_global: true,
+            ..Preferences::default()
+        };
+        assert!(Preferences::decode(&off.encode()).unwrap().hide_global);
+        assert!(
+            !Preferences::decode(&Preferences::default().encode())
+                .unwrap()
+                .hide_global
+        );
+        // Settings saved before the switch existed have no key: global chat stays on.
+        let old = r#"{"schema":1,"width":320,"height":180}"#;
+        assert!(!Preferences::decode(old).unwrap().hide_global);
     }
 }
