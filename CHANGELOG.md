@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.3
+
+- Baritone navigation, step 1: the pure core of Baritone 1.21.4 (goals, movement costs, the A* search, all movements including parkour and pillar, the movement executor, path executor and pathing behavior) is added under `mixins/draimhorizon/baritone/`, taken with its authorship from luhnox's Horizon port (LGPL-3.0, see `NOTICE.md` there; the rest of DraimHorizon stays MIT). It is compiled and tested in the test crate only (51 upstream pathing tests) and is not wired into the game or the existing navigation yet. The upstream desktop-notification call is not ported.
+
 ## 0.40.2
 
 - Chat row cache: pressure no longer flushes the whole cache. Entries are evicted one at a time, least recently used first (a hit or insert refreshes an entry; an ordered index finds the oldest in O(log n), hits stay a bucket lookup), so rows still painted survive a resize drag that produces a new exact-width layout every frame. Widths are still compared as exact `f32` bits: no rounding, throttling or geometry change. Count and character budgets are updated on every insert and eviction. Oversized layouts are rejected without evicting anything; Full/Cut variants and forced hash collisions stay separate entries when one of them is evicted.
