@@ -1,5 +1,11 @@
 # История версий
 
+## 0.40.3
+
+- Auto Eat now has a saved allowed-food filter under Experiments → Helpers. Select food-item icon tiles like mining targets, with highlighted selection, hover names and hunger values, and paging for small menus. The list starts empty; only explicitly selected safe foods can be consumed. English and Russian controls are included.
+- Auto Eat never wastes hunger points: it waits until the entire food value fits, with no oversized-food fallback. The old fixed 14/20 trigger no longer delays smaller selected snacks. Saturation is not part of the check. Pending meals recheck the selected item and allowlist before using it, and farm food-availability checks respect the same filter.
+- Review correction: candidate selection, pending meals and farm food availability resolve each stack's effective food component through Horizon's consumption resolver, instead of using registry defaults. Modified bread restoring 8 points waits until 12/20; removed or zero-nutrition food components are not edible supplies. Four native regressions cover larger/smaller overrides, removal/zero nutrition and same-item component changes. Test-only module paths also work inside the injected client.
+
 ## 0.40.2
 
 - Chat row cache: pressure no longer flushes the whole cache. Entries are evicted one at a time, least recently used first (a hit or insert refreshes an entry; an ordered index finds the oldest in O(log n), hits stay a bucket lookup), so rows still painted survive a resize drag that produces a new exact-width layout every frame. Widths are still compared as exact `f32` bits: no rounding, throttling or geometry change. Count and character budgets are updated on every insert and eviction. Oversized layouts are rejected without evicting anything; Full/Cut variants and forced hash collisions stay separate entries when one of them is evicted.

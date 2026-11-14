@@ -380,8 +380,8 @@ mod content_hashes {
 
 #[cfg(test)]
 mod tests {
+    use super::super::claim_borders_chat_preferences::Preferences;
     use super::*;
-    use crate::chat_preferences::Preferences;
     use std::cell::Cell;
 
     const FONT: FontId = FontId {
