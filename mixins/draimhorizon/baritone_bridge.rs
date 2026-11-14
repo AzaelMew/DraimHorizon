@@ -664,6 +664,15 @@ pub fn paused(game: &mut Game<'_>) -> bool {
     with(game, |b, _| b.procs.pause.paused).unwrap_or(false)
 }
 
+/// Whether the port is at work on something (a process runs, not paused), as last read: the
+/// window then keeps going when it is minimised.
+pub fn busy() -> bool {
+    baritone::port_on() && {
+        let snap = snapshot();
+        snap.process.is_some() && !snap.paused
+    }
+}
+
 /// What the tab shows, as last read (at most half a second old).
 pub fn snapshot() -> Snapshot {
     state(|s| s.snapshot.clone())

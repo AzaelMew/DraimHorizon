@@ -206,7 +206,8 @@ pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
     } else if !focused {
         WAS_FOCUSED.store(false, Relaxed);
     }
-    let busy = game.native_on(claims::ID) && control().0;
+    let busy = game.native_on(claims::ID)
+        && (control().0 || crate::game::claim_borders_baritone_bridge::busy());
     let off = FOCUS_PAUSE_OFF.load(Relaxed);
     if busy && !off && game.settings.file.bool("pauseOnLostFocus") {
         game.settings.file.set(
