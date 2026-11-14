@@ -632,6 +632,20 @@ fn needs_no_tool(game: &Game<'_>, at: model::Pos) -> bool {
 /// anywhere in the hotbar or inventory, a fresh one (over a fifth of its durability left) comes
 /// before a worn one, the held one before the rest.
 fn tool_slot(game: &Game<'_>, target: Option<model::Pos>, pickaxe_only: bool) -> Option<usize> {
+    tool_slot_in(
+        game,
+        target,
+        pickaxe_only,
+        crate::game::claim_borders_auto_tools::ALL_SLOTS,
+    )
+}
+/// [`tool_slot`] over the first `limit` slots only (9 = the hotbar), cut before ranking.
+fn tool_slot_in(
+    game: &Game<'_>,
+    target: Option<model::Pos>,
+    pickaxe_only: bool,
+    limit: usize,
+) -> Option<usize> {
     let block = target.map(|at| game.native_block(at));
     let fits = |slot: &usize| {
         slot_stack(game, *slot)
@@ -643,11 +657,12 @@ fn tool_slot(game: &Game<'_>, target: Option<model::Pos>, pickaxe_only: bool) ->
             max == 0 || left * 5 >= max
         })
     };
-    let order = || std::iter::once(game.selected).chain(0..36);
-    order()
-        .filter(|slot| fits(slot))
-        .find(|slot| fresh(slot))
-        .or_else(|| order().find(|slot| fits(slot)))
+    crate::game::claim_borders_auto_tools::rank_slot(
+        game.selected,
+        limit,
+        |slot| fits(&slot),
+        |slot| fresh(&slot),
+    )
 }
 fn mining_tool(game: &Game<'_>, target: Option<model::Pos>) -> bool {
     tool_slot(game, target, false).is_some() || target.is_some_and(|at| needs_no_tool(game, at))
@@ -716,7 +731,9 @@ fn hold_slot(game: &mut Game<'_>, slot: usize, keep: &dyn Fn(usize) -> bool) -> 
     let mut last = LAST_SWAP.lock().unwrap_or_else(|e| e.into_inner());
     // One inventory swap every five ticks: enough for the server to answer each, without the
     // job standing still for most of a second at every change of tool.
-    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(250)) {
+    if !crate::game::claim_borders_auto_tools::swap_due(
+        last.map(|t| t.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
+    ) {
         return Tool::Wait;
     }
     let spare = (0..9)
@@ -1798,6 +1815,15 @@ pub(super) fn auto_tools_only_holding(game: &Game<'_>) -> bool {
         .as_deref(),
     )
 }
+pub(super) fn auto_tools_from_inventory(game: &Game<'_>) -> bool {
+    crate::game::claim_borders_auto_tools::from_inventory(
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_tools::FROM_INVENTORY_KEY,
+        )
+        .as_deref(),
+    )
+}
 pub(super) fn auto_eat_to_heal(game: &Game<'_>) -> bool {
     crate::game::claim_borders_auto_eat::heal_enabled(
         game.native_setting(
@@ -2168,7 +2194,8 @@ fn merge_bottles(game: &mut Game<'_>) {
 }
 /// Auto Tools: while the attack button is held by hand and no task runs, the hotbar tool that
 /// fits the block under the crosshair is selected (the held one stays if it fits). With the
-/// held-tool trigger on, it only acts while the main hand holds a pickaxe, axe or shovel.
+/// held-tool trigger on, it only acts while the main hand holds a pickaxe, axe or shovel. It
+/// searches the hotbar only, unless "Allow from inventory" is on.
 pub(super) fn auto_tool(game: &mut Game<'_>) {
     if !game.left || game.right || control().0 || !game.native_playing() {
         return;
@@ -2191,10 +2218,13 @@ pub(super) fn auto_tool(game: &mut Game<'_>) {
     {
         return;
     }
-    if let Some(slot) = tool_slot(game, Some(at), false).filter(|slot| *slot < 9)
-        && game.selected != slot
-    {
-        game.selected = slot;
+    // The search domain is cut before ranking: the hotbar, or with "Allow from inventory" the
+    // main inventory too, whose tool is swapped into the hotbar by the usual rate-limited,
+    // locally predicted swap (never a selected index outside the hotbar).
+    let limit =
+        crate::game::claim_borders_auto_tools::search_slots(auto_tools_from_inventory(game));
+    if let Some(slot) = tool_slot_in(game, Some(at), false, limit) {
+        hold_slot(game, slot, &|_| false);
     }
 }
 /// The mining job while a trip to the storage walks: a walk starts the navigator over, which

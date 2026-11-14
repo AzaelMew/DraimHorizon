@@ -1573,6 +1573,8 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
             auto_tools_only_holding:
                 crate::game::claim_borders_navigation_view::auto_tools_only_holding(game),
+            auto_tools_from_inventory:
+                crate::game::claim_borders_navigation_view::auto_tools_from_inventory(game),
             auto_eat_to_heal: crate::game::claim_borders_navigation_view::auto_eat_to_heal(game),
             auto_eat_foods: crate::game::claim_borders_navigation_view::auto_eat_foods(game),
             auto_eat_options: {
@@ -1852,6 +1854,14 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 crate::game::claim_borders_auto_tools::ONLY_HOLDING_KEY,
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoToolsFromInventory(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_tools::FROM_INVENTORY_KEY,
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())

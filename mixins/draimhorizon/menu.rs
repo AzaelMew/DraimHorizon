@@ -137,6 +137,8 @@ pub struct ViewModel {
     pub auto_eat_to_heal: bool,
     /// Auto Tools switches only while a pickaxe, axe or shovel is held (off by default).
     pub auto_tools_only_holding: bool,
+    /// Auto Tools may also take a tool from the main inventory (off by default).
+    pub auto_tools_from_inventory: bool,
     /// Explicit item ids allowed for Auto Eat; empty means nothing may be eaten.
     pub auto_eat_foods: Vec<String>,
     /// Safe foods from the live item registry: id, display name, hunger restored.
@@ -286,6 +288,7 @@ pub enum Action {
     SetAutoEat(bool),
     SetAutoEatToHeal(bool),
     SetAutoToolsOnlyHolding(bool),
+    SetAutoToolsFromInventory(bool),
     SetAutoEatFood(String, bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
@@ -438,6 +441,10 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetAutoToolsFromInventory(on) => f
+                .debug_tuple("SetAutoToolsFromInventory")
+                .field(on)
+                .finish(),
             Self::SetAutoEatToHeal(on) => f.debug_tuple("SetAutoEatToHeal").field(on).finish(),
             Self::SetAutoToolsOnlyHolding(on) => {
                 f.debug_tuple("SetAutoToolsOnlyHolding").field(on).finish()
@@ -729,6 +736,8 @@ pub enum Control {
     AutoEatToHeal,
     /// Switches the held-tool trigger of Auto Tools.
     AutoToolsOnlyHolding,
+    /// Switches the inventory sourcing of Auto Tools.
+    AutoToolsFromInventory,
     AutoEatFoods,
     AutoEatFood(usize),
     AutoEatFoodPage(usize),
@@ -4439,6 +4448,17 @@ impl Menu {
                     "Only a pickaxe, axe or shovel in the main hand qualifies",
                 ),
             ),
+            (
+                self.language
+                    .text("Разрешить из инвентаря", "Allow from inventory")
+                    .to_string(),
+                Control::AutoToolsFromInventory,
+                model.auto_tools_from_inventory,
+                self.language.text(
+                    "Выкл: только хотбар. Вкл: инструмент из инвентаря меняется в хотбар",
+                    "Off: hotbar only. On: an inventory tool is swapped into the hotbar",
+                ),
+            ),
         ];
         let mut rows: Vec<_> = rows.into_iter().collect();
         rows.insert(
@@ -5055,6 +5075,9 @@ impl Menu {
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
             Control::AutoEatToHeal => Some(Action::SetAutoEatToHeal(!model.auto_eat_to_heal)),
+            Control::AutoToolsFromInventory => Some(Action::SetAutoToolsFromInventory(
+                !model.auto_tools_from_inventory,
+            )),
             Control::AutoToolsOnlyHolding => Some(Action::SetAutoToolsOnlyHolding(
                 !model.auto_tools_only_holding,
             )),
@@ -8806,6 +8829,67 @@ mod tests {
             }
         }
         assert!(!ViewModel::default().auto_eat_to_heal);
+    }
+    #[test]
+    fn allow_from_inventory_toggle_is_independent_and_adjacent_to_the_held_tool_toggle() {
+        for language in [Language::English, Language::Russian] {
+            for (width, height) in [(360.0, 200.0), (640.0, 400.0), (720.0, 300.0)] {
+                for (holding, inventory) in
+                    [(false, false), (false, true), (true, false), (true, true)]
+                {
+                    let model = ViewModel {
+                        auto_tools_only_holding: holding,
+                        auto_tools_from_inventory: inventory,
+                        ..Default::default()
+                    };
+                    let mut menu = Menu {
+                        tab: Tab::Experimental,
+                        experimental_section: ExperimentalSection::Helpers,
+                        language,
+                        ..Default::default()
+                    };
+                    let mut rows = Vec::new();
+                    for page in 0..40 {
+                        menu.helper_page = page;
+                        for w in
+                            menu.helpers_layout(&model, 100.0, width - 110.0, height, Vec::new())
+                        {
+                            assert!(w.rect[0] >= 100.0 && w.rect[0] + w.rect[2] <= width);
+                            assert!(w.rect[1] + w.rect[3] <= height);
+                            if matches!(
+                                w.control,
+                                Some(
+                                    Control::AutoToolsOnlyHolding | Control::AutoToolsFromInventory
+                                )
+                            ) {
+                                // Pages past the last one clamp, so a row may repeat.
+                                if !rows.iter().any(|(c, _, _)| *c == w.control) {
+                                    rows.push((w.control, w.text.clone(), w.selected));
+                                }
+                            }
+                        }
+                    }
+                    let label = match language {
+                        Language::English => "Allow from inventory",
+                        Language::Russian => "Разрешить из инвентаря",
+                    };
+                    assert_eq!(rows.len(), 2, "both rows reachable exactly once");
+                    assert_eq!(rows[0].0, Some(Control::AutoToolsOnlyHolding));
+                    assert_eq!(rows[1].0, Some(Control::AutoToolsFromInventory));
+                    assert_eq!((rows[0].2, rows[1].2), (holding, inventory));
+                    assert_eq!(rows[1].1, label);
+                    assert_eq!(
+                        menu.activate(&model, height, Control::AutoToolsFromInventory),
+                        Some(Action::SetAutoToolsFromInventory(!inventory))
+                    );
+                    assert_eq!(
+                        menu.activate(&model, height, Control::AutoToolsOnlyHolding),
+                        Some(Action::SetAutoToolsOnlyHolding(!holding))
+                    );
+                }
+            }
+        }
+        assert!(!ViewModel::default().auto_tools_from_inventory);
     }
     #[test]
     fn mining_targets_toggle_like_filters_and_several_mine_together() {
