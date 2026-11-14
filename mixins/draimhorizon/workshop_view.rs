@@ -855,7 +855,10 @@ fn has_food(game: &Game<'_>) -> bool {
                     .res
                     .items()
                     .get(&st.item)
-                    .is_some_and(|item| item.food.is_some_and(|(nutrition, _)| nutrition > 0))
+                    .and_then(|item| {
+                        crate::game::claim_borders_navigation_view::stack_nutrition(st, item.food)
+                    })
+                    .is_some()
         })
     })
 }

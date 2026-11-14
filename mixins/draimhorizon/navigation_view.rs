@@ -1795,6 +1795,80 @@ pub(super) fn auto_eat_foods(game: &Game<'_>) -> Vec<String> {
             .as_deref(),
     )
 }
+/// Use the same stack-aware food resolver as Horizon's actual consumption path, including
+/// food overrides and removals. Shared by selection, pending meals and farm supplies.
+pub(super) fn stack_nutrition(
+    stack: &horizon_client::items::ItemStack,
+    default: Option<(u32, f32)>,
+) -> Option<i32> {
+    horizon_client::item_sync::food(stack, default)
+        .and_then(|(nutrition, _)| i32::try_from(nutrition).ok())
+        .filter(|nutrition| *nutrition > 0)
+}
+#[cfg(test)]
+mod auto_eat_stack_tests {
+    use super::stack_nutrition;
+    use crate::game::claim_borders_auto_eat::{Food, choose};
+    use horizon_client::items::ItemStack;
+    use horizon_world::nbt::Tag;
+
+    fn bread(nutrition: i32) -> ItemStack {
+        let mut stack = ItemStack::new("minecraft:bread", 1);
+        stack.data_mut().set_other(
+            "minecraft:food",
+            Some(Tag::compound([
+                ("nutrition", Tag::Int(nutrition)),
+                ("saturation", Tag::Float(0.0_f32.to_bits())),
+            ])),
+        );
+        stack
+    }
+    fn candidate(stack: &ItemStack) -> Vec<Food> {
+        stack_nutrition(stack, Some((5, 6.0)))
+            .map(|nutrition| Food {
+                slot: 0,
+                item: stack.item.to_string(),
+                nutrition,
+            })
+            .into_iter()
+            .collect()
+    }
+    #[test]
+    fn overridden_bread_waits_until_all_eight_points_fit() {
+        let foods = candidate(&bread(8));
+        assert_eq!(choose(&foods, 15), None);
+        assert_eq!(choose(&foods, 13), None);
+        assert_eq!(choose(&foods, 12).unwrap().nutrition, 8);
+    }
+    #[test]
+    fn smaller_override_can_be_used_before_default_bread_fits() {
+        let foods = candidate(&bread(2));
+        assert_eq!(choose(&foods, 18).unwrap().nutrition, 2);
+        assert_eq!(choose(&foods, 19), None);
+    }
+    #[test]
+    fn removed_or_zero_food_is_not_a_candidate_or_farm_supply() {
+        let mut stack = bread(8);
+        stack.data_mut().set_other(
+            "!minecraft:food",
+            Some(Tag::compound(Vec::<(&str, Tag)>::new())),
+        );
+        assert_eq!(stack_nutrition(&stack, Some((5, 6.0))), None);
+        assert!(candidate(&stack).is_empty());
+        assert!(candidate(&bread(0)).is_empty());
+        assert!(candidate(&bread(-1)).is_empty());
+    }
+    #[test]
+    fn pending_meal_rechecks_component_changes_on_the_same_item() {
+        let mut stack = ItemStack::new("minecraft:bread", 1);
+        assert_eq!(stack_nutrition(&stack, Some((5, 6.0))), Some(5));
+        // Same item id, but the server changed its food component after selection.
+        stack = bread(8);
+        assert!(!stack_nutrition(&stack, Some((5, 6.0))).is_some_and(|n| n <= 5));
+        stack = bread(2);
+        assert!(stack_nutrition(&stack, Some((5, 6.0))).is_some_and(|n| n <= 5));
+    }
+}
 /// Eats selected food only when every hunger point fits, during tasks or manual play. Holds
 /// the use button until the bar rises, then takes the old slot back.
 fn auto_eat(game: &mut Game<'_>) -> bool {
@@ -1824,8 +1898,8 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
                     .res
                     .items()
                     .get(&stack.item)
-                    .and_then(|item| item.food)
-                    .is_some_and(|(nutrition, _)| nutrition > 0 && nutrition as i32 <= 20 - level)
+                    .and_then(|item| stack_nutrition(stack, item.food))
+                    .is_some_and(|nutrition| nutrition <= 20 - level)
         });
         let done = level > m.level
             || level >= 20
@@ -1859,11 +1933,11 @@ fn auto_eat(game: &mut Game<'_>) -> bool {
             if stack.count == 0 || !eat::allowed(&stack.item, &allowed) {
                 return None;
             }
-            let (nutrition, _) = game.res.items().get(&stack.item)?.food?;
+            let nutrition = stack_nutrition(stack, game.res.items().get(&stack.item)?.food)?;
             Some(eat::Food {
                 slot,
                 item: stack.item.to_string(),
-                nutrition: nutrition as i32,
+                nutrition,
             })
         })
         .collect();

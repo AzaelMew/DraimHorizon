@@ -6307,7 +6307,9 @@ mod tests {
                                 continue;
                             };
                             assert_eq!(
-                                crate::ui_style::switch_label(&button.text).unwrap().1,
+                                super::super::claim_borders_ui_style::switch_label(&button.text)
+                                    .unwrap()
+                                    .1,
                                 enabled
                             );
                             assert_eq!(button.selected, enabled);
@@ -6520,7 +6522,9 @@ mod tests {
                         };
                         let english = en.layout(&ViewModel::default(), 800.0, 500.0);
                         for widget in ru.layout(&ViewModel::default(), 800.0, 500.0) {
-                            if let Some((name, on)) = crate::ui_style::switch_label(&widget.text) {
+                            if let Some((name, on)) =
+                                super::super::claim_borders_ui_style::switch_label(&widget.text)
+                            {
                                 assert!(
                                     name.chars().any(|c| ('\u{400}'..='\u{4ff}').contains(&c)),
                                     "{name}"
@@ -6530,7 +6534,10 @@ mod tests {
                                     .find(|w| w.control == widget.control)
                                     .unwrap();
                                 let (name, state) =
-                                    crate::ui_style::switch_label(&counterpart.text).unwrap();
+                                    super::super::claim_borders_ui_style::switch_label(
+                                        &counterpart.text,
+                                    )
+                                    .unwrap();
                                 assert!(name.is_ascii(), "{name}");
                                 assert_eq!(on, state);
                             }
@@ -6783,7 +6790,9 @@ mod tests {
                             let english = en.layout(&model, 800.0, 500.0);
                             for widget in ru.layout(&model, 800.0, 500.0) {
                                 let Some((russian, state)) =
-                                    crate::ui_style::switch_label(&widget.text)
+                                    super::super::claim_borders_ui_style::switch_label(
+                                        &widget.text,
+                                    )
                                 else {
                                     continue;
                                 };
@@ -6792,7 +6801,10 @@ mod tests {
                                     .find(|w| w.control == widget.control)
                                     .unwrap();
                                 let (name, english_state) =
-                                    crate::ui_style::switch_label(&counterpart.text).unwrap();
+                                    super::super::claim_borders_ui_style::switch_label(
+                                        &counterpart.text,
+                                    )
+                                    .unwrap();
                                 assert_eq!(state, english_state);
                                 assert!(
                                     russian

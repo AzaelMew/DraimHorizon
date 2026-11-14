@@ -289,9 +289,9 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
+    use super::super::claim_borders_chat_feed::{Channel, Feed};
+    use super::super::claim_borders_chat_preferences::Preferences;
     use super::*;
-    use crate::chat_feed::Feed;
-    use crate::chat_preferences::Preferences;
     fn root() -> PathBuf {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let p = std::env::temp_dir().join(format!(
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(e.original, "[Party] hello");
         assert_eq!(e.translated.as_deref(), Some("привет"));
         assert!(e.show_original && e.archived);
-        assert_eq!(e.channel, crate::chat_feed::Channel::Party);
+        assert_eq!(e.channel, Channel::Party);
         assert!(restored.last_whisper_sender.is_none());
         drop(worker);
         fs::remove_dir_all(root).unwrap();
