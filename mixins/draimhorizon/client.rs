@@ -1594,6 +1594,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                         .native_setting(claims::SETTINGS_ID, "baritone_engine")
                         .as_deref()
                         == Some("true"),
+                    profile: game
+                        .native_setting(claims::SETTINGS_ID, "baritone_profile")
+                        .as_deref()
+                        == Some("true"),
                 }
             },
             pat_policy: crate::game::claim_borders_pat_view::policy(game),
@@ -1927,6 +1931,15 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             if !on {
                 crate::game::claim_borders_baritone_bridge::walk_cancel();
             }
+            Ok(Vec::new())
+        }
+        Action::SetBaritoneProfile(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "baritone_profile",
+                if on { "true" } else { "false" },
+            );
+            crate::game::baritone::invalidate_enabled();
             Ok(Vec::new())
         }
         Action::SchematicEdit(edit) => {

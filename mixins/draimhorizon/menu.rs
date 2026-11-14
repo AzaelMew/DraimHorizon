@@ -290,6 +290,7 @@ pub enum Action {
     /// Set entry `.0` of the port settings list to `.1`.
     BaritoneSetting(usize, i32),
     SetBaritoneEngine(bool),
+    SetBaritoneProfile(bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
@@ -452,6 +453,7 @@ impl std::fmt::Debug for Action {
                 f.debug_tuple("BaritoneSetting").field(i).field(v).finish()
             }
             Self::SetBaritoneEngine(on) => f.debug_tuple("SetBaritoneEngine").field(on).finish(),
+            Self::SetBaritoneProfile(on) => f.debug_tuple("SetBaritoneProfile").field(on).finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
@@ -715,6 +717,8 @@ pub struct BaritoneView {
     pub values: Vec<i32>,
     /// The farm and mining walk with the port (off: their own walking).
     pub engine: bool,
+    /// The port writes what its work costs to `profile.txt` once a second.
+    pub profile: bool,
 }
 /// What the buttons of the Baritone tab ask the port to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -779,6 +783,7 @@ pub enum Control {
     /// A port setting: `.1` is the direction of a stepper (a flag toggles whichever it is).
     BaritoneSetting(usize, bool),
     BaritoneEngine,
+    BaritoneProfile,
     /// The previous (false) or next (true) schematic file of the Build section.
     BaritoneFile(bool),
     /// Switches one of the helpers of the Helpers tab.
@@ -3956,6 +3961,27 @@ impl Menu {
                     Some(Control::BaritoneEngine),
                     model.baritone.engine,
                 ));
+                let i = walk::SETTINGS.len() + 1;
+                out.push(widget(
+                    [
+                        x + (i % 2) as f32 * (cell + gap),
+                        80.0 + (i / 2) as f32 * 19.0,
+                        cell,
+                        17.0,
+                    ],
+                    localized!(
+                        l,
+                        "Профиль: {}",
+                        "Profile: {}",
+                        if model.baritone.profile {
+                            l.text("вкл", "on")
+                        } else {
+                            l.text("выкл", "off")
+                        }
+                    ),
+                    Some(Control::BaritoneProfile),
+                    model.baritone.profile,
+                ));
             }
         }
         // What the port is doing, at the foot.
@@ -5391,6 +5417,7 @@ impl Menu {
                 None
             }
             Control::BaritoneEngine => Some(Action::SetBaritoneEngine(!model.baritone.engine)),
+            Control::BaritoneProfile => Some(Action::SetBaritoneProfile(!model.baritone.profile)),
             Control::BaritoneSetting(index, up) => {
                 let setting = super::claim_borders_baritone_walk::SETTINGS.get(index)?;
                 let current = *model.baritone.values.get(index)?;

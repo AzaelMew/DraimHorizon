@@ -33,12 +33,26 @@ pub const ID: &str = "baritone";
 /// DraimHorizon: the port runs only with the experiments consent given and the Baritone tab's
 /// switch on (an unregistered mod id is always "on" for `native_on`, so it cannot be used).
 pub const ENABLED_SETTING: &str = "baritone_enabled";
+/// Whether the port is on, as last worked out by `enabled` (a cheap read for the hooks that run
+/// every tick and frame: they do nothing while the port is off).
+static PORT_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn port_on() -> bool {
+    PORT_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// Times a section of the port's work when the profiler is on (Baritone tab > Settings).
+macro_rules! prof {
+    ($name:literal, $body:expr) => {
+        super::claim_borders_baritone_profile::time($name, || $body)
+    };
+}
 thread_local! {
     static ENABLED_CACHE: FlagCell<Option<(std::time::Instant, bool)>> = const { FlagCell::new(None) };
 }
 /// The switch was changed: the next `enabled` reads the files again.
 pub fn invalidate_enabled() {
     ENABLED_CACHE.with(|c| c.set(None));
+    // The hooks idle until the next tick works the switch out again.
+    set_port_on(false);
 }
 pub fn enabled(game: &Game<'_>) -> bool {
     // Read from the settings files at most twice a second: this is asked every tick.
@@ -58,7 +72,20 @@ pub fn enabled(game: &Game<'_>) -> bool {
             .as_deref()
             == Some("true");
     ENABLED_CACHE.with(|c| c.set(Some((std::time::Instant::now(), on))));
+    set_port_on(on);
+    super::claim_borders_baritone_profile::set_enabled(
+        on && game
+            .native_setting(claims::SETTINGS_ID, "baritone_profile")
+            .as_deref()
+            == Some("true"),
+    );
     on
+}
+fn set_port_on(on: bool) {
+    if PORT_ON.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
+        // The chunk hook in the game's streaming module is told too (and drops what it holds).
+        horizon_client::streaming::baritone_unload::set_on(on);
+    }
 }
 /// `SettingsUtil.SETTINGS_DEFAULT_NAME`, in the mod's data folder.
 pub const SETTINGS_DEFAULT_NAME: &str = "settings.txt";
@@ -456,20 +483,20 @@ impl Baritone {
         for note in std::mem::take(&mut self.core.setting_notes) {
             self.core.say(game, &note);
         }
-        self.core.cache.note_chunks(game);
-        self.core.cache_tick(game);
+        prof!("note_chunks", self.core.cache.note_chunks(game));
+        prof!("cache_tick", self.core.cache_tick(game));
         self.click_tick(game);
-        self.track_death(game);
+        prof!("track_death", self.track_death(game));
         if game.screen == Screen::Dead {
             // The death screen: hold still, keep the plan.
             self.core.input.release(game);
             return;
         }
         self.elytra_goal_update(game);
-        self.control_tick(game);
+        prof!("control_tick", self.control_tick(game));
         // Nobody listened to the block changes this tick (the elytra flight takes them in its own tick).
         let _ = take_block_changes();
-        for line in self.core.inventory_tick(game) {
+        for line in prof!("inventory_tick", self.core.inventory_tick(game)) {
             self.core.say(game, &line);
         }
     }
@@ -768,10 +795,14 @@ thread_local! {
 
 /// `BlockChangeEvent`: a block was set.
 pub fn block_changed(game: &Game<'_>, pos: [i32; 3], state: i32) {
+    if !port_on() {
+        return;
+    }
     let id = horizon_world::registry::BlockStateId(state.max(0) as u32);
-    let solid = !game.res.facts().is_air(id);
-    let name = game.res.facts().get(id).name.clone();
-    if super::baritone_cached_world::BLOCKS_TO_KEEP_TRACK_OF.contains(&name.strip_prefix("minecraft:").unwrap_or(&name)) {
+    let facts = game.res.facts();
+    let solid = !facts.is_air(id);
+    let name = &facts.get(id).name;
+    if super::baritone_cached_world::BLOCKS_TO_KEEP_TRACK_OF.contains(&name.strip_prefix("minecraft:").unwrap_or(name)) {
         TRACKED_CHANGES.with_borrow_mut(|tracked| {
             if tracked.len() < 1 << 12 {
                 tracked.push((pos[0] >> 4, pos[2] >> 4));
@@ -797,7 +828,7 @@ pub fn take_block_changes() -> Vec<(i32, i32, i32, bool)> {
 
 /// `BlockInteractEvent` USE, which WaypointBehavior listens to: a bed that is right-clicked becomes a bed waypoint, at its head.
 pub fn block_interact_use(game: &mut Game<'_>) {
-    if !game.native_window() {
+    if !port_on() || !game.native_window() {
         return;
     }
     with(game, |b, game| {
@@ -926,10 +957,10 @@ pub fn page_wheel(game: &mut Game<'_>, amount: f32) {
 
 /// `onPlayerUpdate` PRE, just before the player's motion reads its rotation.
 pub fn look_pre(game: &mut Game<'_>) {
-    if !game.native_window() {
+    if !port_on() || !game.native_window() {
         return;
     }
-    with(game, |b, game| {
+    prof!("look_pre", with(game, |b, game| {
         let Core { look, aim, settings, .. } = &mut b.core;
         let aim_settings = super::baritone_aim::AimSettings::of(settings, f64::from(game.settings.sensitivity));
         let current = super::baritone_rotation::Rotation::new(game.yaw, game.pitch);
@@ -937,32 +968,50 @@ pub fn look_pre(game: &mut Game<'_>) {
             game.yaw = actual.yaw;
             game.pitch = actual.pitch.clamp(-90.0, 90.0);
         }
-    });
+    }));
 }
 
 /// `onPlayerUpdate` POST, once the tick has been sent to the server.
 pub fn look_post(game: &mut Game<'_>) {
-    with(game, |b, game| {
+    if port_on() {
+        look_post_now(game);
+    }
+}
+/// `look_post` for when the port is being switched off: the view must come back whatever the flag.
+fn look_post_now(game: &mut Game<'_>) {
+    prof!("look_post", with(game, |b, game| {
         let fall_flying = game.player.as_ref().is_some_and(|p| p.fall_flying);
         let current = super::baritone_rotation::Rotation::new(game.yaw, game.pitch);
         if let Some(shown) = b.core.look.post(current, fall_flying, &b.core.settings) {
             game.yaw = shown.yaw;
             game.pitch = shown.pitch.clamp(-90.0, 90.0);
         }
-    });
+    }));
 }
 
 pub fn tick(game: &mut Game<'_>) {
+    WAS_ON.with(|w| w.set(true));
     look_post(game);
     super::baritone_input::back(game);
     if !game.native_window() {
         return;
     }
-    with(game, |b, game| {
-        b.tick(game);
-        publish(b, game);
-        publish_tab(b, game);
-    });
+    prof!("tick (all)", with(game, |b, game| {
+        prof!("Baritone::tick", b.tick(game));
+        prof!("publish lines", publish(b, game));
+        prof!("publish tab", publish_tab(b, game));
+    }));
+}
+
+thread_local! {
+    /// Whether the port ran since it was last switched off.
+    static WAS_ON: FlagCell<bool> = const { FlagCell::new(false) };
+}
+/// The tick of a switched-off port: nothing, but once, right after it was on, it lets go.
+pub fn off_tick(game: &mut Game<'_>) {
+    if WAS_ON.with(|w| w.replace(false)) {
+        stop(game);
+    }
 }
 
 /// Every block's properties and the values each can take, from the block states the game knows.
@@ -987,7 +1036,10 @@ fn block_properties(game: &Game<'_>) -> super::baritone_tab::BlockProperties {
 /// The toast hook, once a frame from the game's mod HUD: `ToastManager.extractRenderState` for the Baritone toast, in a free
 /// 32 pixel slot, with the sound of a toast coming and going.
 pub fn draw_toast(game: &mut Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
-    with(game, |b, game| {
+    if !port_on() {
+        return;
+    }
+    prof!("draw_toast", with(game, |b, game| {
         let mut cell = b.core.toast.borrow_mut();
         let Some(toast) = cell.as_mut() else { return };
         if toast.slot.is_none() {
@@ -1008,15 +1060,15 @@ pub fn draw_toast(game: &mut Game<'_>, batch: &mut horizon_client::hud::HudBatch
         if let Some(slot) = toast.slot {
             toast.draw(&game.gui.atlas, batch, 32.0 * slot as f32);
         }
-    });
+    }));
 }
 
 /// The beacon hook: the beam of a GoalXZ, drawn with the beacons.
 pub fn goal_beams(game: &mut Game<'_>, camera: glam::DVec3, alpha: f64, out: &mut Vec<horizon_client::mesher::Vertex>) {
-    if !game.native_window() {
+    if !port_on() || !game.native_window() {
         return;
     }
-    with(game, |b, game| super::baritone_render::goal_beams(b, game, camera, alpha, out));
+    prof!("goal_beams", with(game, |b, game| super::baritone_render::goal_beams(b, game, camera, alpha, out)));
 }
 
 /// What TAB completes: the prefix, the waypoints, the block and mob names, and the function the chat
@@ -1058,7 +1110,7 @@ fn publish_tab(b: &mut Baritone, game: &mut Game<'_>) {
 
 /// The mod was turned off: stop and draw nothing.
 pub fn stop(game: &mut Game<'_>) {
-    look_post(game);
+    look_post_now(game);
     if !game.native_window() {
         return;
     }

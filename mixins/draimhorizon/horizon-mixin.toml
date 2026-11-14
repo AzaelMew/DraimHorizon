@@ -2056,6 +2056,12 @@ name = "claim_borders_baritone_walk"
 source = "baritone_walk.rs"
 
 [[module]]
+id = "baritone-profile"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_baritone_profile"
+source = "baritone_profile.rs"
+
+[[module]]
 id = "baritone-bridge"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_baritone_bridge"

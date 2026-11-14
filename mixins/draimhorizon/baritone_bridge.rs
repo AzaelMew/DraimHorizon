@@ -149,6 +149,18 @@ fn restore(b: &mut baritone::Baritone, saved: Saved) {
 /// Every tick, from the mod's tick hook: carries out a request or a cancel, watches the walk and
 /// keeps the snapshot of the tab fresh.
 pub fn tick(game: &mut Game<'_>) {
+    super::claim_borders_baritone_profile::time("bridge tick", || tick_inner(game));
+    // With the profiler on, what the last second of the port's work cost goes to `profile.txt`.
+    if super::claim_borders_baritone_profile::enabled()
+        && let Some(report) =
+            super::claim_borders_baritone_profile::take_report(std::time::Instant::now())
+    {
+        let dir = game.native_data_dir(baritone::ID);
+        let _ = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(dir.join("profile.txt"), report));
+    }
+}
+fn tick_inner(game: &mut Game<'_>) {
     if !baritone::enabled(game) {
         // The settings a walk changed go back even though the port is off now.
         let left = state(|s| {

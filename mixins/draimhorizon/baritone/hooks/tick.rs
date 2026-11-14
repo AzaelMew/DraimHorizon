@@ -4,6 +4,6 @@ fn baritone_tick(game: &mut crate::game::Game<'_>) {
     if baritone::enabled(game) {
         baritone::tick(game);
     } else {
-        baritone::stop(game);
+        baritone::off_tick(game);
     }
 }

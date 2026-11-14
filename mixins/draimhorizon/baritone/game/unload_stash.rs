@@ -9,6 +9,20 @@ use std::sync::Arc;
 /// memory of the chunk. The Java's queue holds 2000 (`chunkPackerQueueMaxSize`).
 const LIMIT: usize = 512;
 
+static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// DraimHorizon: the port is on. While it is off nothing is kept (the packer that takes the chunks
+/// does not run), and what was kept goes when it is switched off.
+pub fn set_on(on: bool) {
+    ON.store(on, std::sync::atomic::Ordering::Relaxed);
+    if !on {
+        UNLOADING.with_borrow_mut(Vec::clear);
+    }
+}
+pub fn is_on() -> bool {
+    ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 thread_local! {
     static UNLOADING: RefCell<Vec<(i32, i32, Arc<Chunk>)>> = const { RefCell::new(Vec::new()) };
 }

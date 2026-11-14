@@ -20,7 +20,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 /// How long a search may run in one tick. The Java has a thread of its own for it; here it takes this out of the game's 50 ms.
-const SEARCH_SLICE: Duration = Duration::from_millis(25);
+// DraimHorizon: 10 ms a tick (upstream: 25), the search takes a few more ticks and the game keeps its frame rate.
+const SEARCH_SLICE: Duration = Duration::from_millis(10);
 /// How many nodes between looks at the clock.
 const NODES_BETWEEN_CHECKS: usize = 128;
 

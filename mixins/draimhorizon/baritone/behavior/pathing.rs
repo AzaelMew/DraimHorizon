@@ -16,6 +16,10 @@ use super::Game;
 pub use super::baritone_pathing_behavior::PathingCommand;
 
 /// baritone.api.process.IBaritoneProcess.
+/// DraimHorizon: the milliseconds a tick may spend packing chunks for the cache (upstream: 4 and 6),
+/// so that the cache fills up over a few seconds and a tick of the game is not held up.
+const PACK_BUDGET_MS: u128 = 1;
+
 pub trait Process {
     fn name(&self) -> &'static str;
     /// What `#proc` says it is doing.
@@ -71,12 +75,12 @@ impl Core {
         // dimension unless this tick changed it.
         let mut unloaded = std::mem::take(&mut self.unloading);
         unloaded.extend(horizon_client::streaming::baritone_unload::take());
-        self.world_data.follow(game, &self.settings);
+        super::claim_borders_baritone_profile::time("world follow", || self.world_data.follow(game, &self.settings));
         if world_before != self.world_data.current.as_ref().map(|d| d.key.clone()) {
             // LookBehavior.onWorldEvent.
             self.look.on_world_event();
         }
-        self.follow_waypoints(game);
+        super::claim_borders_baritone_profile::time("follow_waypoints", || self.follow_waypoints(game));
         if !self.settings.flag("chunkCaching") {
             return;
         }
@@ -92,15 +96,15 @@ impl Core {
         let same_world = world_before == self.world_data.current.as_ref().map(|d| d.key.clone());
         if same_world && !unloaded.is_empty() {
             let factory = self.states.clone();
-            let (done, left) = self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_unloaded(g, calc, &factory, unloaded, 6)));
+            let (done, left) = super::claim_borders_baritone_profile::time("pack_unloaded", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_unloaded(g, calc, &factory, unloaded, PACK_BUDGET_MS))));
             self.world_data.finish_batch(done, Vec::new());
             self.unloading = left;
         }
-        self.world_data.queue_chunks(game);
+        super::claim_borders_baritone_profile::time("queue_chunks", || self.world_data.queue_chunks(game));
         let batch = self.world_data.take_batch(game, 4, self.settings.int("chunkPackerQueueMaxSize").max(0) as usize);
         if !batch.is_empty() {
             let factory = self.states.clone();
-            let (done, left) = self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_batch(g, calc, &factory, batch, 4)));
+            let (done, left) = super::claim_borders_baritone_profile::time("pack_batch", || self.with_calc(game, |calc, ctx, _| ctx.with_game(|g| super::baritone_world_data::WorldProvider::pack_batch(g, calc, &factory, batch, PACK_BUDGET_MS))));
             self.world_data.finish_batch(done, left);
         }
         self.world_data.save_if_due(game, &self.settings);
