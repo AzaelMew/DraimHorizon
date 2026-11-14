@@ -133,6 +133,8 @@ pub struct ViewModel {
     pub shulker_peek: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
+    /// The Baritone port is switched on (the tab's switch).
+    pub baritone_enabled: bool,
     /// Who may pat this player, and whether a pat shows a notification.
     pub pat_policy: super::claim_borders_patting::Policy,
     pub pat_notify: bool,
@@ -276,6 +278,7 @@ pub enum SchematicEdit {
 #[derive(Clone, PartialEq)]
 pub enum Action {
     SetAutoEat(bool),
+    SetBaritone(bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
     SetProtectGlowBerries(bool),
@@ -427,6 +430,7 @@ impl std::fmt::Debug for Action {
             Self::FarmPlotShow(i) => f.debug_tuple("FarmPlotShow").field(i).finish(),
             Self::FarmPlotRemove(i) => f.debug_tuple("FarmPlotRemove").field(i).finish(),
             Self::SetAutoEat(on) => f.debug_tuple("SetAutoEat").field(on).finish(),
+            Self::SetBaritone(on) => f.debug_tuple("SetBaritone").field(on).finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
             Self::SetProtectGlowBerries(on) => {
@@ -708,6 +712,8 @@ pub enum Control {
     FarmLevels,
     /// Switches eating on its own.
     AutoEat,
+    /// The switch on the Baritone tab.
+    BaritoneEnable,
     /// Switches one of the helpers of the Helpers tab.
     Helper(Helper),
     /// Cycles the auto-clicker's button: left or right.
@@ -2132,7 +2138,7 @@ impl Menu {
             return self.experimental_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Baritone {
-            return self.baritone_layout(x, w, out);
+            return self.baritone_layout(model, x, w, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -3529,7 +3535,13 @@ impl Menu {
         out
     }
     /// The Baritone tab: the navigation port taken from the Baritone project (LGPL-3.0).
-    fn baritone_layout(&self, x: f32, w: f32, mut out: Vec<Widget>) -> Vec<Widget> {
+    fn baritone_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
         let lines = [
             self.language.text(
                 "Навигация Baritone: полный расчёт маршрутов, обходов, прыжков и подъёмов.",
@@ -3540,13 +3552,28 @@ impl Menu {
                 "Port of Baritone 1.21.4 (LGPL-3.0), see mixins/draimhorizon/baritone/NOTICE.md.",
             ),
             self.language.text(
-                "Статус: ядро добавлено, подключение к игре в работе.",
-                "Status: the core is added, game integration is in progress.",
+                "Команды начинаются с #: #goto, #mine, #farm, #build, #stop, #help.",
+                "Commands start with #: #goto, #mine, #farm, #build, #stop, #help.",
             ),
         ];
+        out.push(widget(
+            [x, 56.0, (w * 0.5).min(180.0), 22.0],
+            localized!(
+                self.language,
+                "Baritone: {}",
+                "Baritone: {}",
+                if model.baritone_enabled {
+                    self.language.text("вкл", "on")
+                } else {
+                    self.language.text("выкл", "off")
+                }
+            ),
+            Some(Control::BaritoneEnable),
+            model.baritone_enabled,
+        ));
         for (i, line) in lines.into_iter().enumerate() {
             out.push(widget(
-                [x, 60.0 + i as f32 * 16.0, w, 14.0],
+                [x, 88.0 + i as f32 * 16.0, w, 14.0],
                 line,
                 None,
                 false,
@@ -4944,6 +4971,7 @@ impl Menu {
                 None
             }
             Control::AutoEat => Some(Action::SetAutoEat(!model.auto_eat)),
+            Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::Helper(helper) => {
                 Some(Action::SetHelper(helper, !model.helpers[helper.index()]))
             }
@@ -7382,7 +7410,22 @@ mod tests {
                 model.experiments_accepted = true;
                 menu.activate(&model, height, Control::Tab(Tab::Baritone));
                 assert_eq!(menu.tab, Tab::Baritone);
-                assert!(!menu.layout(&model, width, height).is_empty());
+                let rows = menu.layout(&model, width, height);
+                let switch = rows
+                    .iter()
+                    .find(|r| r.control == Some(Control::BaritoneEnable))
+                    .expect("the switch is on the tab");
+                assert_eq!(switch.selected, model.baritone_enabled);
+                assert!(matches!(
+                    menu.activate(&model, height, Control::BaritoneEnable),
+                    Some(Action::SetBaritone(true))
+                ));
+                model.baritone_enabled = true;
+                assert!(matches!(
+                    menu.activate(&model, height, Control::BaritoneEnable),
+                    Some(Action::SetBaritone(false))
+                ));
+                model.baritone_enabled = false;
             }
         }
     }

@@ -1571,6 +1571,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 crate::game::claim_borders_mining::custom()
             },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            baritone_enabled: game
+                .native_setting(claims::SETTINGS_ID, "baritone_enabled")
+                .as_deref()
+                == Some("true"),
             pat_policy: crate::game::claim_borders_pat_view::policy(game),
             pat_notify: crate::game::claim_borders_pat_view::notify(game),
             protect_glow_berries: game
@@ -1825,6 +1829,17 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "auto_eat",
                 if on { "true" } else { "false" },
             );
+            Ok(Vec::new())
+        }
+        Action::SetBaritone(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "baritone_enabled",
+                if on { "true" } else { "false" },
+            );
+            if !on {
+                crate::game::baritone::stop(game);
+            }
             Ok(Vec::new())
         }
         Action::SchematicEdit(edit) => {

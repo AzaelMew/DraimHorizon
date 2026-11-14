@@ -13,6 +13,13 @@ file layout, module names (`baritone_*`) and authorship.
 - Local changes to the upstream files are listed here:
   - `behavior/pathing_behavior.rs`: the desktop notification on a failed search (it ran an
     external command) is not ported.
-
-Not included yet: commands, processes (mine, farm, build, elytra, ...), the schematic and
-selection code, the settings screen and the game bridge (`src/game/`).
+  - `baritone.rs`: `enabled()` is added; `hooks/chat.rs`, `hooks/command.rs` and
+    `hooks/tick.rs` use it instead of `native_on("baritone")`, which is always true for a mod
+    that is not registered. The port runs only with the experiments consent given and the
+    switch on the Baritone tab on.
+- The module and hook list of upstream's `horizon-mixin.toml` is merged into DraimHorizon's
+  with the ids prefixed `bar-` and the source paths under `baritone/`. Not taken: the
+  Options > Mods entry and its settings page hooks (`list`, `settings`, `click`, `page_*`).
+  The two sort hooks target `horizon_client::game::extras::sorting` (upstream's Nightly had
+  them in `tweaks`).
+- Upstream's data folder `baritone` (settings, waypoints, cache, schematics) is kept.
