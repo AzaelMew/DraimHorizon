@@ -243,6 +243,21 @@ pub fn cancels_task(line: &str) -> bool {
     )
 }
 
+/// How far along `direction` (`[dx, dz]`, a unit step) the player has gone from `start`.
+pub fn tunnel_progress(start: [i32; 3], direction: [i32; 2], feet: [i32; 3]) -> i32 {
+    (feet[0] - start[0]) * direction[0] + (feet[2] - start[2]) * direction[1]
+}
+/// A straight tunnel is done once the player has gone `length` blocks along it.
+pub fn tunnel_done(progress: i32, length: i32) -> bool {
+    progress >= length
+}
+/// Whether a tunnel is the plain one the port digs fastest, straight on and a block wide and two
+/// high (its own `tunnel`: it walks right up to the rock and digs as it goes, bridging a gap by
+/// itself); any other size goes to the builder.
+pub fn tunnel_is_straight(width: u8, height: u8) -> bool {
+    width == 1 && height == 2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +430,24 @@ mod tests {
         ] {
             assert!(!cancels_task(line), "{line}");
         }
+    }
+
+    #[test]
+    fn a_straight_tunnel_ends_after_its_length_along_the_way() {
+        let start = [10, 64, 5];
+        // East: x grows. A step sideways or back does not count.
+        assert_eq!(tunnel_progress(start, [1, 0], [13, 64, 5]), 3);
+        assert_eq!(tunnel_progress(start, [1, 0], [13, 64, 9]), 3);
+        assert_eq!(tunnel_progress(start, [1, 0], [8, 64, 5]), -2);
+        // North: z shrinks.
+        assert_eq!(tunnel_progress(start, [0, -1], [10, 60, 1]), 4);
+        assert!(!tunnel_done(7, 8));
+        assert!(tunnel_done(8, 8));
+        assert!(tunnel_done(20, 8));
+        // Only the plain size is dug the fast way.
+        assert!(tunnel_is_straight(1, 2));
+        assert!(!tunnel_is_straight(1, 3));
+        assert!(!tunnel_is_straight(2, 2));
+        assert!(!tunnel_is_straight(3, 3));
     }
 }

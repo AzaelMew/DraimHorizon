@@ -310,6 +310,10 @@ pub enum Action {
         length: u16,
         width: u8,
     },
+    /// Fly to these coordinates with the elytra (the port's `elytra` to a goal).
+    BaritoneElytra([i32; 3]),
+    /// Fly to the saved waypoint with this id.
+    BaritoneElytraWaypoint(u64),
     /// A pond filled in the chosen pattern.
     BaritoneDrain(super::claim_borders_draining::Config),
     /// Mine these blocks with the port (and unload when the inventory is full).
@@ -498,6 +502,10 @@ impl std::fmt::Debug for Action {
                 .field("width", width)
                 .finish(),
             Self::BaritoneDrain(config) => f.debug_tuple("BaritoneDrain").field(config).finish(),
+            Self::BaritoneElytra(at) => f.debug_tuple("BaritoneElytra").field(at).finish(),
+            Self::BaritoneElytraWaypoint(id) => {
+                f.debug_tuple("BaritoneElytraWaypoint").field(id).finish()
+            }
             Self::SetAutoEatFood(item, on) => f
                 .debug_tuple("SetAutoEatFood")
                 .field(item)
@@ -826,6 +834,7 @@ pub enum BaritoneCmd {
     Build,
     Tunnel,
     Bridge,
+    Elytra,
     Goto,
     Mine,
     Farm,
@@ -1629,6 +1638,22 @@ impl Menu {
             BaritoneSection::Tasks => Ok(Action::Baritone("resume".into())),
             BaritoneSection::Settings => Err(missing()),
         }
+    }
+    /// The Elytra button of Navigation: fly to the chosen waypoint or the typed X/Y/Z (a player
+    /// is followed on foot, not flown to).
+    fn baritone_elytra(&self) -> Option<Action> {
+        if self.navigation_player.is_some() {
+            return None;
+        }
+        if let Some(id) = self.navigation_waypoint {
+            return Some(Action::BaritoneElytraWaypoint(id));
+        }
+        let [x, y, z] = self.navigation_position()?;
+        Some(Action::BaritoneElytra([
+            x.floor() as i32,
+            y.floor() as i32,
+            z.floor() as i32,
+        ]))
     }
     /// The Tunnel button: the sizes chosen in the section.
     fn baritone_tunnel(&self) -> Action {
@@ -3728,6 +3753,21 @@ impl Menu {
                     self.language.text("Сдвиг Y", "Y offset"),
                     p.offset_y.to_string(),
                 ),
+                vec![(
+                    localized!(
+                        self.language,
+                        "Глобальный чат: {}",
+                        "Global chat: {}",
+                        if p.hide_global {
+                            self.language
+                                .text("выкл (только друзья)", "off (friends only)")
+                        } else {
+                            self.language.text("вкл", "on")
+                        }
+                    ),
+                    Control::ChatGlobal,
+                    p.hide_global,
+                )],
             ],
             ChatSection::Notifications => vec![
                 vec![(
@@ -3882,21 +3922,6 @@ impl Menu {
                 vec![(
                     localized!(
                         self.language,
-                        "Глобальный чат: {}",
-                        "Global chat: {}",
-                        if p.hide_global {
-                            self.language
-                                .text("выкл (только друзья)", "off (friends only)")
-                        } else {
-                            self.language.text("вкл", "on")
-                        }
-                    ),
-                    Control::ChatGlobal,
-                    p.hide_global,
-                )],
-                vec![(
-                    localized!(
-                        self.language,
                         "Режим: {}",
                         "Mode: {}",
                         p.repeats.label_in(self.language)
@@ -4013,7 +4038,7 @@ impl Menu {
                 super::claim_borders_mine_picker::mine_line(&self.baritone_mine_cache)?
             }
             BaritoneCmd::Build => return None,
-            BaritoneCmd::Tunnel | BaritoneCmd::Bridge => return None,
+            BaritoneCmd::Tunnel | BaritoneCmd::Bridge | BaritoneCmd::Elytra => return None,
             BaritoneCmd::Farm => "farm".into(),
             BaritoneCmd::Explore => "explore".into(),
             BaritoneCmd::Follow => "follow players".into(),
@@ -4181,12 +4206,18 @@ impl Menu {
                     Some(Control::NavigationPlayer),
                     self.navigation_player.is_some(),
                 ));
+                button(
+                    &mut out,
+                    [x, 128.0, half, 20.0],
+                    l.text("Элитры", "Elytra"),
+                    BaritoneCmd::Elytra,
+                );
                 hint(
                     &mut out,
-                    128.0,
+                    152.0,
                     l.text(
-                        "Метка: идти к ней. Игрок: следовать за ним.",
-                        "Waypoint: walk to it. Player: follow them.",
+                        "Метка: идти. Игрок: следовать. Элитры: лететь к X Y Z или метке (нужны элитры и фейерверки).",
+                        "Waypoint: walk. Player: follow. Elytra: fly to X Y Z or a waypoint (needs elytra and fireworks).",
                     ),
                 );
             }
@@ -4220,24 +4251,24 @@ impl Menu {
                     l.text("Копать", "Mine"),
                     BaritoneCmd::Mine,
                 );
-                // The rows: our presets first, then every block; a chosen row is highlighted.
+                // Icon tiles, our presets first and then every block; the name is the tooltip and a
+                // chosen tile is highlighted. Twelve to a row, two rows to a page.
                 let rows = picker::entries(&model.blocks, l, &self.baritone_block);
                 let page = picker::clamp_page(self.baritone_mine_page, rows.len());
-                let col_w = (w - gap) / 2.0;
-                for (i, (index, row)) in rows
+                let tile = ((w - (picker::COLUMNS - 1) as f32 * 2.0) / picker::COLUMNS as f32)
+                    .clamp(12.0, 22.0);
+                for (i, row) in rows
                     .iter()
-                    .enumerate()
                     .skip(page * picker::PER_PAGE)
                     .take(picker::PER_PAGE)
                     .enumerate()
                 {
-                    let _ = index;
                     out.push(widget(
                         [
-                            x + (i % 2) as f32 * (col_w + gap),
-                            104.0 + (i / 2) as f32 * 19.0,
-                            col_w,
-                            17.0,
+                            x + (i % picker::COLUMNS) as f32 * (tile + 2.0),
+                            104.0 + (i / picker::COLUMNS) as f32 * (tile + 2.0),
+                            tile,
+                            tile,
                         ],
                         picker::label(row, l),
                         Some(Control::BaritoneMineRow(page * picker::PER_PAGE + i)),
@@ -5746,6 +5777,7 @@ impl Menu {
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
             Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
+            Control::BaritoneCmd(BaritoneCmd::Elytra) => self.baritone_elytra(),
             Control::BaritoneCmd(BaritoneCmd::Tunnel) => Some(self.baritone_tunnel()),
             Control::BaritoneCmd(BaritoneCmd::Bridge) => Some(self.baritone_bridge()),
             Control::BaritoneCmd(BaritoneCmd::Mine) => (!model.baritone.mine.is_empty())
@@ -8288,12 +8320,12 @@ mod tests {
     }
 
     #[test]
-    fn global_chat_switch_sits_in_the_spam_section_and_toggles_both_ways() {
+    fn global_chat_switch_sits_in_the_appearance_section_and_toggles_both_ways() {
         for language in [Language::Russian, Language::English] {
             let mut menu = Menu {
                 tab: Tab::Settings,
                 settings_section: 3,
-                chat_section: ChatSection::Spam,
+                chat_section: ChatSection::Appearance,
                 language,
                 ..Menu::default()
             };
@@ -8301,33 +8333,33 @@ mod tests {
                 language,
                 ..ViewModel::default()
             };
-            for (width, height) in [(320.0, 224.0), (800.0, 480.0)] {
-                let rows = menu.layout(&model, width, height);
-                let switch = rows
-                    .iter()
-                    .find(|r| r.control == Some(Control::ChatGlobal))
-                    .expect("the switch is in the Spam section");
-                assert!(switch.rect[2] > 20.0 && switch.rect[0] + switch.rect[2] <= width);
+            // The settings pages scroll: the switch is on one of them, in view and inside the panel.
+            for size in [[320.0, 224.0], [800.0, 480.0]] {
+                let switch = reveal_control(&mut menu, &model, size, Control::ChatGlobal);
+                assert!(switch.rect[2] > 20.0 && switch.rect[0] + switch.rect[2] <= size[0]);
                 assert!(!switch.selected);
             }
             let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
                 panic!("the switch must update the chat preferences");
             };
             assert!(p.hide_global);
-            // Nothing else changed.
             assert_eq!(p.width, model.chat_preferences.width);
             model.chat_preferences = p;
-            let rows = menu.layout(&model, 320.0, 224.0);
-            let switch = rows
-                .iter()
-                .find(|r| r.control == Some(Control::ChatGlobal))
-                .unwrap();
+            let switch = reveal_control(&mut menu, &model, [320.0, 224.0], Control::ChatGlobal);
             assert!(switch.selected);
             assert!(switch.text.contains("friends only") || switch.text.contains("только друзья"));
             let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
                 panic!();
             };
             assert!(!p.hide_global);
+            // It is no longer in the Spam section, so that section is as it was.
+            menu.chat_section = ChatSection::Spam;
+            assert!(
+                !menu
+                    .layout(&model, 320.0, 224.0)
+                    .iter()
+                    .any(|r| r.control == Some(Control::ChatGlobal))
+            );
         }
     }
 
@@ -8733,6 +8765,52 @@ mod tests {
     }
 
     #[test]
+    fn the_elytra_button_flies_to_the_typed_place_or_the_waypoint_and_not_to_a_player() {
+        let model = ViewModel {
+            navigation_waypoints: vec![WaypointRow {
+                id: 7,
+                name: "Base".into(),
+                detail: String::new(),
+                color: 0,
+            }],
+            navigation_players: vec![(5, "Alex".into())],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
+            ..Menu::default()
+        };
+        // Nothing typed, nothing chosen: nothing starts.
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra))
+                .is_none()
+        );
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("100.5".into(), "70".into(), "-300".into());
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra)),
+            Some(Action::BaritoneElytra([100, 70, -300]))
+        ));
+        menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra)),
+            Some(Action::BaritoneElytraWaypoint(7))
+        ));
+        // A player is followed on foot; the elytra does not go to one.
+        menu.activate(&model, 200.0, Control::NavigationPlayerChoice(0));
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra))
+                .is_none()
+        );
+        // The hotkeys do not fly: Start still goes on foot.
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::Baritone(l)) if l == "follow player Alex"
+        ));
+    }
+
+    #[test]
     fn baritone_buttons_build_commands_only_from_valid_input() {
         let model = ViewModel::default();
         let mut menu = Menu {
@@ -8794,6 +8872,7 @@ mod tests {
                 vec![
                     Control::Field(Field::NavigationX),
                     Control::BaritoneCmd(BaritoneCmd::Goto),
+                    Control::BaritoneCmd(BaritoneCmd::Elytra),
                 ],
             ),
             (

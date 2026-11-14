@@ -266,8 +266,14 @@ fn block_catalogue(game: &Game<'_>) -> std::sync::Arc<Vec<String>> {
     {
         return list.clone();
     }
+    // Only blocks that have an item: the picker shows an icon for each.
+    let items = game.res.items();
     let list = std::sync::Arc::new(crate::game::claim_borders_mine_picker::catalogue(
-        facts.states.iter().map(|s| &*s.name),
+        facts
+            .states
+            .iter()
+            .map(|s| &*s.name)
+            .filter(|name| items.get(name).is_some()),
     ));
     *cache = Some((facts.states.len(), list.clone()));
     list
@@ -2055,6 +2061,39 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 return Err(baritone_off());
             }
             crate::game::claim_borders_baritone_bridge::mine_start(game, names)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneElytra(at) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::elytra(game, at)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneElytraWaypoint(id) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let dimension = game
+                .native_player()
+                .map(|p| p.dimension.to_owned())
+                .ok_or_else(|| {
+                    l.text("Сначала зайдите в мир", "Join a world first")
+                        .to_owned()
+                })?;
+            let waypoint = own_waypoints()
+                .into_iter()
+                .find(|w| w.id == id && w.dimension == dimension)
+                .ok_or_else(|| {
+                    l.text(
+                        "Метка недоступна в этом измерении",
+                        "Waypoint unavailable in this dimension",
+                    )
+                    .to_owned()
+                })?;
+            let at = crate::game::claim_borders_navigation::block(waypoint.position);
+            crate::game::claim_borders_baritone_bridge::elytra(game, at)?;
             Ok(Vec::new())
         }
         Action::BaritoneWaypoint(id) => {

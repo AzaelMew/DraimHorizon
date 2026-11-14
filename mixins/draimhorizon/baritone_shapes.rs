@@ -57,9 +57,10 @@ pub fn tunnel(
     };
     match floor {
         Some(block) => {
-            let layer = FillSchematic {
+            // Only where the ground is missing: a floor that is there is left alone.
+            let layer = BridgeSchematic {
                 size: [sx, 1, sz],
-                spec: BlockSpec::named(block),
+                block: BlockSpec::named(block),
             };
             let parts: Vec<(Pos, Rc<dyn Schematic>)> =
                 vec![([0, 0, 0], Rc::new(layer)), ([0, 1, 0], Rc::new(air))];
@@ -76,6 +77,41 @@ pub fn tunnel(
     }
 }
 
+/// Whether a cell is empty enough to lay a bridge block in: air, water and the plants that grow in
+/// it. Anything else (stone, dirt, a block of the player's own) is left as it is.
+fn open_cell(name: &str) -> bool {
+    matches!(
+        name,
+        "minecraft:air"
+            | "minecraft:cave_air"
+            | "minecraft:void_air"
+            | "minecraft:water"
+            | "minecraft:seagrass"
+            | "minecraft:tall_seagrass"
+            | "minecraft:short_grass"
+            | "minecraft:tall_grass"
+            | "minecraft:fern"
+            | "minecraft:snow"
+    )
+}
+/// A one block thick floor of `block`: it is asked for only in the cells that are empty, so a
+/// bridge over a gap is laid and ground that is already there is never dug up and replaced (the
+/// builder would take it for work to do and stand digging it).
+pub struct BridgeSchematic {
+    size: Pos,
+    block: BlockSpec,
+}
+impl Schematic for BridgeSchematic {
+    fn size(&self) -> [i32; 3] {
+        self.size
+    }
+    fn desired(&self, _p: [i32; 3], current: &str) -> Option<BlockSpec> {
+        open_cell(current).then(|| self.block.clone())
+    }
+    fn label(&self) -> String {
+        "bridge".into()
+    }
+}
 /// A floor `length` long and `width` wide of `block`, level with the one under the player's feet,
 /// from the block in front of the player on.
 pub fn bridge(
@@ -88,9 +124,9 @@ pub fn bridge(
     let (corner, [sx, sz]) = strip(at, direction, length, width);
     (
         [corner[0], corner[1] - 1, corner[2]],
-        Rc::new(FillSchematic {
+        Rc::new(BridgeSchematic {
             size: [sx, 1, sz],
-            spec: BlockSpec::named(block),
+            block: BlockSpec::named(block),
         }),
     )
 }
@@ -225,6 +261,8 @@ mod tests {
                 }
             }
         }
+        // Ground that is already under the tunnel is not replaced by the floor block.
+        assert_eq!(wants(&*s, corner, [12, 63, 5], "minecraft:dirt"), None);
         // Without a floor the box is just the air.
         let (corner, s) = tunnel([10, 64, 5], Direction::East, 4, 3, 2, None);
         assert_eq!(
@@ -242,6 +280,26 @@ mod tests {
             wants(&*s, corner, [1, 69, 5], "minecraft:air").as_deref(),
             Some("minecraft:stone")
         );
+        // Over a gap or water the block is asked for; where there is ground already, nothing is.
+        for open in [
+            "minecraft:cave_air",
+            "minecraft:water",
+            "minecraft:seagrass",
+        ] {
+            assert_eq!(
+                wants(&*s, corner, [0, 69, 3], open).as_deref(),
+                Some("minecraft:stone"),
+                "{open}"
+            );
+        }
+        for ground in [
+            "minecraft:dirt",
+            "minecraft:stone",
+            "minecraft:oak_planks",
+            "minecraft:lava",
+        ] {
+            assert_eq!(wants(&*s, corner, [0, 69, 3], ground), None, "{ground}");
+        }
         // The block under the player is not part of it.
         let inside = |w: Pos| (0..3).all(|i| w[i] >= corner[i] && w[i] < corner[i] + s.size()[i]);
         assert!(!inside([0, 69, 0]));

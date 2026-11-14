@@ -1894,7 +1894,9 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
             walking: false,
         });
         if !close {
-            match driver::workshop_walk(game, nav::block(item), true, false) {
+            // Within a block of the item is enough for the pickup, and a walk onto the very block
+            // (a crop was just replanted there) may have no way.
+            match driver::workshop_walk_near(game, nav::block(item), true, false, "farm", 1) {
                 Ok(()) => {
                     if let Some(l) = s.loot.as_mut() {
                         l.walking = true;

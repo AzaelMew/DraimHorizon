@@ -5,8 +5,11 @@ use super::claim_borders_mining as mining;
 use claim_borders_relay_client::translation::Language;
 use std::collections::BTreeSet;
 
+/// Tiles in a row of the picker, and rows to a page.
+pub const COLUMNS: usize = 12;
+pub const ROWS: usize = 2;
 /// Entries per page of the list.
-pub const PER_PAGE: usize = 6;
+pub const PER_PAGE: usize = COLUMNS * ROWS;
 /// The most blocks one `mine` command carries.
 pub const MAX_SELECTED: usize = 64;
 /// How many chosen blocks are kept in the settings.
@@ -324,8 +327,8 @@ mod tests {
             mine_line(&many).unwrap().split(' ').count(),
             MAX_SELECTED + 1
         );
-        assert_eq!((pages(0), pages(6), pages(7)), (1, 1, 2));
-        assert_eq!((clamp_page(9, 7), clamp_page(1, 0)), (1, 0));
+        assert_eq!((pages(0), pages(PER_PAGE), pages(PER_PAGE + 1)), (1, 1, 2));
+        assert_eq!((clamp_page(9, PER_PAGE + 1), clamp_page(1, 0)), (1, 0));
     }
 
     #[test]

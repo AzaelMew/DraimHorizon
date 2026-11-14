@@ -113,17 +113,24 @@ fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, 
             ) == crate::game::claim_borders_baritone_walk::StartKey::Resume
             {
                 line(game, "resume");
+                crate::game::claim_borders_baritone_bridge::notice("Далее", "Resume");
                 return Ok(true);
             }
-            start_from_menu(game, true).map(|()| true)
+            let started = start_from_menu(game, true);
+            if started.is_ok() {
+                crate::game::claim_borders_baritone_bridge::notice("Старт", "Start");
+            }
+            started.map(|()| true)
         }
         model::Hotkey::Pause => {
             line(game, "pause");
+            crate::game::claim_borders_baritone_bridge::notice("Пауза", "Pause");
             Ok(false)
         }
         model::Hotkey::Stop => {
             line(game, "cancel");
             crate::game::claim_borders_baritone_bridge::walk_cancel();
+            crate::game::claim_borders_baritone_bridge::notice("Стоп", "Stop");
             Ok(false)
         }
     }
@@ -148,6 +155,8 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
         | Action::BaritoneTunnel { .. }
         | Action::BaritoneBridge { .. }
         | Action::BaritoneDrain(_)
+        | Action::BaritoneElytra(_)
+        | Action::BaritoneElytraWaypoint(_)
         | Action::BaritoneBuild { .. }) => {
             crate::game::claim_borders_client::run_menu_action(game, action)
         }
@@ -952,6 +961,18 @@ pub(super) fn workshop_walk_for(
     level: bool,
     owner: &'static str,
 ) -> Result<(), String> {
+    workshop_walk_near(game, goal, flat, level, owner, 0)
+}
+/// As `workshop_walk_for`, but with the port it is enough to come within `radius` blocks of the
+/// goal (an item to pick up, which a walk onto the very block can miss); our own walk ignores it.
+pub(super) fn workshop_walk_near(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+    owner: &'static str,
+    radius: i32,
+) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
     let here = model::block(from);
     let g = model::center(goal);
@@ -968,6 +989,7 @@ pub(super) fn workshop_walk_for(
             game,
             owner,
             goal,
+            radius,
             &crate::game::claim_borders_baritone_walk::FARM_WALK,
             far,
         )
@@ -3190,6 +3212,7 @@ fn mining_walk_by_port(
         game,
         "mining",
         stand,
+        0,
         &crate::game::claim_borders_baritone_walk::MINING_WALK,
         far,
     )

@@ -241,6 +241,16 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             );
         }
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
+        // The rows of the Mining picker, worked out once a frame, for the icons of its tiles.
+        let mine_rows = (s.menu.tab == model::Tab::Baritone
+            && s.menu.baritone_section == model::BaritoneSection::Mining)
+            .then(|| {
+                crate::game::claim_borders_mine_picker::entries(
+                    &s.model.blocks,
+                    s.menu.language,
+                    &s.menu.baritone_block,
+                )
+            });
         for widget in widgets {
             if !s.menu.experiments_prompt
                 && s.menu.tab == model::Tab::Waypoints
@@ -692,6 +702,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             // Mining targets are item icons; the name is shown as a tooltip.
             if let Some(
                 control @ (model::Control::FarmCropPick(_)
+                | model::Control::BaritoneMineRow(_)
                 | model::Control::AutoEatFood(_)
                 | model::Control::ExperimentalOreToggle(_)),
             ) = widget.control
@@ -704,6 +715,17 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         crate::game::claim_borders_mining::icon(index)
                     }
                     model::Control::FarmCropPick(crop) => Some(crop.icon()),
+                    model::Control::BaritoneMineRow(index) => mine_rows
+                        .as_ref()
+                        .and_then(|rows| rows.get(index))
+                        .and_then(|row| match row {
+                            crate::game::claim_borders_mine_picker::Entry::Preset(i) => {
+                                crate::game::claim_borders_mining::icon(*i)
+                            }
+                            crate::game::claim_borders_mine_picker::Entry::Block(id) => {
+                                Some(id.as_str())
+                            }
+                        }),
                     model::Control::AutoEatFood(index) => s
                         .model
                         .auto_eat_options
