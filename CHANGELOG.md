@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.4
+
+- Baritone navigation port: step 1, pure core (#55). Replace this line with a concrete entry.
+
 ## 0.40.3
 
 - Baritone navigation, step 1: the pure core of Baritone 1.21.4 (goals, movement costs, the A* search, all movements including parkour and pillar, the movement executor, path executor and pathing behavior) is added under `mixins/draimhorizon/baritone/`, taken with its authorship from luhnox's Horizon port (LGPL-3.0, see `NOTICE.md` there; the rest of DraimHorizon stays MIT). The upstream desktop-notification call is not ported.
