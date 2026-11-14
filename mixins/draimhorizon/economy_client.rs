@@ -120,9 +120,10 @@ struct State {
     last_finance: u64,
     queue: VecDeque<String>,
     issuing: bool,
-    query_at: u64,
     replies: crate::game::claim_borders_economy_requests::Replies,
     quiet: VecDeque<(String, u64)>,
+    /// The line the book recognized in the delivery now being shown; taken once by `deliver`.
+    recognized: Option<String>,
     scanner: scan::Scanner,
     menu_token: String,
     nav_last: u64,
@@ -161,9 +162,9 @@ impl Default for State {
             last_finance: 0,
             queue: VecDeque::new(),
             issuing: false,
-            query_at: 0,
             replies: Default::default(),
             quiet: VecDeque::new(),
+            recognized: None,
             scanner: scan::Scanner::default(),
             menu_token: String::new(),
             nav_last: 0,
@@ -247,30 +248,38 @@ pub(super) fn quiet(text: &str) -> bool {
         s.quiet.iter().any(|(line, _)| *line == text)
     })
 }
+/// A server line before it is shown: parsed into the book whether or not it is hidden. Which
+/// delivery it belongs to is settled at `deliver`, which runs for the same line right after.
 pub(super) fn server(text: &str) {
     let now = now();
     let text = claims::strip_formatting(text);
     state(|s| {
+        s.recognized = None;
         if s.scope.is_empty() || !s.pref.flag("enabled") {
             return;
         }
-        let recognized = s.book.server(&text, now);
-        if recognized {
+        if s.book.server(&text, now) {
             s.dirty = true;
-        }
-        if recognized
-            && s.pref.flag("quiet")
-            && s.replies.quiet(&text, now)
-            && now.saturating_sub(s.query_at) < 10000
-            && !text.starts_with("Sold ")
-            && !text.starts_with("Bought ")
-        {
-            if s.quiet.len() >= 48 {
-                s.quiet.pop_front();
-            }
-            s.quiet.push_back((text, now));
+            s.recognized = Some(text);
         }
     });
+}
+/// One incoming chat message at the point it is about to be shown (the chat-capture hook, once
+/// per delivery). Advances the two-message window of an automatic routine command and says
+/// whether this message is that command's own output. The recognition of this delivery is
+/// consumed here, so an identical line delivered later is decided on its own.
+pub(super) fn deliver(text: &str) -> bool {
+    let now = now();
+    let text = claims::strip_formatting(text);
+    state(|s| {
+        let recognized = s.recognized.take().is_some_and(|line| line == text);
+        if s.scope.is_empty() || !s.pref.flag("enabled") {
+            s.replies.clear();
+            return false;
+        }
+        let quiet = s.pref.flag("quiet");
+        s.replies.deliver(&text, recognized, now, quiet)
+    })
 }
 pub(super) fn command(command: &str) {
     state(|s| {
@@ -285,13 +294,9 @@ pub(super) fn command(command: &str) {
             s.opening = None;
             s.status.message = Message::StoppedByCommand;
         }
-        s.replies.manual(command);
-        if matches!(
-            command.split_whitespace().next(),
-            Some("worth" | "bal" | "balance")
-        ) {
-            s.quiet.clear();
-        }
+        // Only the routine window is cancelled; the lines other producers silenced stay so.
+        s.replies.manual(command, now());
+        s.recognized = None;
         if command.starts_with("sell ") || command.starts_with("buy ") {
             s.status.sale = None;
         }
@@ -325,11 +330,17 @@ fn queue(s: &mut State, command: String) {
 }
 fn request(game: &mut Game<'_>, command: String, quiet: bool) {
     let now = now();
+    // `send_unattended_command` returns nothing: it sends nothing when there is no connection
+    // or the command is not allowed, and opens a confirmation instead for a command the server
+    // tree does not verify. Hiding is armed only when it really went out.
+    let allowed = game.remote.is_some()
+        && game.command_prompt.is_none()
+        && game
+            .chat_abilities()
+            .allows(&format!("/{}", command.trim().trim_start_matches('/')));
     state(|s| {
         s.issuing = true;
         s.last_command = now;
-        s.query_at = now;
-        s.replies.begin(&command, now, quiet);
         if command == "bal" {
             s.last_finance = now;
         }
@@ -338,7 +349,13 @@ fn request(game: &mut Game<'_>, command: String, quiet: bool) {
         }
     });
     game.send_unattended_command(&command);
-    state(|s| s.issuing = false);
+    let sent = allowed && game.command_prompt.is_none();
+    state(|s| {
+        s.issuing = false;
+        if sent {
+            s.replies.arm(&command, now, quiet);
+        }
+    });
 }
 pub(super) fn configure(game: &Game<'_>, key: &str, dir: i64) {
     let raw = state(|s| {
@@ -905,7 +922,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
     }
     let read_command = state(|s| {
-        if now.saturating_sub(s.last_command) < 2000 || s.scanner.active {
+        // One routine query at a time, and none while a typed command's reply is due, so the
+        // two-message window is never shared or overwritten.
+        if now.saturating_sub(s.last_command) < 2000 || s.scanner.active || s.replies.busy(now) {
             return None;
         }
         // Scoreboard balance updates independently of the trading window.
@@ -1123,4 +1142,103 @@ pub(super) fn server_click(
     }
     cancel_scan();
     game.menu_ops(&[(Some(300 + button.slot), 0, Input::Pickup)])
+}
+#[cfg(test)]
+mod reply_window_tests {
+    //! The delivery seam the chat hooks use, on the real module state: `server` (chat line hook),
+    //! then `deliver` (chat-capture hook) once per shown message.
+    use super::*;
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    const QUOTE: &str = "leather: 3.01 coins each, to buy or sell.";
+    fn fresh() -> std::sync::MutexGuard<'static, ()> {
+        let guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        state(|s| {
+            *s = State::default();
+            s.scope = "test-server".into();
+        });
+        guard
+    }
+    /// What the two hooks do for one shown server message.
+    fn shown(text: &str) -> bool {
+        server(text);
+        deliver(text) || quiet(text)
+    }
+    fn auto(command: &str) {
+        let now = now();
+        state(|s| {
+            assert!(s.pref.flag("enabled") && s.pref.flag("quiet"), "defaults");
+            assert!(s.replies.arm(command, now, true));
+        });
+    }
+    #[test]
+    fn automatic_worth_is_hidden_once_and_the_cache_still_updates() {
+        let _g = fresh();
+        auto("worth leather");
+        assert!(shown(QUOTE), "hidden");
+        let cached = state(|s| s.book.quotes.get("minecraft:leather").and_then(|q| q.buy));
+        assert_eq!(cached, Some(301), "hidden replies still update the cache");
+        // The window is two messages long, whatever they are; after that the same text shows.
+        assert!(shown(QUOTE), "second message of the window");
+        assert!(!shown(QUOTE), "never hidden indefinitely");
+        assert!(!shown(QUOTE));
+    }
+    #[test]
+    fn a_manual_worth_after_an_automatic_one_is_visible_and_updates_the_cache() {
+        let _g = fresh();
+        auto("worth leather");
+        command("worth leather");
+        assert!(!shown(QUOTE), "manual output is shown");
+        assert_eq!(
+            state(|s| s.book.quotes.get("minecraft:leather").and_then(|q| q.buy)),
+            Some(301)
+        );
+        // A queued routine send right after must wait instead of rearming over the reply.
+        assert!(state(|s| s.replies.busy(now())));
+    }
+    #[test]
+    fn identical_text_in_separate_deliveries_is_decided_per_delivery() {
+        let _g = fresh();
+        auto("worth leather");
+        // A recognized line whose own delivery never reaches capture (chat hidden) must not
+        // authorize the next, identical, line.
+        server(QUOTE);
+        assert!(!shown("<Steve> hi"));
+        assert!(
+            !deliver(QUOTE),
+            "no recognition left over for a later delivery"
+        );
+    }
+    #[test]
+    fn manual_commands_leave_other_silence_producers_alone() {
+        let _g = fresh();
+        silence("Claim list line");
+        auto("bal");
+        command("bal");
+        assert!(
+            quiet("Claim list line"),
+            "claims silence survives a manual bal"
+        );
+        assert!(!shown("Balance: 5 coins"));
+    }
+    #[test]
+    fn disabled_or_quiet_off_or_no_scope_hides_nothing() {
+        let _g = fresh();
+        auto("bal");
+        state(|s| s.pref.adjust("quiet", 1));
+        assert!(!shown("Balance: 5 coins"), "quiet off");
+        state(|s| {
+            *s = State::default();
+            s.scope = "x".into();
+            assert!(s.replies.arm("bal", now(), true));
+            s.scope.clear();
+        });
+        assert!(!shown("Balance: 5 coins"), "no scope");
+    }
+    #[test]
+    fn a_failed_dispatch_never_arms() {
+        let _g = fresh();
+        // `request` arms only after a verified send; without it nothing is watched.
+        assert!(!shown("Balance: 5 coins"));
+        assert!(!state(|s| s.replies.busy(now())));
+    }
 }

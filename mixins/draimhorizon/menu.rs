@@ -639,6 +639,9 @@ pub enum ChatSection {
 }
 /// Height reserved above the claims list for the Map and claims section selector.
 const CLAIMS_SELECTOR: f32 = 24.0;
+/// Key names as Horizon emits them to screens (`keybinds::key_name`): dotted, not underscored.
+pub const PAGE_UP_KEY: &str = "key.keyboard.page.up";
+pub const PAGE_DOWN_KEY: &str = "key.keyboard.page.down";
 /// Width of the tab rail on the left of the J menu; the layout and the drawing share it.
 pub const RAIL_WIDTH: f32 = 128.0;
 /// A labelled rail must leave enough room for the editors, not just fit beside them.
@@ -4401,10 +4404,18 @@ impl Menu {
                         localized!(language, "Авто-еда: {}", "Auto Eat: {}", state(model.auto_eat)),
                         Control::AutoEat,
                         model.auto_eat,
-                        language.text(
-                            "Только выбранная еда, без потери очков голода",
-                            "Only selected foods, without wasting hunger points",
-                        ),
+                        if model.auto_eat && !model.experiments_accepted {
+                            // On by default, but it only acts once the warning is accepted.
+                            language.text(
+                                "Не ест без согласия на эксперименты; еду можно выбрать заранее",
+                                "Won't eat until you accept the experimental warning; foods can be chosen now",
+                            )
+                        } else {
+                            language.text(
+                                "Только выбранная еда, без потери очков голода",
+                                "Only selected foods, without wasting hunger points",
+                            )
+                        },
                     ),
                     HelperRow::Toggle {
                         label: localized!(
@@ -6205,6 +6216,23 @@ impl Menu {
                 Some(Action::SetClaims(s))
             }
         }
+    }
+    /// A physical key press as the production screen adapter hands it over: Page Up / Down page
+    /// the QOL rows or food tiles, everything else goes to [`Menu::key`]. True when consumed.
+    pub fn dispatch_key(
+        &mut self,
+        model: &ViewModel,
+        size: [f32; 2],
+        key: &str,
+        modifiers: u32,
+    ) -> bool {
+        if modifiers == 0
+            && matches!(key, PAGE_UP_KEY | PAGE_DOWN_KEY)
+            && self.helper_page_key(model, size, key == PAGE_DOWN_KEY)
+        {
+            return true;
+        }
+        self.key(key, modifiers)
     }
     /// Page Up / Page Down on the Helpers tab: the same step as the Back and Next buttons,
     /// for the category rows or for the food picker, whichever is on screen.

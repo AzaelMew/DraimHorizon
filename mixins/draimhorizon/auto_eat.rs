@@ -53,14 +53,30 @@ pub const HEAL_KEY: &str = "auto_eat_to_heal";
 pub fn heal_enabled(setting: Option<&str>) -> bool {
     setting == Some("true")
 }
-/// Whether a living player is below their actual maximum health. Missing, non-finite,
-/// non-positive or dead values never count as injured.
-pub fn injured(health: f64, max_health: f64) -> bool {
-    health.is_finite()
-        && max_health.is_finite()
-        && max_health > 0.0
-        && health > 0.0
-        && health < max_health
+/// Settings key of the saved Auto Eat switch; absent means on (the default).
+pub const ENABLED_KEY: &str = "auto_eat";
+/// Settings key holding the experimental-features consent.
+pub const CONSENT_KEY: &str = "experiments_accepted";
+/// Whether the saved switch is on. Absent or anything but "false" means on.
+pub fn enabled(setting: Option<&str>) -> bool {
+    setting != Some("false")
+}
+/// Whether the player has accepted the experimental warning.
+pub fn consented(setting: Option<&str>) -> bool {
+    setting == Some("true")
+}
+/// Whether Auto Eat may act now, from the raw saved switch and consent values exactly as the
+/// adapter reads them (a fresh profile has neither).
+pub fn active(setting: Option<&str>, consent: Option<&str>) -> bool {
+    consented(consent) && enabled(setting)
+}
+/// Whether a living player is below their actual maximum health, as Horizon decides it
+/// (`living_health::is_hurt`): health is an `f32`, and the maximum attribute is narrowed to
+/// `f32` before the comparison, so a full bar at a fractional maximum is not injured. Missing,
+/// non-finite, non-positive or dead values never count as injured.
+pub fn injured(health: f32, max_health: f64) -> bool {
+    let max = max_health as f32;
+    health.is_finite() && max.is_finite() && max > 0.0 && health > 0.0 && health < max
 }
 /// Whether a food of `nutrition` may be eaten at hunger `level`: it fits in full, or, while
 /// healing, any positive food at a bar that is not full (the overfill is accepted).
@@ -140,6 +156,40 @@ mod tests {
         assert_eq!(choose(&[], 4), None);
     }
     #[test]
+    fn a_fresh_profile_never_eats_before_the_experimental_warning_is_accepted() {
+        // A fresh profile has neither key: the switch reads on, the consent is missing.
+        assert!(enabled(None) && !consented(None));
+        assert!(!active(None, None), "default-on Auto Eat needs consent");
+        for consent in [Some("false"), Some(""), Some("1"), Some("TRUE")] {
+            assert!(!active(None, consent));
+            assert!(!active(Some("true"), consent));
+        }
+        // Consent given: the saved switch decides, default on, off respected.
+        assert!(active(None, Some("true")));
+        assert!(active(Some("true"), Some("true")));
+        assert!(!active(Some("false"), Some("true")));
+        assert!(!active(Some("false"), None));
+    }
+    #[test]
+    fn injury_matches_horizons_f32_health_semantics() {
+        // Horizon: health > 0 && health < (max_health_attribute as f32), all in f32.
+        // Health is stored as f32, so a full bar at a fractional maximum must not be injured.
+        for max in [20.3_f64, 20.1, 40.7, 6.3, 1.1, 100.9, 20.000001, 0.1] {
+            let full: f32 = max as f32;
+            assert!(!injured(full, max), "full at {max}");
+            let below = f32::from_bits(full.to_bits() - 1);
+            assert!(injured(below, max), "one step below {max}");
+        }
+        // The maximum rounds down to f32 (20.3 -> 20.299999...) and rounds up (20.30000099).
+        let down = 20.3000001_f64;
+        assert!((down as f32) as f64 <= down, "rounds down");
+        assert!(!injured(down as f32, down));
+        let up = 20.30000099_f64;
+        assert!((up as f32) as f64 > up, "rounds up");
+        assert!(!injured(up as f32, up));
+        assert!(injured((up as f32) - 0.000_01, up));
+    }
+    #[test]
     fn heal_setting_defaults_off() {
         assert!(!heal_enabled(None));
         assert!(!heal_enabled(Some("")));
@@ -157,11 +207,15 @@ mod tests {
         assert!(injured(5.0, 6.0));
         assert!(!injured(0.0, 20.0), "dead");
         assert!(!injured(-1.0, 20.0));
-        assert!(!injured(f64::NAN, 20.0));
+        assert!(!injured(f32::NAN, 20.0));
         assert!(!injured(10.0, f64::NAN));
         assert!(!injured(10.0, 0.0));
         assert!(!injured(10.0, -4.0));
-        assert!(!injured(f64::INFINITY, f64::INFINITY));
+        assert!(!injured(f32::INFINITY, f64::INFINITY));
+        assert!(
+            !injured(10.0, f64::MAX),
+            "a maximum that overflows f32 is invalid"
+        );
         assert!(!injured(10.0, f64::INFINITY));
     }
     #[test]

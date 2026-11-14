@@ -1586,3 +1586,95 @@ fn show_invisible_entities_keeps_consent_and_the_ban_warning_in_qol() {
     }
     assert!(claim_borders::visibility::enabled(true, true, Some("true")));
 }
+
+/// The key names Horizon's `keybinds::key_name` emits (crates/horizon-client-input, pin
+/// 9f42064c): dotted, never underscored.
+const PAGE_UP: &str = "key.keyboard.page.up";
+const PAGE_DOWN: &str = "key.keyboard.page.down";
+
+#[test]
+fn physical_page_keys_reach_qol_and_food_picker_pagination_through_production_dispatch() {
+    let model = ViewModel {
+        auto_eat: true,
+        auto_eat_options: (0..60)
+            .map(|i| (format!("minecraft:f{i}"), format!("Food {i}"), 4))
+            .collect(),
+        ..ViewModel::default()
+    };
+    let size = [240.0, 216.0];
+    let mut menu = menu_with(|m| {
+        m.tab = Tab::Helpers;
+        m.language = Language::English;
+    });
+    assert!(menu.helper_page_count(&model, 200.0) > 1);
+    assert!(menu.dispatch_key(&model, size, PAGE_DOWN, 0));
+    assert_eq!(menu.helper_page, 1, "Page Down must page the QOL rows");
+    assert!(menu.dispatch_key(&model, size, PAGE_UP, 0));
+    assert_eq!(menu.helper_page, 0, "Page Up must page back");
+    click(&mut menu, &model, size, Control::AutoEatFoods);
+    assert!(menu.dispatch_key(&model, size, PAGE_DOWN, 0));
+    assert_eq!(
+        menu.auto_eat_food_page, 1,
+        "Page Down must page the food tiles"
+    );
+    assert!(menu.dispatch_key(&model, size, PAGE_UP, 0));
+    assert_eq!(menu.auto_eat_food_page, 0);
+    // Other keys are not mistaken for paging: Tab still walks categories from the list.
+    click(&mut menu, &model, size, Control::AutoEatFoods);
+    assert!(menu.dispatch_key(&model, size, "key.keyboard.tab", 0));
+    assert_eq!(menu.helper_category, HelperCategory::Gear);
+    // The old underscore spelling is not a key Horizon ever emits and must not page.
+    menu.helper_page = 0;
+    menu.dispatch_key(&model, size, "key.keyboard.page_down", 0);
+    assert_eq!(menu.helper_page, 0);
+}
+
+#[test]
+fn default_on_auto_eat_is_inactive_without_consent_but_foods_can_be_chosen_ahead() {
+    use claim_borders::auto_eat as eat;
+    // The real fresh-profile snapshot: neither "auto_eat" nor "experiments_accepted" is saved.
+    let model = ViewModel {
+        auto_eat: eat::enabled(None),
+        experiments_accepted: eat::consented(None),
+        auto_eat_options: vec![("minecraft:bread".into(), "Bread".into(), 5)],
+        ..ViewModel::default()
+    };
+    assert!(model.auto_eat && !model.experiments_accepted);
+    assert!(!eat::active(None, None), "the runtime gate stays shut");
+    for language in [Language::English, Language::Russian] {
+        let size = [800.0, 500.0];
+        let mut menu = menu_with(|m| {
+            m.tab = Tab::Helpers;
+            m.language = language;
+        });
+        let walked = walk_helpers(&mut menu, &model, size);
+        let survival = &walked[0].2;
+        let hint = survival.iter().any(|w| {
+            w.control.is_none()
+                && w.text.starts_with(match language {
+                    Language::English => "Won't eat until you accept",
+                    Language::Russian => "Не ест без согласия",
+                })
+        });
+        assert!(hint, "the switch must say it is inactive");
+        // Choosing foods ahead of time works, and no prompt is forced for it.
+        press(&mut menu, &model, size, Control::AutoEatFoods);
+        assert_eq!(
+            click(&mut menu, &model, size, Control::AutoEatFood(0)),
+            Some(Action::SetAutoEatFood("minecraft:bread".into(), true))
+        );
+        assert!(!menu.experiments_prompt);
+        click(&mut menu, &model, size, Control::AutoEatFoods);
+        // It can be switched off, and switching it back on asks for the warning.
+        assert_eq!(
+            press(&mut menu, &model, size, Control::AutoEat),
+            Some(Action::SetAutoEat(false))
+        );
+        let off = ViewModel {
+            auto_eat: false,
+            ..model.clone()
+        };
+        assert_eq!(press(&mut menu, &off, size, Control::AutoEat), None);
+        assert!(menu.experiments_prompt);
+    }
+}

@@ -1035,15 +1035,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut boo
                 return;
             }
         }
-        if modifiers == 0
-            && matches!(key, "key.keyboard.page_up" | "key.keyboard.page_down")
-            && s.menu
-                .helper_page_key(&s.model, s.screen_size, key.ends_with("down"))
-        {
-            *canceled = true;
-            return;
-        }
-        if s.menu.key(key, modifiers) {
+        if s.menu.dispatch_key(&s.model, s.screen_size, key, modifiers) {
             *canceled = true;
         }
     });
@@ -1078,4 +1070,39 @@ pub(super) fn open_settings() {
         s.menu.settings_section = 0;
         s.menu.focus = None;
     });
+}
+#[cfg(test)]
+mod emitted_key_names {
+    use horizon_client_input::keybinds::key_name;
+    use winit::keyboard::KeyCode;
+    /// The strings `screen_key_pressed` hands to this screen are `keybinds::key_name`'s, so the
+    /// constants the menu matches must equal them (they are dotted: `page.up`, not `page_up`).
+    #[test]
+    fn menu_page_keys_and_keypad_enter_match_the_names_horizon_emits() {
+        assert_eq!(
+            key_name(KeyCode::PageUp),
+            Some(crate::game::claim_borders_menu::PAGE_UP_KEY)
+        );
+        assert_eq!(
+            key_name(KeyCode::PageDown),
+            Some(crate::game::claim_borders_menu::PAGE_DOWN_KEY)
+        );
+        assert_eq!(
+            key_name(KeyCode::NumpadEnter),
+            Some("key.keyboard.keypad.enter")
+        );
+    }
+    /// Physical Page Down, as emitted, pages the QOL rows through the same dispatch the screen
+    /// hook uses.
+    #[test]
+    fn an_emitted_page_down_reaches_qol_pagination() {
+        use crate::game::claim_borders_menu::{Menu, Tab, ViewModel};
+        let mut menu = Menu::default();
+        menu.tab = Tab::Helpers;
+        let model = ViewModel::default();
+        let emitted = key_name(KeyCode::PageDown).expect("Page Down has a name");
+        assert!(menu.helper_page_count(&model, 200.0) > 1);
+        assert!(menu.dispatch_key(&model, [240.0, 216.0], emitted, 0));
+        assert_eq!(menu.helper_page, 1);
+    }
 }

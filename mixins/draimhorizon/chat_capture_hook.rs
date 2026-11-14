@@ -9,10 +9,19 @@ fn horizon_chat_capture(
     if allowed && game.ui.chat.shows(source) {
         let text = content.plain();
         if game.native_on(crate::game::claim_borders::ID)
-            && source == horizon_client::chat::ChatSource::Server
-            && crate::game::claim_borders_economy_client::quiet(&text)
+            && matches!(
+                source,
+                horizon_client::chat::ChatSource::Server | horizon_client::chat::ChatSource::Player
+            )
         {
-            return core::ops::ControlFlow::Break(false);
+            // Every shown message counts toward the routine-reply window; only a server line
+            // that is the automatic command's own output is hidden by it.
+            let routine = crate::game::claim_borders_economy_client::deliver(&text);
+            if source == horizon_client::chat::ChatSource::Server
+                && (routine || crate::game::claim_borders_economy_client::quiet(&text))
+            {
+                return core::ops::ControlFlow::Break(false);
+            }
         }
         if source == horizon_client::chat::ChatSource::Server
             && let Some((_, accept, _)) = crate::game::claim_borders_teleport::parse(&text)

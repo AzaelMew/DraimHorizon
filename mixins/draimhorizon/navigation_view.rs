@@ -1800,11 +1800,33 @@ struct Meal {
     armed: bool,
 }
 static MEAL: Mutex<Option<Meal>> = Mutex::new(None);
-/// "Eat on its own" is on unless the player switched it off.
+/// The saved "Eat on its own" switch: on unless the player switched it off. This is what the
+/// menu shows and what the player can change; it may be on without being active.
+pub(super) fn auto_eat_setting(game: &Game<'_>) -> bool {
+    crate::game::claim_borders_auto_eat::enabled(
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_eat::ENABLED_KEY,
+        )
+        .as_deref(),
+    )
+}
+/// Whether Auto Eat may act: the saved switch (on by default) and the experimental warning
+/// accepted. Selecting foods ahead of time is allowed; eating, farm food restocking and pending
+/// meals all go through this, so a default-on switch cannot eat before consent.
 pub(super) fn auto_eat_enabled(game: &Game<'_>) -> bool {
-    game.native_setting(claims::SETTINGS_ID, "auto_eat")
-        .as_deref()
-        != Some("false")
+    crate::game::claim_borders_auto_eat::active(
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_eat::ENABLED_KEY,
+        )
+        .as_deref(),
+        game.native_setting(
+            claims::SETTINGS_ID,
+            crate::game::claim_borders_auto_eat::CONSENT_KEY,
+        )
+        .as_deref(),
+    )
 }
 pub(super) fn auto_tools_only_holding(game: &Game<'_>) -> bool {
     crate::game::claim_borders_auto_tools::only_holding(
@@ -1840,9 +1862,8 @@ fn healing(game: &mut Game<'_>) -> bool {
         return false;
     }
     game.player.as_mut().is_some_and(|body| {
-        let health = f64::from(body.health.health());
         let max = body.attribute("minecraft:max_health").unwrap_or(20.0);
-        crate::game::claim_borders_auto_eat::injured(health, max)
+        crate::game::claim_borders_auto_eat::injured(body.health.health(), max)
     })
 }
 pub(super) fn auto_eat_foods(game: &Game<'_>) -> Vec<String> {

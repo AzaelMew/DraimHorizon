@@ -515,7 +515,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, canceled: &mut bool) -> bool {
         };
         match key {
             "key.keyboard.escape" => s.action = Some(model::TranslationControl::Cancel),
-            "key.keyboard.enter" | "key.keyboard.kp.enter" => {
+            "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
                 s.action = Some(model::TranslationControl::Save)
             }
             "key.keyboard.tab" => {

@@ -1570,7 +1570,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 crate::game::claim_borders_navigation_view::load_custom_blocks(game);
                 crate::game::claim_borders_mining::custom()
             },
-            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_setting(game),
             auto_tools_only_holding:
                 crate::game::claim_borders_navigation_view::auto_tools_only_holding(game),
             auto_tools_from_inventory:
