@@ -2068,6 +2068,12 @@ name = "claim_borders_mine_picker"
 source = "mine_picker.rs"
 
 [[module]]
+id = "baritone-shapes"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_baritone_shapes"
+source = "baritone_shapes.rs"
+
+[[module]]
 id = "baritone-bridge"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_baritone_bridge"

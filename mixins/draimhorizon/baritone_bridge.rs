@@ -410,6 +410,114 @@ fn mine_tick(game: &mut Game<'_>) {
     }
 }
 
+/// The names of the items carried (hotbar and inventory), for choosing the block of a floor.
+fn carried(game: &Game<'_>) -> Vec<String> {
+    (0..36)
+        .filter_map(|slot| {
+            if slot < 9 {
+                game.stack_in(slot)
+            } else {
+                game.inventory.get(slot).and_then(Option::as_ref)
+            }
+        })
+        .map(|stack| stack.item.to_string())
+        .collect()
+}
+/// Hands a schematic to the port's builder: it plans the walking, breaking and placing itself.
+fn build(
+    game: &mut Game<'_>,
+    name: &str,
+    origin: [i32; 3],
+    schematic: std::rc::Rc<dyn super::baritone_schematic::Schematic>,
+) -> Result<(), String> {
+    if !baritone::enabled(game) {
+        return Err("Baritone is off".into());
+    }
+    with(game, |b, game| {
+        let baritone::Baritone { core, procs, .. } = b;
+        procs
+            .build
+            .build(core, game, name.to_owned(), schematic, origin);
+    })
+    .ok_or_else(|| "Baritone is busy".to_owned())
+}
+fn feet(game: &mut Game<'_>) -> Result<[i32; 3], String> {
+    with(game, |b, game| b.core.player_feet(game))
+        .flatten()
+        .ok_or_else(|| "Join a world first".to_owned())
+}
+/// A tunnel the way the player looks, with a floor when asked and a block for it is carried.
+pub fn tunnel(
+    game: &mut Game<'_>,
+    length: u16,
+    width: u8,
+    height: u8,
+    floor: bool,
+) -> Result<(), String> {
+    use super::claim_borders_baritone_shapes as shapes;
+    let at = feet(game)?;
+    let direction = super::claim_borders_construction::Direction::from_yaw(game.yaw);
+    let items = carried(game);
+    let block = if floor {
+        shapes::floor_block(items.iter().map(String::as_str))
+    } else {
+        None
+    };
+    if floor && block.is_none() {
+        say(
+            game,
+            "Нет блоков для пола: тоннель без пола.",
+            "No blocks for a floor: a tunnel without one.",
+        );
+    }
+    let (origin, schematic) = shapes::tunnel(
+        at,
+        direction,
+        i32::from(length),
+        i32::from(width),
+        i32::from(height),
+        block.as_deref(),
+    );
+    build(game, "tunnel", origin, schematic)
+}
+/// A bridge (a floor) the way the player looks, of a block they carry.
+pub fn bridge(game: &mut Game<'_>, length: u16, width: u8) -> Result<(), String> {
+    use super::claim_borders_baritone_shapes as shapes;
+    let at = feet(game)?;
+    let direction = super::claim_borders_construction::Direction::from_yaw(game.yaw);
+    let items = carried(game);
+    let Some(block) = shapes::floor_block(items.iter().map(String::as_str)) else {
+        return Err(crate::game::claim_borders_chat_view::current_language()
+            .text(
+                "Нет блоков для моста: возьмите булыжник, камень или землю",
+                "No blocks for a bridge: carry cobblestone, stone or dirt",
+            )
+            .to_owned());
+    };
+    let (origin, schematic) =
+        shapes::bridge(at, direction, i32::from(length), i32::from(width), &block);
+    build(game, "bridge", origin, schematic)
+}
+/// A pond filled in the pattern chosen, with sand, red sand or gravel carried.
+pub fn drain(
+    game: &mut Game<'_>,
+    config: super::claim_borders_draining::Config,
+) -> Result<(), String> {
+    use super::claim_borders_baritone_shapes as shapes;
+    let at = feet(game)?;
+    let items = carried(game);
+    let Some(block) = shapes::drain_block(items.iter().map(String::as_str)) else {
+        return Err(crate::game::claim_borders_chat_view::current_language()
+            .text(
+                "Нет песка или гравия для осушения",
+                "No sand or gravel to drain with",
+            )
+            .to_owned());
+    };
+    let (origin, schematic) = shapes::drain(at, config, &block);
+    build(game, "drain", origin, schematic)
+}
+
 /// Whether `#pause` holds the port right now (not the half second old snapshot).
 pub fn paused(game: &mut Game<'_>) -> bool {
     with(game, |b, _| b.procs.pause.paused).unwrap_or(false)

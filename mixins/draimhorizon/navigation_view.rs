@@ -145,6 +145,9 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
         action @ (Action::Baritone(_)
         | Action::BaritoneWaypoint(_)
         | Action::BaritoneMine(_)
+        | Action::BaritoneTunnel { .. }
+        | Action::BaritoneBridge { .. }
+        | Action::BaritoneDrain(_)
         | Action::BaritoneBuild { .. }) => {
             crate::game::claim_borders_client::run_menu_action(game, action)
         }

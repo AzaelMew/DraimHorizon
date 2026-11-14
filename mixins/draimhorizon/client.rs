@@ -2006,6 +2006,32 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
             Ok(Vec::new())
         }
+        Action::BaritoneTunnel {
+            length,
+            width,
+            height,
+            floor,
+        } => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::tunnel(game, length, width, height, floor)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneBridge { length, width } => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::bridge(game, length, width)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneDrain(config) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::drain(game, config)?;
+            Ok(Vec::new())
+        }
         Action::BaritoneMineSet(list) => {
             let text = crate::game::claim_borders_mine_picker::encode(&list);
             game.native_set_setting(claims::SETTINGS_ID, "baritone_mine_blocks", &text);

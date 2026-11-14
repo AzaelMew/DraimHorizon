@@ -490,8 +490,6 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && w < 56.0
             {
                 let icon = match mode {
-                    model::BaritoneMode::Tunnel => ui::Icon::Layers,
-                    model::BaritoneMode::Bridge => ui::Icon::Fill,
                     model::BaritoneMode::Farm => ui::Icon::Restock,
                     model::BaritoneMode::Drain => ui::Icon::Grid,
                     model::BaritoneMode::Schematic => ui::Icon::Home,
@@ -842,7 +840,6 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Some(model::Field::NavigationY) => ("Y: ", "Y: "),
                         Some(model::Field::NavigationZ) => ("Z: ", "Z: "),
                         Some(model::Field::BaritoneBlock) => ("Блок: ", "Block: "),
-                        Some(model::Field::BaritoneTunnel) => ("Тоннель В Ш Г: ", "Tunnel H W D: "),
                         Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
                         Some(model::Field::Name) => ("Имя: ", "Name: "),
                         Some(model::Field::Color | model::Field::PriorityColor) => {

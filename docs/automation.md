@@ -45,14 +45,13 @@ Not a Baritone feature. Hover a shulker box that holds something (inventory, che
 
 ## Drain
 
-Open **Baritone → Drain**, choose a radius (3, 6, 9 or 12), carry sand, red sand or gravel (hotbar, off hand or inventory) and press the start key. Drain places only those blocks, never an ordinary block that would be left standing in the water.
+Open **Experiments → Automation → Drain**, choose a radius (3, 6, 9 or 12), a pattern and press the start key (Baritone must be on); carry sand, red sand or gravel. The port's builder does the rest: it plans where to stand and what to place, walks, sneaks out along what it has laid and places from the bottom of each column up. Only water and seagrass cells are asked for a block, so no ordinary block is left standing in the water; kelp is not removed. There is no preview: turn **Baritone → Settings → Draw the path** on to see its plan.
 
-- The bot drops the block into the surface water cell next to a solid block, for example the edge of the shore or a pier you stand on. The block sinks and fills the column from the bottom; the bot stays on that column, dropping the next block when the last one has sunk, until the column reaches the surface, and only then moves on to the next column. Each drop waits under a second for the block to sink.
-- The wall of the shore facing the water cannot be clicked from inland, so the bot walks to the edge of the shore block and sneaks over it, like when bridging, before dropping the block. If it falls into the water, it swims back to dry ground and goes on.
+**Patterns.** **Pattern** switches between a fill (the default), lines and a grid, and **Spacing** sets the distance between the lines (2 to 8). Lines run along the x axis every N blocks, starting with the row you stand on; the grid adds columns, so the water is cut into squares. The pattern is measured from the column you start on.
 
-**Patterns.** The **Pattern** button switches between a fill (the default), lines and a grid, and **Spacing** sets the distance between the lines (3 to 8). Lines run along the x axis every N blocks, starting with the row you stand on; the grid adds columns, so the water is cut into squares. A pattern grows along its own blocks: the bot walks out along the line it has laid, sneaking, and places the next column from its end.
+## Tunnel and Bridge (Baritone tab)
 
-Stand on a block next to the water, not in it. If the next cell is out of reach the bot walks to a standable spot nearby; if none exists it stops with a message. It finishes after several empty scans in a row and reports how many cells were filled. Water and seagrass are replaced; kelp is not removed. The task stops at 4000 placements.
+**Tunnel** clears a corridor ahead of you, the way you look, of the length, width and height you pick, and with **Floor** on (the default) lays a floor of a block you carry (cobblestone first) under it, so the bot does not fall into a gap. **Bridge** lays a floor of the length and width you pick. Both are built by the port's builder; **Cancel** or the Stop key end them.
 
 ## Farm
 

@@ -173,6 +173,18 @@ pub use baritone_profile as claim_borders_baritone_profile;
 pub mod mine_picker;
 pub use mine_picker as claim_borders_mine_picker;
 
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/schematic/mask.rs"]
+pub mod baritone_schematic_mask;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/schematic/schematic.rs"]
+pub mod baritone_schematic;
+#[path = "../mixins/draimhorizon/baritone_shapes.rs"]
+pub mod baritone_shapes;
+pub use baritone_shapes as claim_borders_baritone_shapes;
+
 // Baritone navigation (LGPL-3.0, see mixins/draimhorizon/baritone/NOTICE.md).
 #[rustfmt::skip]
 #[allow(clippy::all, dead_code, unused_mut)]

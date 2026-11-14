@@ -298,6 +298,20 @@ pub enum Action {
     SetBaritoneProfile(bool),
     /// The blocks chosen in the Mining section are now these.
     BaritoneMineSet(Vec<String>),
+    /// A tunnel the way the player looks, built by the port's builder.
+    BaritoneTunnel {
+        length: u16,
+        width: u8,
+        height: u8,
+        floor: bool,
+    },
+    /// A bridge (a floor) the way the player looks.
+    BaritoneBridge {
+        length: u16,
+        width: u8,
+    },
+    /// A pond filled in the chosen pattern.
+    BaritoneDrain(super::claim_borders_draining::Config),
     /// Mine these blocks with the port (and unload when the inventory is full).
     BaritoneMine(Vec<String>),
     SetAutoEatFood(String, bool),
@@ -466,6 +480,24 @@ impl std::fmt::Debug for Action {
                 f.debug_tuple("BaritoneMineSet").field(&list.len()).finish()
             }
             Self::BaritoneMine(list) => f.debug_tuple("BaritoneMine").field(&list.len()).finish(),
+            Self::BaritoneTunnel {
+                length,
+                width,
+                height,
+                floor,
+            } => f
+                .debug_struct("BaritoneTunnel")
+                .field("length", length)
+                .field("width", width)
+                .field("height", height)
+                .field("floor", floor)
+                .finish(),
+            Self::BaritoneBridge { length, width } => f
+                .debug_struct("BaritoneBridge")
+                .field("length", length)
+                .field("width", width)
+                .finish(),
+            Self::BaritoneDrain(config) => f.debug_tuple("BaritoneDrain").field(config).finish(),
             Self::SetAutoEatFood(item, on) => f
                 .debug_tuple("SetAutoEatFood")
                 .field(item)
@@ -615,8 +647,6 @@ pub enum Field {
     NavigationZ,
     /// Block name(s) for the Baritone tab's Mine button.
     BaritoneBlock,
-    /// "height width depth" of the Baritone tab's Tunnel button.
-    BaritoneTunnel,
     Name,
     Color,
     PeerCode,
@@ -775,6 +805,7 @@ pub struct BaritoneView {
 pub enum BaritoneCmd {
     Build,
     Tunnel,
+    Bridge,
     Goto,
     Mine,
     Farm,
@@ -787,8 +818,6 @@ pub enum BaritoneCmd {
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum BaritoneMode {
-    Tunnel,
-    Bridge,
     #[default]
     Farm,
     Drain,
@@ -1054,7 +1083,6 @@ pub struct Menu {
     pub navigation_player_name: Option<String>,
     /// The action keys act on the Baritone tab (the last of it and Automation on screen).
     pub keys_for_baritone_tab: bool,
-    pub baritone_tunnel: String,
     pub baritone_section: BaritoneSection,
     pub baritone_section_page: usize,
     pub baritone_file: usize,
@@ -1126,7 +1154,6 @@ impl Default for Menu {
             baritone_mine_cache: Vec::new(),
             navigation_player_name: None,
             keys_for_baritone_tab: false,
-            baritone_tunnel: String::new(),
             baritone_section: BaritoneSection::Tasks,
             baritone_section_page: 0,
             baritone_file: 0,
@@ -1311,7 +1338,6 @@ impl Menu {
         self.baritone_mine_cache = from.baritone_mine_cache.clone();
         self.navigation_player_name = from.navigation_player_name.clone();
         self.keys_for_baritone_tab = from.keys_for_baritone_tab;
-        self.baritone_tunnel = from.baritone_tunnel.clone();
         self.baritone_section = from.baritone_section;
         self.baritone_section_page = from.baritone_section_page;
         self.baritone_file = from.baritone_file;
@@ -1390,14 +1416,27 @@ impl Menu {
                     Ok(Action::BaritoneMine(self.baritone_mine_cache.clone()))
                 }
             }
-            BaritoneSection::Tunnel => self
-                .baritone_line(BaritoneCmd::Tunnel)
-                .map(Action::Baritone)
-                .ok_or_else(missing),
-            BaritoneSection::Tasks
-            | BaritoneSection::Bridge
-            | BaritoneSection::Build
-            | BaritoneSection::Settings => Err(missing()),
+            BaritoneSection::Tunnel => Ok(self.baritone_tunnel()),
+            BaritoneSection::Bridge => Ok(self.baritone_bridge()),
+            BaritoneSection::Tasks | BaritoneSection::Build | BaritoneSection::Settings => {
+                Err(missing())
+            }
+        }
+    }
+    /// The Tunnel button: the sizes chosen in the section.
+    fn baritone_tunnel(&self) -> Action {
+        Action::BaritoneTunnel {
+            length: self.construct_length,
+            width: self.construct_width,
+            height: self.construct_height,
+            floor: self.construct_floor,
+        }
+    }
+    /// The Bridge button.
+    fn baritone_bridge(&self) -> Action {
+        Action::BaritoneBridge {
+            length: self.construct_length,
+            width: self.construct_width,
         }
     }
     /// The Go button of Navigation: a chosen player is followed, a chosen waypoint is walked to,
@@ -1416,31 +1455,12 @@ impl Menu {
     /// settings. The action keys call this, so they work with the menu closed;
     /// the consent, world and tool checks stay in the drivers that run it.
     pub fn baritone_request(&self, running: bool) -> Result<Action, String> {
-        use super::claim_borders_construction as construction;
         use super::claim_borders_navigation::Goal;
         let language = self.language;
         if self.keys_scope_is_baritone_tab() {
             return self.baritone_tab_request(running);
         }
         match self.baritone_mode {
-            BaritoneMode::Tunnel | BaritoneMode::Bridge => {
-                let bridge = self.baritone_mode == BaritoneMode::Bridge;
-                Ok(Action::Navigate {
-                    goal: Goal::Construct(construction::Config {
-                        kind: if bridge {
-                            construction::Kind::Bridge
-                        } else {
-                            construction::Kind::Tunnel
-                        },
-                        direction: self.construct_direction,
-                        width: self.construct_width,
-                        height: if bridge { 2 } else { self.construct_height },
-                        length: self.construct_length,
-                        fill_floor: bridge || self.construct_floor,
-                    }),
-                    running,
-                })
-            }
             BaritoneMode::Farm => Ok(Action::Navigate {
                 goal: Goal::Farm(super::claim_borders_farming::Config {
                     crops: self.farm_crops,
@@ -1454,14 +1474,20 @@ impl Menu {
                 }),
                 running,
             }),
-            BaritoneMode::Drain => Ok(Action::Navigate {
-                goal: Goal::Drain(super::claim_borders_draining::Config {
+            // Drain is built by the port; it has no preview.
+            BaritoneMode::Drain if !running => Err(language
+                .text(
+                    "Предпросмотра нет: Baritone рисует путь сам",
+                    "No preview: Baritone draws its path itself",
+                )
+                .to_owned()),
+            BaritoneMode::Drain => Ok(Action::BaritoneDrain(
+                super::claim_borders_draining::Config {
                     radius: self.drain_radius,
                     pattern: self.drain_pattern,
                     spacing: self.drain_spacing,
-                }),
-                running,
-            }),
+                },
+            )),
             BaritoneMode::Schematic => {
                 let filename = self.schematic_file.clone().ok_or_else(|| {
                     language
@@ -3773,28 +3799,7 @@ impl Menu {
                 super::claim_borders_mine_picker::mine_line(&self.baritone_mine_cache)?
             }
             BaritoneCmd::Build => return None,
-            BaritoneCmd::Tunnel => {
-                let sizes: Vec<&str> = self.baritone_tunnel.split_whitespace().collect();
-                match sizes.as_slice() {
-                    [] => "tunnel".into(),
-                    [h, w, d] => {
-                        let (h, w, d) = (
-                            h.parse::<i32>().ok()?,
-                            w.parse::<i32>().ok()?,
-                            d.parse::<i32>().ok()?,
-                        );
-                        // The same limits as the port's own command.
-                        if !(2..=319).contains(&h)
-                            || !(1..=64).contains(&w)
-                            || !(1..=4096).contains(&d)
-                        {
-                            return None;
-                        }
-                        format!("tunnel {h} {w} {d}")
-                    }
-                    _ => return None,
-                }
-            }
+            BaritoneCmd::Tunnel | BaritoneCmd::Bridge => return None,
             BaritoneCmd::Farm => "farm".into(),
             BaritoneCmd::Explore => "explore".into(),
             BaritoneCmd::Follow => "follow players".into(),
@@ -4068,37 +4073,88 @@ impl Menu {
                 ));
             }
             BaritoneSection::Tunnel => {
+                let third = (w - gap * 2.0) / 3.0;
+                for (i, (label, control)) in [
+                    (
+                        localized!(l, "Длина: {}", "Length: {}", self.construct_length),
+                        Control::ConstructLength,
+                    ),
+                    (
+                        localized!(l, "Ширина: {}", "Width: {}", self.construct_width),
+                        Control::ConstructWidth,
+                    ),
+                    (
+                        localized!(l, "Высота: {}", "Height: {}", self.construct_height),
+                        Control::ConstructHeight,
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [x + i as f32 * (third + gap), 80.0, third, 20.0],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
                 out.push(widget(
-                    [x, 80.0, w - cw - gap, 20.0],
+                    [x, 104.0, w - cw - gap, 20.0],
                     localized!(
                         l,
-                        "Тоннель В Ш Г: {}",
-                        "Tunnel H W D: {}",
-                        self.baritone_tunnel
+                        "Пол: {}",
+                        "Floor: {}",
+                        if self.construct_floor {
+                            l.text("да", "on")
+                        } else {
+                            l.text("нет", "off")
+                        }
                     ),
-                    Some(Control::Field(Field::BaritoneTunnel)),
-                    self.focus == Some(Field::BaritoneTunnel),
+                    Some(Control::ConstructFloor),
+                    self.construct_floor,
                 ));
                 button(
                     &mut out,
-                    [x + w - cw, 80.0, cw, 20.0],
+                    [x + w - cw, 104.0, cw, 20.0],
                     l.text("Тоннель", "Tunnel"),
                     BaritoneCmd::Tunnel,
                 );
                 hint(
                     &mut out,
-                    104.0,
+                    128.0,
                     l.text(
-                        "Пусто: прямо вперёд. Высота, ширина, глубина: коридор.",
-                        "Empty: straight ahead. Height, width, depth: a corridor.",
+                        "Вперёд, куда вы смотрите. Пол из блока в инвентаре.",
+                        "Ahead, the way you look. The floor is a block you carry.",
                     ),
                 );
             }
             BaritoneSection::Bridge => {
+                let half = (w - gap) / 2.0;
+                out.push(widget(
+                    [x, 80.0, half, 20.0],
+                    localized!(l, "Длина: {}", "Length: {}", self.construct_length),
+                    Some(Control::ConstructLength),
+                    false,
+                ));
+                out.push(widget(
+                    [x + half + gap, 80.0, half, 20.0],
+                    localized!(l, "Ширина: {}", "Width: {}", self.construct_width),
+                    Some(Control::ConstructWidth),
+                    false,
+                ));
+                button(
+                    &mut out,
+                    [x + w - cw, 104.0, cw, 20.0],
+                    l.text("Мост", "Bridge"),
+                    BaritoneCmd::Bridge,
+                );
                 hint(
                     &mut out,
-                    80.0,
-                    l.text("Мост: раздел в работе.", "Bridge: section in progress."),
+                    128.0,
+                    l.text(
+                        "Вперёд, куда вы смотрите. Блоки: из инвентаря.",
+                        "Ahead, the way you look. Blocks: from the inventory.",
+                    ),
                 );
             }
             BaritoneSection::Build => {
@@ -4280,26 +4336,16 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 16.0) / 5.0;
+            let mode_width = (w - 8.0) / 3.0;
             for (i, mode, label) in [
-                (
-                    0,
-                    BaritoneMode::Tunnel,
-                    self.language.text("Тоннель", "Tunnel"),
-                ),
+                (0, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
                     1,
-                    BaritoneMode::Bridge,
-                    self.language.text("Мост", "Bridge"),
-                ),
-                (2, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
-                (
-                    3,
                     BaritoneMode::Drain,
                     self.language.text("Осушение", "Drain"),
                 ),
                 (
-                    4,
+                    2,
                     BaritoneMode::Schematic,
                     self.language.text("Схемы", "Schematics"),
                 ),
@@ -4523,101 +4569,6 @@ impl Menu {
                         next = y + 12.0;
                     }
                     self.farm_plot_list(model, x, w, next + 2.0, height - 50.0, &mut out);
-                }
-            } else if matches!(
-                self.baritone_mode,
-                BaritoneMode::Tunnel | BaritoneMode::Bridge
-            ) {
-                let compact_tunnel = self.baritone_mode == BaritoneMode::Tunnel && height < 320.0;
-                out.push(widget(
-                    [x, 100.0, if compact_tunnel { tab_width } else { w }, h],
-                    localized!(
-                        self.language,
-                        "Длина: {}",
-                        "Length: {}",
-                        self.construct_length
-                    ),
-                    Some(Control::ConstructLength),
-                    false,
-                ));
-                if self.baritone_mode == BaritoneMode::Tunnel {
-                    for (i, (label, control, on)) in [
-                        (
-                            localized!(
-                                self.language,
-                                "Ширина: {}",
-                                "Width: {}",
-                                self.construct_width
-                            ),
-                            Control::ConstructWidth,
-                            false,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Высота: {}",
-                                "Height: {}",
-                                self.construct_height
-                            ),
-                            Control::ConstructHeight,
-                            false,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Пол: {}",
-                                "Floor: {}",
-                                if self.construct_floor {
-                                    self.language.text("да", "on")
-                                } else {
-                                    self.language.text("нет", "off")
-                                }
-                            ),
-                            Control::ConstructFloor,
-                            self.construct_floor,
-                        ),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        out.push(widget(
-                            if compact_tunnel {
-                                [
-                                    x + ((i + 1) % 2) as f32 * (tab_width + 4.0),
-                                    100.0 + i.div_ceil(2) as f32 * step,
-                                    tab_width,
-                                    h,
-                                ]
-                            } else {
-                                [x, 100.0 + (i + 1) as f32 * step, w, h]
-                            },
-                            label,
-                            Some(control),
-                            on,
-                        ));
-                    }
-                } else {
-                    // A bridge has a length and a width, like a tunnel; its height is fixed.
-                    out.push(widget(
-                        [x, 100.0 + step, w, h],
-                        localized!(
-                            self.language,
-                            "Ширина: {}",
-                            "Width: {}",
-                            self.construct_width
-                        ),
-                        Some(Control::ConstructWidth),
-                        false,
-                    ));
-                    out.push(widget(
-                        [x, 100.0 + 2.0 * step, w, h],
-                        self.language.text(
-                            "Блоки: хотбар, вторая рука или инвентарь",
-                            "Blocks: hotbar, off hand or inventory",
-                        ),
-                        None,
-                        false,
-                    ));
                 }
             } else if self.baritone_mode == BaritoneMode::Drain {
                 use super::claim_borders_draining::Pattern;
@@ -5580,6 +5531,8 @@ impl Menu {
             Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
             Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
             Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
+            Control::BaritoneCmd(BaritoneCmd::Tunnel) => Some(self.baritone_tunnel()),
+            Control::BaritoneCmd(BaritoneCmd::Bridge) => Some(self.baritone_bridge()),
             Control::BaritoneCmd(BaritoneCmd::Mine) => (!model.baritone.mine.is_empty())
                 .then(|| Action::BaritoneMine(model.baritone.mine.clone())),
             Control::BaritoneMineRow(index) => {
@@ -6602,7 +6555,6 @@ impl Menu {
                 &mut self.navigation_z
             }
             Field::BaritoneBlock => &mut self.baritone_block,
-            Field::BaritoneTunnel => &mut self.baritone_tunnel,
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
@@ -6623,7 +6575,6 @@ impl Menu {
             Some(Field::NavigationY) => &self.navigation_y,
             Some(Field::NavigationZ) => &self.navigation_z,
             Some(Field::BaritoneBlock) => &self.baritone_block,
-            Some(Field::BaritoneTunnel) => &self.baritone_tunnel,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -6702,7 +6653,6 @@ impl Menu {
             Field::SchematicOrigin => 80,
             Field::NavigationX | Field::NavigationY | Field::NavigationZ => 12,
             Field::BaritoneBlock => 64,
-            Field::BaritoneTunnel => 16,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -6722,7 +6672,6 @@ impl Menu {
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
             || (field == Field::BaritoneBlock
                 && !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | ' ')))
-            || (field == Field::BaritoneTunnel && !(c.is_ascii_digit() || c == ' '))
             || (field == Field::SchematicOrigin
                 && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
             || (matches!(
@@ -7392,8 +7341,6 @@ mod tests {
                         ExperimentalSection::Helpers,
                     ] {
                         for baritone_mode in [
-                            BaritoneMode::Tunnel,
-                            BaritoneMode::Bridge,
                             BaritoneMode::Farm,
                             BaritoneMode::Drain,
                             BaritoneMode::Schematic,
@@ -8250,6 +8197,65 @@ mod tests {
     }
 
     #[test]
+    fn tunnel_and_bridge_buttons_use_the_chosen_sizes_and_the_floor_is_on_by_default() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Tunnel,
+            ..Menu::default()
+        };
+        // The floor is on from the start, so a tunnel does not drop the bot into a gap.
+        assert!(menu.construct_floor);
+        let Some(Action::BaritoneTunnel {
+            length,
+            width,
+            height,
+            floor,
+        }) = menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Tunnel))
+        else {
+            panic!("the Tunnel button must ask for a tunnel");
+        };
+        assert_eq!(
+            (length, width, height, floor),
+            (
+                menu.construct_length,
+                menu.construct_width,
+                menu.construct_height,
+                true
+            )
+        );
+        // The steppers change what is asked, and Floor turns the floor off.
+        menu.activate(&model, 200.0, Control::ConstructLength);
+        menu.activate(&model, 200.0, Control::ConstructWidth);
+        menu.activate(&model, 200.0, Control::ConstructHeight);
+        menu.activate(&model, 200.0, Control::ConstructFloor);
+        let Some(Action::BaritoneTunnel {
+            length: l2,
+            width: w2,
+            height: h2,
+            floor: f2,
+        }) = menu.baritone_request(true).ok()
+        else {
+            panic!("Start in the Tunnel section must ask for a tunnel");
+        };
+        assert_ne!((l2, w2, h2), (length, width, height));
+        assert!(!f2);
+        assert!((1..=64).contains(&l2) && (1..=3).contains(&w2) && (2..=3).contains(&h2));
+        // A bridge has a length and a width and no floor or height.
+        menu.baritone_section = BaritoneSection::Bridge;
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Bridge)),
+            Some(Action::BaritoneBridge { length, width }) if length == l2 && width == w2
+        ));
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneBridge { .. })
+        ));
+        // There is no preview for either.
+        assert!(menu.baritone_request(false).is_err());
+    }
+
+    #[test]
     fn baritone_buttons_build_commands_only_from_valid_input() {
         let model = ViewModel::default();
         let mut menu = Menu {
@@ -8323,8 +8329,16 @@ mod tests {
             (
                 BaritoneSection::Tunnel,
                 vec![
-                    Control::Field(Field::BaritoneTunnel),
+                    Control::ConstructLength,
+                    Control::ConstructFloor,
                     Control::BaritoneCmd(BaritoneCmd::Tunnel),
+                ],
+            ),
+            (
+                BaritoneSection::Bridge,
+                vec![
+                    Control::ConstructLength,
+                    Control::BaritoneCmd(BaritoneCmd::Bridge),
                 ],
             ),
             (
@@ -8401,36 +8415,6 @@ mod tests {
             tab: Tab::Baritone,
             ..Menu::default()
         };
-        // Tunnel: empty is a straight goal, three sizes are checked like the port does.
-        assert_eq!(
-            menu.baritone_line(BaritoneCmd::Tunnel).as_deref(),
-            Some("tunnel")
-        );
-        for (typed, line) in [
-            ("2 1 10", Some("tunnel 2 1 10")),
-            ("  3   3  50 ", Some("tunnel 3 3 50")),
-            ("1 1 10", None),
-            ("2 0 10", None),
-            ("2 1 0", None),
-            ("320 1 1", None),
-            ("2 1", None),
-            ("2 1 10 5", None),
-            ("2 1 99999999999", None),
-        ] {
-            menu.baritone_tunnel = typed.into();
-            assert_eq!(
-                menu.baritone_line(BaritoneCmd::Tunnel).as_deref(),
-                line,
-                "{typed:?}"
-            );
-        }
-        menu.baritone_tunnel.clear();
-        menu.focus = Some(Field::BaritoneTunnel);
-        for c in "2a 1,x 10\n".chars() {
-            menu.character(c);
-        }
-        assert_eq!(menu.baritone_tunnel, "2 1 10");
-        menu.focus = None;
         // Build: needs a file; X Y Z all empty means "here", all valid means there, a half
         // typed origin or a file name with a space starts nothing.
         assert!(
@@ -8721,89 +8705,6 @@ mod tests {
                         );
                     }
                 }
-            }
-        }
-    }
-
-    #[test]
-    fn construction_modes_validate_consent_and_compact_geometry() {
-        for language in [Language::Russian, Language::English] {
-            for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
-                let menu = Menu {
-                    tab: Tab::Experimental,
-                    experimental_section: ExperimentalSection::Baritone,
-                    baritone_mode: mode,
-                    language,
-                    ..Menu::default()
-                };
-                let mut model = ViewModel {
-                    navigation_status: "Build status".into(),
-                    experiments_accepted: true,
-                    ..ViewModel::default()
-                };
-                assert!(
-                    menu.construct_floor,
-                    "tunnel floor must be enabled by default"
-                );
-                assert!(matches!(
-                    menu.baritone_request(false),
-                    Ok(Action::Navigate {
-                        goal: super::super::claim_borders_navigation::Goal::Construct(_),
-                        running: false
-                    })
-                ));
-                for height in [200., 216., 300., 500.] {
-                    let rows = menu.layout(&model, 360., height);
-                    let controls: Vec<_> = rows
-                        .iter()
-                        .filter(|w| {
-                            matches!(
-                                w.control,
-                                Some(
-                                    Control::ConstructDirection
-                                        | Control::ConstructLength
-                                        | Control::ConstructWidth
-                                        | Control::ConstructHeight
-                                        | Control::ConstructFloor
-                                        | Control::BaritoneMode(_)
-                                )
-                            )
-                        })
-                        .collect();
-                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 9 } else { 5 });
-                    if mode == BaritoneMode::Tunnel && height < 320.0 {
-                        let control_rect = |control| {
-                            controls
-                                .iter()
-                                .find(|w| w.control == Some(control))
-                                .unwrap()
-                                .rect
-                        };
-                        let length = control_rect(Control::ConstructLength);
-                        let width = control_rect(Control::ConstructWidth);
-                        let tunnel_height = control_rect(Control::ConstructHeight);
-                        let floor = control_rect(Control::ConstructFloor);
-                        assert_eq!(length[1], width[1]);
-                        assert_eq!(tunnel_height[1], floor[1]);
-                        assert!(length[0] < width[0]);
-                        assert!(tunnel_height[0] < floor[0]);
-                        assert!(length[1] < tunnel_height[1]);
-                    }
-                    let status = rows.iter().find(|w| w.text == "Build status").unwrap();
-                    for (i, a) in controls.iter().enumerate() {
-                        assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
-                        for b in controls.iter().skip(i + 1) {
-                            assert!(
-                                a.rect[0] + a.rect[2] <= b.rect[0]
-                                    || b.rect[0] + b.rect[2] <= a.rect[0]
-                                    || a.rect[1] + a.rect[3] <= b.rect[1]
-                                    || b.rect[1] + b.rect[3] <= a.rect[1]
-                            );
-                        }
-                    }
-                }
-                model.experiments_accepted = false;
-                assert!(!model.experiments_accepted);
             }
         }
     }
@@ -9782,12 +9683,11 @@ mod tests {
         ));
         menu.baritone_mode = BaritoneMode::Drain;
         assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Drain(c),
-                running: false
-            }) if c.radius == 6
+            menu.baritone_request(true),
+            Ok(Action::BaritoneDrain(c)) if c.radius == 6
         ));
+        // There is no preview: the port draws its own path.
+        assert!(menu.baritone_request(false).is_err());
         menu.activate(&model, 200.0, Control::DrainRadius);
         assert_eq!(menu.drain_radius, 9);
         menu.activate(&model, 200.0, Control::DrainPattern);
