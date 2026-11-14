@@ -289,7 +289,6 @@ pub enum Action {
     },
     /// Set entry `.0` of the port settings list to `.1`.
     BaritoneSetting(usize, i32),
-    SetBaritoneEngine(bool),
     SetBaritoneProfile(bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
@@ -452,7 +451,6 @@ impl std::fmt::Debug for Action {
             Self::BaritoneSetting(i, v) => {
                 f.debug_tuple("BaritoneSetting").field(i).field(v).finish()
             }
-            Self::SetBaritoneEngine(on) => f.debug_tuple("SetBaritoneEngine").field(on).finish(),
             Self::SetBaritoneProfile(on) => f.debug_tuple("SetBaritoneProfile").field(on).finish(),
             Self::SetPatPolicy(p) => f.debug_tuple("SetPatPolicy").field(p).finish(),
             Self::SetPatNotify(on) => f.debug_tuple("SetPatNotify").field(on).finish(),
@@ -704,8 +702,41 @@ impl Helper {
 pub enum BaritoneSection {
     #[default]
     Tasks,
+    Navigation,
+    Mining,
+    Tunnel,
+    Bridge,
     Build,
     Settings,
+}
+impl BaritoneSection {
+    pub const ALL: [Self; 7] = [
+        Self::Tasks,
+        Self::Navigation,
+        Self::Mining,
+        Self::Tunnel,
+        Self::Bridge,
+        Self::Build,
+        Self::Settings,
+    ];
+    /// How many section buttons the selector shows at once.
+    pub const PER_PAGE: usize = 4;
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Tasks => language.text("Задачи", "Tasks"),
+            Self::Navigation => language.text("Навигация", "Navigation"),
+            Self::Mining => language.text("Добыча", "Mining"),
+            Self::Tunnel => language.text("Тоннель", "Tunnel"),
+            Self::Bridge => language.text("Мост", "Bridge"),
+            Self::Build => language.text("Строить", "Build"),
+            Self::Settings => language.text("Настройки", "Settings"),
+        }
+    }
+    /// The page of the selector the section is on.
+    pub fn page(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0) / Self::PER_PAGE
+    }
+    pub const PAGES: usize = Self::ALL.len().div_ceil(Self::PER_PAGE);
 }
 /// What the port is doing and how it is set, as last read from it (empty while it is off).
 #[derive(Clone, Debug, Default)]
@@ -715,8 +746,6 @@ pub struct BaritoneView {
     pub goal: Option<f64>,
     /// One value per `claim_borders_baritone_walk::SETTINGS` entry (a flag is 0 or 1).
     pub values: Vec<i32>,
-    /// The farm and mining walk with the port (off: their own walking).
-    pub engine: bool,
     /// The port writes what its work costs to `profile.txt` once a second.
     pub profile: bool,
 }
@@ -780,9 +809,10 @@ pub enum Control {
     /// A command button on the Baritone tab.
     BaritoneCmd(BaritoneCmd),
     BaritoneSection(BaritoneSection),
+    /// The previous (false) or next (true) page of the section selector.
+    BaritoneSectionPage(bool),
     /// A port setting: `.1` is the direction of a stepper (a flag toggles whichever it is).
     BaritoneSetting(usize, bool),
-    BaritoneEngine,
     BaritoneProfile,
     /// The previous (false) or next (true) schematic file of the Build section.
     BaritoneFile(bool),
@@ -996,6 +1026,7 @@ pub struct Menu {
     pub baritone_block: String,
     pub baritone_tunnel: String,
     pub baritone_section: BaritoneSection,
+    pub baritone_section_page: usize,
     pub baritone_file: usize,
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
@@ -1061,6 +1092,7 @@ impl Default for Menu {
             baritone_block: String::new(),
             baritone_tunnel: String::new(),
             baritone_section: BaritoneSection::Tasks,
+            baritone_section_page: 0,
             baritone_file: 0,
             navigation_waypoint: None,
             navigation_choices: None,
@@ -1243,6 +1275,7 @@ impl Menu {
         self.baritone_block = from.baritone_block.clone();
         self.baritone_tunnel = from.baritone_tunnel.clone();
         self.baritone_section = from.baritone_section;
+        self.baritone_section_page = from.baritone_section_page;
         self.baritone_file = from.baritone_file;
     }
     /// Footer line of the Baritone tabs: what each action key is bound to.
@@ -3694,7 +3727,8 @@ impl Menu {
         })
     }
     /// The Baritone tab: the navigation port taken from the Baritone project (LGPL-3.0). A row
-    /// of sections, the section's controls and, at the foot, what the port is doing.
+    /// of sections (four at a time, with arrows), the section's controls and, at the foot, what
+    /// the port is doing.
     fn baritone_layout(
         &self,
         model: &ViewModel,
@@ -3709,21 +3743,33 @@ impl Menu {
         let button = |out: &mut Vec<Widget>, rect: [f32; 4], text: &str, cmd: BaritoneCmd| {
             out.push(widget(rect, text, Some(Control::BaritoneCmd(cmd)), false));
         };
-        // The sections.
-        let sw = (w - gap * 2.0) / 3.0;
-        for (i, (section, text)) in [
-            (BaritoneSection::Tasks, l.text("Задачи", "Tasks")),
-            (BaritoneSection::Build, l.text("Строить", "Build")),
-            (BaritoneSection::Settings, l.text("Настройки", "Settings")),
-        ]
-        .into_iter()
-        .enumerate()
+        // The sections, four at a time between two arrows.
+        let arrow = 22.0;
+        let sw = (w - arrow * 2.0 - gap * 5.0) / BaritoneSection::PER_PAGE as f32;
+        out.push(widget(
+            [x, 56.0, arrow, 20.0],
+            "<",
+            Some(Control::BaritoneSectionPage(false)),
+            false,
+        ));
+        out.push(widget(
+            [x + w - arrow, 56.0, arrow, 20.0],
+            ">",
+            Some(Control::BaritoneSectionPage(true)),
+            false,
+        ));
+        let page = self.baritone_section_page.min(BaritoneSection::PAGES - 1);
+        for (i, section) in BaritoneSection::ALL
+            .iter()
+            .skip(page * BaritoneSection::PER_PAGE)
+            .take(BaritoneSection::PER_PAGE)
+            .enumerate()
         {
             out.push(widget(
-                [x + i as f32 * (sw + gap), 56.0, sw, 20.0],
-                text,
-                Some(Control::BaritoneSection(section)),
-                self.baritone_section == section,
+                [x + arrow + gap + i as f32 * (sw + gap), 56.0, sw, 20.0],
+                section.label(l),
+                Some(Control::BaritoneSection(*section)),
+                self.baritone_section == *section,
             ));
         }
         let cw = (w - gap * 3.0) / 4.0;
@@ -3743,6 +3789,11 @@ impl Menu {
                     self.focus == Some(field),
                 ));
             }
+        };
+        let hint = |out: &mut Vec<Widget>, y: f32, text: &str| {
+            let mut line = widget([x, y, w, 14.0], text, None, false);
+            line.muted = true;
+            out.push(line);
         };
         match self.baritone_section {
             BaritoneSection::Tasks => {
@@ -3777,27 +3828,6 @@ impl Menu {
                         cmd,
                     );
                 }
-                // Go to X Y Z.
-                coordinates(&mut out, 104.0);
-                button(
-                    &mut out,
-                    [x + 3.0 * (cw + gap), 104.0, cw, 20.0],
-                    l.text("Идти", "Go"),
-                    BaritoneCmd::Goto,
-                );
-                // Mine a block.
-                out.push(widget(
-                    [x, 128.0, w - cw - gap, 20.0],
-                    localized!(l, "Блок: {}", "Block: {}", self.baritone_block),
-                    Some(Control::Field(Field::BaritoneBlock)),
-                    self.focus == Some(Field::BaritoneBlock),
-                ));
-                button(
-                    &mut out,
-                    [x + w - cw, 128.0, cw, 20.0],
-                    l.text("Копать", "Mine"),
-                    BaritoneCmd::Mine,
-                );
                 // Tasks without input.
                 for (i, (text, cmd)) in [
                     (l.text("Ферма", "Farm"), BaritoneCmd::Farm),
@@ -3810,11 +3840,68 @@ impl Menu {
                 {
                     button(
                         &mut out,
-                        [x + i as f32 * (cw + gap), 152.0, cw, 20.0],
+                        [x + i as f32 * (cw + gap), 104.0, cw, 20.0],
                         text,
                         cmd,
                     );
                 }
+            }
+            BaritoneSection::Navigation => {
+                coordinates(&mut out, 80.0);
+                button(
+                    &mut out,
+                    [x + 3.0 * (cw + gap), 80.0, cw, 20.0],
+                    l.text("Идти", "Go"),
+                    BaritoneCmd::Goto,
+                );
+            }
+            BaritoneSection::Mining => {
+                out.push(widget(
+                    [x, 80.0, w - cw - gap, 20.0],
+                    localized!(l, "Блок: {}", "Block: {}", self.baritone_block),
+                    Some(Control::Field(Field::BaritoneBlock)),
+                    self.focus == Some(Field::BaritoneBlock),
+                ));
+                button(
+                    &mut out,
+                    [x + w - cw, 80.0, cw, 20.0],
+                    l.text("Копать", "Mine"),
+                    BaritoneCmd::Mine,
+                );
+            }
+            BaritoneSection::Tunnel => {
+                out.push(widget(
+                    [x, 80.0, w - cw - gap, 20.0],
+                    localized!(
+                        l,
+                        "Тоннель В Ш Г: {}",
+                        "Tunnel H W D: {}",
+                        self.baritone_tunnel
+                    ),
+                    Some(Control::Field(Field::BaritoneTunnel)),
+                    self.focus == Some(Field::BaritoneTunnel),
+                ));
+                button(
+                    &mut out,
+                    [x + w - cw, 80.0, cw, 20.0],
+                    l.text("Тоннель", "Tunnel"),
+                    BaritoneCmd::Tunnel,
+                );
+                hint(
+                    &mut out,
+                    104.0,
+                    l.text(
+                        "Пусто: прямо вперёд. Высота, ширина, глубина: коридор.",
+                        "Empty: straight ahead. Height, width, depth: a corridor.",
+                    ),
+                );
+            }
+            BaritoneSection::Bridge => {
+                hint(
+                    &mut out,
+                    80.0,
+                    l.text("Мост: раздел в работе.", "Bridge: section in progress."),
+                );
             }
             BaritoneSection::Build => {
                 // The schematic: previous, name, next.
@@ -3851,38 +3938,14 @@ impl Menu {
                     l.text("Строить", "Build"),
                     BaritoneCmd::Build,
                 );
-                // A tunnel: height width depth.
-                out.push(widget(
-                    [x, 128.0, w - cw - gap, 20.0],
-                    localized!(
-                        l,
-                        "Тоннель В Ш Г: {}",
-                        "Tunnel H W D: {}",
-                        self.baritone_tunnel
-                    ),
-                    Some(Control::Field(Field::BaritoneTunnel)),
-                    self.focus == Some(Field::BaritoneTunnel),
-                ));
-                button(
+                hint(
                     &mut out,
-                    [x + w - cw, 128.0, cw, 20.0],
-                    l.text("Тоннель", "Tunnel"),
-                    BaritoneCmd::Tunnel,
+                    128.0,
+                    l.text("X Y Z пусты: строить у себя.", "X Y Z empty: build at you."),
                 );
-                let mut hint = widget(
-                    [x, 152.0, w, 14.0],
-                    l.text(
-                        "X Y Z пусты: строить у себя. Тоннель пуст: прямо вперёд.",
-                        "X Y Z empty: build at you. Tunnel empty: straight ahead.",
-                    ),
-                    None,
-                    false,
-                );
-                hint.muted = true;
-                out.push(hint);
             }
             BaritoneSection::Settings => {
-                // Two columns of the port settings, then the engine switch.
+                // Two columns of the port settings, then the profiler.
                 let cell = (w - gap) / 2.0;
                 let on = !model.baritone.values.is_empty();
                 for (i, setting) in walk::SETTINGS.iter().enumerate() {
@@ -3941,27 +4004,6 @@ impl Menu {
                     }
                 }
                 let i = walk::SETTINGS.len();
-                out.push(widget(
-                    [
-                        x + (i % 2) as f32 * (cell + gap),
-                        80.0 + (i / 2) as f32 * 19.0,
-                        cell,
-                        17.0,
-                    ],
-                    localized!(
-                        l,
-                        "Ферма и добыча: {}",
-                        "Farm and mining: {}",
-                        if model.baritone.engine {
-                            "Baritone"
-                        } else {
-                            l.text("классика", "classic")
-                        }
-                    ),
-                    Some(Control::BaritoneEngine),
-                    model.baritone.engine,
-                ));
-                let i = walk::SETTINGS.len() + 1;
                 out.push(widget(
                     [
                         x + (i % 2) as f32 * (cell + gap),
@@ -4063,7 +4105,11 @@ impl Menu {
                     self.language.text("Мост", "Bridge"),
                 ),
                 (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
-                (5, BaritoneMode::Drain, self.language.text("Вода", "Drain")),
+                (
+                    5,
+                    BaritoneMode::Drain,
+                    self.language.text("Осушение", "Drain"),
+                ),
                 (
                     6,
                     BaritoneMode::Schematic,
@@ -5401,7 +5447,17 @@ impl Menu {
             Control::BaritoneCmd(cmd) => self.baritone_line(cmd).map(Action::Baritone),
             Control::BaritoneSection(section) => {
                 self.baritone_section = section;
+                self.baritone_section_page = section.page();
                 self.focus = None;
+                None
+            }
+            Control::BaritoneSectionPage(next) => {
+                let pages = BaritoneSection::PAGES;
+                self.baritone_section_page = if next {
+                    (self.baritone_section_page + 1) % pages
+                } else {
+                    (self.baritone_section_page + pages - 1) % pages
+                };
                 None
             }
             Control::BaritoneFile(next) => {
@@ -5416,7 +5472,6 @@ impl Menu {
                 }
                 None
             }
-            Control::BaritoneEngine => Some(Action::SetBaritoneEngine(!model.baritone.engine)),
             Control::BaritoneProfile => Some(Action::SetBaritoneProfile(!model.baritone.profile)),
             Control::BaritoneSetting(index, up) => {
                 let setting = super::claim_borders_baritone_walk::SETTINGS.get(index)?;
@@ -7939,20 +7994,100 @@ mod tests {
             menu.character(c);
         }
         assert_eq!(menu.baritone_block, "iron_ore x");
-        // Every button and field is on the tab, inside it, at compact and wide sizes.
-        for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
-            menu.navigation_menu = false;
-            let rows = menu.layout(&model, width, height);
-            for control in [
-                Control::BaritoneEnable,
-                Control::Field(Field::BaritoneBlock),
-                Control::BaritoneCmd(BaritoneCmd::Goto),
-                Control::BaritoneCmd(BaritoneCmd::Come),
-            ] {
-                let r = rows.iter().find(|r| r.control == Some(control));
-                let r = r.unwrap_or_else(|| panic!("{control:?} missing at {width}"));
-                assert!(r.rect[2] > 20.0 && r.rect[0] + r.rect[2] <= width + 1.0);
+        // Every section has its controls on the tab, inside it, at compact and wide sizes.
+        for (section, controls) in [
+            (
+                BaritoneSection::Tasks,
+                vec![
+                    Control::BaritoneEnable,
+                    Control::BaritoneCmd(BaritoneCmd::Come),
+                ],
+            ),
+            (
+                BaritoneSection::Navigation,
+                vec![
+                    Control::Field(Field::NavigationX),
+                    Control::BaritoneCmd(BaritoneCmd::Goto),
+                ],
+            ),
+            (
+                BaritoneSection::Mining,
+                vec![
+                    Control::Field(Field::BaritoneBlock),
+                    Control::BaritoneCmd(BaritoneCmd::Mine),
+                ],
+            ),
+            (
+                BaritoneSection::Tunnel,
+                vec![
+                    Control::Field(Field::BaritoneTunnel),
+                    Control::BaritoneCmd(BaritoneCmd::Tunnel),
+                ],
+            ),
+            (
+                BaritoneSection::Build,
+                vec![
+                    Control::BaritoneFile(true),
+                    Control::BaritoneCmd(BaritoneCmd::Build),
+                ],
+            ),
+        ] {
+            menu.baritone_section = section;
+            for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+                menu.navigation_menu = false;
+                let rows = menu.layout(&model, width, height);
+                for control in &controls {
+                    let r = rows.iter().find(|r| r.control == Some(*control));
+                    let r = r.unwrap_or_else(|| panic!("{control:?} missing at {width}"));
+                    assert!(r.rect[2] > 20.0 && r.rect[0] + r.rect[2] <= width + 1.0);
+                }
             }
+        }
+    }
+
+    #[test]
+    fn the_baritone_section_selector_pages_and_reaches_every_section() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        // Every section is on exactly one page, and the page buttons wrap around.
+        let on_screen = |menu: &Menu| -> Vec<BaritoneSection> {
+            menu.layout(&model, 360.0, 200.0)
+                .iter()
+                .filter_map(|r| match r.control {
+                    Some(Control::BaritoneSection(s)) => Some(s),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut seen = Vec::new();
+        for _ in 0..BaritoneSection::PAGES {
+            let page = on_screen(&menu);
+            assert!(!page.is_empty() && page.len() <= BaritoneSection::PER_PAGE);
+            seen.extend(page);
+            assert!(
+                menu.activate(&model, 200.0, Control::BaritoneSectionPage(true))
+                    .is_none()
+            );
+        }
+        seen.sort_by_key(|s| BaritoneSection::ALL.iter().position(|a| a == s));
+        assert_eq!(seen, BaritoneSection::ALL.to_vec());
+        // Back to where it began, and backwards from the first page lands on the last.
+        assert_eq!(menu.baritone_section_page, 0);
+        menu.activate(&model, 200.0, Control::BaritoneSectionPage(false));
+        assert_eq!(menu.baritone_section_page, BaritoneSection::PAGES - 1);
+        // Choosing a section on screen selects it and keeps its page.
+        let last = *on_screen(&menu).last().unwrap();
+        menu.activate(&model, 200.0, Control::BaritoneSection(last));
+        assert_eq!(menu.baritone_section, last);
+        assert_eq!(menu.baritone_section_page, last.page());
+        // Every label exists in both languages.
+        for s in BaritoneSection::ALL {
+            assert!(
+                !s.label(Language::Russian).is_empty() && s.label(Language::English).is_ascii()
+            );
         }
     }
 
@@ -8078,15 +8213,6 @@ mod tests {
             menu.activate(&model, 200.0, Control::BaritoneSetting(99, true))
                 .is_none()
         );
-        assert!(matches!(
-            menu.activate(&model, 200.0, Control::BaritoneEngine),
-            Some(Action::SetBaritoneEngine(true))
-        ));
-        model.baritone.engine = true;
-        assert!(matches!(
-            menu.activate(&model, 200.0, Control::BaritoneEngine),
-            Some(Action::SetBaritoneEngine(false))
-        ));
     }
 
     #[test]
@@ -8101,11 +8227,7 @@ mod tests {
         model.baritone.process = Some("Mining".into());
         model.baritone.goal = Some(400.0);
         for language in [Language::Russian, Language::English] {
-            for section in [
-                BaritoneSection::Tasks,
-                BaritoneSection::Build,
-                BaritoneSection::Settings,
-            ] {
+            for section in BaritoneSection::ALL {
                 for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
                     let menu = Menu {
                         tab: Tab::Baritone,
@@ -8116,7 +8238,7 @@ mod tests {
                     let rows = menu.layout(&model, width, height);
                     let status = rows
                         .iter()
-                        .find(|r| r.text.starts_with("Mining"))
+                        .find(|r| r.text.starts_with("Mining ·"))
                         .expect("the status line");
                     let controls: Vec<_> = rows
                         .iter()

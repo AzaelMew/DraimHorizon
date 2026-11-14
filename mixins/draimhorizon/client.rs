@@ -1636,10 +1636,6 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                     segment: read.segment,
                     goal: read.goal,
                     values: read.values,
-                    engine: game
-                        .native_setting(claims::SETTINGS_ID, "baritone_engine")
-                        .as_deref()
-                        == Some("true"),
                     profile: game
                         .native_setting(claims::SETTINGS_ID, "baritone_profile")
                         .as_deref()
@@ -1966,17 +1962,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 return Err(baritone_off());
             }
             crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
-            Ok(Vec::new())
-        }
-        Action::SetBaritoneEngine(on) => {
-            game.native_set_setting(
-                claims::SETTINGS_ID,
-                "baritone_engine",
-                if on { "true" } else { "false" },
-            );
-            if !on {
-                crate::game::claim_borders_baritone_bridge::walk_cancel();
-            }
             Ok(Vec::new())
         }
         Action::SetBaritoneProfile(on) => {

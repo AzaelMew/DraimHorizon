@@ -65,13 +65,9 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
-/// Whether the player asked for the port to do the farm's and mining's walking, and the port is on.
+/// Whether the farm's and mining's walking is the port's: it is whenever the port is on.
 pub fn engine(game: &Game<'_>) -> bool {
     baritone::enabled(game)
-        && game
-            .native_setting(claims::SETTINGS_ID, "baritone_engine")
-            .as_deref()
-            == Some("true")
 }
 
 /// Starts a walk to `goal` for the farm or mining. It begins on the next tick; `walk_status`
