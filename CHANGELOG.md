@@ -1,5 +1,12 @@
 # История версий
 
+## 0.40.2
+
+- Chat row cache: pressure no longer flushes the whole cache. Entries are evicted one at a time, least recently used first (a hit or insert refreshes an entry; an ordered index finds the oldest in O(log n), hits stay a bucket lookup), so rows still painted survive a resize drag that produces a new exact-width layout every frame. Widths are still compared as exact `f32` bits: no rounding, throttling or geometry change. Count and character budgets are updated on every insert and eviction. Oversized layouts are rejected without evicting anything; Full/Cut variants and forced hash collisions stay separate entries when one of them is evicted.
+- Chat row cache: the name/original/translation digest is computed once per card query (`Inputs::new`) and shared by `get`, `insert` and the Full/Cut variants, instead of up to four times for a cold full + cut query and twice for a warm one. Stored inputs are still compared structurally after the bucket lookup, and hits borrow the entry strings.
+- Interface shape cache: replacing an existing key now removes its old run from the vertex budget first, so growth and shrinkage no longer drift the accounted total, and a replacement at the run-count limit no longer flushes unrelated runs. A rejected (empty or oversized) replacement drops the stale run.
+- Tests: LRU retention under count and byte pressure with exact-ulp widths, collisions and Full/Cut namespaces surviving eviction, oversized insertions, a counted shared content digest across full + cut get and insert, and shape-cache replacement growth, shrinkage, identical replacement, count limit and budget overflow.
+
 ## 0.40.1
 
 - Custom chat does less repeated work per frame; what is drawn is meant to stay identical. Wrapped rows are cached per card under structural inputs compared on every hit (no hash-only equality): text, translation, repetitions, UI language, presentation flags, available width and the font identity (atlas revision and font epoch). Full and row-cut variants are separate entries, bounded by count and size. Nothing is formatted or wrapped once no card fits, and drawing stops at the first faded card instead of walking the 500-entry history. Cache misses retain the original prefix-by-prefix wrapping and clipping checks, including resource-pack glyphs with negative advances; a narrow final string width cannot hide an overflowing prefix.
