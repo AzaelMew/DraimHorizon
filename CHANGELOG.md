@@ -1,5 +1,10 @@
 # История версий
 
+## 0.40.6
+
+- Ores experiment: the highlight now reads every loaded chunk within its 128-block range (it read only the 3x3 chunks around the player), and moving to another chunk keeps the old marks until the new scan arrives instead of clearing them, so portals ahead appear and stay while flying. Chests, Ender chests and portals are capped at 64 marks each so a base full of chests cannot hide a portal.
+- Ores experiment tiles for the new kinds show their own icons (chest, Ender chest, End portal frame, obsidian for the Nether portal) instead of the stone, cobblestone, dirt and sand icons of the mining list; the highlighted blocks are still the portals themselves.
+
 ## 0.40.5
 
 - Experiments → Ores can now also highlight **Chests** (chest and trapped chest in one button), **Ender chest**, **End portal** (portal and portal frame) and **Nether portal**, through walls with the same cages as ores, off until enabled and range-limited like them. They are highlight-only: the miner's targets, its saved selection and its ore hints are unchanged (`experimental::MINABLE`). Seed prediction does not predict them. Test: the new kinds classify their blocks only when enabled.

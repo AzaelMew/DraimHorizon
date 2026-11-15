@@ -301,12 +301,20 @@ pub(super) fn frame(game: &Game<'_>) {
         let chunks = if prefs.prediction {
             Vec::new()
         } else {
-            (-1..=1)
-                .flat_map(|z| (-1..=1).map(move |x| (center.0 + x, center.1 + z)))
+            (-model::SCAN_CHUNKS..=model::SCAN_CHUNKS)
+                .flat_map(|z| (-model::SCAN_CHUNKS..=model::SCAN_CHUNKS).map(move |x| (center.0 + x, center.1 + z)))
                 .filter_map(|at| game.world.chunks.get(&at).map(|chunk| (at, chunk.clone())))
                 .collect()
         };
-        if s.requested.as_ref() != Some(&key) {
+        // Moving to another chunk keeps the old marks until the new scan lands; only a change
+        // of what is searched (world, dimension, kinds, source) drops them.
+        if s.requested.as_ref().is_none_or(|r| {
+            r.scope != key.scope
+                || r.dimension != key.dimension
+                || r.ores != key.ores
+                || r.prediction != key.prediction
+                || r.prediction_radius != key.prediction_radius
+        }) {
             s.marks.clear();
         }
         s.last = Instant::now();

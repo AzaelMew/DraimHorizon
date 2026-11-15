@@ -171,6 +171,23 @@ pub struct Mark {
 }
 pub const MAX_MARKS: usize = 256;
 pub const RANGE: f64 = 128.0;
+/// Chunks read around the player: the whole highlight range, so flying shows what is ahead.
+pub const SCAN_CHUNKS: i32 = 8;
+/// Each highlight-only kind is capped separately so a base full of chests cannot hide a portal.
+pub const MAX_EXTRA_MARKS: usize = 64;
+/// Item icons of the highlight-only kinds (the menu tiles); the portals show their frame and
+/// obsidian items, though the highlighted blocks are the portals themselves.
+const EXTRA_ICONS: [&str; ORES.len() - MINABLE] = [
+    "minecraft:chest",
+    "minecraft:ender_chest",
+    "minecraft:end_portal_frame",
+    "minecraft:obsidian",
+];
+pub fn icon(kind: u8) -> Option<&'static str> {
+    EXTRA_ICONS
+        .get(usize::from(kind).checked_sub(MINABLE)?)
+        .copied()
+}
 pub fn nearest(mut marks: Vec<Mark>, player: [f64; 3]) -> Vec<Mark> {
     let distance = |m: &Mark| {
         m.position
@@ -186,6 +203,14 @@ pub fn nearest(mut marks: Vec<Mark>, player: [f64; 3]) -> Vec<Mark> {
             .then(a.position.cmp(&b.position))
     });
     marks.dedup_by_key(|m| m.position);
+    let mut extra = [0usize; ORES.len()];
+    marks.retain(|m| {
+        let kind = usize::from(m.kind);
+        kind < MINABLE || {
+            extra[kind] += 1;
+            extra[kind] <= MAX_EXTRA_MARKS
+        }
+    });
     marks.truncate(MAX_MARKS);
     marks
 }
@@ -285,6 +310,32 @@ mod tests {
             assert_eq!(p.classify(id), Some(kind), "{id}");
         }
         assert_eq!(Preferences::default().classify("minecraft:chest"), None);
+    }
+    #[test]
+    fn menu_icons_of_new_kinds_and_chests_do_not_hide_portals() {
+        assert_eq!(icon(0), None);
+        assert_eq!(icon(10), Some("minecraft:chest"));
+        assert_eq!(icon(11), Some("minecraft:ender_chest"));
+        assert_eq!(icon(12), Some("minecraft:end_portal_frame"));
+        assert_eq!(icon(13), Some("minecraft:obsidian"));
+        let mut marks: Vec<Mark> = (0..200)
+            .map(|i| Mark {
+                position: [i % 20, 12, i / 20],
+                kind: 10,
+                predicted: false,
+            })
+            .collect();
+        marks.push(Mark {
+            position: [100, 12, 0],
+            kind: 13,
+            predicted: false,
+        });
+        let kept = nearest(marks, [0.0, 12.0, 0.0]);
+        assert_eq!(
+            kept.iter().filter(|m| m.kind == 10).count(),
+            MAX_EXTRA_MARKS
+        );
+        assert!(kept.iter().any(|m| m.kind == 13));
     }
     #[test]
     fn highlights_are_bounded_and_predictions_have_a_different_shape() {
