@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.8
+
+- Added the official Lucide `file-box` icon to the Schematics menu destination in English and Russian.
+
 ## 0.40.7
 
 - Merge compatibility: integrated published 0.40.6 without replacing its expanded Ores highlights, per-kind caps, persistent in-flight marks or chest/portal tile icons. QOL controls and all command-reply review fixes remain intact. Published 0.40.6, 0.40.5 and earlier changelog entries are preserved below.
