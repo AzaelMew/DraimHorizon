@@ -92,7 +92,9 @@ pub(super) fn marks_for(kind: u8) -> Vec<[i32; 3]> {
     state(|s| {
         s.marks
             .iter()
-            .filter(|mark| mark.kind == kind && usize::from(kind) < model::MINABLE && !mark.predicted)
+            .filter(|mark| {
+                mark.kind == kind && usize::from(kind) < model::MINABLE && !mark.predicted
+            })
             .map(|mark| mark.position)
             .collect()
     })
@@ -302,7 +304,10 @@ pub(super) fn frame(game: &Game<'_>) {
             Vec::new()
         } else {
             (-model::SCAN_CHUNKS..=model::SCAN_CHUNKS)
-                .flat_map(|z| (-model::SCAN_CHUNKS..=model::SCAN_CHUNKS).map(move |x| (center.0 + x, center.1 + z)))
+                .flat_map(|z| {
+                    (-model::SCAN_CHUNKS..=model::SCAN_CHUNKS)
+                        .map(move |x| (center.0 + x, center.1 + z))
+                })
                 .filter_map(|at| game.world.chunks.get(&at).map(|chunk| (at, chunk.clone())))
                 .collect()
         };
