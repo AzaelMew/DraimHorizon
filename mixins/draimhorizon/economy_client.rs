@@ -104,6 +104,8 @@ pub struct Status {
     pub catalog_at: u64,
 }
 struct State {
+    /// Bound before disk-backed scope initialization, also at command and chat hooks.
+    session: Option<String>,
     scope: String,
     own: String,
     path: PathBuf,
@@ -145,6 +147,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            session: None,
             scope: String::new(),
             own: String::new(),
             path: PathBuf::new(),
@@ -186,6 +189,57 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .get_or_init(|| Mutex::new(State::default()))
         .lock()
         .unwrap_or_else(|e| e.into_inner()))
+}
+/// Only manual protection survives first adoption; another identity starts entirely clean.
+fn bind_session(s: &mut State, scope: &str) {
+    if s.session.as_deref() == Some(scope) {
+        return;
+    }
+    let replies = if s.session.is_none() {
+        s.replies.manual_only();
+        std::mem::take(&mut s.replies)
+    } else {
+        Default::default()
+    };
+    *s = State {
+        session: Some(scope.into()),
+        replies,
+        ..State::default()
+    };
+}
+/// Hooks check the current identity too: accounts can change before the next frame.
+pub(super) fn synchronize(game: &Game<'_>) {
+    if !game.native_on(claims::ID) || game.remote.is_none() {
+        suspend();
+        return;
+    }
+    // Same identity source and canonical form as client::scope, without requiring the
+    // player entity to have spawned. Never use the disk/client cache for a new account.
+    let remote = game.remote.as_ref().unwrap();
+    let scope = format!(
+        "{}#{:032x}",
+        remote.session.address.to_ascii_lowercase(),
+        remote.profile()
+    );
+    if state(|s| s.session.as_deref().is_some_and(|old| old != scope)) {
+        flush();
+    }
+    state(|s| {
+        bind_session(s, &scope);
+        if !s.scope.is_empty() && !s.pref.flag("enabled") {
+            s.replies.clear();
+            s.recognized = None;
+        }
+    });
+}
+/// Used by the real frame's disk-load replacement and lifecycle regression tests.
+fn adopt_scope(s: &mut State, mut loaded: State) {
+    bind_session(s, &loaded.scope);
+    loaded.session = s.session.take();
+    if loaded.pref.flag("enabled") {
+        loaded.replies = std::mem::take(&mut s.replies);
+    }
+    *s = loaded;
 }
 pub fn now() -> u64 {
     SystemTime::now()
@@ -253,8 +307,12 @@ pub(super) fn deliver(text: &str) -> bool {
     let text = claims::strip_formatting(text);
     state(|s| {
         let recognized = s.recognized.take().is_some_and(|line| line == text);
-        if s.scope.is_empty() || !s.pref.flag("enabled") {
+        if !s.scope.is_empty() && !s.pref.flag("enabled") {
             s.replies.clear();
+            return false;
+        }
+        if s.scope.is_empty() {
+            s.replies.manual_only();
             return false;
         }
         let quiet = s.pref.flag("quiet");
@@ -595,12 +653,14 @@ fn window_token(game: &Game<'_>) -> String {
     )
 }
 pub(super) fn frame(game: &mut Game<'_>) {
+    synchronize(game);
     if !game.native_on(claims::ID) || game.remote.is_none() {
         suspend();
         return;
     }
     let Some((scope, _)) = client::scope(game) else {
-        suspend();
+        // The remote identity is already bound; preserve pre-frame typed commands while
+        // waiting for the player entity required by the rest of the economy frame.
         return;
     };
     let now = now();
@@ -623,14 +683,17 @@ pub(super) fn frame(game: &mut Game<'_>) {
             .unwrap_or_default();
         let own = game.remote.as_ref().unwrap().session.name.clone();
         state(|s| {
-            *s = State {
-                scope,
-                own,
-                path,
-                pref,
-                worker: disk::Worker::spawn().ok(),
-                ..State::default()
-            };
+            adopt_scope(
+                s,
+                State {
+                    scope,
+                    own,
+                    path,
+                    pref,
+                    worker: disk::Worker::spawn().ok(),
+                    ..State::default()
+                },
+            );
             match loaded {
                 Ok(Some(book)) => s.book = book,
                 Ok(None) => {}
@@ -723,6 +786,8 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if !read(|_, p, _, _| p.flag("enabled")) {
         state(|s| {
             s.queue.clear();
+            s.replies.clear();
+            s.recognized = None;
             s.scanner.stop();
             s.status.scanning = false;
             s.status.catalog = false;
@@ -902,56 +967,59 @@ pub(super) fn frame(game: &mut Game<'_>) {
             client::open_trades(game);
         }
     }
-    let read_command = state(|s| {
-        // One routine query at a time, and none while a typed command's reply is due, so the
-        // two-message window is never shared or overwritten.
-        if now.saturating_sub(s.last_command) < 2000 || s.scanner.active || s.replies.busy(now) {
-            return None;
-        }
-        // Scoreboard balance updates independently of the trading window.
-        if s.pref.flag("auto_poll")
-            && s.pref.flag("custom_sidebar")
-            && (s.last_finance == 0 || now.saturating_sub(s.last_finance) >= 60_000)
-        {
-            s.last_finance = now;
-            return Some("bal".into());
-        }
-        if !ui_visible && page.is_none() {
-            s.queue.clear();
-            return None;
-        }
-        while let Some(c) = s.queue.pop_front() {
-            if c.strip_prefix("worth ")
-                .is_some_and(|id| s.book.unsupported.contains(id))
-            {
-                continue;
-            }
-            return Some(c);
-        }
-        if s.pref.flag("auto_poll") && (ui_visible || page.is_some()) {
-            if let Some(item) = crate::game::claim_borders_economy_requests::next_watch(
-                &s.book.watch,
-                &s.book.unsupported,
-                &s.last_poll,
-                now,
-                s.pref.get("interval") as u64 * 1000,
-            )
-            .map(str::to_owned)
-            {
-                s.last_poll.insert(item.clone(), now);
-                return Some(format!("worth {item}"));
-            }
-        }
-        None
-    });
-    // Single player runs Horizon's own server, which has no economy commands: an automatic
-    // poll there would only raise the game's unknown-command confirmation.
+    let read_command = state(|s| next_read_command(s, now, ui_visible, page.is_some()));
+    // Single player has no economy commands; never trigger unknown-command confirmation.
     if let Some(command) = read_command
         && game.integrated.is_none()
     {
         let quiet = read(|_, p, _, _| p.flag("quiet"));
         request(game, command, quiet);
     }
+}
+fn next_read_command(s: &mut State, now: u64, ui_visible: bool, page_open: bool) -> Option<String> {
+    if s.scope.is_empty() || !s.pref.flag("enabled") {
+        return None;
+    }
+    // One routine query at a time, and none while a typed command's reply is due, so the
+    // two-message window is never shared or overwritten.
+    if now.saturating_sub(s.last_command) < 2000 || s.scanner.active || s.replies.busy(now) {
+        return None;
+    }
+    // Scoreboard balance updates independently of the trading window.
+    if s.pref.flag("auto_poll")
+        && s.pref.flag("custom_sidebar")
+        && (s.last_finance == 0 || now.saturating_sub(s.last_finance) >= 60_000)
+    {
+        s.last_finance = now;
+        return Some("bal".into());
+    }
+    if !ui_visible && !page_open {
+        s.queue.clear();
+        return None;
+    }
+    while let Some(c) = s.queue.pop_front() {
+        if c.strip_prefix("worth ")
+            .is_some_and(|id| s.book.unsupported.contains(id))
+        {
+            continue;
+        }
+        return Some(c);
+    }
+    if s.pref.flag("auto_poll") && (ui_visible || page_open) {
+        if let Some(item) = crate::game::claim_borders_economy_requests::next_watch(
+            &s.book.watch,
+            &s.book.unsupported,
+            &s.last_poll,
+            now,
+            s.pref.get("interval") as u64 * 1000,
+        )
+        .map(str::to_owned)
+        {
+            s.last_poll.insert(item.clone(), now);
+            return Some(format!("worth {item}"));
+        }
+    }
+    None
 }
 
 /// Pause after each auction page arrives during the catalogue walk.
@@ -974,6 +1042,10 @@ fn suspend() {
         state(abandon);
         flush();
     }
+    if !running && state(|s| !s.scope.is_empty()) {
+        flush();
+    }
+    state(|s| *s = State::default());
 }
 /// The window is not parsed yet (a new one just arrived) while the catalogue walk is running:
 /// the walk's last page stands in, so the server's page is not drawn or clicked meanwhile.
@@ -1227,5 +1299,120 @@ mod reply_window_tests {
         // `request` arms only after a verified send; without it nothing is watched.
         assert!(!shown("Balance: 5 coins"));
         assert!(!state(|s| s.replies.busy(now())));
+    }
+    #[test]
+    fn first_scope_load_preserves_typed_commands_and_blocks_due_automatic_balance() {
+        let _g = fresh();
+        for (typed, reply) in [
+            ("bal", "Balance: 5 coins"),
+            ("balance", "Your balance: 5 coins"),
+            ("worth leather", QUOTE),
+        ] {
+            state(|s| *s = State::default());
+            command(typed);
+            assert!(!shown("<Steve> before scope load"));
+            let at = now();
+            state(|s| {
+                adopt_scope(
+                    s,
+                    State {
+                        scope: "first#account".into(),
+                        ..State::default()
+                    },
+                );
+                assert!(s.pref.flag("auto_poll") && s.pref.flag("custom_sidebar"));
+                for _ in 0..3 {
+                    bind_session(s, "first#account");
+                    assert!(next_read_command(s, at + 4_500, false, false).is_none());
+                    assert_eq!(s.last_finance, 0, "automatic balance is still due");
+                    assert!(!s.replies.arm("bal", at + 4_500, true));
+                }
+            });
+            assert!(!shown(reply), "first-frame manual {typed} stays visible");
+            assert!(state(
+                |s| s.book.balance.is_some() || !s.book.quotes.is_empty()
+            ));
+            // Once this unambiguous answer's observed-reply grace expires, the same real
+            // scheduler resumes the still-owed balance check, whose own output can hide.
+            let due = state(|s| next_read_command(s, now() + 4_500, false, false));
+            assert_eq!(due.as_deref(), Some("bal"));
+            state(|s| assert!(s.replies.arm("bal", now() + 4_500, true)));
+            assert!(shown("Balance: 6 coins"));
+        }
+    }
+    #[test]
+    fn session_switch_disconnect_and_disable_drop_attribution_not_just_scope_text() {
+        let _g = fresh();
+        state(|s| {
+            *s = State::default();
+            bind_session(s, "old#account");
+            adopt_scope(
+                s,
+                State {
+                    scope: "old#account".into(),
+                    ..State::default()
+                },
+            );
+        });
+        auto("bal");
+        server("Balance: 5 coins");
+        state(|s| {
+            queue(s, "worth leather".into());
+            bind_session(s, "new#account");
+            assert!(s.scope.is_empty() && s.queue.is_empty());
+            assert!(s.book.balance.is_none() && s.recognized.is_none());
+            assert!(!s.replies.busy(now()));
+        });
+        assert!(!deliver("Balance: 5 coins"));
+        command("balance");
+        state(|s| {
+            adopt_scope(
+                s,
+                State {
+                    scope: "new#account".into(),
+                    ..State::default()
+                },
+            )
+        });
+        assert!(state(|s| s.replies.busy(now())));
+        suspend(); // Used by both disconnect and the global mod-off paths.
+        assert!(state(|s| s.session.is_none() && !s.replies.busy(now())));
+        state(|s| {
+            adopt_scope(
+                s,
+                State {
+                    scope: "new#account".into(),
+                    ..State::default()
+                },
+            )
+        });
+        auto("bal");
+        command("bal");
+        state(|s| s.pref.adjust("enabled", 1));
+        assert!(!shown("Balance: 5 coins"));
+        assert!(!state(|s| s.replies.busy(now())));
+        assert!(state(
+            |s| next_read_command(s, now() + 20_000, true, true).is_none()
+        ));
+    }
+    #[test]
+    fn first_adoption_never_keeps_unbound_automatic_windows_or_cached_recognition() {
+        let _g = fresh();
+        state(|s| {
+            *s = State::default();
+            assert!(s.replies.arm("bal", now(), true));
+            s.recognized = Some("Balance: 5 coins".into());
+            queue(s, "bal".into());
+            adopt_scope(
+                s,
+                State {
+                    scope: "first#account".into(),
+                    ..State::default()
+                },
+            );
+            assert!(!s.replies.busy(now()));
+            assert!(s.recognized.is_none() && s.queue.is_empty());
+        });
+        assert!(!shown("Balance: 5 coins"));
     }
 }

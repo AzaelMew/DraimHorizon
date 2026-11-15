@@ -4,6 +4,7 @@ fn horizon_chat_capture(
     content: &horizon_client::text::Text,
     source: horizon_client::chat::ChatSource,
 ) -> core::ops::ControlFlow<bool> {
+    crate::game::claim_borders_economy_client::synchronize(game);
     let allowed = !matches!(trust, crate::game::remote::ChatTrust::NotSecure)
         || !game.settings.file.bool("onlyShowSecureChat");
     if allowed && game.ui.chat.shows(source) {

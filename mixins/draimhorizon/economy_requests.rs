@@ -27,9 +27,9 @@ struct Awaiting {
     /// The normalized command: `bal` (also for `balance`), `worth` or `worth <item>`.
     command: String,
     until: u64,
-    /// Matching answers to let pass first: one when an automatic query of the same command was
-    /// already in flight, since its answer looks exactly like this one's.
-    skip: u8,
+    /// Overlapping indistinguishable responses have no reliable line-level terminator.
+    /// Keep their waits until the bound instead of counting response parts as answers.
+    ambiguous: bool,
 }
 /// Typed commands waited for at once; past this the oldest entry becomes [`UNANSWERABLE`].
 const MAX_AWAITING: usize = 4;
@@ -90,7 +90,7 @@ impl Replies {
     /// quiet is off, the command is not a routine one, or another window is still open (an
     /// unresolved window is never overwritten).
     pub fn arm(&mut self, command: &str, now: u64, quiet: bool) -> bool {
-        if !quiet || !routine(command) || self.live(now) {
+        if !quiet || !routine(command) || self.busy(now) {
             return false;
         }
         self.window = Some(Window {
@@ -106,30 +106,34 @@ impl Replies {
             let normalized = normalize(command);
             // An automatic query of the same command already in flight will be answered with
             // text that looks exactly like this command's answer.
-            let skip = u8::from(
-                self.live(now)
-                    && self
-                        .window
-                        .as_ref()
-                        .is_some_and(|w| canon(&w.command) == normalized),
-            );
+            let mut ambiguous = self.live(now)
+                && self
+                    .window
+                    .as_ref()
+                    .is_some_and(|w| canon(&w.command) == normalized);
             self.window = None;
             self.hold_until = now.saturating_add(MANUAL_HOLD_MS);
             let until = now.saturating_add(MANUAL_WAIT_MS);
             self.awaiting.retain(|a| now < a.until);
+            for a in &mut self.awaiting {
+                if a.command == normalized {
+                    a.ambiguous = true;
+                    ambiguous = true;
+                }
+            }
             if self.awaiting.len() >= MAX_AWAITING {
                 // The list is full and this command cannot get an entry of its own. Turn the
                 // oldest entry into one nothing can answer, so it holds until its deadline and
                 // covers the commands that did not fit; it can no longer be released early by
                 // the oldest command's own answer.
                 self.awaiting[0].command = UNANSWERABLE.into();
-                self.awaiting[0].skip = 0;
+                self.awaiting[0].ambiguous = true;
                 self.awaiting[0].until = until;
             } else {
                 self.awaiting.push(Awaiting {
                     command: normalized,
                     until,
-                    skip,
+                    ambiguous,
                 });
             }
         }
@@ -139,14 +143,17 @@ impl Replies {
         self.hold_until = 0;
         self.awaiting.clear();
     }
+    /// Only manual protection may survive the first adoption of a connection scope.
+    pub fn manual_only(&mut self) {
+        self.window = None;
+    }
     /// One incoming chat message, at the point it is about to be shown. Advances the budget and
     /// says whether this message is recognized output of the watched command. `recognized` is
     /// whether the economy book parsed it for this very delivery.
     pub fn deliver(&mut self, text: &str, recognized: bool, now: u64, quiet: bool) -> bool {
         if recognized {
-            // Only an answer to a typed command ends its wait, one entry per line: an unrelated
-            // quote, balance, Sold or Bought line does not, and a first line is not taken as proof
-            // that a multi-line answer is complete (the 3-second hold still covers the rest).
+            // Unrelated output never releases a wait. A quote, limit and Moves line may all
+            // belong to ONE response, so none can count down overlapping ambiguous waits.
             if let Some(i) = self
                 .awaiting
                 .iter()
@@ -155,9 +162,7 @@ impl Replies {
                 // The reply is being observed now, so the grace for its remaining lines starts
                 // now, not at the time the command was typed.
                 self.hold_until = self.hold_until.max(now.saturating_add(MANUAL_HOLD_MS));
-                if self.awaiting[i].skip > 0 {
-                    self.awaiting[i].skip -= 1;
-                } else {
+                if !self.awaiting[i].ambiguous {
                     self.awaiting.remove(i);
                 }
             }
@@ -221,6 +226,40 @@ mod tests {
     use super::*;
     const QUOTE: &str = "leather: 3.01 coins each, to buy or sell.";
     const TODAY: &str = "Selling today: 50 coins left of your 100 coins";
+    #[test]
+    fn multipart_worth_cannot_consume_overlapping_request_protection() {
+        for automatic_first in [false, true] {
+            let mut r = Replies::default();
+            let mut book = model::Book::default();
+            if automatic_first {
+                assert!(r.arm("worth minecraft:leather", 900, true));
+            }
+            r.manual("worth leather", 1_000);
+            let deadline = if automatic_first {
+                11_000
+            } else {
+                r.manual("worth Leather", 1_100);
+                11_100
+            };
+            for (line, at) in [
+                (QUOTE, 2_000),
+                ("You may sell 640 more leather today.", 2_001),
+                (
+                    "Moves: 1%, 2%, 3%; traded in 24 h: 100; Chart: /market leather",
+                    2_002,
+                ),
+            ] {
+                assert!(book.server(line, at), "real parser: {line}");
+                assert!(!r.deliver(line, true, at, true));
+            }
+            assert!(r.busy(5_100));
+            assert!(!r.arm("worth leather", 5_100, true));
+            assert!(!r.deliver(QUOTE, book.server(QUOTE, 5_500), 5_500, true));
+            assert!(r.busy(deadline - 1));
+            assert!(!r.busy(deadline), "the existing wait stays bounded");
+            assert!(r.arm("worth leather", deadline, true));
+        }
+    }
     #[test]
     fn an_automatic_worth_hides_its_own_quote_and_limits_within_two_messages() {
         let mut r = Replies::default();
@@ -425,14 +464,15 @@ mod tests {
         assert!(r.busy(LATE), "worth diamond is still awaited");
         r.deliver("diamond: 100 coins each, to buy or sell.", true, 210, true);
         assert!(!r.busy(LATE + 100));
-        // The same command twice needs two answers.
+        // Identical overlapping requests cannot be counted safely by incoming line.
         let mut r = Replies::default();
         r.manual("bal", 100);
         r.manual("bal", 120);
         r.deliver("Balance: 9 coins", true, 200, true);
         assert!(r.busy(LATE));
         r.deliver("Balance: 9 coins", true, 210, true);
-        assert!(!r.busy(LATE + 100));
+        assert!(r.busy(LATE + 100));
+        assert!(!r.busy(120 + MANUAL_WAIT_MS));
         // More typed commands than the bound keep every protection and do not grow it.
         let mut r = Replies::default();
         for i in 0..10 {
@@ -449,7 +489,8 @@ mod tests {
         assert!(!r.deliver("diamond: 100 coins each, to buy or sell.", true, 150, true));
         assert!(r.busy(LATE), "that first answer may be the automatic one's");
         assert!(!r.deliver("diamond: 100 coins each, to buy or sell.", true, 160, true));
-        assert!(!r.busy(LATE));
+        assert!(r.busy(LATE));
+        assert!(!r.busy(101 + MANUAL_WAIT_MS));
         // A different item's automatic query does not delay the release.
         let mut r = Replies::default();
         assert!(r.arm("worth leather", 100, true));

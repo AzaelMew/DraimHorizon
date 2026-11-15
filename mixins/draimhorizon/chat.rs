@@ -5,6 +5,7 @@ fn claim_borders_chat(
     source: horizon_client::chat::ChatSource,
 ) {
     use crate::game::claim_borders as m;
+    crate::game::claim_borders_economy_client::synchronize(game);
     if game.native_on(m::ID)
         && game.remote.is_some()
         && source == horizon_client::chat::ChatSource::Server

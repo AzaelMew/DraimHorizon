@@ -1,5 +1,6 @@
 fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &mut bool) {
     use crate::game::claim_borders as m;
+    crate::game::claim_borders_economy_client::synchronize(game);
     if !game.native_on(m::ID) {
         m::with_state(|state| state.clear());
         crate::game::claim_borders_claim_replies::leave();
