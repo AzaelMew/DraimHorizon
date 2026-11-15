@@ -7,7 +7,9 @@ pub struct Ore {
     pub color: u32,
     pub blocks: &'static [&'static str],
 }
-pub const ORES: [Ore; 10] = [
+/// The first entries are ores the miner can collect; later ones are highlight-only.
+pub const MINABLE: usize = 10;
+pub const ORES: [Ore; 14] = [
     Ore {
         label: "Алмазы",
         label_en: "Diamonds",
@@ -71,6 +73,30 @@ pub const ORES: [Ore; 10] = [
         label_en: "Nether quartz",
         color: 0xf1e5dd,
         blocks: &["minecraft:nether_quartz_ore"],
+    },
+    Ore {
+        label: "Сундуки",
+        label_en: "Chests",
+        color: 0xd8a24a,
+        blocks: &["minecraft:chest", "minecraft:trapped_chest"],
+    },
+    Ore {
+        label: "Эндер-сундук",
+        label_en: "Ender chest",
+        color: 0x2fb7a3,
+        blocks: &["minecraft:ender_chest"],
+    },
+    Ore {
+        label: "Портал Энда",
+        label_en: "End portal",
+        color: 0x9a6bff,
+        blocks: &["minecraft:end_portal", "minecraft:end_portal_frame"],
+    },
+    Ore {
+        label: "Портал Незера",
+        label_en: "Nether portal",
+        color: 0xc23bd6,
+        blocks: &["minecraft:nether_portal"],
     },
 ];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +171,23 @@ pub struct Mark {
 }
 pub const MAX_MARKS: usize = 256;
 pub const RANGE: f64 = 128.0;
+/// Chunks read around the player: the whole highlight range, so flying shows what is ahead.
+pub const SCAN_CHUNKS: i32 = 8;
+/// Each highlight-only kind is capped separately so a base full of chests cannot hide a portal.
+pub const MAX_EXTRA_MARKS: usize = 64;
+/// Item icons of the highlight-only kinds (the menu tiles); the portals show their frame and
+/// obsidian items, though the highlighted blocks are the portals themselves.
+const EXTRA_ICONS: [&str; ORES.len() - MINABLE] = [
+    "minecraft:chest",
+    "minecraft:ender_chest",
+    "minecraft:end_portal_frame",
+    "minecraft:obsidian",
+];
+pub fn icon(kind: u8) -> Option<&'static str> {
+    EXTRA_ICONS
+        .get(usize::from(kind).checked_sub(MINABLE)?)
+        .copied()
+}
 pub fn nearest(mut marks: Vec<Mark>, player: [f64; 3]) -> Vec<Mark> {
     let distance = |m: &Mark| {
         m.position
@@ -160,6 +203,14 @@ pub fn nearest(mut marks: Vec<Mark>, player: [f64; 3]) -> Vec<Mark> {
             .then(a.position.cmp(&b.position))
     });
     marks.dedup_by_key(|m| m.position);
+    let mut extra = [0usize; ORES.len()];
+    marks.retain(|m| {
+        let kind = usize::from(m.kind);
+        kind < MINABLE || {
+            extra[kind] += 1;
+            extra[kind] <= MAX_EXTRA_MARKS
+        }
+    });
     marks.truncate(MAX_MARKS);
     marks
 }
@@ -241,6 +292,50 @@ mod tests {
         assert_eq!(p.classify("minecraft:deepslate_diamond_ore"), Some(0));
         assert_eq!(p.classify("minecraft:ancient_debris"), Some(1));
         assert_eq!(p.classify("minecraft:gold_ore"), None);
+    }
+    #[test]
+    fn container_and_portal_blocks_have_their_own_kinds_when_enabled() {
+        let p = Preferences {
+            ores: (1 << ORES.len()) - 1,
+            ..Preferences::default()
+        };
+        for (id, kind) in [
+            ("minecraft:chest", 10),
+            ("minecraft:trapped_chest", 10),
+            ("minecraft:ender_chest", 11),
+            ("minecraft:end_portal", 12),
+            ("minecraft:end_portal_frame", 12),
+            ("minecraft:nether_portal", 13),
+        ] {
+            assert_eq!(p.classify(id), Some(kind), "{id}");
+        }
+        assert_eq!(Preferences::default().classify("minecraft:chest"), None);
+    }
+    #[test]
+    fn menu_icons_of_new_kinds_and_chests_do_not_hide_portals() {
+        assert_eq!(icon(0), None);
+        assert_eq!(icon(10), Some("minecraft:chest"));
+        assert_eq!(icon(11), Some("minecraft:ender_chest"));
+        assert_eq!(icon(12), Some("minecraft:end_portal_frame"));
+        assert_eq!(icon(13), Some("minecraft:obsidian"));
+        let mut marks: Vec<Mark> = (0..200)
+            .map(|i| Mark {
+                position: [i % 20, 12, i / 20],
+                kind: 10,
+                predicted: false,
+            })
+            .collect();
+        marks.push(Mark {
+            position: [100, 12, 0],
+            kind: 13,
+            predicted: false,
+        });
+        let kept = nearest(marks, [0.0, 12.0, 0.0]);
+        assert_eq!(
+            kept.iter().filter(|m| m.kind == 10).count(),
+            MAX_EXTRA_MARKS
+        );
+        assert!(kept.iter().any(|m| m.kind == 13));
     }
     #[test]
     fn highlights_are_bounded_and_predictions_have_a_different_shape() {

@@ -1,5 +1,10 @@
 // Bounded ore mining jobs. Only server-confirmed block changes advance the count.
-use super::{claim_borders_experimental::ORES, claim_borders_navigation as nav};
+use super::{
+    claim_borders_experimental::{MINABLE, ORES as MARKED, Ore},
+    claim_borders_navigation as nav,
+};
+/// Only the ores are mining targets; chests and portals are highlight-only.
+const ORES: &[Ore] = MARKED.split_at(MINABLE).0;
 use std::{
     sync::{
         Mutex,
