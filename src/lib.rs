@@ -109,6 +109,9 @@ pub use chat_priority as claim_borders_chat_priority;
 pub use economy as claim_borders_economy;
 #[path = "../mixins/draimhorizon/economy_requests.rs"]
 pub mod economy_requests;
+pub use economy_requests as claim_borders_economy_requests;
+#[path = "../mixins/draimhorizon/claim_replies.rs"]
+pub mod claim_replies;
 #[path = "../mixins/draimhorizon/economy_ui.rs"]
 pub mod economy_ui;
 

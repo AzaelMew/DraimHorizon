@@ -16,9 +16,8 @@ fn claim_borders_chat(
         crate::game::claim_borders_claim_memory::server(&content.plain());
         crate::game::claim_borders_auto_trust_view::server(&content.plain());
         crate::game::claim_borders_economy_client::server(&content.plain());
-        let text = m::strip_formatting(&content.plain());
-        if m::parse_claims(text.trim()).ok().flatten().is_some() {
-            crate::game::claim_borders_economy_client::silence(&text);
-        }
+        // A claims list is only remembered for this delivery; whether it is hidden is decided
+        // when it is shown, and only for the mod's own automatic refresh.
+        crate::game::claim_borders_claim_replies::on_server_line(&content.plain());
     }
 }

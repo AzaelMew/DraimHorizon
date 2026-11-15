@@ -14,6 +14,7 @@ fn claim_borders_reset() {
     crate::game::claim_borders_seed_found_view::reset();
     crate::game::claim_borders_schematic_share_view::reset();
     crate::game::claim_borders_claim_memory::reset();
+    crate::game::claim_borders_claim_replies::leave();
     crate::game::claim_borders_auto_trust_view::reset();
     crate::game::claim_borders_economy_client::reset();
     crate::game::claim_borders_client::reset();

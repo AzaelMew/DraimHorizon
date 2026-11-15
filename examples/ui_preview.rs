@@ -265,11 +265,32 @@ fn main() -> std::io::Result<()> {
                 [800.0, 500.0],
             ),
             (
-                "qol-automation",
+                "qol-connection",
                 menu::Tab::Helpers,
                 0,
                 menu::ExperimentalSection::Ores,
                 [800.0, 500.0],
+            ),
+            (
+                "experiments-automation",
+                menu::Tab::Experimental,
+                0,
+                menu::ExperimentalSection::Automation,
+                [800.0, 500.0],
+            ),
+            (
+                "experiments-automation-compact",
+                menu::Tab::Experimental,
+                0,
+                menu::ExperimentalSection::Automation,
+                [360.0, 280.0],
+            ),
+            (
+                "experiments-automation-minimum",
+                menu::Tab::Experimental,
+                0,
+                menu::ExperimentalSection::Automation,
+                [240.0, 216.0],
             ),
             (
                 "qol-survival-compact",
@@ -301,8 +322,8 @@ fn main() -> std::io::Result<()> {
             if let Some(category) = name.strip_prefix("qol-") {
                 menu.helper_category = if category.starts_with("gear") {
                     menu::HelperCategory::Gear
-                } else if category.starts_with("automation") {
-                    menu::HelperCategory::Automation
+                } else if category.starts_with("connection") {
+                    menu::HelperCategory::Connection
                 } else {
                     menu::HelperCategory::Survival
                 };

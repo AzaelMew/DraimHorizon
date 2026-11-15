@@ -714,6 +714,12 @@ name = "claim_borders_claim_directory"
 source = "claim_directory.rs"
 
 [[module]]
+id = "claim-replies"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_replies"
+source = "claim_replies.rs"
+
+[[module]]
 id = "claim-memory"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_claim_memory"

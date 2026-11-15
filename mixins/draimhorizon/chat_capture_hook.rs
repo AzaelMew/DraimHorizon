@@ -17,8 +17,12 @@ fn horizon_chat_capture(
             // Every shown message counts toward the routine-reply window; only a server line
             // that is the automatic command's own output is hidden by it.
             let routine = crate::game::claim_borders_economy_client::deliver(&text);
+            let claims = crate::game::claim_borders_claim_replies::on_shown_line(
+                &text,
+                crate::game::claim_borders_economy_client::quiet_enabled(),
+            );
             if source == horizon_client::chat::ChatSource::Server
-                && (routine || crate::game::claim_borders_economy_client::quiet(&text))
+                && (routine || claims || crate::game::claim_borders_economy_client::quiet(&text))
             {
                 return core::ops::ControlFlow::Break(false);
             }

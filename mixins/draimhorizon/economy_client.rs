@@ -240,6 +240,10 @@ pub(super) fn silence(text: &str) {
         s.quiet.push_back((text, time));
     });
 }
+/// The "Hide routine command replies" preference, whether or not the Economy module is on.
+pub(super) fn quiet_enabled() -> bool {
+    state(|s| s.pref.flag("quiet"))
+}
 pub(super) fn quiet(text: &str) -> bool {
     let text = claims::strip_formatting(text);
     let now = now();

@@ -660,6 +660,8 @@ pub enum ExperimentalSection {
     #[default]
     Ores,
     Baritone,
+    /// The helpers that run the bot and the mouse on their own: resume, camera and clicking.
+    Automation,
 }
 /// The task groups of the Helpers tab, in the order they are offered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -669,16 +671,16 @@ pub enum HelperCategory {
     Survival,
     /// Keeping the hands equipped: hotbar refill and tool choice.
     Gear,
-    /// Things the bot or the client does on its own: resume, camera and clicking.
-    Automation,
+    /// Keeping the connection: rejoining after it is lost.
+    Connection,
 }
 impl HelperCategory {
-    pub const ALL: [HelperCategory; 3] = [Self::Survival, Self::Gear, Self::Automation];
+    pub const ALL: [HelperCategory; 3] = [Self::Survival, Self::Gear, Self::Connection];
     pub fn label(self, language: Language) -> &'static str {
         match self {
             Self::Survival => language.text("Выживание", "Survival"),
             Self::Gear => language.text("Снаряжение", "Gear"),
-            Self::Automation => language.text("Автоматика", "Automation"),
+            Self::Connection => language.text("Соединение", "Connection"),
         }
     }
     pub fn next(self, forward: bool) -> Self {
@@ -1459,7 +1461,7 @@ impl Menu {
     pub fn clamp_page(&mut self, model: &ViewModel, height: f32) {
         let pages = self.count(model).div_ceil(self.page_size(height)).max(1);
         self.page = self.page.min(pages - 1);
-        if self.tab == Tab::Helpers {
+        if self.helper_rows_on_screen() {
             self.helper_page = self
                 .helper_page
                 .min(self.helper_page_count(model, height) - 1);
@@ -3574,7 +3576,7 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let tab_width = (w - 4.0) / 2.0;
+        let tab_width = (w - 8.0) / 3.0;
         for (index, section, label) in [
             (
                 0,
@@ -3582,6 +3584,11 @@ impl Menu {
                 self.language.text("Руды", "Ores"),
             ),
             (1, ExperimentalSection::Baritone, "Baritone"),
+            (
+                2,
+                ExperimentalSection::Automation,
+                self.language.text("Автоматика", "Automation"),
+            ),
         ] {
             out.push(widget(
                 [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
@@ -3589,6 +3596,9 @@ impl Menu {
                 Some(Control::ExperimentalTab(section)),
                 self.experimental_section == section,
             ));
+        }
+        if self.experimental_section == ExperimentalSection::Automation {
+            return self.helper_rows_layout(model, x, w, height, out);
         }
         if self.experimental_section == ExperimentalSection::Baritone {
             let mode_width = (w - 24.0) / 7.0;
@@ -4570,52 +4580,7 @@ impl Menu {
                     ),
                 )],
             ],
-            HelperCategory::Automation => vec![
-                vec![toggle(
-                    localized!(
-                        language,
-                        "Авто-возобновление: {}",
-                        "Auto Resume: {}",
-                        state(helper(Helper::Resume))
-                    ),
-                    Control::Helper(Helper::Resume),
-                    helper(Helper::Resume),
-                    language.text(
-                        "После рестарта сервера задача бота продолжается сама",
-                        "After a server restart the bot's task carries on by itself",
-                    ),
-                )],
-                vec![toggle(
-                    localized!(
-                        language,
-                        "Человеческий взгляд: {}",
-                        "Human Look: {}",
-                        state(helper(Helper::HumanLook))
-                    ),
-                    Control::Helper(Helper::HumanLook),
-                    helper(Helper::HumanLook),
-                    language.text(
-                        "Бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
-                        "The bot looks where it walks; moving the mouse takes the camera back",
-                    ),
-                )],
-                vec![
-                    toggle(
-                        localized!(
-                            language,
-                            "Авто-клик: {}",
-                            "Auto Click: {}",
-                            state(helper(Helper::AutoClick))
-                        ),
-                        Control::Helper(Helper::AutoClick),
-                        helper(Helper::AutoClick),
-                        language.text(
-                            "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
-                            "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
-                        ),
-                    ),
-                    HelperRow::Click,
-                ],
+            HelperCategory::Connection => vec![
                 vec![toggle(
                     localized!(
                         language,
@@ -4632,6 +4597,87 @@ impl Menu {
                 )],
             ],
         }
+    }
+    /// The rows of Experiments → Automation: the helpers that act on their own. Each switch sits
+    /// with the choices that depend on it, as in the QOL categories.
+    fn automation_blocks(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
+        let language = self.language;
+        let state = |on: bool| {
+            if on {
+                language.text("вкл", "on")
+            } else {
+                language.text("выкл", "off")
+            }
+        };
+        let toggle = |label: String, control, on, hint: &str| HelperRow::Toggle {
+            label,
+            control,
+            on,
+            hint: hint.to_owned(),
+            parent: None,
+        };
+        let helper = |helper: Helper| model.helpers[helper.index()];
+        vec![
+            vec![toggle(
+                localized!(
+                    language,
+                    "Авто-возобновление: {}",
+                    "Auto Resume: {}",
+                    state(helper(Helper::Resume))
+                ),
+                Control::Helper(Helper::Resume),
+                helper(Helper::Resume),
+                language.text(
+                    "После рестарта сервера задача бота продолжается сама",
+                    "After a server restart the bot's task carries on by itself",
+                ),
+            )],
+            vec![toggle(
+                localized!(
+                    language,
+                    "Человеческий взгляд: {}",
+                    "Human Look: {}",
+                    state(helper(Helper::HumanLook))
+                ),
+                Control::Helper(Helper::HumanLook),
+                helper(Helper::HumanLook),
+                language.text(
+                    "Бот смотрит, куда идёт; мышь забирает камеру, задача не прерывается",
+                    "The bot looks where it walks; moving the mouse takes the camera back",
+                ),
+            )],
+            vec![
+                toggle(
+                    localized!(
+                        language,
+                        "Авто-клик: {}",
+                        "Auto Click: {}",
+                        state(helper(Helper::AutoClick))
+                    ),
+                    Control::Helper(Helper::AutoClick),
+                    helper(Helper::AutoClick),
+                    language.text(
+                        "Кликает выбранной кнопкой в заданном темпе: бьёт мобов и ломает блоки",
+                        "Clicks the chosen button at the chosen pace: hits mobs and breaks blocks",
+                    ),
+                ),
+                HelperRow::Click,
+            ],
+        ]
+    }
+    /// The rows of whichever helper list is on screen: a QOL category or Experiments → Automation.
+    fn current_helper_blocks(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
+        if self.tab == Tab::Experimental {
+            self.automation_blocks(model)
+        } else {
+            self.helper_blocks(model)
+        }
+    }
+    /// Whether a page of helper rows is on screen (QOL, or Experiments → Automation).
+    fn helper_rows_on_screen(&self) -> bool {
+        self.tab == Tab::Helpers
+            || (self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Automation)
     }
     /// How many helper rows fit above the page buttons, and whether each gets a hint line.
     fn helper_page_rows(height: f32) -> (usize, f32, bool) {
@@ -4673,7 +4719,11 @@ impl Menu {
     }
     /// The number of pages the current Helpers category has at this height.
     pub fn helper_page_count(&self, model: &ViewModel, height: f32) -> usize {
-        let blocks: Vec<usize> = self.helper_blocks(model).iter().map(Vec::len).collect();
+        let blocks: Vec<usize> = self
+            .current_helper_blocks(model)
+            .iter()
+            .map(Vec::len)
+            .collect();
         Self::helper_pages(&blocks, Self::helper_page_rows(height).0).len()
     }
     /// The Helpers tab: a category row, then a switch per helper with a line saying what it does.
@@ -4697,7 +4747,18 @@ impl Menu {
                 self.helper_category == category,
             ));
         }
-        let blocks = self.helper_blocks(model);
+        self.helper_rows_layout(model, x, w, height, out)
+    }
+    /// The paged helper rows under the selector row, shared by QOL and Experiments → Automation.
+    fn helper_rows_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        let blocks = self.current_helper_blocks(model);
         let rows: Vec<HelperRow> = blocks.iter().flatten().cloned().collect();
         let lengths: Vec<usize> = blocks.iter().map(Vec::len).collect();
         let (per, step, note) = Self::helper_page_rows(height);
@@ -5495,6 +5556,7 @@ impl Menu {
             }
             Control::ExperimentalTab(section) => {
                 self.experimental_section = section;
+                self.helper_page = 0;
                 self.focus = None;
                 None
             }
@@ -6237,7 +6299,7 @@ impl Menu {
     /// Page Up / Page Down on the Helpers tab: the same step as the Back and Next buttons,
     /// for the category rows or for the food picker, whichever is on screen.
     pub fn helper_page_key(&mut self, model: &ViewModel, size: [f32; 2], forward: bool) -> bool {
-        if self.tab != Tab::Helpers || self.experiments_prompt {
+        if !self.helper_rows_on_screen() || self.experiments_prompt {
             return false;
         }
         let current = if self.auto_eat_food_picker {
@@ -6274,7 +6336,7 @@ impl Menu {
         if !delta.is_finite() || delta == 0.0 {
             return;
         }
-        if self.tab == Tab::Helpers && !self.auto_eat_food_picker {
+        if self.helper_rows_on_screen() && !self.auto_eat_food_picker {
             let last = self.helper_page_count(model, height) - 1;
             self.helper_page = if delta > 0.0 {
                 self.helper_page.min(last).saturating_sub(1)
@@ -6503,6 +6565,13 @@ impl Menu {
                     self.helper_category = self.helper_category.next(modifiers & 1 == 0);
                     self.helper_page = 0;
                 }
+                self.focus = None;
+                return true;
+            }
+            if self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Automation
+            {
+                // Switches only: no text field to focus here.
                 self.focus = None;
                 return true;
             }

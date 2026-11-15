@@ -1147,6 +1147,8 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
         };
     }
     if action == "sync" && args.len() == 1 {
+        // A refresh the player asked for: its list is shown, not hidden as a background one.
+        crate::game::claim_borders_claim_replies::manual();
         claims::with_state(|s| s.begin_refresh());
         game.send_unattended_command("claims");
         state(|c| {
@@ -2277,6 +2279,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                     "Claims can only be refreshed on a server."
                 ));
             }
+            crate::game::claim_borders_claim_replies::manual();
             claims::with_state(|s| s.begin_refresh());
             game.send_unattended_command("claims");
             state(|c| {

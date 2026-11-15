@@ -317,12 +317,12 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Style, notifications, anti-spam and translation",
                     ),
                     model::Tab::Helpers => (
-                        "Выживание, предметы, автоматика и удобства",
-                        "Survival, gear, automation and conveniences",
+                        "Выживание, предметы и соединение",
+                        "Survival, gear and connection",
                     ),
                     model::Tab::Experimental => (
-                        "Подсветка руд и инструменты Baritone",
-                        "Ore highlighting and Baritone tools",
+                        "Руды, Baritone и автоматические помощники",
+                        "Ores, Baritone and the automation helpers",
                     ),
                     model::Tab::Settings => (
                         "Оформление, связь, список игроков и боковая панель",
