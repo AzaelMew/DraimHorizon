@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.5
+
+- Experiments → Ores can now also highlight **Chests** (chest and trapped chest in one button), **Ender chest**, **End portal** (portal and portal frame) and **Nether portal**, through walls with the same cages as ores, off until enabled and range-limited like them. They are highlight-only: the miner's targets, its saved selection and its ore hints are unchanged (`experimental::MINABLE`). Seed prediction does not predict them. Test: the new kinds classify their blocks only when enabled.
+
 ## 0.40.4
 
 - Baritone navigation, step 1: the pure core of Baritone 1.21.4 (goals, movement costs, the A* search, all movements including parkour and pillar, the movement executor, path executor and pathing behavior) is added under `mixins/draimhorizon/baritone/`, taken with its authorship from luhnox's Horizon port (LGPL-3.0, see `NOTICE.md` there; the rest of DraimHorizon stays MIT). The upstream desktop-notification call is not ported.

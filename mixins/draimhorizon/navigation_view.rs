@@ -2461,7 +2461,7 @@ fn request(game: &Game<'_>, s: &mut State) -> Result<(), String> {
         .map(|j| {
             if j.ore == mining::ANY {
                 let mask = mining::selection();
-                (0..crate::game::claim_borders_experimental::ORES.len() as u8)
+                (0..crate::game::claim_borders_experimental::MINABLE as u8)
                     .filter(|i| mask & (1 << i) != 0)
                     .flat_map(crate::game::claim_borders_ore_view::marks_for)
                     .collect()

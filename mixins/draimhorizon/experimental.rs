@@ -7,7 +7,9 @@ pub struct Ore {
     pub color: u32,
     pub blocks: &'static [&'static str],
 }
-pub const ORES: [Ore; 10] = [
+/// The first entries are ores the miner can collect; later ones are highlight-only.
+pub const MINABLE: usize = 10;
+pub const ORES: [Ore; 14] = [
     Ore {
         label: "Алмазы",
         label_en: "Diamonds",
@@ -71,6 +73,30 @@ pub const ORES: [Ore; 10] = [
         label_en: "Nether quartz",
         color: 0xf1e5dd,
         blocks: &["minecraft:nether_quartz_ore"],
+    },
+    Ore {
+        label: "Сундуки",
+        label_en: "Chests",
+        color: 0xd8a24a,
+        blocks: &["minecraft:chest", "minecraft:trapped_chest"],
+    },
+    Ore {
+        label: "Эндер-сундук",
+        label_en: "Ender chest",
+        color: 0x2fb7a3,
+        blocks: &["minecraft:ender_chest"],
+    },
+    Ore {
+        label: "Портал Энда",
+        label_en: "End portal",
+        color: 0x9a6bff,
+        blocks: &["minecraft:end_portal", "minecraft:end_portal_frame"],
+    },
+    Ore {
+        label: "Портал Незера",
+        label_en: "Nether portal",
+        color: 0xc23bd6,
+        blocks: &["minecraft:nether_portal"],
     },
 ];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,6 +267,24 @@ mod tests {
         assert_eq!(p.classify("minecraft:deepslate_diamond_ore"), Some(0));
         assert_eq!(p.classify("minecraft:ancient_debris"), Some(1));
         assert_eq!(p.classify("minecraft:gold_ore"), None);
+    }
+    #[test]
+    fn container_and_portal_blocks_have_their_own_kinds_when_enabled() {
+        let p = Preferences {
+            ores: (1 << ORES.len()) - 1,
+            ..Preferences::default()
+        };
+        for (id, kind) in [
+            ("minecraft:chest", 10),
+            ("minecraft:trapped_chest", 10),
+            ("minecraft:ender_chest", 11),
+            ("minecraft:end_portal", 12),
+            ("minecraft:end_portal_frame", 12),
+            ("minecraft:nether_portal", 13),
+        ] {
+            assert_eq!(p.classify(id), Some(kind), "{id}");
+        }
+        assert_eq!(Preferences::default().classify("minecraft:chest"), None);
     }
     #[test]
     fn highlights_are_bounded_and_predictions_have_a_different_shape() {

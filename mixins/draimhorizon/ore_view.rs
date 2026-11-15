@@ -92,7 +92,7 @@ pub(super) fn marks_for(kind: u8) -> Vec<[i32; 3]> {
     state(|s| {
         s.marks
             .iter()
-            .filter(|mark| mark.kind == kind && !mark.predicted)
+            .filter(|mark| mark.kind == kind && usize::from(kind) < model::MINABLE && !mark.predicted)
             .map(|mark| mark.position)
             .collect()
     })
