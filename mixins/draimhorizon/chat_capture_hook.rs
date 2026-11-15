@@ -4,6 +4,7 @@ fn horizon_chat_capture(
     content: &horizon_client::text::Text,
     source: horizon_client::chat::ChatSource,
 ) -> core::ops::ControlFlow<bool> {
+    crate::game::claim_borders_economy_client::synchronize(game);
     let allowed = !matches!(trust, crate::game::remote::ChatTrust::NotSecure)
         || !game.settings.file.bool("onlyShowSecureChat");
     if allowed && game.ui.chat.shows(source) {
@@ -14,10 +15,27 @@ fn horizon_chat_capture(
             return core::ops::ControlFlow::Break(false);
         }
         if game.native_on(crate::game::claim_borders::ID)
-            && source == horizon_client::chat::ChatSource::Server
-            && crate::game::claim_borders_economy_client::quiet(&text)
+            && matches!(
+                source,
+                horizon_client::chat::ChatSource::Server | horizon_client::chat::ChatSource::Player
+            )
         {
-            return core::ops::ControlFlow::Break(false);
+            // Every shown message counts toward the routine-reply window; only a server line
+            // that is the automatic command's own output is hidden by it.
+            let routine = crate::game::claim_borders_economy_client::deliver(&text);
+            let claims = crate::game::claim_borders_claim_replies::on_shown_line(
+                &text,
+                crate::game::claim_borders_economy_client::quiet_enabled(),
+            );
+            let trust = crate::game::claim_borders_auto_trust_view::deliver(&text);
+            let info = crate::game::claim_borders_claim_observations_view::deliver(&text);
+            // Every one of these decides about this delivery alone and consumes its own state;
+            // there is no shared "recently hidden" text list any more.
+            if source == horizon_client::chat::ChatSource::Server
+                && (routine || claims || trust || info)
+            {
+                return core::ops::ControlFlow::Break(false);
+            }
         }
         if source == horizon_client::chat::ChatSource::Server
             && let Some((_, accept, _)) = crate::game::claim_borders_teleport::parse(&text)

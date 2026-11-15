@@ -1,7 +1,9 @@
 fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &mut bool) {
     use crate::game::claim_borders as m;
+    crate::game::claim_borders_economy_client::synchronize(game);
     if !game.native_on(m::ID) {
         m::with_state(|state| state.clear());
+        crate::game::claim_borders_claim_replies::leave();
         return;
     }
     crate::game::claim_borders_claim_observations_view::command(game, command);
@@ -43,6 +45,8 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         return;
     };
     if name == "claims" && words.next().is_none() {
+        // A typed /claims: its list is never hidden, and any automatic window ends now.
+        crate::game::claim_borders_claim_replies::manual();
         m::with_state(|state| state.begin_refresh());
         return; // Preserve the actual server command and its response.
     }
@@ -65,6 +69,7 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
                 game.native_chat("[DraimHorizons] Join a server before refreshing.");
                 return;
             }
+            crate::game::claim_borders_claim_replies::manual();
             m::with_state(|state| state.begin_refresh());
             game.send_unattended_command("claims");
             game.native_chat("[DraimHorizons] Requested /claims from the server.");

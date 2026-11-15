@@ -420,7 +420,7 @@ fn _moves_used(_: Moves) {}
 #[cfg(test)]
 mod open_set_tests {
     use super::*;
-    use crate::baritone_goals::{rc, GoalXZ};
+    use super::super::baritone_goals::{rc, GoalXZ};
 
     /// Both open sets hand out the same costs in the same order, whatever the insertion order and the updates.
     #[test]

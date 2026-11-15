@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.40.6"
+version = "0.40.7"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -189,6 +189,12 @@ id = "auto-eat"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_auto_eat"
 source = "auto_eat.rs"
+
+[[module]]
+id = "auto-tools"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_auto_tools"
+source = "auto_tools.rs"
 
 [[module]]
 id = "farm-storage"
@@ -748,6 +754,12 @@ id = "claim-directory"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_claim_directory"
 source = "claim_directory.rs"
+
+[[module]]
+id = "claim-replies"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_claim_replies"
+source = "claim_replies.rs"
 
 [[module]]
 id = "claim-memory"

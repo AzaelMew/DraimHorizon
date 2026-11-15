@@ -669,9 +669,9 @@ pub fn wants_firework(start: V3, going_to: V3, is_boosted: bool, force_use_firew
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baritone_elytra_chunk::Chunk;
-    use crate::baritone_elytra_pathfinder::{CacheMiss, Dimension, NetherPathfinder};
-    use crate::baritone_elytra_raytracer::raytrace;
+    use super::super::baritone_elytra_chunk::Chunk;
+    use super::super::baritone_elytra_pathfinder::{CacheMiss, Dimension, NetherPathfinder};
+    use super::super::baritone_elytra_raytracer::raytrace;
 
     /// A world of octree chunks; any chunk it does not hold is solid, as in the pathfinder's passable().
     struct Octree {

@@ -30,6 +30,10 @@ fn preview(menu: &menu::Menu, size: [f32; 2]) -> String {
     let model = menu::ViewModel {
         language: menu.language,
         auto_eat: true,
+        shulker_peek: true,
+        auto_reconnect: true,
+        show_invisible_entities: true,
+        helpers: [false, false, true, false, true, true],
         navigation_status: menu
             .language
             .text(
@@ -247,11 +251,81 @@ fn main() -> std::io::Result<()> {
                 [800.0, 500.0],
             ),
             (
-                "helpers",
+                "claims-storage",
+                menu::Tab::Claims,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "claims-storage-compact",
+                menu::Tab::Claims,
+                0,
+                menu::ExperimentalSection::Ores,
+                [360.0, 280.0],
+            ),
+            (
+                "claims-storage-minimum",
+                menu::Tab::Claims,
+                0,
+                menu::ExperimentalSection::Ores,
+                [240.0, 216.0],
+            ),
+            (
+                "qol-survival",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "qol-gear",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "qol-controls",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [800.0, 500.0],
+            ),
+            (
+                "experiments-automation",
                 menu::Tab::Experimental,
                 0,
-                menu::ExperimentalSection::Helpers,
+                menu::ExperimentalSection::Baritone,
                 [800.0, 500.0],
+            ),
+            (
+                "experiments-automation-compact",
+                menu::Tab::Experimental,
+                0,
+                menu::ExperimentalSection::Baritone,
+                [360.0, 280.0],
+            ),
+            (
+                "experiments-automation-minimum",
+                menu::Tab::Experimental,
+                0,
+                menu::ExperimentalSection::Baritone,
+                [240.0, 216.0],
+            ),
+            (
+                "qol-survival-compact",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [360.0, 280.0],
+            ),
+            (
+                "qol-gear-minimum",
+                menu::Tab::Helpers,
+                0,
+                menu::ExperimentalSection::Ores,
+                [240.0, 216.0],
             ),
             (
                 "compact",
@@ -266,6 +340,18 @@ fn main() -> std::io::Result<()> {
             menu.tab = tab;
             menu.settings_section = section;
             menu.experimental_section = experimental_section;
+            if name.starts_with("claims-storage") {
+                menu.claims_section = menu::ClaimsSection::Storage;
+            }
+            if let Some(category) = name.strip_prefix("qol-") {
+                menu.helper_category = if category.starts_with("gear") {
+                    menu::HelperCategory::Gear
+                } else if category.starts_with("controls") {
+                    menu::HelperCategory::Controls
+                } else {
+                    menu::HelperCategory::Survival
+                };
+            }
             if name.starts_with("mining-") {
                 menu.baritone_section = menu::BaritoneSection::Mining;
             }

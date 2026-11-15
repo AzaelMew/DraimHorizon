@@ -26,6 +26,9 @@ struct State {
     cursor: usize,
     pull: bool,
     wanted: BTreeSet<String>,
+    /// The background claims refresh of this connection is still owed (it waits while a typed
+    /// `/claims` protects its reply).
+    refresh_due: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -45,6 +48,7 @@ impl Default for State {
             cursor: 0,
             pull: false,
             wanted: BTreeSet::new(),
+            refresh_due: false,
         }
     }
 }
@@ -214,12 +218,18 @@ pub(super) fn receive(peer: &claim_borders_relay_client::Peer, body: &str, tab: 
     });
 }
 pub(super) fn frame(game: &mut Game<'_>) {
-    if !game.native_on(claims::ID) || game.remote.is_none() || game.native_player().is_none() {
+    if !game.native_on(claims::ID) || game.remote.is_none() {
+        // No connection or the mod is off: no reply attribution carries over to the next one.
+        crate::game::claim_borders_claim_replies::leave();
+        return;
+    }
+    if game.native_player().is_none() {
         return;
     }
     let Some((scope, own)) = client::scope(game) else {
         return;
     };
+    crate::game::claim_borders_claim_replies::bind(&scope);
     let cold = state(|s| s.scope != scope);
     if cold {
         let root = match Game::native_config_dir() {
@@ -261,8 +271,21 @@ pub(super) fn frame(game: &mut Game<'_>) {
         } else if game.integrated.is_none() {
             // Single player has no claims plugin; asking would raise an unknown-command prompt.
             claims::with_state(|s| s.begin_refresh());
-            game.send_unattended_command("claims");
+            state(|s| s.refresh_due = true);
         }
+    }
+    // The owed refresh, once: it waits while a typed /claims protects its own reply and arms
+    // the hiding only if the command really went out.
+    if state(|s| s.refresh_due) {
+        let mut due = true;
+        crate::game::claim_borders_claim_replies::refresh(&mut due, || {
+            let allowed = game.remote.is_some()
+                && game.command_prompt.is_none()
+                && game.chat_abilities().allows("/claims");
+            game.send_unattended_command("claims");
+            allowed && game.command_prompt.is_none()
+        });
+        state(|s| s.refresh_due = due);
     }
     let identity = client::claim_identity();
     let peers = client::claim_peers(game);

@@ -25,6 +25,25 @@ struct State {
     dirty: bool,
     writable: bool,
     worker: Option<disk::Worker>,
+    /// The `/claim info` reply the book just accepted, hidden only if the player asked for that.
+    hide_line: Option<String>,
+}
+/// "Hide /claim info replies" (`hide_claim_info`, off unless the player turned it on). Read each
+/// frame and set when the switch is flipped, so it applies at once and never starts on.
+static HIDE_INFO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(super) const HIDE_KEY: &str = "hide_claim_info";
+pub(super) fn set_hide_info(on: bool) {
+    HIDE_INFO.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+pub(super) fn hide_info() -> bool {
+    HIDE_INFO.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// The capture hook, once per shown incoming message: true when it is the accepted `/claim info`
+/// reply of this delivery and the player chose to hide those. Consumed once, so an identical later
+/// line is decided on its own.
+pub(super) fn deliver(text: &str) -> bool {
+    let text = claims::strip_formatting(text);
+    state(|s| s.hide_line.take().is_some_and(|line| line == text)) && hide_info()
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
@@ -101,6 +120,7 @@ pub(super) fn command(game: &Game<'_>, command: &str) {
 }
 pub(super) fn server(text: &str) {
     let text = claims::strip_formatting(text);
+    state(|s| s.hide_line = None);
     let Some((x, z, owner)) = model::reply(text.trim()) else {
         return;
     };
@@ -128,8 +148,9 @@ pub(super) fn server(text: &str) {
             Err(_) => false,
         }
     });
-    if accepted {
-        crate::game::claim_borders_economy_client::silence(&text);
+    if accepted && hide_info() {
+        // Recorded either way; hidden only when asked for, by this delivery alone.
+        state(|s| s.hide_line = Some(text));
     }
 }
 pub(super) fn receive(peer: &claim_borders_relay_client::Peer, body: &str) {
@@ -142,6 +163,11 @@ pub(super) fn receive(peer: &claim_borders_relay_client::Peer, body: &str) {
     });
 }
 pub(super) fn frame(game: &mut Game<'_>) {
+    set_hide_info(
+        game.native_setting(claims::SETTINGS_ID, HIDE_KEY)
+            .as_deref()
+            == Some("true"),
+    );
     if !game.native_on(claims::ID) || game.remote.is_none() {
         return;
     }
@@ -323,4 +349,84 @@ pub(super) fn action_bar(game: &Game<'_>, text: &str) {
 
 fn language() -> Language {
     crate::game::claim_borders_chat_view::current_language()
+}
+#[cfg(test)]
+mod hide_info_tests {
+    //! `/claim info` replies through the real seam: the chat hook's `server`, then the capture
+    //! hook's `deliver`. They are visible unless the player turned the hiding on.
+    use super::*;
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    const FREE: &str = "This chunk (x 0 to 15, z 0 to 15) is free: /claim it.";
+    const OWNED: &str = "This chunk (x 16 to 31, z 0 to 15) is Alex's.";
+    fn fresh() -> std::sync::MutexGuard<'static, ()> {
+        let guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        reset();
+        state(|s| {
+            s.scope = "server#me".into();
+            s.name = "Me".into();
+        });
+        set_hide_info(false);
+        guard
+    }
+    fn ask(x: i32, z: i32) {
+        state(|s| {
+            s.pending.push_back((
+                claims::Claim {
+                    dimension: "minecraft:overworld".into(),
+                    x,
+                    z,
+                },
+                now(),
+            ))
+        });
+    }
+    fn shown(text: &str) -> bool {
+        server(text);
+        deliver(text)
+    }
+    #[test]
+    fn replies_are_visible_by_default_and_still_recorded() {
+        let _g = fresh();
+        ask(0, 0);
+        ask(16, 0);
+        assert!(!shown(FREE));
+        assert!(!shown(OWNED));
+        assert_eq!(
+            state(|s| s.book.records.len()),
+            2,
+            "both observations are kept"
+        );
+    }
+    #[test]
+    fn the_switch_hides_exactly_the_accepted_reply_and_works_at_once() {
+        let _g = fresh();
+        set_hide_info(true);
+        ask(0, 0);
+        assert!(shown(FREE), "hidden when asked for");
+        assert_eq!(state(|s| s.book.records.len()), 1, "and still recorded");
+        // The same text later is a different delivery with nothing asked: shown.
+        assert!(!shown(FREE));
+        // Switched off between the chat hook and the capture hook: visible immediately.
+        ask(16, 0);
+        server(OWNED);
+        set_hide_info(false);
+        assert!(!deliver(OWNED));
+    }
+    #[test]
+    fn unrequested_malformed_or_other_scope_replies_are_never_hidden() {
+        let _g = fresh();
+        set_hide_info(true);
+        assert!(!shown(FREE), "nobody asked for this chunk");
+        ask(0, 0);
+        assert!(
+            !shown("This chunk (x 5 to 20, z 0 to 15) is free: /claim it."),
+            "malformed"
+        );
+        assert!(
+            !shown("This chunk (x 0 to 15, z 0 to 15) is free"),
+            "partial"
+        );
+        reset(); // another server or account
+        assert!(!shown(FREE), "no scope, nothing pending");
+    }
 }

@@ -15,6 +15,7 @@ struct State {
     // Release is consumed only if this screen consumed the matching press.
     pressed: Vec<i32>,
     height: f32,
+    screen_size: [f32; 2],
     suppress_shortcut: Option<(char, std::time::Instant)>,
     paste_fields: VecDeque<model::Field>,
 }
@@ -214,6 +215,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     });
     state(|s| {
         s.height = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
+        s.screen_size = size(screen);
         s.menu.clamp_page(&s.model, s.height);
         if s.menu.experiments_prompt {
             ui::fill(game, batch, screen.rect, 0xcc080b12);
@@ -336,9 +338,13 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         "Вид, уведомления, антиспам и перевод",
                         "Style, notifications, anti-spam and translation",
                     ),
+                    model::Tab::Helpers => (
+                        "Выживание, предметы и управление",
+                        "Survival, gear and controls",
+                    ),
                     model::Tab::Experimental => (
-                        "Автоматизация, помощники и расширенные инструменты",
-                        "Automation, helpers and advanced tools",
+                        "Руды и автоматизация: ферма, осушение",
+                        "Ores and automation: farm and drain",
                     ),
                     model::Tab::Baritone => (
                         "Навигация Baritone: маршруты, обходы, прыжки и подъёмы",
@@ -534,6 +540,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         model::Control::SettingsTab(_)
                             | model::Control::TradingGroup(_)
                             | model::Control::ExperimentalTab(_)
+                            | model::Control::HelperCategory(_)
                             | model::Control::BaritoneMode(_)
                             | model::Control::ClaimsSection(_)
                             | model::Control::ChatSection(_)
@@ -903,6 +910,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                                 model::Tab::Party => ("Друзья и игроки", "Friends and players"),
                                 model::Tab::Claims => ("Карта и приваты", "Map and claims"),
                                 model::Tab::Chat => ("Чат", "Chat"),
+                                model::Tab::Helpers => ("Помощники", "QOL"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
                                 model::Tab::Baritone => ("Baritone", "Baritone"),
                                 model::Tab::Schematics => ("Схемы", "Schematics"),
@@ -1070,7 +1078,7 @@ pub(super) fn key(game: &Game<'_>, key: &str, modifiers: u32, canceled: &mut boo
                 return;
             }
         }
-        if s.menu.key(key, modifiers) {
+        if s.menu.dispatch_key(&s.model, s.screen_size, key, modifiers) {
             *canceled = true;
         }
     });
@@ -1105,4 +1113,39 @@ pub(super) fn open_settings() {
         s.menu.settings_section = 0;
         s.menu.focus = None;
     });
+}
+#[cfg(test)]
+mod emitted_key_names {
+    use horizon_client_input::keybinds::key_name;
+    use winit::keyboard::KeyCode;
+    /// The strings `screen_key_pressed` hands to this screen are `keybinds::key_name`'s, so the
+    /// constants the menu matches must equal them (they are dotted: `page.up`, not `page_up`).
+    #[test]
+    fn menu_page_keys_and_keypad_enter_match_the_names_horizon_emits() {
+        assert_eq!(
+            key_name(KeyCode::PageUp),
+            Some(crate::game::claim_borders_menu::PAGE_UP_KEY)
+        );
+        assert_eq!(
+            key_name(KeyCode::PageDown),
+            Some(crate::game::claim_borders_menu::PAGE_DOWN_KEY)
+        );
+        assert_eq!(
+            key_name(KeyCode::NumpadEnter),
+            Some("key.keyboard.keypad.enter")
+        );
+    }
+    /// Physical Page Down, as emitted, pages the QOL rows through the same dispatch the screen
+    /// hook uses.
+    #[test]
+    fn an_emitted_page_down_reaches_qol_pagination() {
+        use crate::game::claim_borders_menu::{Menu, Tab, ViewModel};
+        let mut menu = Menu::default();
+        menu.tab = Tab::Helpers;
+        let model = ViewModel::default();
+        let emitted = key_name(KeyCode::PageDown).expect("Page Down has a name");
+        assert!(menu.helper_page_count(&model, 200.0) > 1);
+        assert!(menu.dispatch_key(&model, [240.0, 216.0], emitted, 0));
+        assert_eq!(menu.helper_page, 1);
+    }
 }

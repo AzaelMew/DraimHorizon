@@ -1,6 +1,6 @@
 // Native adapter for the helpers that work while the player plays by hand: a totem for the off
 // hand, a used-up hotbar stack replaced from the inventory, the right tool for the block hit.
-// Each one has its own switch (Experiments > Helpers) and is off until it is turned on.
+// Each one has its own switch (the QOL tab; Russian «Помощники») and is off until it is turned on.
 use crate::game::{
     Game, claim_borders as claims, claim_borders_autoclick as pace, claim_borders_menu::Helper,
     claim_borders_navigation_view as walk,

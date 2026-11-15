@@ -1224,6 +1224,8 @@ fn party_command(game: &mut Game<'_>, args: &[&str]) -> Result<Vec<String>, Stri
         };
     }
     if action == "sync" && args.len() == 1 {
+        // A refresh the player asked for: its list is shown, not hidden as a background one.
+        crate::game::claim_borders_claim_replies::manual();
         claims::with_state(|s| s.begin_refresh());
         game.send_unattended_command("claims");
         state(|c| {
@@ -1650,7 +1652,12 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
             schematic_friend_places: crate::game::claim_borders_schematic_share_view::rows(game),
-            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            auto_eat: crate::game::claim_borders_navigation_view::auto_eat_setting(game),
+            auto_tools_only_holding:
+                crate::game::claim_borders_navigation_view::auto_tools_only_holding(game),
+            auto_tools_from_inventory:
+                crate::game::claim_borders_navigation_view::auto_tools_from_inventory(game),
+            auto_eat_to_heal: crate::game::claim_borders_navigation_view::auto_eat_to_heal(game),
             blocks: block_catalogue(game),
             baritone_enabled: game
                 .native_setting(claims::SETTINGS_ID, "baritone_enabled")
@@ -1719,6 +1726,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 .native_setting(claims::SETTINGS_ID, "shulker_peek")
                 .as_deref()
                 != Some("false"),
+            hide_claim_info: game
+                .native_setting(claims::SETTINGS_ID, "hide_claim_info")
+                .as_deref()
+                == Some("true"),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1938,6 +1949,16 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             );
             Ok(Vec::new())
         }
+        Action::SetHideClaimInfo(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_claim_observations_view::HIDE_KEY,
+                if on { "true" } else { "false" },
+            );
+            // Takes effect at once, with no reconnect and no waiting for the next frame.
+            crate::game::claim_borders_claim_observations_view::set_hide_info(on);
+            Ok(Vec::new())
+        }
         Action::SetAutoClickButton(right) => {
             game.native_set_setting(
                 claims::SETTINGS_ID,
@@ -1990,6 +2011,30 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             game.native_set_setting(
                 claims::SETTINGS_ID,
                 "auto_eat",
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoToolsOnlyHolding(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_tools::ONLY_HOLDING_KEY,
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoToolsFromInventory(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_tools::FROM_INVENTORY_KEY,
+                if on { "true" } else { "false" },
+            );
+            Ok(Vec::new())
+        }
+        Action::SetAutoEatToHeal(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_auto_eat::HEAL_KEY,
                 if on { "true" } else { "false" },
             );
             Ok(Vec::new())
@@ -2535,6 +2580,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                     "Claims can only be refreshed on a server."
                 ));
             }
+            crate::game::claim_borders_claim_replies::manual();
             claims::with_state(|s| s.begin_refresh());
             game.send_unattended_command("claims");
             state(|c| {
