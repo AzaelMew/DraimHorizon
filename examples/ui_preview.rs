@@ -203,14 +203,14 @@ fn main() -> std::io::Result<()> {
         for (name, tab, section, experimental_section, size) in [
             (
                 "mining-wide",
-                menu::Tab::Experimental,
+                menu::Tab::Baritone,
                 0,
                 menu::ExperimentalSection::Baritone,
                 [800.0, 500.0],
             ),
             (
                 "mining-compact",
-                menu::Tab::Experimental,
+                menu::Tab::Baritone,
                 0,
                 menu::ExperimentalSection::Baritone,
                 [240.0, 216.0],
@@ -265,7 +265,7 @@ fn main() -> std::io::Result<()> {
                 [800.0, 500.0],
             ),
             (
-                "qol-connection",
+                "qol-controls",
                 menu::Tab::Helpers,
                 0,
                 menu::ExperimentalSection::Ores,
@@ -275,21 +275,21 @@ fn main() -> std::io::Result<()> {
                 "experiments-automation",
                 menu::Tab::Experimental,
                 0,
-                menu::ExperimentalSection::Automation,
+                menu::ExperimentalSection::Baritone,
                 [800.0, 500.0],
             ),
             (
                 "experiments-automation-compact",
                 menu::Tab::Experimental,
                 0,
-                menu::ExperimentalSection::Automation,
+                menu::ExperimentalSection::Baritone,
                 [360.0, 280.0],
             ),
             (
                 "experiments-automation-minimum",
                 menu::Tab::Experimental,
                 0,
-                menu::ExperimentalSection::Automation,
+                menu::ExperimentalSection::Baritone,
                 [240.0, 216.0],
             ),
             (
@@ -322,14 +322,14 @@ fn main() -> std::io::Result<()> {
             if let Some(category) = name.strip_prefix("qol-") {
                 menu.helper_category = if category.starts_with("gear") {
                     menu::HelperCategory::Gear
-                } else if category.starts_with("connection") {
-                    menu::HelperCategory::Connection
+                } else if category.starts_with("controls") {
+                    menu::HelperCategory::Controls
                 } else {
                     menu::HelperCategory::Survival
                 };
             }
             if name.starts_with("mining-") {
-                menu.baritone_mode = menu::BaritoneMode::Mining;
+                menu.baritone_section = menu::BaritoneSection::Mining;
             }
             let file = root.join(format!("{name}-{locale}.svg"));
             std::fs::write(&file, preview(&menu, size))?;

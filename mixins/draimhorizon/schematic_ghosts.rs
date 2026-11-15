@@ -82,7 +82,7 @@ fn key_of(game: &Game<'_>, list: &[(places::Placement, Arc<view::Shape>, bool)])
     h.finish()
 }
 /// The game's id for a schematic state; properties the game does not know are left out.
-fn resolve(game: &Game<'_>, s: &model::BlockState) -> Option<BlockStateId> {
+pub(super) fn resolve(game: &Game<'_>, s: &model::BlockState) -> Option<BlockStateId> {
     let registry = &game.pack.assets.registry;
     let wanted = horizon_world::chunk::BlockState {
         name: s.name.clone(),
@@ -356,7 +356,7 @@ pub(super) fn tick(game: &Game<'_>) {
                 let ids = shape
                     .states
                     .iter()
-                    .map(|s| resolve(game, &s.rotated(placement.rotation)))
+                    .map(|s| resolve(game, &s.transformed(placement.rotation)))
                     .collect();
                 let (lo, hi) =
                     places::bounds(shape.min, shape.max, placement.origin, placement.rotation);

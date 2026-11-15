@@ -139,6 +139,11 @@ pub struct ViewModel {
     pub auto_tools_only_holding: bool,
     /// Auto Tools may also take a tool from the main inventory (off by default).
     pub auto_tools_from_inventory: bool,
+    /// The Baritone port is switched on (the tab's switch).
+    pub baritone_enabled: bool,
+    pub baritone: BaritoneView,
+    /// Every block of the game that can be mined, for the Mining section's picker.
+    pub blocks: std::sync::Arc<Vec<String>>,
     /// Explicit item ids allowed for Auto Eat; empty means nothing may be eaten.
     pub auto_eat_foods: Vec<String>,
     /// Safe foods from the live item registry: id, display name, hunger restored.
@@ -160,14 +165,16 @@ pub struct ViewModel {
     pub farm_safe: Option<[i32; 3]>,
     /// The composter found by the running farm's field, if any.
     pub farm_composter: Option<[i32; 3]>,
-    /// The blocks of the "own block" mining target.
-    pub mining_custom: Vec<String>,
     /// The schematic previews placed in this world: (index, label, shown, selected).
     pub schematic_places: Vec<(usize, String, bool, bool)>,
     /// Friends' shared previews of this world: label (file, friend, place) and shown here.
     pub schematic_friend_places: Vec<(String, bool)>,
     /// This player's choice of preview layers to draw, and the chosen layer.
     pub schematic_layers: (super::claim_borders_schematic_places::LayerMode, i32),
+    /// The verifier of the selected preview: `None` off; on, the name of the type it draws.
+    pub schematic_verify: Option<String>,
+    /// The area selection's size and regions, or what the save is doing.
+    pub schematic_selection: String,
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
     pub navigation_players: Vec<(u128, String)>,
@@ -265,6 +272,18 @@ impl PlayerRequest {
         self.command(current, language)
     }
 }
+/// What a button of the area selection does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionEdit {
+    /// The first corner of the current region: the block aimed at, or the one stood on.
+    Corner1,
+    Corner2,
+    /// A region of its own beside the others.
+    NewBox,
+    /// Read the area and write it as a schematic file.
+    Save,
+    Clear,
+}
 /// What a schematic editor button does to the selected preview.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SchematicEdit {
@@ -272,6 +291,8 @@ pub enum SchematicEdit {
     Move([i32; 3]),
     /// Turn it a quarter clockwise.
     Rotate,
+    /// Mirror it: across Z, across X, as it was.
+    Mirror,
     /// Bring its origin to where the player stands.
     Here,
     /// Show or hide it.
@@ -289,6 +310,41 @@ pub enum Action {
     SetAutoEatToHeal(bool),
     SetAutoToolsOnlyHolding(bool),
     SetAutoToolsFromInventory(bool),
+    SetBaritone(bool),
+    /// A Baritone command line (without the prefix) to run, built by a Baritone tab button.
+    Baritone(String),
+    /// Walk to the saved waypoint with this id (resolved where the waypoints are kept).
+    BaritoneWaypoint(u64),
+    /// Build the schematic file (a name in the schematics folder), at `origin` or at the player.
+    BaritoneBuild {
+        file: String,
+        origin: Option<[i32; 3]>,
+    },
+    /// Set entry `.0` of the port settings list to `.1`.
+    BaritoneSetting(usize, i32),
+    SetBaritoneProfile(bool),
+    /// The blocks chosen in the Mining section are now these.
+    BaritoneMineSet(Vec<String>),
+    /// A tunnel the way the player looks, built by the port's builder.
+    BaritoneTunnel {
+        length: u16,
+        width: u8,
+        height: u8,
+        floor: bool,
+    },
+    /// A bridge (a floor) the way the player looks.
+    BaritoneBridge {
+        length: u16,
+        width: u8,
+    },
+    /// Fly to these coordinates with the elytra (the port's `elytra` to a goal).
+    BaritoneElytra([i32; 3]),
+    /// Fly to the saved waypoint with this id.
+    BaritoneElytraWaypoint(u64),
+    /// A pond filled in the chosen pattern.
+    BaritoneDrain(super::claim_borders_draining::Config),
+    /// Mine these blocks with the port (and unload when the inventory is full).
+    BaritoneMine(Vec<String>),
     SetAutoEatFood(String, bool),
     SetPatPolicy(super::claim_borders_patting::Policy),
     SetPatNotify(bool),
@@ -305,7 +361,6 @@ pub enum Action {
     /// The safe point of the farm: set to where the player stands, or cleared.
     FarmSafe,
     /// The block under the crosshair goes into the "own block" mining target, or out of it.
-    MiningCustom,
     /// The schematic editor acting on the selected preview.
     SchematicEdit(SchematicEdit),
     /// Places `file` as a preview at `origin` (where the player stands when none), turned.
@@ -330,6 +385,12 @@ pub enum Action {
     FarmPlotRemove(usize),
     RefreshSchematics,
     SchematicInfo(bool),
+    /// The verifier: on or off, the next type to draw, the report to the clipboard.
+    SchematicVerify,
+    SchematicVerifyKind,
+    SchematicVerifyReport,
+    /// The area selection: corners, a region, save, clear.
+    SchematicSelection(SelectionEdit),
     /// Keeps this player's choice of preview layers (mode and layer).
     SchematicLayers(super::claim_borders_schematic_places::LayerMode, i32),
     LoadSchematic {
@@ -426,7 +487,6 @@ impl std::fmt::Debug for Action {
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
-            Self::MiningCustom => f.write_str("MiningCustom"),
             Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
             Self::SchematicEdit(e) => f.debug_tuple("SchematicEdit").field(e).finish(),
             Self::SchematicPreview { file, .. } => {
@@ -448,6 +508,44 @@ impl std::fmt::Debug for Action {
             Self::SetAutoEatToHeal(on) => f.debug_tuple("SetAutoEatToHeal").field(on).finish(),
             Self::SetAutoToolsOnlyHolding(on) => {
                 f.debug_tuple("SetAutoToolsOnlyHolding").field(on).finish()
+            }
+            Self::SetBaritone(on) => f.debug_tuple("SetBaritone").field(on).finish(),
+            Self::Baritone(line) => f.debug_tuple("Baritone").field(line).finish(),
+            Self::BaritoneWaypoint(id) => f.debug_tuple("BaritoneWaypoint").field(id).finish(),
+            Self::BaritoneBuild { file, origin } => f
+                .debug_struct("BaritoneBuild")
+                .field("file", file)
+                .field("origin", origin)
+                .finish(),
+            Self::BaritoneSetting(i, v) => {
+                f.debug_tuple("BaritoneSetting").field(i).field(v).finish()
+            }
+            Self::SetBaritoneProfile(on) => f.debug_tuple("SetBaritoneProfile").field(on).finish(),
+            Self::BaritoneMineSet(list) => {
+                f.debug_tuple("BaritoneMineSet").field(&list.len()).finish()
+            }
+            Self::BaritoneMine(list) => f.debug_tuple("BaritoneMine").field(&list.len()).finish(),
+            Self::BaritoneTunnel {
+                length,
+                width,
+                height,
+                floor,
+            } => f
+                .debug_struct("BaritoneTunnel")
+                .field("length", length)
+                .field("width", width)
+                .field("height", height)
+                .field("floor", floor)
+                .finish(),
+            Self::BaritoneBridge { length, width } => f
+                .debug_struct("BaritoneBridge")
+                .field("length", length)
+                .field("width", width)
+                .finish(),
+            Self::BaritoneDrain(config) => f.debug_tuple("BaritoneDrain").field(config).finish(),
+            Self::BaritoneElytra(at) => f.debug_tuple("BaritoneElytra").field(at).finish(),
+            Self::BaritoneElytraWaypoint(id) => {
+                f.debug_tuple("BaritoneElytraWaypoint").field(id).finish()
             }
             Self::SetAutoEatFood(item, on) => f
                 .debug_tuple("SetAutoEatFood")
@@ -473,6 +571,10 @@ impl std::fmt::Debug for Action {
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
+            Self::SchematicVerify => f.write_str("SchematicVerify"),
+            Self::SchematicVerifyKind => f.write_str("SchematicVerifyKind"),
+            Self::SchematicVerifyReport => f.write_str("SchematicVerifyReport"),
+            Self::SchematicSelection(e) => f.debug_tuple("SchematicSelection").field(e).finish(),
             Self::SchematicLayers(mode, layer) => f
                 .debug_tuple("SchematicLayers")
                 .field(mode)
@@ -585,6 +687,10 @@ pub enum Tab {
     Chat,
     Helpers,
     Experimental,
+    /// The Baritone navigation port (LGPL), a tab of its own under Experiments.
+    Baritone,
+    /// Schematics (Litematica-style), a tab of its own under Baritone.
+    Schematics,
     Trading,
     Settings,
 }
@@ -597,6 +703,8 @@ impl Tab {
             Self::Chat => language.text("Чат", "Chat"),
             Self::Helpers => language.text("Помощники", "QOL"),
             Self::Experimental => language.text("Эксперименты", "Experiments"),
+            Self::Baritone => "Baritone",
+            Self::Schematics => language.text("Схемы", "Schematics"),
             Self::Trading => language.text("Торговля", "Trading"),
             Self::Settings => language.text("Настройки", "Settings"),
         }
@@ -608,6 +716,8 @@ pub enum Field {
     NavigationX,
     NavigationY,
     NavigationZ,
+    /// Block name(s) for the Baritone tab's Mine button.
+    BaritoneBlock,
     Name,
     Color,
     PeerCode,
@@ -646,8 +756,9 @@ pub const PAGE_DOWN_KEY: &str = "key.keyboard.page.down";
 pub const RAIL_WIDTH: f32 = 128.0;
 /// A labelled rail must leave enough room for the editors, not just fit beside them.
 pub const RAIL_BREAKPOINT: f32 = 520.0;
-/// Seven destinations above Settings keep the targets they had with six at 244.
-pub const RAIL_MIN_HEIGHT: f32 = 268.0;
+/// Nine destinations above Settings keep every rail target at least 18 high (the readable
+/// minimum the other controls keep); shorter panels use the compact two-column menu instead.
+pub const RAIL_MIN_HEIGHT: f32 = 302.0;
 pub fn rail_width(panel_width: f32, panel_height: f32) -> f32 {
     if panel_width >= RAIL_BREAKPOINT && panel_height >= RAIL_MIN_HEIGHT {
         RAIL_WIDTH
@@ -655,13 +766,31 @@ pub fn rail_width(panel_width: f32, panel_height: f32) -> f32 {
         0.0
     }
 }
+/// The pages of the Farm mode of Automation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FarmSection {
+    #[default]
+    Crops,
+    Options,
+    Chests,
+    Plots,
+}
+impl FarmSection {
+    pub const ALL: [Self; 4] = [Self::Crops, Self::Options, Self::Chests, Self::Plots];
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Crops => language.text("Культуры", "Crops"),
+            Self::Options => language.text("Опции", "Options"),
+            Self::Chests => language.text("Сундуки", "Chests"),
+            Self::Plots => language.text("Участки", "Plots"),
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ExperimentalSection {
     #[default]
     Ores,
     Baritone,
-    /// The helpers that run the bot and the mouse on their own: resume, camera and clicking.
-    Automation,
 }
 /// The task groups of the Helpers tab, in the order they are offered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -671,16 +800,17 @@ pub enum HelperCategory {
     Survival,
     /// Keeping the hands equipped: hotbar refill and tool choice.
     Gear,
-    /// Keeping the connection: rejoining after it is lost.
-    Connection,
+    /// The helpers that steer the bot and the mouse, and rejoining after a lost connection.
+    /// Not the Experiments → Automation section (Farm and Drain), which is separate.
+    Controls,
 }
 impl HelperCategory {
-    pub const ALL: [HelperCategory; 3] = [Self::Survival, Self::Gear, Self::Connection];
+    pub const ALL: [HelperCategory; 3] = [Self::Survival, Self::Gear, Self::Controls];
     pub fn label(self, language: Language) -> &'static str {
         match self {
             Self::Survival => language.text("Выживание", "Survival"),
             Self::Gear => language.text("Снаряжение", "Gear"),
-            Self::Connection => language.text("Соединение", "Connection"),
+            Self::Controls => language.text("Управление", "Controls"),
         }
     }
     pub fn next(self, forward: bool) -> Self {
@@ -737,16 +867,82 @@ impl Helper {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum BaritoneMode {
+/// The sections of the Baritone tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BaritoneSection {
     #[default]
+    Tasks,
     Navigation,
     Mining,
     Tunnel,
     Bridge,
+    Build,
+    Settings,
+}
+impl BaritoneSection {
+    pub const ALL: [Self; 7] = [
+        Self::Tasks,
+        Self::Navigation,
+        Self::Mining,
+        Self::Tunnel,
+        Self::Bridge,
+        Self::Build,
+        Self::Settings,
+    ];
+    /// How many section buttons the selector shows at once.
+    pub const PER_PAGE: usize = 4;
+    pub fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Tasks => language.text("Задачи", "Tasks"),
+            Self::Navigation => language.text("Навигация", "Navigation"),
+            Self::Mining => language.text("Добыча", "Mining"),
+            Self::Tunnel => language.text("Тоннель", "Tunnel"),
+            Self::Bridge => language.text("Мост", "Bridge"),
+            Self::Build => language.text("Строить", "Build"),
+            Self::Settings => language.text("Настройки", "Settings"),
+        }
+    }
+    /// The page of the selector the section is on.
+    pub fn page(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0) / Self::PER_PAGE
+    }
+    pub const PAGES: usize = Self::ALL.len().div_ceil(Self::PER_PAGE);
+}
+/// What the port is doing and how it is set, as last read from it (empty while it is off).
+#[derive(Clone, Debug, Default)]
+pub struct BaritoneView {
+    pub process: Option<String>,
+    pub segment: Option<f64>,
+    pub goal: Option<f64>,
+    /// One value per `claim_borders_baritone_walk::SETTINGS` entry (a flag is 0 or 1).
+    pub values: Vec<i32>,
+    /// The port writes what its work costs to `profile.txt` once a second.
+    pub profile: bool,
+    /// The blocks chosen in Mining (ids).
+    pub mine: Vec<String>,
+}
+/// What the buttons of the Baritone tab ask the port to do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BaritoneCmd {
+    Build,
+    Tunnel,
+    Bridge,
+    Elytra,
+    Goto,
+    Mine,
+    Farm,
+    Explore,
+    Follow,
+    Come,
+    Pause,
+    Resume,
+    Cancel,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum BaritoneMode {
+    #[default]
     Farm,
     Drain,
-    Schematic,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -783,6 +979,26 @@ pub enum Control {
     AutoToolsOnlyHolding,
     /// Switches the inventory sourcing of Auto Tools.
     AutoToolsFromInventory,
+    /// The switch on the Baritone tab.
+    BaritoneEnable,
+    /// A command button on the Baritone tab.
+    BaritoneCmd(BaritoneCmd),
+    BaritoneSection(BaritoneSection),
+    /// The previous (false) or next (true) page of the section selector.
+    BaritoneSectionPage(bool),
+    /// A port setting: `.1` is the direction of a stepper (a flag toggles whichever it is).
+    BaritoneSetting(usize, bool),
+    BaritoneProfile,
+    /// A page of the Farm mode.
+    FarmSection(FarmSection),
+    /// A row of the Mining picker (index into the filtered rows).
+    BaritoneMineRow(usize),
+    /// The previous (false) or next (true) page of the Mining picker.
+    BaritoneMinePage(bool),
+    /// Empties the Mining choice.
+    BaritoneMineClear,
+    /// The previous (false) or next (true) schematic file of the Build section.
+    BaritoneFile(bool),
     AutoEatFoods,
     AutoEatFood(usize),
     AutoEatFoodPage(usize),
@@ -816,6 +1032,10 @@ pub enum Control {
     SchematicRefresh,
     SchematicRotation,
     SchematicMaterials,
+    SchematicVerify,
+    SchematicVerifyKind,
+    SchematicVerifyReport,
+    SchematicSelect(SelectionEdit),
     SchematicFolder,
     ConstructDirection,
     ConstructLength,
@@ -823,10 +1043,6 @@ pub enum Control {
     ConstructHeight,
     ConstructFloor,
     BaritoneMode(BaritoneMode),
-    MiningTarget(u8),
-    /// Adds the block under the crosshair to the "own block" mining target (or takes it out;
-    /// aimed at nothing, clears the list).
-    MiningCustom,
     /// The schematic editor's buttons (on the selected preview).
     SchematicEdit(SchematicEdit),
     /// Places the chosen file as a preview (at XYZ, or where the player stands).
@@ -843,7 +1059,6 @@ pub enum Control {
     SchematicPlaceShow(usize),
     SchematicPlaceRemove(usize),
     SchematicFriendShow(usize),
-    MiningPage,
     NavigationPlayer,
     NavigationWaypoint,
     NavigationPlayerChoice(usize),
@@ -922,6 +1137,8 @@ pub enum Control {
     ChatPresence,
     ChatPresenceStyle,
     ChatDeaths,
+    /// Global chat off: only friends and important players' public messages are shown.
+    ChatGlobal,
     ChatRepeats,
     ChatPrefix,
     ChatReset,
@@ -988,12 +1205,26 @@ pub struct Menu {
     pub construct_floor: bool,
     pub baritone_mode: BaritoneMode,
     /// Selected mining targets, one bit per `mining::target` index.
-    pub mining_targets: u32,
-    pub mining_page: usize,
     pub navigation_player: Option<u128>,
     pub navigation_x: String,
     pub navigation_y: String,
     pub navigation_z: String,
+    pub baritone_block: String,
+    pub baritone_mine_page: usize,
+    /// Navigation flies (the elytra) instead of walking: Go and the Start key then fly.
+    pub navigation_elytra: bool,
+    pub farm_section: FarmSection,
+    /// The blocks chosen in Mining as of the last snapshot (the action keys use them, menu closed).
+    pub baritone_mine_cache: Vec<String>,
+    /// The schematic files as of the last snapshot (Start in Build, with the menu closed).
+    pub baritone_files_cache: Vec<String>,
+    /// The player chosen in Navigation (its name, for `follow player`).
+    pub navigation_player_name: Option<String>,
+    /// The action keys act on the Baritone tab (the last of it and Automation on screen).
+    pub keys_for_baritone_tab: bool,
+    pub baritone_section: BaritoneSection,
+    pub baritone_section_page: usize,
+    pub baritone_file: usize,
     pub navigation_waypoint: Option<u64>,
     pub navigation_choices: Option<bool>, // false: waypoints, true: players
     pub navigation_choices_page: usize,
@@ -1060,6 +1291,17 @@ impl Default for Menu {
             navigation_x: String::new(),
             navigation_y: String::new(),
             navigation_z: String::new(),
+            baritone_block: String::new(),
+            baritone_mine_page: 0,
+            navigation_elytra: false,
+            farm_section: FarmSection::Crops,
+            baritone_mine_cache: Vec::new(),
+            baritone_files_cache: Vec::new(),
+            navigation_player_name: None,
+            keys_for_baritone_tab: false,
+            baritone_section: BaritoneSection::Tasks,
+            baritone_section_page: 0,
+            baritone_file: 0,
             navigation_waypoint: None,
             navigation_choices: None,
             navigation_choices_page: 0,
@@ -1067,9 +1309,7 @@ impl Default for Menu {
             schematic_place_page: 0,
             farm_plot_page: 0,
             navigation_player: None,
-            baritone_mode: BaritoneMode::Navigation,
-            mining_targets: 1,
-            mining_page: 0,
+            baritone_mode: BaritoneMode::Farm,
             construct_direction: super::claim_borders_construction::Direction::North,
             construct_length: 16,
             construct_width: 1,
@@ -1115,7 +1355,7 @@ impl Default for Menu {
     }
 }
 /// Where the Schematics tab's panel starts, and the room kept below it (status and key hint).
-const SCHEMATIC_TOP: f32 = 100.0;
+const SCHEMATIC_TOP: f32 = 60.0;
 const SCHEMATIC_BOTTOM: f32 = 48.0;
 /// The files the Schematics tab's list shows at once, below its header row.
 fn schematic_list_rows(top: f32, limit: f32) -> usize {
@@ -1198,6 +1438,193 @@ fn merge_steppers(widgets: Vec<Widget>) -> Vec<Widget> {
 fn contains(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[1] >= r[1] && p[0] < r[0] + r[2] && p[1] < r[1] + r[3]
 }
+#[cfg(test)]
+impl Menu {
+    /// A copy of the menu showing `section` of the Baritone tab (for tests of the action keys).
+    fn clone_for(&self, section: BaritoneSection) -> Menu {
+        let mut menu = Menu::default();
+        menu.keep_baritone(self);
+        menu.tab = Tab::Baritone;
+        menu.baritone_section = section;
+        menu
+    }
+}
+/// What the J menu shows, kept between openings and between sessions: the tab and the page of each
+/// tab that has pages, as `tab=baritone;bs=mining;...`. Unknown or missing keys are ignored.
+impl Menu {
+    pub fn view_state(&self) -> String {
+        let tab = match self.tab {
+            Tab::Waypoints => "waypoints",
+            Tab::Party => "party",
+            Tab::Claims => "claims",
+            Tab::Chat => "chat",
+            Tab::Helpers => "helpers",
+            Tab::Experimental => "experimental",
+            Tab::Baritone => "baritone",
+            Tab::Schematics => "schematics",
+            Tab::Trading => "trading",
+            Tab::Settings => "settings",
+        };
+        let exp = match self.experimental_section {
+            ExperimentalSection::Ores => "ores",
+            ExperimentalSection::Baritone => "automation",
+        };
+        let hc = match self.helper_category {
+            HelperCategory::Survival => "survival",
+            HelperCategory::Gear => "gear",
+            HelperCategory::Controls => "controls",
+        };
+        let bs = match self.baritone_section {
+            BaritoneSection::Tasks => "tasks",
+            BaritoneSection::Navigation => "navigation",
+            BaritoneSection::Mining => "mining",
+            BaritoneSection::Tunnel => "tunnel",
+            BaritoneSection::Bridge => "bridge",
+            BaritoneSection::Build => "build",
+            BaritoneSection::Settings => "settings",
+        };
+        let bm = match self.baritone_mode {
+            BaritoneMode::Farm => "farm",
+            BaritoneMode::Drain => "drain",
+        };
+        let fs = match self.farm_section {
+            FarmSection::Crops => "crops",
+            FarmSection::Options => "options",
+            FarmSection::Chests => "chests",
+            FarmSection::Plots => "plots",
+        };
+        format!(
+            "tab={tab};exp={exp};hc={hc};bs={bs};bm={bm};fs={fs};set={};chat={};claims={};party={};trade={}",
+            self.settings_section,
+            self.chat_section as u8,
+            self.claims_section as u8,
+            self.party_filter as u8,
+            self.trading_group,
+        )
+    }
+    /// Puts back what `view_state` kept.
+    pub fn restore_view(&mut self, text: &str) {
+        for pair in text.split(';') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            let number = || value.parse::<u8>().ok();
+            match key {
+                "tab" => {
+                    self.tab = match value {
+                        "waypoints" => Tab::Waypoints,
+                        "party" => Tab::Party,
+                        "claims" => Tab::Claims,
+                        "chat" => Tab::Chat,
+                        "helpers" => Tab::Helpers,
+                        "experimental" => Tab::Experimental,
+                        "baritone" => Tab::Baritone,
+                        "schematics" => Tab::Schematics,
+                        "trading" => Tab::Trading,
+                        "settings" => Tab::Settings,
+                        _ => self.tab,
+                    };
+                    self.keys_for_baritone_tab = match self.tab {
+                        Tab::Baritone => true,
+                        Tab::Experimental | Tab::Schematics => false,
+                        _ => self.keys_for_baritone_tab,
+                    };
+                }
+                "exp" => {
+                    self.experimental_section = match value {
+                        "ores" => ExperimentalSection::Ores,
+                        "automation" => ExperimentalSection::Baritone,
+                        // Older saves kept the helpers as a section of Experiments: that
+                        // view is now the QOL tab.
+                        "helpers" => {
+                            if self.tab == Tab::Experimental {
+                                self.tab = Tab::Helpers;
+                            }
+                            self.experimental_section
+                        }
+                        _ => self.experimental_section,
+                    }
+                }
+                "hc" => {
+                    self.helper_category = match value {
+                        "survival" => HelperCategory::Survival,
+                        "gear" => HelperCategory::Gear,
+                        "controls" => HelperCategory::Controls,
+                        _ => self.helper_category,
+                    }
+                }
+                "bs" => {
+                    if let Some(section) = BaritoneSection::ALL
+                        .into_iter()
+                        .find(|s| format!("{s:?}").eq_ignore_ascii_case(value))
+                    {
+                        self.baritone_section = section;
+                        self.baritone_section_page = section.page();
+                    }
+                }
+                "bm" => {
+                    self.baritone_mode = match value {
+                        "farm" => BaritoneMode::Farm,
+                        "drain" => BaritoneMode::Drain,
+                        _ => self.baritone_mode,
+                    }
+                }
+                "fs" => {
+                    if let Some(section) = FarmSection::ALL
+                        .into_iter()
+                        .find(|s| format!("{s:?}").eq_ignore_ascii_case(value))
+                    {
+                        self.farm_section = section;
+                    }
+                }
+                "set" => {
+                    if let Some(n) = number().filter(|n| *n < 8) {
+                        self.settings_section = n;
+                    }
+                }
+                "chat" => {
+                    self.chat_section = match number() {
+                        Some(0) => ChatSection::Appearance,
+                        Some(1) => ChatSection::Notifications,
+                        Some(2) => ChatSection::Spam,
+                        Some(3) => ChatSection::DeepL,
+                        Some(4) => ChatSection::Priority,
+                        _ => self.chat_section,
+                    }
+                }
+                "claims" => {
+                    self.claims_section = match number() {
+                        Some(0) => ClaimsSection::List,
+                        Some(1) => ClaimsSection::Map,
+                        Some(2) => ClaimsSection::Borders,
+                        Some(3) => ClaimsSection::Colours,
+                        Some(4) => ClaimsSection::Storage,
+                        _ => self.claims_section,
+                    }
+                }
+                "party" => {
+                    self.party_filter = match number() {
+                        Some(0) => PartyFilter::Friends,
+                        Some(1) => PartyFilter::Users,
+                        Some(2) => PartyFilter::Invitations,
+                        Some(3) => PartyFilter::Important,
+                        _ => self.party_filter,
+                    }
+                }
+                "trade" => {
+                    if let Some(n) = number().filter(|n| *n < 16) {
+                        self.trading_group = n;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    /// Carries the tab and its pages over to a fresh menu, as `keep_baritone` does the settings.
+    pub fn keep_view(&mut self, from: &Menu) {
+        self.restore_view(&from.view_state());
+    }
+}
 impl Menu {
     pub fn clear_navigation_coordinates(&mut self) {
         self.navigation_x.clear();
@@ -1235,19 +1662,29 @@ impl Menu {
         self.construct_height = from.construct_height;
         self.construct_floor = from.construct_floor;
         self.baritone_mode = from.baritone_mode;
-        self.mining_targets = from.mining_targets;
-        self.mining_page = from.mining_page;
         self.navigation_player = from.navigation_player;
         self.navigation_waypoint = from.navigation_waypoint;
         self.navigation_x = from.navigation_x.clone();
         self.navigation_y = from.navigation_y.clone();
         self.navigation_z = from.navigation_z.clone();
+        self.baritone_block = from.baritone_block.clone();
+        self.baritone_mine_page = from.baritone_mine_page;
+        self.farm_section = from.farm_section;
+        self.baritone_mine_cache = from.baritone_mine_cache.clone();
+        self.baritone_files_cache = from.baritone_files_cache.clone();
+        self.navigation_player_name = from.navigation_player_name.clone();
+        self.keys_for_baritone_tab = from.keys_for_baritone_tab;
+        self.baritone_section = from.baritone_section;
+        self.baritone_section_page = from.baritone_section_page;
+        self.baritone_file = from.baritone_file;
+        self.keep_view(from);
     }
     /// Footer line of the Baritone tabs: what each action key is bound to.
     /// Whether the Baritone tab is on screen with no text field taking the keys.
     pub fn baritone_keys_active(&self) -> bool {
-        self.tab == Tab::Experimental
-            && self.experimental_section == ExperimentalSection::Baritone
+        (matches!(self.tab, Tab::Baritone | Tab::Schematics)
+            || (self.tab == Tab::Experimental
+                && self.experimental_section == ExperimentalSection::Baritone))
             && self.focus.is_none()
             && self.navigation_choices.is_none()
             && !self.experiments_prompt
@@ -1274,73 +1711,126 @@ impl Menu {
         .collect::<Vec<_>>()
         .join(" · ")
     }
+    /// Whether the action keys act on the Baritone tab (the last of it and Automation on screen).
+    pub fn keys_scope_is_baritone_tab(&self) -> bool {
+        self.tab == Tab::Baritone || (self.tab != Tab::Experimental && self.keys_for_baritone_tab)
+    }
+    /// What Start does on the Baritone tab: the section on screen runs its own task. Preview does
+    /// nothing there (the port draws its path itself, see Settings).
+    fn baritone_tab_request(&self, running: bool) -> Result<Action, String> {
+        let language = self.language;
+        if !running {
+            return Err(language
+                .text(
+                    "Предпросмотра нет: Baritone рисует путь сам (Настройки → Рисовать путь)",
+                    "No preview: Baritone draws its path itself (Settings → Draw the path)",
+                )
+                .into());
+        }
+        let missing = || {
+            language
+                .text(
+                    "Заполните раздел или нажмите его кнопку",
+                    "Fill in the section or press its button",
+                )
+                .to_owned()
+        };
+        match self.baritone_section {
+            BaritoneSection::Navigation => self.baritone_goto().ok_or_else(|| {
+                language
+                    .text(
+                        "Введите X, Y, Z или выберите метку или игрока",
+                        "Enter X, Y, Z or choose a waypoint or a player",
+                    )
+                    .to_owned()
+            }),
+            BaritoneSection::Mining => {
+                if self.baritone_mine_cache.is_empty() {
+                    Err(language
+                        .text("Выберите, что добывать", "Choose what to mine")
+                        .to_owned())
+                } else {
+                    Ok(Action::BaritoneMine(self.baritone_mine_cache.clone()))
+                }
+            }
+            BaritoneSection::Tunnel => Ok(self.baritone_tunnel()),
+            BaritoneSection::Bridge => Ok(self.baritone_bridge()),
+            // Start in Build builds the chosen file (at the typed X/Y/Z, or where you stand).
+            BaritoneSection::Build => self
+                .baritone_build_from(&self.baritone_files_cache)
+                .ok_or_else(|| {
+                    language
+                        .text(
+                            "Выберите схему (имя без пробелов) и укажите X Y Z целиком или оставьте пустыми",
+                            "Choose a schematic (a name without spaces) and give X Y Z whole or leave them empty",
+                        )
+                        .to_owned()
+                }),
+            // Start on the home page takes up what Pause held.
+            BaritoneSection::Tasks => Ok(Action::Baritone("resume".into())),
+            BaritoneSection::Settings => Err(missing()),
+        }
+    }
+    /// The Elytra button of Navigation: fly to the chosen waypoint or the typed X/Y/Z (a player
+    /// is followed on foot, not flown to).
+    fn baritone_elytra(&self) -> Option<Action> {
+        if self.navigation_player.is_some() {
+            return None;
+        }
+        if let Some(id) = self.navigation_waypoint {
+            return Some(Action::BaritoneElytraWaypoint(id));
+        }
+        let [x, y, z] = self.navigation_position()?;
+        Some(Action::BaritoneElytra([
+            x.floor() as i32,
+            y.floor() as i32,
+            z.floor() as i32,
+        ]))
+    }
+    /// The Tunnel button: the sizes chosen in the section.
+    fn baritone_tunnel(&self) -> Action {
+        Action::BaritoneTunnel {
+            length: self.construct_length,
+            width: self.construct_width,
+            height: self.construct_height,
+            floor: self.construct_floor,
+        }
+    }
+    /// The Bridge button.
+    fn baritone_bridge(&self) -> Action {
+        Action::BaritoneBridge {
+            length: self.construct_length,
+            width: self.construct_width,
+        }
+    }
+    /// The Go button of Navigation: a chosen player is followed, a chosen waypoint is walked to,
+    /// otherwise the typed X/Y/Z.
+    fn baritone_goto(&self) -> Option<Action> {
+        if self.navigation_player.is_some() {
+            let name = self.navigation_player_name.as_ref()?;
+            return Some(Action::Baritone(format!("follow player {name}")));
+        }
+        if self.navigation_elytra {
+            return self.baritone_elytra();
+        }
+        if let Some(id) = self.navigation_waypoint {
+            return Some(Action::BaritoneWaypoint(id));
+        }
+        self.baritone_line(BaritoneCmd::Goto).map(Action::Baritone)
+    }
     /// The task the Baritone tab on screen describes, built from its current
     /// settings. The action keys call this, so they work with the menu closed;
     /// the consent, world and tool checks stay in the drivers that run it.
     pub fn baritone_request(&self, running: bool) -> Result<Action, String> {
-        use super::claim_borders_construction as construction;
         use super::claim_borders_navigation::Goal;
         let language = self.language;
+        if self.tab == Tab::Schematics {
+            return self.schematic_request(running);
+        }
+        if self.keys_scope_is_baritone_tab() {
+            return self.baritone_tab_request(running);
+        }
         match self.baritone_mode {
-            BaritoneMode::Navigation => {
-                let goal = if let Some(id) = self.navigation_player {
-                    Goal::Follow(id)
-                } else if let Some(id) = self.navigation_waypoint {
-                    Goal::Waypoint(id)
-                } else {
-                    let position = self.navigation_position().ok_or_else(|| {
-                        language
-                            .text(
-                                "Введите X, Y, Z, например: 120 64 -350",
-                                "Enter X, Y, Z, for example: 120 64 -350",
-                            )
-                            .to_owned()
-                    })?;
-                    Goal::Coordinates(super::claim_borders_navigation::block(position))
-                };
-                Ok(Action::Navigate { goal, running })
-            }
-            BaritoneMode::Mining => {
-                use super::claim_borders_mining as mining;
-                let targets = self.mining_targets & mining::ALL;
-                if targets == 0 {
-                    return Err(language
-                        .text("Выберите, что добывать", "Choose what to mine")
-                        .into());
-                }
-                let ore = if targets.count_ones() == 1 {
-                    targets.trailing_zeros() as u8
-                } else {
-                    mining::ANY
-                };
-                Ok(Action::Navigate {
-                    goal: Goal::Mine {
-                        ore,
-                        targets,
-                        // Mining has no block limit: start and stop with the action keys.
-                        limit: 0,
-                    },
-                    running,
-                })
-            }
-            BaritoneMode::Tunnel | BaritoneMode::Bridge => {
-                let bridge = self.baritone_mode == BaritoneMode::Bridge;
-                Ok(Action::Navigate {
-                    goal: Goal::Construct(construction::Config {
-                        kind: if bridge {
-                            construction::Kind::Bridge
-                        } else {
-                            construction::Kind::Tunnel
-                        },
-                        direction: self.construct_direction,
-                        width: self.construct_width,
-                        height: if bridge { 2 } else { self.construct_height },
-                        length: self.construct_length,
-                        fill_floor: bridge || self.construct_floor,
-                    }),
-                    running,
-                })
-            }
             BaritoneMode::Farm => Ok(Action::Navigate {
                 goal: Goal::Farm(super::claim_borders_farming::Config {
                     crops: self.farm_crops,
@@ -1354,39 +1844,58 @@ impl Menu {
                 }),
                 running,
             }),
-            BaritoneMode::Drain => Ok(Action::Navigate {
-                goal: Goal::Drain(super::claim_borders_draining::Config {
+            // Drain is built by the port; it has no preview.
+            BaritoneMode::Drain if !running => Err(language
+                .text(
+                    "Предпросмотра нет: Baritone рисует путь сам",
+                    "No preview: Baritone draws its path itself",
+                )
+                .to_owned()),
+            BaritoneMode::Drain => Ok(Action::BaritoneDrain(
+                super::claim_borders_draining::Config {
                     radius: self.drain_radius,
                     pattern: self.drain_pattern,
                     spacing: self.drain_spacing,
-                }),
-                running,
-            }),
-            BaritoneMode::Schematic => {
-                let filename = self.schematic_file.clone().ok_or_else(|| {
-                    language
-                        .text("Сначала выберите файл", "Select a file first")
-                        .to_owned()
-                })?;
-                let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
-                let origin = <[&str; 3]>::try_from(values.as_slice())
-                    .ok()
-                    .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
-                    .filter(|p| p.iter().all(|v| v.fract() == 0.0))
-                    .map(|p| p.map(|v| v as i32))
-                    .ok_or_else(|| language.text("Введите X Y Z", "Enter X Y Z").to_owned())?;
-                Ok(Action::LoadSchematic {
-                    filename,
-                    origin,
-                    rotation: self.schematic_rotation,
-                    running,
-                })
-            }
+                },
+            )),
         }
+    }
+    /// Start on the Schematics tab: build the chosen file at the typed place.
+    fn schematic_request(&self, running: bool) -> Result<Action, String> {
+        let language = self.language;
+        let filename = self.schematic_file.clone().ok_or_else(|| {
+            language
+                .text("Сначала выберите файл", "Select a file first")
+                .to_owned()
+        })?;
+        let values = self.schematic_origin.split_whitespace().collect::<Vec<_>>();
+        let origin = <[&str; 3]>::try_from(values.as_slice())
+            .ok()
+            .and_then(|v| super::claim_borders_waypoints::parse_coordinates(v).ok())
+            .filter(|p| p.iter().all(|v| v.fract() == 0.0))
+            .map(|p| p.map(|v| v as i32))
+            .ok_or_else(|| language.text("Введите X Y Z", "Enter X Y Z").to_owned())?;
+        Ok(Action::LoadSchematic {
+            filename,
+            origin,
+            rotation: self.schematic_rotation,
+            running,
+        })
     }
     /// Keep a selection attached to its identity while snapshots reorder or remove rows.
     pub fn reconcile(&mut self, previous: &ViewModel, next: &ViewModel, height: f32) {
         self.language = next.language;
+        // A restored tab that needs the experiments consent is not shown without it.
+        if matches!(
+            self.tab,
+            Tab::Experimental | Tab::Baritone | Tab::Schematics
+        ) && !next.experiments_accepted
+        {
+            self.tab = Tab::Waypoints;
+            self.keys_for_baritone_tab = false;
+        }
+        self.baritone_mine_cache.clone_from(&next.baritone.mine);
+        self.baritone_files_cache.clone_from(&next.schematic_files);
         self.selected = self.selected.and_then(|index| match self.tab {
             Tab::Waypoints => previous
                 .waypoints
@@ -1405,6 +1914,8 @@ impl Menu {
             | Tab::Chat
             | Tab::Helpers
             | Tab::Experimental
+            | Tab::Baritone
+            | Tab::Schematics
             | Tab::Trading
             | Tab::Settings => None,
         });
@@ -1423,6 +1934,7 @@ impl Menu {
             .is_some_and(|id| !next.navigation_players.iter().any(|(uuid, _)| *uuid == id))
         {
             self.navigation_player = None;
+            self.navigation_player_name = None;
             target_missing = true;
         }
         if self
@@ -1461,7 +1973,7 @@ impl Menu {
     pub fn clamp_page(&mut self, model: &ViewModel, height: f32) {
         let pages = self.count(model).div_ceil(self.page_size(height)).max(1);
         self.page = self.page.min(pages - 1);
-        if self.helper_rows_on_screen() {
+        if self.tab == Tab::Helpers {
             self.helper_page = self
                 .helper_page
                 .min(self.helper_page_count(model, height) - 1);
@@ -1494,6 +2006,8 @@ impl Menu {
             | Tab::Chat
             | Tab::Helpers
             | Tab::Experimental
+            | Tab::Baritone
+            | Tab::Schematics
             | Tab::Trading
             | Tab::Settings => 0,
         }
@@ -1518,14 +2032,15 @@ impl Menu {
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
         let sidebar = rail_width(panel_w, panel_h);
-        let nav_step = ((panel_h - 104.0) / 7.0).min(28.0);
+        let nav_step = ((panel_h - 104.0) / 9.0).min(28.0);
         let x = (width - panel_w) * 0.5;
         let y = (height - panel_h) * 0.5;
         let mut widgets = self.legacy_layout(model, panel_w - sidebar, panel_h);
         for widget in &mut widgets {
             if sidebar > 0.0
-                && self.tab == Tab::Experimental
-                && self.experimental_section == ExperimentalSection::Baritone
+                && (matches!(self.tab, Tab::Baritone | Tab::Schematics)
+                    || (self.tab == Tab::Experimental
+                        && self.experimental_section == ExperimentalSection::Baritone))
                 && widget.control.is_none()
                 && widget.rect[1] == panel_h - 24.0
             {
@@ -1549,7 +2064,9 @@ impl Menu {
                     Tab::Trading => 4,
                     Tab::Helpers => 5,
                     Tab::Experimental => 6,
-                    Tab::Settings => 7,
+                    Tab::Baritone => 7,
+                    Tab::Schematics => 8,
+                    Tab::Settings => 9,
                 };
                 widget.rect = [
                     x + 6.0,
@@ -1574,13 +2091,22 @@ impl Menu {
             };
             if self.navigation_menu {
                 let mut index = 0;
+                // Every destination in two columns: the rows shrink to fit the panel rather
+                // than running past it when there are many destinations.
+                let rows = widgets
+                    .iter()
+                    .filter(|w| navigation(w.control))
+                    .count()
+                    .div_ceil(2)
+                    .max(1);
+                let row_step = ((panel_h - 64.0) / rows as f32).floor().min(30.0);
                 widgets.retain_mut(|widget| {
                     if navigation(widget.control) {
                         widget.rect = [
                             x + 8.0 + (index % 2) as f32 * (panel_w - 16.0) / 2.0,
-                            y + 56.0 + (index / 2) as f32 * 30.0,
+                            y + 56.0 + (index / 2) as f32 * row_step,
                             (panel_w - 20.0) / 2.0,
-                            26.0,
+                            row_step - 4.0,
                         ];
                         index += 1;
                         return true;
@@ -1608,8 +2134,8 @@ impl Menu {
                 return widgets;
             }
         }
-        if self.tab == Tab::Experimental
-            && self.baritone_mode == BaritoneMode::Navigation
+        if self.tab == Tab::Baritone
+            && self.baritone_section == BaritoneSection::Navigation
             && let Some(players) = self.navigation_choices
         {
             let anchor = widgets.iter().find(|w| {
@@ -1691,6 +2217,55 @@ impl Menu {
             }
         }
         widgets
+    }
+    /// The Schematics tab: the panel below, the status line and the key hint.
+    fn schematics_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        mut out: Vec<Widget>,
+    ) -> Vec<Widget> {
+        self.schematic_panel(
+            model,
+            x,
+            w,
+            SCHEMATIC_TOP,
+            height - SCHEMATIC_BOTTOM,
+            &mut out,
+        );
+        let eat_w = 92.0_f32.min(w * 0.4);
+        out.push(widget(
+            [x, height - 44.0, w - eat_w - 4.0, 18.0],
+            &model.navigation_status,
+            None,
+            false,
+        ));
+        out.push(widget(
+            [x + w - eat_w, height - 44.0, eat_w, 18.0],
+            localized!(
+                self.language,
+                "Еда: {}",
+                "Eat: {}",
+                if model.auto_eat {
+                    self.language.text("вкл", "on")
+                } else {
+                    self.language.text("выкл", "off")
+                }
+            ),
+            Some(Control::AutoEat),
+            model.auto_eat,
+        ));
+        let mut hint = widget(
+            [x, height - 24.0, (w - 100.0).max(1.0), 18.0],
+            self.hotkey_hint(model),
+            None,
+            false,
+        );
+        hint.muted = true;
+        out.push(hint);
+        out
     }
     /// The Schematics tab, in two columns. Left: the files of the schematics folder as a list
     /// (the mouse wheel scrolls it; a click chooses one), with Refresh and Open folder above it.
@@ -1850,12 +2425,13 @@ impl Menu {
         if y + row <= limit {
             let edits = [
                 (l.text("Повернуть", "Turn"), SchematicEdit::Rotate),
+                (l.text("Отразить", "Mirror"), SchematicEdit::Mirror),
                 (l.text("Ко мне", "To me"), SchematicEdit::Here),
                 (l.text("Вид", "View"), SchematicEdit::Look),
             ];
             for (i, (label, edit)) in edits.into_iter().enumerate() {
                 out.push(widget(
-                    cells(3, i, y),
+                    cells(4, i, y),
                     label,
                     Some(Control::SchematicEdit(edit)),
                     false,
@@ -1919,6 +2495,69 @@ impl Menu {
                 ));
             }
             y += row + 3.0;
+        }
+        // Litematica's tools, on one row: the verifier of the preview against the world, the
+        // corners of an area of the world, and saving it as a schematic. A second row has the
+        // rest of them while they are in use.
+        if y + row <= limit {
+            out.push(widget(
+                cells(4, 0, y),
+                if model.schematic_verify.is_some() {
+                    l.text("Проверка: вкл", "Verify: on")
+                } else {
+                    l.text("Проверка", "Verify")
+                },
+                Some(Control::SchematicVerify),
+                model.schematic_verify.is_some(),
+            ));
+            for (i, (label, edit)) in [
+                (l.text("Угол 1", "Corner 1"), SelectionEdit::Corner1),
+                (l.text("Угол 2", "Corner 2"), SelectionEdit::Corner2),
+                (l.text("Сохранить", "Save area"), SelectionEdit::Save),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    cells(4, i + 1, y),
+                    label,
+                    Some(Control::SchematicSelect(edit)),
+                    false,
+                ));
+            }
+            y += row;
+            let in_use = model.schematic_verify.is_some() || !model.schematic_selection.is_empty();
+            if in_use && y + row <= limit {
+                if let Some(kind) = &model.schematic_verify {
+                    out.push(widget(
+                        cells(4, 0, y),
+                        localized!(l, "Тип: {}", "Type: {}", kind),
+                        Some(Control::SchematicVerifyKind),
+                        false,
+                    ));
+                    out.push(widget(
+                        cells(4, 1, y),
+                        l.text("Отчёт", "Report"),
+                        Some(Control::SchematicVerifyReport),
+                        false,
+                    ));
+                }
+                if !model.schematic_selection.is_empty() {
+                    out.push(widget(
+                        cells(4, 2, y),
+                        l.text("Регион +", "Region +"),
+                        Some(Control::SchematicSelect(SelectionEdit::NewBox)),
+                        false,
+                    ));
+                    out.push(widget(
+                        cells(4, 3, y),
+                        l.text("Сбросить", "Clear"),
+                        Some(Control::SchematicSelect(SelectionEdit::Clear)),
+                        false,
+                    ));
+                }
+                y += row;
+            }
         }
         // The previews of this world: the player's own, then friends' (show or hide only), a
         // page at a time with the pager on the last line when they do not fit.
@@ -2191,6 +2830,11 @@ impl Menu {
                 Control::Tab(Tab::Experimental),
                 self.language.text("Эксперименты", "Experiments"),
             ),
+            (Control::Tab(Tab::Baritone), "Baritone"),
+            (
+                Control::Tab(Tab::Schematics),
+                self.language.text("Схемы", "Schematics"),
+            ),
             (
                 Control::Tab(Tab::Trading),
                 self.language.text("Торговля", "Trading"),
@@ -2229,6 +2873,12 @@ impl Menu {
         }
         if self.tab == Tab::Experimental {
             return self.experimental_layout(model, x, w, height, out);
+        }
+        if self.tab == Tab::Baritone {
+            return self.baritone_layout(model, x, w, out, height);
+        }
+        if self.tab == Tab::Schematics {
+            return self.schematics_layout(model, x, w, height, out);
         }
         if self.tab == Tab::Party {
             return self.party_layout(model, width, height, out);
@@ -3338,6 +3988,21 @@ impl Menu {
                     self.language.text("Сдвиг Y", "Y offset"),
                     p.offset_y.to_string(),
                 ),
+                vec![(
+                    localized!(
+                        self.language,
+                        "Глобальный чат: {}",
+                        "Global chat: {}",
+                        if p.hide_global {
+                            self.language
+                                .text("выкл (только друзья)", "off (friends only)")
+                        } else {
+                            self.language.text("вкл", "on")
+                        }
+                    ),
+                    Control::ChatGlobal,
+                    p.hide_global,
+                )],
             ],
             ChatSection::Notifications => vec![
                 vec![(
@@ -3568,6 +4233,760 @@ impl Menu {
         }
         out
     }
+    /// The Build button: the chosen schematic file, at the typed X/Y/Z or, with the three empty,
+    /// at the player. A file name with a space is refused (the port reads one word).
+    fn baritone_build(&self, model: &ViewModel) -> Option<Action> {
+        self.baritone_build_from(&model.schematic_files)
+    }
+    fn baritone_build_from(&self, files: &[String]) -> Option<Action> {
+        let n = files.len();
+        let file = files.get(self.baritone_file.min(n.checked_sub(1)?))?;
+        if file.is_empty() || file.chars().any(char::is_whitespace) {
+            return None;
+        }
+        let typed = [&self.navigation_x, &self.navigation_y, &self.navigation_z];
+        let origin = if typed.iter().all(|v| v.trim().is_empty()) {
+            None
+        } else {
+            let [x, y, z] = self.navigation_position()?;
+            Some([x.floor() as i32, y.floor() as i32, z.floor() as i32])
+        };
+        Some(Action::BaritoneBuild {
+            file: file.clone(),
+            origin,
+        })
+    }
+    /// The command line (without the `#`) a Baritone tab button runs; None when its input is
+    /// missing or malformed, so a half-typed destination or block never starts anything.
+    pub fn baritone_line(&self, cmd: BaritoneCmd) -> Option<String> {
+        Some(match cmd {
+            BaritoneCmd::Goto => {
+                let [x, y, z] = self.navigation_position()?;
+                format!(
+                    "goto {} {} {}",
+                    x.floor() as i32,
+                    y.floor() as i32,
+                    z.floor() as i32
+                )
+            }
+            BaritoneCmd::Mine => {
+                super::claim_borders_mine_picker::mine_line(&self.baritone_mine_cache)?
+            }
+            BaritoneCmd::Build => return None,
+            BaritoneCmd::Tunnel | BaritoneCmd::Bridge | BaritoneCmd::Elytra => return None,
+            BaritoneCmd::Farm => "farm".into(),
+            BaritoneCmd::Explore => "explore".into(),
+            BaritoneCmd::Follow => "follow players".into(),
+            BaritoneCmd::Come => "come".into(),
+            BaritoneCmd::Pause => "pause".into(),
+            BaritoneCmd::Resume => "resume".into(),
+            BaritoneCmd::Cancel => "cancel".into(),
+        })
+    }
+    /// The Baritone tab: the navigation port taken from the Baritone project (LGPL-3.0). A row
+    /// of sections (four at a time, with arrows), the section's controls and, at the foot, what
+    /// the port is doing.
+    fn baritone_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        mut out: Vec<Widget>,
+        height: f32,
+    ) -> Vec<Widget> {
+        use super::claim_borders_baritone_walk as walk;
+        let l = self.language;
+        let gap = 4.0;
+        let button = |out: &mut Vec<Widget>, rect: [f32; 4], text: &str, cmd: BaritoneCmd| {
+            out.push(widget(rect, text, Some(Control::BaritoneCmd(cmd)), false));
+        };
+        // The sections, four at a time between two arrows.
+        let arrow = 22.0;
+        let sw = (w - arrow * 2.0 - gap * 5.0) / BaritoneSection::PER_PAGE as f32;
+        out.push(widget(
+            [x, 56.0, arrow, 20.0],
+            "<",
+            Some(Control::BaritoneSectionPage(false)),
+            false,
+        ));
+        out.push(widget(
+            [x + w - arrow, 56.0, arrow, 20.0],
+            ">",
+            Some(Control::BaritoneSectionPage(true)),
+            false,
+        ));
+        let page = self.baritone_section_page.min(BaritoneSection::PAGES - 1);
+        for (i, section) in BaritoneSection::ALL
+            .iter()
+            .skip(page * BaritoneSection::PER_PAGE)
+            .take(BaritoneSection::PER_PAGE)
+            .enumerate()
+        {
+            out.push(widget(
+                [x + arrow + gap + i as f32 * (sw + gap), 56.0, sw, 20.0],
+                section.label(l),
+                Some(Control::BaritoneSection(*section)),
+                self.baritone_section == *section,
+            ));
+        }
+        let cw = (w - gap * 3.0) / 4.0;
+        let coordinates = |out: &mut Vec<Widget>, y: f32| {
+            for (i, (label, field, value)) in [
+                ("X", Field::NavigationX, &self.navigation_x),
+                ("Y", Field::NavigationY, &self.navigation_y),
+                ("Z", Field::NavigationZ, &self.navigation_z),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                out.push(widget(
+                    [x + i as f32 * (cw + gap), y, cw, 20.0],
+                    format!("{label}: {value}"),
+                    Some(Control::Field(field)),
+                    self.focus == Some(field),
+                ));
+            }
+        };
+        let hint = |out: &mut Vec<Widget>, y: f32, text: &str| {
+            let mut line = widget([x, y, w, 14.0], text, None, false);
+            line.muted = true;
+            out.push(line);
+        };
+        match self.baritone_section {
+            BaritoneSection::Tasks => {
+                // The switch and the task controls.
+                out.push(widget(
+                    [x, 80.0, cw, 20.0],
+                    localized!(
+                        l,
+                        "Вкл: {}",
+                        "On: {}",
+                        if model.baritone_enabled {
+                            l.text("да", "yes")
+                        } else {
+                            l.text("нет", "no")
+                        }
+                    ),
+                    Some(Control::BaritoneEnable),
+                    model.baritone_enabled,
+                ));
+                for (i, (text, cmd)) in [
+                    (l.text("Пауза", "Pause"), BaritoneCmd::Pause),
+                    (l.text("Далее", "Resume"), BaritoneCmd::Resume),
+                    (l.text("Отмена", "Cancel"), BaritoneCmd::Cancel),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    button(
+                        &mut out,
+                        [x + (i + 1) as f32 * (cw + gap), 80.0, cw, 20.0],
+                        text,
+                        cmd,
+                    );
+                }
+                hint(&mut out, 128.0, &self.hotkey_hint(model));
+                // Tasks without input.
+                for (i, (text, cmd)) in [
+                    (l.text("Ферма", "Farm"), BaritoneCmd::Farm),
+                    (l.text("Исследовать", "Explore"), BaritoneCmd::Explore),
+                    (l.text("За игроком", "Follow"), BaritoneCmd::Follow),
+                    (l.text("Ко мне", "Come"), BaritoneCmd::Come),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    button(
+                        &mut out,
+                        [x + i as f32 * (cw + gap), 104.0, cw, 20.0],
+                        text,
+                        cmd,
+                    );
+                }
+            }
+            BaritoneSection::Navigation => {
+                coordinates(&mut out, 80.0);
+                button(
+                    &mut out,
+                    [x + 3.0 * (cw + gap), 80.0, cw, 20.0],
+                    l.text("Идти", "Go"),
+                    BaritoneCmd::Goto,
+                );
+                // A saved waypoint or a player instead of the coordinates.
+                let waypoint = self
+                    .navigation_waypoint
+                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
+                let half = (w - gap) / 2.0;
+                out.push(widget(
+                    [x, 104.0, half, 20.0],
+                    localized!(
+                        l,
+                        "Метка: {}",
+                        "Waypoint: {}",
+                        waypoint.map_or(l.text("выбрать", "select"), |w| w.name.as_str())
+                    ),
+                    Some(Control::NavigationWaypoint),
+                    waypoint.is_some(),
+                ));
+                out.push(widget(
+                    [x + half + gap, 104.0, half, 20.0],
+                    localized!(
+                        l,
+                        "Игрок: {}",
+                        "Player: {}",
+                        self.navigation_player_name
+                            .as_deref()
+                            .unwrap_or(l.text("выбрать", "select"))
+                    ),
+                    Some(Control::NavigationPlayer),
+                    self.navigation_player.is_some(),
+                ));
+                out.push(widget(
+                    [x, 128.0, half, 20.0],
+                    if self.navigation_elytra {
+                        l.text("Элитры: вкл", "Elytra: on")
+                    } else {
+                        l.text("Элитры: выкл", "Elytra: off")
+                    },
+                    Some(Control::BaritoneCmd(BaritoneCmd::Elytra)),
+                    self.navigation_elytra,
+                ));
+                hint(
+                    &mut out,
+                    152.0,
+                    l.text(
+                        "Метка: идти. Игрок: следовать. Элитры (вкл): Go и клавиша Старт летят к X Y Z или метке; с земли взлетает сам (нужны элитры и фейерверки).",
+                        "Waypoint: walk. Player: follow. Elytra (on): Go and the Start key fly to X Y Z or a waypoint, taking off by themselves (needs elytra and fireworks).",
+                    ),
+                );
+            }
+            BaritoneSection::Mining => {
+                use super::claim_borders_mine_picker as picker;
+                // The filter, the page arrows and Mine.
+                let arrow = 22.0;
+                let filter_w = (w - arrow * 2.0 - cw - gap * 3.0).max(40.0);
+                out.push(widget(
+                    [x, 80.0, filter_w, 20.0],
+                    localized!(l, "Поиск: {}", "Find: {}", self.baritone_block),
+                    Some(Control::Field(Field::BaritoneBlock)),
+                    self.focus == Some(Field::BaritoneBlock),
+                ));
+                for (k, (text, next)) in [("<", false), (">", true)].into_iter().enumerate() {
+                    out.push(widget(
+                        [
+                            x + filter_w + gap + k as f32 * (arrow + 2.0),
+                            80.0,
+                            arrow,
+                            20.0,
+                        ],
+                        text,
+                        Some(Control::BaritoneMinePage(next)),
+                        false,
+                    ));
+                }
+                button(
+                    &mut out,
+                    [x + w - cw, 80.0, cw, 20.0],
+                    l.text("Копать", "Mine"),
+                    BaritoneCmd::Mine,
+                );
+                // Icon tiles, our presets first and then every block; the name is the tooltip and a
+                // chosen tile is highlighted. The whole width: 24 to a row, four rows to a page.
+                let rows = picker::entries(&model.blocks, l, &self.baritone_block);
+                let page = picker::clamp_page(self.baritone_mine_page, rows.len());
+                let tile = ((w - (picker::COLUMNS - 1) as f32 * 2.0) / picker::COLUMNS as f32)
+                    .clamp(6.0, 22.0);
+                let below = 104.0 + picker::ROWS as f32 * (tile + 2.0) + 3.0;
+                for (i, row) in rows
+                    .iter()
+                    .skip(page * picker::PER_PAGE)
+                    .take(picker::PER_PAGE)
+                    .enumerate()
+                {
+                    out.push(widget(
+                        [
+                            x + (i % picker::COLUMNS) as f32 * (tile + 2.0),
+                            104.0 + (i / picker::COLUMNS) as f32 * (tile + 2.0),
+                            tile,
+                            tile,
+                        ],
+                        picker::label(row, l),
+                        Some(Control::BaritoneMineRow(page * picker::PER_PAGE + i)),
+                        picker::chosen(row, &model.baritone.mine),
+                    ));
+                }
+                if rows.is_empty() {
+                    hint(
+                        &mut out,
+                        104.0,
+                        l.text("Ничего не найдено", "Nothing found"),
+                    );
+                }
+                // The count, the storage and a reset, under the rows.
+                let third = (w - gap * 2.0) / 3.0;
+                let mut count = widget(
+                    [x, below, third, 15.0],
+                    localized!(
+                        l,
+                        "Выбрано: {}  стр. {}/{}",
+                        "Chosen: {}  page {}/{}",
+                        model.baritone.mine.len(),
+                        page + 1,
+                        picker::pages(rows.len())
+                    ),
+                    None,
+                    false,
+                );
+                count.muted = true;
+                out.push(count);
+                out.push(widget(
+                    [x + third + gap, below, third, 15.0],
+                    if model.farm_storage[0].is_some() {
+                        l.text("Склад: задан", "Storage: set")
+                    } else {
+                        l.text("Склад: нет", "Storage: none")
+                    },
+                    Some(Control::FarmStorage(
+                        super::claim_borders_farm_storage::Role::Harvest,
+                    )),
+                    model.farm_storage[0].is_some(),
+                ));
+                out.push(widget(
+                    [x + (third + gap) * 2.0, below, third, 15.0],
+                    l.text("Сбросить", "Clear"),
+                    Some(Control::BaritoneMineClear),
+                    false,
+                ));
+            }
+            BaritoneSection::Tunnel => {
+                let third = (w - gap * 2.0) / 3.0;
+                for (i, (label, control)) in [
+                    (
+                        localized!(l, "Длина: {}", "Length: {}", self.construct_length),
+                        Control::ConstructLength,
+                    ),
+                    (
+                        localized!(l, "Ширина: {}", "Width: {}", self.construct_width),
+                        Control::ConstructWidth,
+                    ),
+                    (
+                        localized!(l, "Высота: {}", "Height: {}", self.construct_height),
+                        Control::ConstructHeight,
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [x + i as f32 * (third + gap), 80.0, third, 20.0],
+                        label,
+                        Some(control),
+                        false,
+                    ));
+                }
+                out.push(widget(
+                    [x, 104.0, w - cw - gap, 20.0],
+                    localized!(
+                        l,
+                        "Пол: {}",
+                        "Floor: {}",
+                        if self.construct_floor {
+                            l.text("да", "on")
+                        } else {
+                            l.text("нет", "off")
+                        }
+                    ),
+                    Some(Control::ConstructFloor),
+                    self.construct_floor,
+                ));
+                button(
+                    &mut out,
+                    [x + w - cw, 104.0, cw, 20.0],
+                    l.text("Тоннель", "Tunnel"),
+                    BaritoneCmd::Tunnel,
+                );
+                hint(
+                    &mut out,
+                    128.0,
+                    l.text(
+                        "Вперёд, куда вы смотрите. Пол из блока в инвентаре.",
+                        "Ahead, the way you look. The floor is a block you carry.",
+                    ),
+                );
+            }
+            BaritoneSection::Bridge => {
+                let half = (w - gap) / 2.0;
+                out.push(widget(
+                    [x, 80.0, half, 20.0],
+                    localized!(l, "Длина: {}", "Length: {}", self.construct_length),
+                    Some(Control::ConstructLength),
+                    false,
+                ));
+                out.push(widget(
+                    [x + half + gap, 80.0, half, 20.0],
+                    localized!(l, "Ширина: {}", "Width: {}", self.construct_width),
+                    Some(Control::ConstructWidth),
+                    false,
+                ));
+                button(
+                    &mut out,
+                    [x + w - cw, 104.0, cw, 20.0],
+                    l.text("Мост", "Bridge"),
+                    BaritoneCmd::Bridge,
+                );
+                hint(
+                    &mut out,
+                    128.0,
+                    l.text(
+                        "Вперёд, куда вы смотрите. Блоки: из инвентаря.",
+                        "Ahead, the way you look. Blocks: from the inventory.",
+                    ),
+                );
+            }
+            BaritoneSection::Build => {
+                // The schematic: previous, name, next.
+                let n = model.schematic_files.len();
+                let name = if n == 0 {
+                    l.text("нет файлов", "no files").to_owned()
+                } else {
+                    let i = self.baritone_file.min(n - 1);
+                    format!("{} ({}/{n})", model.schematic_files[i], i + 1)
+                };
+                out.push(widget(
+                    [x, 80.0, 24.0, 20.0],
+                    "<",
+                    Some(Control::BaritoneFile(false)),
+                    false,
+                ));
+                out.push(widget(
+                    [x + 28.0, 80.0, w - 56.0, 20.0],
+                    localized!(l, "Схема: {}", "Schematic: {}", name),
+                    None,
+                    false,
+                ));
+                out.push(widget(
+                    [x + w - 24.0, 80.0, 24.0, 20.0],
+                    ">",
+                    Some(Control::BaritoneFile(true)),
+                    false,
+                ));
+                // Where, and the build button.
+                coordinates(&mut out, 104.0);
+                button(
+                    &mut out,
+                    [x + 3.0 * (cw + gap), 104.0, cw, 20.0],
+                    l.text("Строить", "Build"),
+                    BaritoneCmd::Build,
+                );
+                hint(
+                    &mut out,
+                    128.0,
+                    l.text("X Y Z пусты: строить у себя.", "X Y Z empty: build at you."),
+                );
+            }
+            BaritoneSection::Settings => {
+                // Two columns of the port settings, then the profiler.
+                let cell = (w - gap) / 2.0;
+                let on = !model.baritone.values.is_empty();
+                for (i, setting) in walk::SETTINGS.iter().enumerate() {
+                    let (col, row) = (i % 2, i / 2);
+                    let rect = [
+                        x + col as f32 * (cell + gap),
+                        80.0 + row as f32 * 19.0,
+                        cell,
+                        17.0,
+                    ];
+                    let value = model.baritone.values.get(i).copied();
+                    let label = setting.label(l);
+                    match setting.kind {
+                        walk::Kind::Flag => out.push(widget(
+                            rect,
+                            match value {
+                                Some(v) => format!(
+                                    "{label}: {}",
+                                    if v != 0 {
+                                        l.text("да", "yes")
+                                    } else {
+                                        l.text("нет", "no")
+                                    }
+                                ),
+                                None => label.to_owned(),
+                            },
+                            on.then_some(Control::BaritoneSetting(i, true)),
+                            value.is_some_and(|v| v != 0),
+                        )),
+                        walk::Kind::Int { .. } => {
+                            out.push(widget(
+                                [rect[0], rect[1], rect[2] - 40.0, rect[3]],
+                                match value {
+                                    Some(v) => format!("{label}: {v}"),
+                                    None => label.to_owned(),
+                                },
+                                None,
+                                false,
+                            ));
+                            for (k, (text, up)) in
+                                [("-", false), ("+", true)].into_iter().enumerate()
+                            {
+                                out.push(widget(
+                                    [
+                                        rect[0] + rect[2] - 38.0 + k as f32 * 20.0,
+                                        rect[1],
+                                        18.0,
+                                        rect[3],
+                                    ],
+                                    text,
+                                    on.then_some(Control::BaritoneSetting(i, up)),
+                                    false,
+                                ));
+                            }
+                        }
+                    }
+                }
+                let i = walk::SETTINGS.len();
+                out.push(widget(
+                    [
+                        x + (i % 2) as f32 * (cell + gap),
+                        80.0 + (i / 2) as f32 * 19.0,
+                        cell,
+                        17.0,
+                    ],
+                    localized!(
+                        l,
+                        "Профиль: {}",
+                        "Profile: {}",
+                        if model.baritone.profile {
+                            l.text("вкл", "on")
+                        } else {
+                            l.text("выкл", "off")
+                        }
+                    ),
+                    Some(Control::BaritoneProfile),
+                    model.baritone.profile,
+                ));
+            }
+        }
+        // What the port is doing, at the foot.
+        let status = if model.baritone_enabled {
+            walk::status_text(
+                l,
+                model.baritone.process.as_deref(),
+                model.baritone.segment,
+                model.baritone.goal,
+            )
+        } else {
+            l.text("Baritone выключен", "Baritone is off").to_owned()
+        };
+        // The row of Settings and the language is at the right of this one.
+        let mut line = widget(
+            [x, height - 24.0, (w - 100.0).max(1.0), 18.0],
+            status,
+            None,
+            false,
+        );
+        line.muted = true;
+        out.push(line);
+        out
+    }
+    /// The Farm mode of Automation: a row of pages (Crops, Options, Chests, Plots) and the page's
+    /// controls. Harvesting, planting and the containers work as before; only where the buttons
+    /// are changed, so that each page fits the smallest panel.
+    #[allow(clippy::too_many_arguments)]
+    fn farm_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        step: f32,
+        h: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        use super::claim_borders_farm_storage::Role;
+        use super::claim_borders_farming::Crop;
+        let l = self.language;
+        let gap = 2.0;
+        // The pages.
+        let pw = (w - gap * 3.0) / 4.0;
+        for (i, section) in FarmSection::ALL.into_iter().enumerate() {
+            out.push(widget(
+                [x + i as f32 * (pw + gap), 100.0, pw, 16.0],
+                section.label(l),
+                Some(Control::FarmSection(section)),
+                self.farm_section == section,
+            ));
+        }
+        let top = 120.0;
+        let half = (w - gap) / 2.0;
+        match self.farm_section {
+            FarmSection::Crops => {
+                // The crop is picked from item icons (name as the tooltip), not by cycling.
+                let tile = 22.0;
+                for (i, crop) in Crop::ALL.into_iter().enumerate() {
+                    let name = match crop {
+                        Crop::Wheat => l.text("Пшеница", "Wheat"),
+                        Crop::Carrots => l.text("Морковь", "Carrots"),
+                        Crop::Potatoes => l.text("Картофель", "Potatoes"),
+                        Crop::Beetroot => l.text("Свёкла", "Beetroot"),
+                    };
+                    out.push(widget(
+                        [x + i as f32 * (tile + gap), top, tile, tile],
+                        name,
+                        Some(Control::FarmCropPick(crop)),
+                        self.farm_crops & crop.bit() != 0,
+                    ));
+                }
+                let from = x + Crop::ALL.len() as f32 * (tile + gap) + 4.0;
+                let bw = (x + w - from).max(40.0);
+                out.push(widget(
+                    [from, top, bw, 10.0],
+                    localized!(l, "Радиус: {}", "Radius: {}", self.farm_radius),
+                    Some(Control::FarmRadius),
+                    false,
+                ));
+                out.push(widget(
+                    [from, top + 12.0, bw, 10.0],
+                    if self.farm_levels == 0 {
+                        l.text("Уровни: плоская", "Levels: flat").to_owned()
+                    } else {
+                        localized!(l, "Уровни: ±{}", "Levels: ±{}", self.farm_levels)
+                    },
+                    Some(Control::FarmLevels),
+                    false,
+                ));
+            }
+            FarmSection::Options => {
+                let on = |v: bool| {
+                    if v {
+                        l.text("Вкл", "On")
+                    } else {
+                        l.text("Выкл", "Off")
+                    }
+                };
+                for (i, (label, control, active)) in [
+                    (
+                        localized!(l, "Пересадка: {}", "Replant: {}", on(self.farm_replant)),
+                        Control::FarmReplant,
+                        self.farm_replant,
+                    ),
+                    (
+                        localized!(
+                            l,
+                            "Костная мука: {}",
+                            "Bone meal: {}",
+                            on(self.farm_bonemeal)
+                        ),
+                        Control::FarmBonemeal,
+                        self.farm_bonemeal,
+                    ),
+                    (
+                        localized!(
+                            l,
+                            "Авто-продажа: {}",
+                            "Auto sell: {}",
+                            on(self.farm_autosell)
+                        ),
+                        Control::FarmAutoSell,
+                        self.farm_autosell,
+                    ),
+                    (
+                        l.text("Точка ожидания", "Wait spot").to_owned(),
+                        Control::FarmSafe,
+                        model.farm_safe.is_some(),
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [
+                            x + (i % 2) as f32 * (half + gap),
+                            top + (i / 2) as f32 * step,
+                            half,
+                            h,
+                        ],
+                        label,
+                        Some(control),
+                        active,
+                    ));
+                }
+            }
+            FarmSection::Chests => {
+                // The three containers: harvest, seeds, bone meal. Aim at a chest, barrel or
+                // shulker box and press (or `/dfarm chest <role>`); a highlighted button has its
+                // container set. They are kept per world, so a restart finds them again.
+                let third = (w - gap * 2.0) / 3.0;
+                for (i, (role, ru, en)) in [
+                    (Role::Harvest, "Урожай", "Harvest"),
+                    (Role::Seeds, "Семена", "Seeds"),
+                    (Role::Meal, "Мука", "Meal"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    out.push(widget(
+                        [x + i as f32 * (third + gap), top, third, 16.0],
+                        l.text(ru, en),
+                        Some(Control::FarmStorage(role)),
+                        model.farm_storage[role.index()].is_some(),
+                    ));
+                }
+                // Where each is, with the colour of the frame drawn around it in the world, as
+                // many lines as there is room for.
+                let at = |pos: Option<[i32; 3]>, none: &str| {
+                    pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
+                };
+                let unset = l.text("не задан", "not set");
+                let entries = [
+                    localized!(
+                        l,
+                        "Урожай (оранж.): {}",
+                        "Harvest (orange): {}",
+                        at(model.farm_storage[0], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Семена (зелён.): {}",
+                        "Seeds (green): {}",
+                        at(model.farm_storage[1], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Мука (бел.): {}",
+                        "Meal (white): {}",
+                        at(model.farm_storage[2], unset)
+                    ),
+                    localized!(
+                        l,
+                        "Точка (син.): {}",
+                        "Spot (blue): {}",
+                        at(model.farm_safe, unset)
+                    ),
+                    localized!(
+                        l,
+                        "Компостер (корич.): {}",
+                        "Composter (brown): {}",
+                        at(model.farm_composter, l.text("рядом нет", "none nearby"))
+                    ),
+                ];
+                for (i, entry) in entries.into_iter().enumerate() {
+                    let y = top + 18.0 + (i / 2) as f32 * 12.0;
+                    if y + 11.0 > height - 50.0 {
+                        break;
+                    }
+                    out.push(widget(
+                        [x + (i % 2) as f32 * (half + gap), y, half, 11.0],
+                        entry,
+                        None,
+                        false,
+                    ));
+                }
+            }
+            FarmSection::Plots => {
+                self.farm_plot_list(model, x, w, top, height - 50.0, out);
+            }
+        }
+    }
     fn experimental_layout(
         &self,
         model: &ViewModel,
@@ -3577,58 +4996,40 @@ impl Menu {
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
         let tab_width = (w - 8.0) / 3.0;
+        // Ores and Automation (Farm, Drain): the Helpers button moved to the QOL tab.
+        let selector_width = (w - 4.0) / 2.0;
         for (index, section, label) in [
             (
                 0,
                 ExperimentalSection::Ores,
                 self.language.text("Руды", "Ores"),
             ),
-            (1, ExperimentalSection::Baritone, "Baritone"),
             (
-                2,
-                ExperimentalSection::Automation,
-                self.language.text("Автоматика", "Automation"),
+                1,
+                ExperimentalSection::Baritone,
+                self.language.text("Автоматизация", "Automation"),
             ),
         ] {
             out.push(widget(
-                [x + index as f32 * (tab_width + 4.0), 56.0, tab_width, 20.0],
+                [
+                    x + index as f32 * (selector_width + 4.0),
+                    56.0,
+                    selector_width,
+                    20.0,
+                ],
                 label,
                 Some(Control::ExperimentalTab(section)),
                 self.experimental_section == section,
             ));
         }
-        if self.experimental_section == ExperimentalSection::Automation {
-            return self.helper_rows_layout(model, x, w, height, out);
-        }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 24.0) / 7.0;
+            let mode_width = (w - 4.0) / 2.0;
             for (i, mode, label) in [
-                (
-                    0,
-                    BaritoneMode::Navigation,
-                    self.language.text("Навигация", "Navigation"),
-                ),
+                (0, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
                     1,
-                    BaritoneMode::Mining,
-                    self.language.text("Добыча", "Mining"),
-                ),
-                (
-                    2,
-                    BaritoneMode::Tunnel,
-                    self.language.text("Тоннель", "Tunnel"),
-                ),
-                (
-                    3,
-                    BaritoneMode::Bridge,
-                    self.language.text("Мост", "Bridge"),
-                ),
-                (4, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
-                (5, BaritoneMode::Drain, self.language.text("Вода", "Drain")),
-                (
-                    6,
-                    BaritoneMode::Schematic,
-                    self.language.text("Схемы", "Schematics"),
+                    BaritoneMode::Drain,
+                    self.language.text("Осушение", "Drain"),
                 ),
             ] {
                 out.push(widget(
@@ -3640,312 +5041,8 @@ impl Menu {
             }
             let step = ((height - 148.0) / 4.0).clamp(12.0, 26.0);
             let h = (step - 2.0).min(22.0);
-            if matches!(
-                self.baritone_mode,
-                BaritoneMode::Farm | BaritoneMode::Schematic
-            ) {
-                let farm = self.baritone_mode == BaritoneMode::Farm;
-                let rows: Vec<(String, Control)> = if farm {
-                    vec![
-                        (
-                            localized!(self.language, "Радиус: {}", "Radius: {}", self.farm_radius),
-                            Control::FarmRadius,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Пересадка: {}",
-                                "Replant: {}",
-                                if self.farm_replant {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmReplant,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Костная мука: {}",
-                                "Bone meal: {}",
-                                if self.farm_bonemeal {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmBonemeal,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Авто-продажа: {}",
-                                "Auto sell: {}",
-                                if self.farm_autosell {
-                                    self.language.text("Вкл", "On")
-                                } else {
-                                    self.language.text("Выкл", "Off")
-                                }
-                            ),
-                            Control::FarmAutoSell,
-                        ),
-                        (
-                            if self.farm_levels == 0 {
-                                self.language
-                                    .text("Уровни: плоская", "Levels: flat")
-                                    .to_owned()
-                            } else {
-                                localized!(
-                                    self.language,
-                                    "Уровни: ±{}",
-                                    "Levels: ±{}",
-                                    self.farm_levels
-                                )
-                            },
-                            Control::FarmLevels,
-                        ),
-                    ]
-                } else {
-                    // The Schematics tab lays itself out (`schematic_panel`).
-                    Vec::new()
-                };
-                // The crop is picked from item icons (name as the tooltip), not by cycling.
-                let mut below = 0.0;
-                if farm {
-                    use super::claim_borders_farming::Crop;
-                    let tile = 22.0;
-                    for (i, crop) in Crop::ALL.into_iter().enumerate() {
-                        let name = match crop {
-                            Crop::Wheat => self.language.text("Пшеница", "Wheat"),
-                            Crop::Carrots => self.language.text("Морковь", "Carrots"),
-                            Crop::Potatoes => self.language.text("Картофель", "Potatoes"),
-                            Crop::Beetroot => self.language.text("Свёкла", "Beetroot"),
-                        };
-                        out.push(widget(
-                            [x + i as f32 * (tile + 2.0), 100.0, tile, tile],
-                            name,
-                            Some(Control::FarmCropPick(crop)),
-                            self.farm_crops & crop.bit() != 0,
-                        ));
-                    }
-                    // The three containers share the row with the crops: harvest, seeds, bone
-                    // meal. Aim at a chest, barrel or shulker box and press; press with the
-                    // crosshair elsewhere to clear. A highlighted button has its container set.
-                    use super::claim_borders_farm_storage::Role;
-                    let from = x + Crop::ALL.len() as f32 * (tile + 2.0) + 4.0;
-                    let width = ((x + w - from - 6.0) / 4.0).max(18.0);
-                    for (i, (role, ru, en)) in [
-                        (Role::Harvest, "Урожай", "Harvest"),
-                        (Role::Seeds, "Семена", "Seeds"),
-                        (Role::Meal, "Мука", "Meal"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        out.push(widget(
-                            [from + i as f32 * (width + 2.0), 100.0, width, tile],
-                            self.language.text(ru, en),
-                            Some(Control::FarmStorage(role)),
-                            model.farm_storage[role.index()].is_some(),
-                        ));
-                    }
-                    // The fourth button: the safe point to wait at. Stand there and press.
-                    out.push(widget(
-                        [from + 3.0 * (width + 2.0), 100.0, width, tile],
-                        self.language.text("Точка", "Spot"),
-                        Some(Control::FarmSafe),
-                        model.farm_safe.is_some(),
-                    ));
-                    below = tile + 2.0;
-                }
-                let count = rows.len();
-                for (i, (label, c)) in rows.into_iter().enumerate() {
-                    out.push(widget(
-                        [
-                            x + (i % 2) as f32 * (tab_width + 4.0),
-                            100.0 + below + (i / 2) as f32 * step,
-                            tab_width,
-                            h,
-                        ],
-                        label,
-                        Some(c),
-                        false,
-                    ));
-                }
-                if !farm {
-                    self.schematic_panel(
-                        model,
-                        x,
-                        w,
-                        SCHEMATIC_TOP,
-                        height - SCHEMATIC_BOTTOM,
-                        &mut out,
-                    );
-                }
-                if farm {
-                    // What the buttons are bound to, with the coordinates and the colour of the
-                    // frame drawn around it in the world, as many lines as there is room for.
-                    let at = |pos: Option<[i32; 3]>, none: &str| {
-                        pos.map_or(none.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
-                    };
-                    let unset = self.language.text("не задан", "not set");
-                    let entries = [
-                        localized!(
-                            self.language,
-                            "Урожай (оранж.): {}",
-                            "Harvest (orange): {}",
-                            at(model.farm_storage[0], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Семена (зелён.): {}",
-                            "Seeds (green): {}",
-                            at(model.farm_storage[1], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Мука (бел.): {}",
-                            "Meal (white): {}",
-                            at(model.farm_storage[2], unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Точка (син.): {}",
-                            "Spot (blue): {}",
-                            at(model.farm_safe, unset)
-                        ),
-                        localized!(
-                            self.language,
-                            "Компостер (корич.): {}",
-                            "Composter (brown): {}",
-                            at(
-                                model.farm_composter,
-                                self.language.text("рядом нет", "none nearby")
-                            )
-                        ),
-                    ];
-                    let top = 100.0 + below + count.div_ceil(2) as f32 * step + 2.0;
-                    let half = (w - 4.0) / 2.0;
-                    let mut next = top;
-                    // The plots come first: room for the header and up to three of them (with
-                    // the pager when there are more) is kept before the coordinate lines.
-                    let plots = model.farm_plots.len();
-                    let keep = if plots == 0 {
-                        0.0
-                    } else {
-                        15.0 + 15.0 * plots.min(3) as f32 + if plots > 3 { 15.0 } else { 0.0 }
-                    };
-                    for (i, entry) in entries.into_iter().enumerate() {
-                        let y = top + (i / 2) as f32 * 12.0;
-                        if y + 11.0 > height - 50.0 - keep {
-                            break;
-                        }
-                        out.push(widget(
-                            [x + (i % 2) as f32 * (half + 4.0), y, half, 11.0],
-                            entry,
-                            None,
-                            false,
-                        ));
-                        next = y + 12.0;
-                    }
-                    self.farm_plot_list(model, x, w, next + 2.0, height - 50.0, &mut out);
-                }
-            } else if matches!(
-                self.baritone_mode,
-                BaritoneMode::Tunnel | BaritoneMode::Bridge
-            ) {
-                let compact_tunnel = self.baritone_mode == BaritoneMode::Tunnel && height < 320.0;
-                out.push(widget(
-                    [x, 100.0, if compact_tunnel { tab_width } else { w }, h],
-                    localized!(
-                        self.language,
-                        "Длина: {}",
-                        "Length: {}",
-                        self.construct_length
-                    ),
-                    Some(Control::ConstructLength),
-                    false,
-                ));
-                if self.baritone_mode == BaritoneMode::Tunnel {
-                    for (i, (label, control, on)) in [
-                        (
-                            localized!(
-                                self.language,
-                                "Ширина: {}",
-                                "Width: {}",
-                                self.construct_width
-                            ),
-                            Control::ConstructWidth,
-                            false,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Высота: {}",
-                                "Height: {}",
-                                self.construct_height
-                            ),
-                            Control::ConstructHeight,
-                            false,
-                        ),
-                        (
-                            localized!(
-                                self.language,
-                                "Пол: {}",
-                                "Floor: {}",
-                                if self.construct_floor {
-                                    self.language.text("да", "on")
-                                } else {
-                                    self.language.text("нет", "off")
-                                }
-                            ),
-                            Control::ConstructFloor,
-                            self.construct_floor,
-                        ),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        out.push(widget(
-                            if compact_tunnel {
-                                [
-                                    x + ((i + 1) % 2) as f32 * (tab_width + 4.0),
-                                    100.0 + i.div_ceil(2) as f32 * step,
-                                    tab_width,
-                                    h,
-                                ]
-                            } else {
-                                [x, 100.0 + (i + 1) as f32 * step, w, h]
-                            },
-                            label,
-                            Some(control),
-                            on,
-                        ));
-                    }
-                } else {
-                    // A bridge has a length and a width, like a tunnel; its height is fixed.
-                    out.push(widget(
-                        [x, 100.0 + step, w, h],
-                        localized!(
-                            self.language,
-                            "Ширина: {}",
-                            "Width: {}",
-                            self.construct_width
-                        ),
-                        Some(Control::ConstructWidth),
-                        false,
-                    ));
-                    out.push(widget(
-                        [x, 100.0 + 2.0 * step, w, h],
-                        self.language.text(
-                            "Блоки: хотбар, вторая рука или инвентарь",
-                            "Blocks: hotbar, off hand or inventory",
-                        ),
-                        None,
-                        false,
-                    ));
-                }
+            if self.baritone_mode == BaritoneMode::Farm {
+                self.farm_layout(model, x, w, height, step, h, &mut out);
             } else if self.baritone_mode == BaritoneMode::Drain {
                 use super::claim_borders_draining::Pattern;
                 out.push(widget(
@@ -3991,167 +5088,11 @@ impl Menu {
                     None,
                     false,
                 ));
-            } else if self.baritone_mode == BaritoneMode::Mining {
-                // A chip per target, toggled like the structure filters on the map.
-                use super::claim_borders_mining as mining;
-                let top = 100.0 + step;
-                // Icon tiles: the name is the tooltip. Square, so many fit in a row.
-                let tile = 22.0;
-                let cols = (((w + 2.0) / (tile + 2.0)).floor() as usize).max(1);
-                let rows = (((height - 66.0 - top) / (tile + 2.0)).floor() as usize).max(1);
-                let per_page = rows * cols;
-                let pages = mining::COUNT.div_ceil(per_page);
-                let page = self.mining_page % pages;
-                out.push(widget(
-                    [x, 100.0, w, h],
-                    if pages > 1 {
-                        localized!(
-                            self.language,
-                            "Выбрано: {} · стр. {}/{} →",
-                            "Selected: {} · page {}/{} →",
-                            (self.mining_targets & mining::ALL).count_ones(),
-                            page + 1,
-                            pages
-                        )
-                    } else {
-                        localized!(
-                            self.language,
-                            "Выбрано: {}",
-                            "Selected: {}",
-                            (self.mining_targets & mining::ALL).count_ones()
-                        )
-                    },
-                    Some(Control::MiningPage),
-                    false,
-                ));
-                for slot in 0..per_page {
-                    let index = page * per_page + slot;
-                    let Some((ru, en, _)) = mining::target(index as u8) else {
-                        break;
-                    };
-                    out.push(widget(
-                        [
-                            x + (slot % cols) as f32 * (tile + 2.0),
-                            top + (slot / cols) as f32 * (tile + 2.0),
-                            tile,
-                            tile,
-                        ],
-                        self.language.text(ru, en),
-                        Some(Control::MiningTarget(index as u8)),
-                        self.mining_targets & (1 << index) != 0,
-                    ));
-                }
-                // Any block of the world: aim at it and press (again to take it out).
-                let half = (w - 4.0) / 2.0;
-                let names: Vec<&str> = model
-                    .mining_custom
-                    .iter()
-                    .map(|n| n.strip_prefix("minecraft:").unwrap_or(n))
-                    .collect();
-                out.push(widget(
-                    [x + half + 4.0, height - 64.0, half, 18.0],
-                    if names.is_empty() {
-                        self.language
-                            .text("Свой блок: прицел на блок", "Own block: aim at a block")
-                            .to_owned()
-                    } else {
-                        localized!(
-                            self.language,
-                            "Свой блок: {}",
-                            "Own block: {}",
-                            names.join(", ")
-                        )
-                    },
-                    Some(Control::MiningCustom),
-                    !names.is_empty(),
-                ));
-                // The storage the miner unloads into when the inventory is full (the farm's).
-                out.push(widget(
-                    [x, height - 64.0, half, 18.0],
-                    match model.farm_storage[0] {
-                        Some([sx, sy, sz]) => localized!(
-                            self.language,
-                            "Склад: {} {} {}",
-                            "Storage: {} {} {}",
-                            sx,
-                            sy,
-                            sz
-                        ),
-                        None => self
-                            .language
-                            .text(
-                                "Склад: не задан (прицел на сундук)",
-                                "Storage: not set (aim at a chest)",
-                            )
-                            .into(),
-                    },
-                    Some(Control::FarmStorage(
-                        super::claim_borders_farm_storage::Role::Harvest,
-                    )),
-                    model.farm_storage[0].is_some(),
-                ));
-            } else {
-                let waypoint = self
-                    .navigation_waypoint
-                    .and_then(|id| model.navigation_waypoints.iter().find(|w| w.id == id));
-                let player = self.navigation_player.and_then(|id| {
-                    model
-                        .navigation_players
-                        .iter()
-                        .find(|(uuid, _)| *uuid == id)
-                });
-                let field_width = (w - 8.0) / 3.0;
-                for (i, (label, field, value)) in [
-                    ("X", Field::NavigationX, &self.navigation_x),
-                    ("Y", Field::NavigationY, &self.navigation_y),
-                    ("Z", Field::NavigationZ, &self.navigation_z),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    out.push(widget(
-                        [x + i as f32 * (field_width + 4.0), 100.0, field_width, h],
-                        format!("{label}: {value}"),
-                        Some(Control::Field(field)),
-                        self.focus == Some(field),
-                    ));
-                }
-                out.push(widget(
-                    [x, 100.0 + step, tab_width, h],
-                    localized!(
-                        self.language,
-                        "Метка: {}",
-                        "Waypoint: {}",
-                        waypoint.map_or(self.language.text("выбрать", "select"), |w| w
-                            .name
-                            .as_str())
-                    ),
-                    Some(Control::NavigationWaypoint),
-                    waypoint.is_some(),
-                ));
-                out.push(widget(
-                    [x + tab_width + 4.0, 100.0 + step, tab_width, h],
-                    localized!(
-                        self.language,
-                        "Игрок: {}",
-                        "Player: {}",
-                        player.map_or(
-                            self.language.text("выбрать", "select"),
-                            |(_, name)| name.as_str()
-                        )
-                    ),
-                    Some(Control::NavigationPlayer),
-                    player.is_some(),
-                ));
             }
             // The status line, and the switch for eating on its own beside it.
             let eat_w = 92.0_f32.min(w * 0.4);
-            let extra_footer = matches!(
-                self.baritone_mode,
-                BaritoneMode::Mining | BaritoneMode::Schematic
-            );
-            let status_y = height - if extra_footer { 44.0 } else { 48.0 };
-            let status_h = if extra_footer { 18.0 } else { 14.0 };
+            let status_y = height - 48.0;
+            let status_h = 14.0;
             out.push(widget(
                 [x, status_y, w - eat_w - 4.0, status_h],
                 &model.navigation_status,
@@ -4580,8 +5521,9 @@ impl Menu {
                     ),
                 )],
             ],
-            HelperCategory::Connection => vec![
-                vec![toggle(
+            HelperCategory::Controls => {
+                let mut blocks = self.control_rows(model);
+                blocks.push(vec![toggle(
                     localized!(
                         language,
                         "Авто-реконнект: {}",
@@ -4594,13 +5536,14 @@ impl Menu {
                         "Вернуться на сервер после потери соединения",
                         "Rejoin the server after a lost connection",
                     ),
-                )],
-            ],
+                )]);
+                blocks
+            }
         }
     }
-    /// The rows of Experiments → Automation: the helpers that act on their own. Each switch sits
-    /// with the choices that depend on it, as in the QOL categories.
-    fn automation_blocks(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
+    /// The Controls group of the QOL tab: the helpers that steer the bot and the mouse. Each
+    /// switch sits with the choices that depend on it, as in the other categories.
+    fn control_rows(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
         let language = self.language;
         let state = |on: bool| {
             if on {
@@ -4665,20 +5608,6 @@ impl Menu {
             ],
         ]
     }
-    /// The rows of whichever helper list is on screen: a QOL category or Experiments → Automation.
-    fn current_helper_blocks(&self, model: &ViewModel) -> Vec<Vec<HelperRow>> {
-        if self.tab == Tab::Experimental {
-            self.automation_blocks(model)
-        } else {
-            self.helper_blocks(model)
-        }
-    }
-    /// Whether a page of helper rows is on screen (QOL, or Experiments → Automation).
-    fn helper_rows_on_screen(&self) -> bool {
-        self.tab == Tab::Helpers
-            || (self.tab == Tab::Experimental
-                && self.experimental_section == ExperimentalSection::Automation)
-    }
     /// How many helper rows fit above the page buttons, and whether each gets a hint line.
     fn helper_page_rows(height: f32) -> (usize, f32, bool) {
         let note = height >= 340.0;
@@ -4719,11 +5648,7 @@ impl Menu {
     }
     /// The number of pages the current Helpers category has at this height.
     pub fn helper_page_count(&self, model: &ViewModel, height: f32) -> usize {
-        let blocks: Vec<usize> = self
-            .current_helper_blocks(model)
-            .iter()
-            .map(Vec::len)
-            .collect();
+        let blocks: Vec<usize> = self.helper_blocks(model).iter().map(Vec::len).collect();
         Self::helper_pages(&blocks, Self::helper_page_rows(height).0).len()
     }
     /// The Helpers tab: a category row, then a switch per helper with a line saying what it does.
@@ -4758,7 +5683,7 @@ impl Menu {
         height: f32,
         mut out: Vec<Widget>,
     ) -> Vec<Widget> {
-        let blocks = self.current_helper_blocks(model);
+        let blocks = self.helper_blocks(model);
         let rows: Vec<HelperRow> = blocks.iter().flatten().cloned().collect();
         let lengths: Vec<usize> = blocks.iter().map(Vec::len).collect();
         let (per, step, note) = Self::helper_page_rows(height);
@@ -5367,6 +6292,82 @@ impl Menu {
             Control::AutoToolsOnlyHolding => Some(Action::SetAutoToolsOnlyHolding(
                 !model.auto_tools_only_holding,
             )),
+            Control::BaritoneEnable => Some(Action::SetBaritone(!model.baritone_enabled)),
+            Control::BaritoneCmd(BaritoneCmd::Build) => self.baritone_build(model),
+            Control::BaritoneCmd(BaritoneCmd::Goto) => self.baritone_goto(),
+            Control::BaritoneCmd(BaritoneCmd::Elytra) => {
+                self.navigation_elytra = !self.navigation_elytra;
+                None
+            }
+            Control::BaritoneCmd(BaritoneCmd::Tunnel) => Some(self.baritone_tunnel()),
+            Control::BaritoneCmd(BaritoneCmd::Bridge) => Some(self.baritone_bridge()),
+            Control::BaritoneCmd(BaritoneCmd::Mine) => (!model.baritone.mine.is_empty())
+                .then(|| Action::BaritoneMine(model.baritone.mine.clone())),
+            Control::BaritoneMineRow(index) => {
+                use super::claim_borders_mine_picker as picker;
+                let rows = picker::entries(&model.blocks, self.language, &self.baritone_block);
+                let row = rows.get(index)?;
+                Some(Action::BaritoneMineSet(picker::toggled(
+                    row,
+                    &model.baritone.mine,
+                )))
+            }
+            Control::BaritoneMinePage(next) => {
+                use super::claim_borders_mine_picker as picker;
+                let count =
+                    picker::entries(&model.blocks, self.language, &self.baritone_block).len();
+                let pages = picker::pages(count);
+                let now = picker::clamp_page(self.baritone_mine_page, count);
+                self.baritone_mine_page = if next {
+                    (now + 1) % pages
+                } else {
+                    (now + pages - 1) % pages
+                };
+                None
+            }
+            Control::FarmSection(section) => {
+                self.farm_section = section;
+                None
+            }
+            Control::BaritoneMineClear => Some(Action::BaritoneMineSet(Vec::new())),
+            Control::BaritoneCmd(cmd) => self.baritone_line(cmd).map(Action::Baritone),
+            Control::BaritoneSection(section) => {
+                self.baritone_section = section;
+                self.baritone_section_page = section.page();
+                self.focus = None;
+                None
+            }
+            Control::BaritoneSectionPage(next) => {
+                let pages = BaritoneSection::PAGES;
+                self.baritone_section_page = if next {
+                    (self.baritone_section_page + 1) % pages
+                } else {
+                    (self.baritone_section_page + pages - 1) % pages
+                };
+                None
+            }
+            Control::BaritoneFile(next) => {
+                let n = model.schematic_files.len();
+                if n > 0 {
+                    let now = self.baritone_file.min(n - 1);
+                    self.baritone_file = if next {
+                        (now + 1) % n
+                    } else {
+                        (now + n - 1) % n
+                    };
+                }
+                None
+            }
+            Control::BaritoneProfile => Some(Action::SetBaritoneProfile(!model.baritone.profile)),
+            Control::BaritoneSetting(index, up) => {
+                let setting = super::claim_borders_baritone_walk::SETTINGS.get(index)?;
+                let current = *model.baritone.values.get(index)?;
+                let value = match setting.kind {
+                    super::claim_borders_baritone_walk::Kind::Flag => i32::from(current == 0),
+                    kind => super::claim_borders_baritone_walk::step_value(current, kind, up),
+                };
+                Some(Action::BaritoneSetting(index, value))
+            }
             Control::AutoEatFoods => {
                 self.auto_eat_food_picker = !self.auto_eat_food_picker;
                 self.auto_eat_food_page = 0;
@@ -5438,18 +6439,15 @@ impl Menu {
                 None
             }
             Control::SchematicMaterials => Some(Action::SchematicInfo(false)),
+            Control::SchematicVerify => Some(Action::SchematicVerify),
+            Control::SchematicVerifyKind => Some(Action::SchematicVerifyKind),
+            Control::SchematicVerifyReport => Some(Action::SchematicVerifyReport),
+            Control::SchematicSelect(e) => Some(Action::SchematicSelection(e)),
             Control::SchematicFolder => Some(Action::OpenSchematicFolder),
             Control::BaritoneMode(mode) => {
                 self.baritone_mode = mode;
                 self.navigation_choices = None;
                 self.focus = None;
-                // The schematics folder is read again whenever its tab is opened.
-                (mode == BaritoneMode::Schematic).then_some(Action::RefreshSchematics)
-            }
-            Control::MiningTarget(index) => {
-                if usize::from(index) < super::claim_borders_mining::COUNT {
-                    self.mining_targets ^= 1 << index;
-                }
                 None
             }
             Control::SchematicEdit(edit) => Some(Action::SchematicEdit(edit)),
@@ -5493,15 +6491,6 @@ impl Menu {
             Control::FarmPlotFarm(i) => Some(Action::FarmPlotFarm(i)),
             Control::FarmPlotShow(i) => Some(Action::FarmPlotShow(i)),
             Control::FarmPlotRemove(i) => Some(Action::FarmPlotRemove(i)),
-            Control::MiningCustom => {
-                // Picking a block selects the target too.
-                self.mining_targets |= 1 << super::claim_borders_mining::CUSTOM;
-                Some(Action::MiningCustom)
-            }
-            Control::MiningPage => {
-                self.mining_page = self.mining_page.wrapping_add(1);
-                None
-            }
             Control::NavigationPlayer => {
                 self.navigation_choices = if self.navigation_choices == Some(true) {
                     None
@@ -5537,8 +6526,9 @@ impl Menu {
                 None
             }
             Control::NavigationPlayerChoice(index) => {
-                if let Some((uuid, _)) = model.navigation_players.get(index) {
+                if let Some((uuid, name)) = model.navigation_players.get(index) {
                     self.navigation_player = Some(*uuid);
+                    self.navigation_player_name = Some(name.clone());
                     self.navigation_waypoint = None;
                 }
                 self.navigation_choices = None;
@@ -5549,6 +6539,7 @@ impl Menu {
                 if let Some(waypoint) = model.navigation_waypoints.get(index) {
                     self.navigation_waypoint = Some(waypoint.id);
                     self.navigation_player = None;
+                    self.navigation_player_name = None;
                 }
                 self.navigation_choices = None;
                 self.focus = None;
@@ -5907,6 +6898,11 @@ impl Menu {
                 p.deaths = !p.deaths;
                 Some(Action::SetChat(p))
             }
+            Control::ChatGlobal => {
+                let mut p = model.chat_preferences;
+                p.hide_global = !p.hide_global;
+                Some(Action::SetChat(p))
+            }
             Control::ChatRepeats => {
                 let mut p = model.chat_preferences;
                 p.repeats = p.repeats.next();
@@ -6057,8 +7053,10 @@ impl Menu {
             Control::ChatTranslate => Some(Action::ToggleTranslation),
             Control::Close => Some(Action::Close),
             Control::ConfirmExperiments | Control::DeclineExperiments => None,
-            Control::Tab(Tab::Experimental) if !model.experiments_accepted => {
-                self.experiments_return = Tab::Experimental;
+            Control::Tab(t @ (Tab::Experimental | Tab::Baritone | Tab::Schematics))
+                if !model.experiments_accepted =>
+            {
+                self.experiments_return = t;
                 self.navigation_menu = false;
                 self.experiments_prompt = true;
                 self.focus = None;
@@ -6069,6 +7067,11 @@ impl Menu {
                 self.deepl_key.clear();
                 self.tab = t;
                 self.auto_eat_food_picker = false;
+                match t {
+                    Tab::Baritone => self.keys_for_baritone_tab = true,
+                    Tab::Experimental | Tab::Schematics => self.keys_for_baritone_tab = false,
+                    _ => {}
+                }
                 if t == Tab::Settings && matches!(self.settings_section, 2..=4) {
                     self.settings_section = 0;
                 }
@@ -6077,7 +7080,8 @@ impl Menu {
                 self.focus = None;
                 self.relay_setup = false;
                 self.access_token.clear();
-                None
+                // The schematics folder is read again whenever its tab is opened.
+                (t == Tab::Schematics).then_some(Action::RefreshSchematics)
             }
             Control::Field(f) => {
                 self.focus = Some(f);
@@ -6299,7 +7303,7 @@ impl Menu {
     /// Page Up / Page Down on the Helpers tab: the same step as the Back and Next buttons,
     /// for the category rows or for the food picker, whichever is on screen.
     pub fn helper_page_key(&mut self, model: &ViewModel, size: [f32; 2], forward: bool) -> bool {
-        if !self.helper_rows_on_screen() || self.experiments_prompt {
+        if self.tab != Tab::Helpers || self.experiments_prompt {
             return false;
         }
         let current = if self.auto_eat_food_picker {
@@ -6336,7 +7340,7 @@ impl Menu {
         if !delta.is_finite() || delta == 0.0 {
             return;
         }
-        if self.helper_rows_on_screen() && !self.auto_eat_food_picker {
+        if (self.tab == Tab::Helpers) && !self.auto_eat_food_picker {
             let last = self.helper_page_count(model, height) - 1;
             self.helper_page = if delta > 0.0 {
                 self.helper_page.min(last).saturating_sub(1)
@@ -6354,10 +7358,7 @@ impl Menu {
             return;
         }
         // The Schematics tab: the wheel scrolls the file list a row at a time.
-        if self.tab == Tab::Experimental
-            && self.experimental_section == ExperimentalSection::Baritone
-            && self.baritone_mode == BaritoneMode::Schematic
-        {
+        if self.tab == Tab::Schematics {
             let rows = schematic_list_rows(SCHEMATIC_TOP, height - SCHEMATIC_BOTTOM);
             let last = model.schematic_files.len().saturating_sub(rows.max(1));
             self.schematic_catalog_page = if delta > 0.0 {
@@ -6385,18 +7386,22 @@ impl Menu {
             Field::NavigationX => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_x
             }
             Field::NavigationY => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_y
             }
             Field::NavigationZ => {
                 self.navigation_waypoint = None;
                 self.navigation_player = None;
+                self.navigation_player_name = None;
                 &mut self.navigation_z
             }
+            Field::BaritoneBlock => &mut self.baritone_block,
             Field::ClaimOwner => &mut self.claim_owner,
             Field::PriorityName => &mut self.priority_name,
             Field::PriorityColor => &mut self.priority_color,
@@ -6416,6 +7421,7 @@ impl Menu {
             Some(Field::NavigationX) => &self.navigation_x,
             Some(Field::NavigationY) => &self.navigation_y,
             Some(Field::NavigationZ) => &self.navigation_z,
+            Some(Field::BaritoneBlock) => &self.baritone_block,
             Some(Field::ClaimOwner) => &self.claim_owner,
             Some(Field::PriorityName) => &self.priority_name,
             Some(Field::PriorityColor) => &self.priority_color,
@@ -6493,6 +7499,7 @@ impl Menu {
         let limit = match field {
             Field::SchematicOrigin => 80,
             Field::NavigationX | Field::NavigationY | Field::NavigationZ => 12,
+            Field::BaritoneBlock => 64,
             Field::Name => 48,
             Field::Color | Field::OwnClaimColor | Field::FriendClaimColor => 7,
             Field::PriorityName | Field::ClaimOwner => 16,
@@ -6510,6 +7517,8 @@ impl Menu {
             || (field == Field::PriorityColor && !(c.is_ascii_hexdigit() || c == '#'))
             || (field == Field::PeerCode && !c.is_ascii_hexdigit())
             || (field == Field::DeepLKey && !c.is_ascii_graphic())
+            || (field == Field::BaritoneBlock
+                && !(c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | ' ')))
             || (field == Field::SchematicOrigin
                 && !(c.is_ascii_digit() || matches!(c, ' ' | '-' | '+' | '.')))
             || (matches!(
@@ -6569,18 +7578,7 @@ impl Menu {
                 return true;
             }
             if self.tab == Tab::Experimental
-                && self.experimental_section == ExperimentalSection::Automation
-            {
-                // Switches only: no text field to focus here.
-                self.focus = None;
-                return true;
-            }
-            if self.tab == Tab::Experimental
                 && self.experimental_section == ExperimentalSection::Baritone
-                && !matches!(
-                    self.baritone_mode,
-                    BaritoneMode::Navigation | BaritoneMode::Schematic
-                )
             {
                 self.focus = None;
                 return true;
@@ -6591,40 +7589,28 @@ impl Menu {
                 self.anchor = None;
                 return true;
             }
-            self.focus = Some(
-                if self.tab == Tab::Experimental
-                    && self.experimental_section == ExperimentalSection::Baritone
-                {
-                    if self.baritone_mode == BaritoneMode::Schematic {
-                        Field::SchematicOrigin
-                    } else {
-                        match self.focus {
-                            Some(Field::NavigationX) => Field::NavigationY,
-                            Some(Field::NavigationY) => Field::NavigationZ,
-                            _ => Field::NavigationX,
-                        }
-                    }
-                } else if self.relay_setup || self.section() == 1 {
-                    if self.focus == Some(Field::RelayUrl) {
-                        Field::RelayToken
-                    } else {
-                        Field::RelayUrl
-                    }
-                } else if self.section() == 2 && self.claims_section == ClaimsSection::Colours {
-                    if self.focus == Some(Field::OwnClaimColor) {
-                        Field::FriendClaimColor
-                    } else {
-                        Field::OwnClaimColor
-                    }
-                } else if self.tab == Tab::Party {
-                    self.focus = None;
-                    return true;
-                } else if self.focus == Some(Field::Name) {
-                    Field::Color
+            self.focus = Some(if self.tab == Tab::Schematics {
+                Field::SchematicOrigin
+            } else if self.relay_setup || self.section() == 1 {
+                if self.focus == Some(Field::RelayUrl) {
+                    Field::RelayToken
                 } else {
-                    Field::Name
-                },
-            );
+                    Field::RelayUrl
+                }
+            } else if self.section() == 2 && self.claims_section == ClaimsSection::Colours {
+                if self.focus == Some(Field::OwnClaimColor) {
+                    Field::FriendClaimColor
+                } else {
+                    Field::OwnClaimColor
+                }
+            } else if self.tab == Tab::Party {
+                self.focus = None;
+                return true;
+            } else if self.focus == Some(Field::Name) {
+                Field::Color
+            } else {
+                Field::Name
+            });
             self.caret = usize::MAX;
             self.anchor = None;
             return true;
@@ -7202,15 +8188,7 @@ mod tests {
                     for experimental_section in
                         [ExperimentalSection::Ores, ExperimentalSection::Baritone]
                     {
-                        for baritone_mode in [
-                            BaritoneMode::Navigation,
-                            BaritoneMode::Mining,
-                            BaritoneMode::Tunnel,
-                            BaritoneMode::Bridge,
-                            BaritoneMode::Farm,
-                            BaritoneMode::Drain,
-                            BaritoneMode::Schematic,
-                        ] {
+                        for baritone_mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
                             let ru = Menu {
                                 tab,
                                 settings_section: section,
@@ -7882,23 +8860,939 @@ mod tests {
     }
 
     #[test]
-    fn navigation_validates_coordinates_from_three_fields() {
-        use super::super::claim_borders_navigation::Goal;
+    fn baritone_tab_sits_under_experiments_with_the_same_consent() {
+        let mut model = ViewModel::default();
+        for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+            for language in [Language::Russian, Language::English] {
+                // Narrow windows keep the tabs behind the navigation button.
+                let mut menu = Menu {
+                    language,
+                    navigation_menu: width < 520.0,
+                    ..Menu::default()
+                };
+                let rows = menu.layout(&model, width, height);
+                let find = |tab| rows.iter().find(|r| r.control == Some(Control::Tab(tab)));
+                let (exp, bar) = (
+                    find(Tab::Experimental).unwrap(),
+                    find(Tab::Baritone).unwrap(),
+                );
+                assert_eq!(bar.text, "Baritone");
+                assert!(bar.rect[2] > 0.0 && bar.rect[3] > 0.0);
+                // In the rail it is the row right under Experiments; in the top row, beside it.
+                assert!(bar.rect[1] > exp.rect[1] || bar.rect[0] > exp.rect[0]);
+                // Without the consent it asks first, like Experiments.
+                model.experiments_accepted = false;
+                assert!(
+                    menu.activate(&model, height, Control::Tab(Tab::Baritone))
+                        .is_none()
+                );
+                assert!(menu.experiments_prompt && menu.tab != Tab::Baritone);
+                menu.experiments_prompt = false;
+                model.experiments_accepted = true;
+                menu.activate(&model, height, Control::Tab(Tab::Baritone));
+                assert_eq!(menu.tab, Tab::Baritone);
+                let rows = menu.layout(&model, width, height);
+                let switch = rows
+                    .iter()
+                    .find(|r| r.control == Some(Control::BaritoneEnable))
+                    .expect("the switch is on the tab");
+                assert_eq!(switch.selected, model.baritone_enabled);
+                assert!(matches!(
+                    menu.activate(&model, height, Control::BaritoneEnable),
+                    Some(Action::SetBaritone(true))
+                ));
+                model.baritone_enabled = true;
+                assert!(matches!(
+                    menu.activate(&model, height, Control::BaritoneEnable),
+                    Some(Action::SetBaritone(false))
+                ));
+                model.baritone_enabled = false;
+            }
+        }
+    }
+
+    #[test]
+    fn global_chat_switch_sits_in_the_appearance_section_and_toggles_both_ways() {
+        for language in [Language::Russian, Language::English] {
+            let mut menu = Menu {
+                tab: Tab::Settings,
+                settings_section: 3,
+                chat_section: ChatSection::Appearance,
+                language,
+                ..Menu::default()
+            };
+            let mut model = ViewModel {
+                language,
+                ..ViewModel::default()
+            };
+            // The settings pages scroll: the switch is on one of them, in view and inside the panel.
+            for size in [[320.0, 224.0], [800.0, 480.0]] {
+                let switch = reveal_control(&mut menu, &model, size, Control::ChatGlobal);
+                assert!(switch.rect[2] > 20.0 && switch.rect[0] + switch.rect[2] <= size[0]);
+                assert!(!switch.selected);
+            }
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
+                panic!("the switch must update the chat preferences");
+            };
+            assert!(p.hide_global);
+            assert_eq!(p.width, model.chat_preferences.width);
+            model.chat_preferences = p;
+            let switch = reveal_control(&mut menu, &model, [320.0, 224.0], Control::ChatGlobal);
+            assert!(switch.selected);
+            assert!(switch.text.contains("friends only") || switch.text.contains("только друзья"));
+            let Some(Action::SetChat(p)) = menu.activate(&model, 224.0, Control::ChatGlobal) else {
+                panic!();
+            };
+            assert!(!p.hide_global);
+            // It is no longer in the Spam section, so that section is as it was.
+            menu.chat_section = ChatSection::Spam;
+            assert!(
+                !menu
+                    .layout(&model, 320.0, 224.0)
+                    .iter()
+                    .any(|r| r.control == Some(Control::ChatGlobal))
+            );
+        }
+    }
+
+    #[test]
+    fn mining_picker_lists_every_block_pages_filters_and_starts_the_choice() {
+        use super::super::claim_borders_mine_picker as picker;
+        let mut model = ViewModel {
+            baritone_enabled: true,
+            experiments_accepted: true,
+            blocks: std::sync::Arc::new(picker::catalogue(
+                (0..140)
+                    .map(|i| format!("minecraft:block_{i:02}"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(String::as_str),
+            )),
+            ..ViewModel::default()
+        };
         let mut menu = Menu {
-            tab: Tab::Experimental,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Mining,
+            ..Menu::default()
+        };
+        let rows = |menu: &Menu, model: &ViewModel| -> Vec<(usize, String, bool)> {
+            menu.layout(model, 360.0, 200.0)
+                .into_iter()
+                .filter_map(|r| match r.control {
+                    Some(Control::BaritoneMineRow(i)) => Some((i, r.text, r.selected)),
+                    _ => None,
+                })
+                .collect()
+        };
+        // First page: our presets lead the list, a page of tiles.
+        let first = rows(&menu, &model);
+        assert_eq!(first.len(), picker::PER_PAGE);
+        assert!(first[0].1.starts_with("Набор:") || first[0].1.starts_with("Set:"));
+        // The page buttons move through presets and the forty blocks and wrap around.
+        let total = picker::entries(&model.blocks, menu.language, "").len();
+        for _ in 0..picker::pages(total) {
+            menu.activate(&model, 200.0, Control::BaritoneMinePage(true));
+        }
+        assert_eq!(menu.baritone_mine_page, 0);
+        menu.activate(&model, 200.0, Control::BaritoneMinePage(false));
+        assert_eq!(menu.baritone_mine_page, picker::pages(total) - 1);
+        // The filter narrows to blocks, and a click asks for the block to be chosen.
+        menu.baritone_mine_page = 0;
+        menu.baritone_block = "block_07".into();
+        let found = rows(&menu, &model);
+        assert_eq!(found.len(), 1);
+        let Some(Action::BaritoneMineSet(list)) =
+            menu.activate(&model, 200.0, Control::BaritoneMineRow(found[0].0))
+        else {
+            panic!("a row must toggle the choice");
+        };
+        assert_eq!(list, ["minecraft:block_07"]);
+        // The choice comes back in the model: the row is highlighted and Mine starts it.
+        model.baritone.mine = list;
+        assert!(rows(&menu, &model)[0].2);
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Mine)),
+            Some(Action::BaritoneMine(l)) if l == ["minecraft:block_07"]
+        ));
+        // The action keys use the last choice seen, with the menu closed.
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneMine(l)) if l == ["minecraft:block_07"]
+        ));
+        // Clear empties it, and with nothing chosen Mine starts nothing.
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneMineClear),
+            Some(Action::BaritoneMineSet(l)) if l.is_empty()
+        ));
+        model.baritone.mine.clear();
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Mine))
+                .is_none()
+        );
+        // A filter that matches nothing says so instead of an empty gap.
+        menu.baritone_block = "zzzz".into();
+        assert!(rows(&menu, &model).is_empty());
+        assert!(
+            menu.layout(&model, 360.0, 200.0)
+                .iter()
+                .any(|r| r.text == "Ничего не найдено")
+        );
+    }
+
+    #[test]
+    fn tunnel_and_bridge_buttons_use_the_chosen_sizes_and_the_floor_is_on_by_default() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Tunnel,
+            ..Menu::default()
+        };
+        // The floor is on from the start, so a tunnel does not drop the bot into a gap.
+        assert!(menu.construct_floor);
+        let Some(Action::BaritoneTunnel {
+            length,
+            width,
+            height,
+            floor,
+        }) = menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Tunnel))
+        else {
+            panic!("the Tunnel button must ask for a tunnel");
+        };
+        assert_eq!(
+            (length, width, height, floor),
+            (
+                menu.construct_length,
+                menu.construct_width,
+                menu.construct_height,
+                true
+            )
+        );
+        // The steppers change what is asked, and Floor turns the floor off.
+        menu.activate(&model, 200.0, Control::ConstructLength);
+        menu.activate(&model, 200.0, Control::ConstructWidth);
+        menu.activate(&model, 200.0, Control::ConstructHeight);
+        menu.activate(&model, 200.0, Control::ConstructFloor);
+        let Some(Action::BaritoneTunnel {
+            length: l2,
+            width: w2,
+            height: h2,
+            floor: f2,
+        }) = menu.baritone_request(true).ok()
+        else {
+            panic!("Start in the Tunnel section must ask for a tunnel");
+        };
+        assert_ne!((l2, w2, h2), (length, width, height));
+        assert!(!f2);
+        assert!((1..=64).contains(&l2) && (1..=3).contains(&w2) && (2..=3).contains(&h2));
+        // A bridge has a length and a width and no floor or height.
+        menu.baritone_section = BaritoneSection::Bridge;
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Bridge)),
+            Some(Action::BaritoneBridge { length, width }) if length == l2 && width == w2
+        ));
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneBridge { .. })
+        ));
+        // There is no preview for either.
+        assert!(menu.baritone_request(false).is_err());
+    }
+
+    #[test]
+    fn farm_pages_hold_every_control_and_each_page_fits_the_smallest_panel() {
+        use super::super::claim_borders_farm_storage::Role;
+        use super::super::claim_borders_farming::Crop;
+        let mut model = ViewModel {
+            experiments_accepted: true,
+            navigation_status: "Farm status".into(),
+            farm_storage: [Some([1, 64, 2]), None, Some([3, 64, 4])],
+            ..ViewModel::default()
+        };
+        model.farm_plots = vec![(0, "Field".into(), true, true)];
+        // Which control lives on which page: nothing is lost in the move.
+        let pages: [(FarmSection, Vec<Control>); 4] = [
+            (
+                FarmSection::Crops,
+                vec![
+                    Control::FarmCropPick(Crop::Wheat),
+                    Control::FarmCropPick(Crop::Beetroot),
+                    Control::FarmRadius,
+                    Control::FarmLevels,
+                ],
+            ),
+            (
+                FarmSection::Options,
+                vec![
+                    Control::FarmReplant,
+                    Control::FarmBonemeal,
+                    Control::FarmAutoSell,
+                    Control::FarmSafe,
+                ],
+            ),
+            (
+                FarmSection::Chests,
+                vec![
+                    Control::FarmStorage(Role::Harvest),
+                    Control::FarmStorage(Role::Seeds),
+                    Control::FarmStorage(Role::Meal),
+                ],
+            ),
+            (FarmSection::Plots, vec![Control::FarmPlotFarm(0)]),
+        ];
+        for language in [Language::Russian, Language::English] {
+            for (section, controls) in &pages {
+                for (width, height) in [(360.0, 216.0), (360.0, 300.0), (800.0, 500.0)] {
+                    let menu = Menu {
+                        tab: Tab::Experimental,
+                        experimental_section: ExperimentalSection::Baritone,
+                        baritone_mode: BaritoneMode::Farm,
+                        farm_section: *section,
+                        language,
+                        ..Menu::default()
+                    };
+                    let rows = menu.layout(&model, width, height);
+                    // The row of pages is always there, with this page highlighted.
+                    for page in FarmSection::ALL {
+                        let tab = rows
+                            .iter()
+                            .find(|r| r.control == Some(Control::FarmSection(page)))
+                            .expect("a page button");
+                        assert_eq!(tab.selected, page == *section);
+                        assert!(tab.rect[0] >= 0.0 && tab.rect[0] + tab.rect[2] <= width);
+                    }
+                    for control in controls {
+                        let r = rows
+                            .iter()
+                            .find(|r| r.control == Some(*control))
+                            .unwrap_or_else(|| {
+                                panic!("{control:?} missing on {section:?} at {width}x{height}")
+                            });
+                        assert!(
+                            r.rect[2] > 8.0 && r.rect[0] + r.rect[2] <= width + 1.0,
+                            "{control:?}"
+                        );
+                        // Above the status line of the footer.
+                        let status = rows
+                            .iter()
+                            .find(|w| w.text == "Farm status")
+                            .expect("status");
+                        assert!(
+                            r.rect[1] + r.rect[3] <= status.rect[1] + 1.0,
+                            "{control:?} on {section:?} at {width}x{height} meets the status"
+                        );
+                    }
+                }
+            }
+        }
+        // A page button only changes the page.
+        let mut menu = Menu::default();
+        assert_eq!(menu.farm_section, FarmSection::Crops);
+        assert!(
+            menu.activate(&model, 216.0, Control::FarmSection(FarmSection::Chests))
+                .is_none()
+        );
+        assert_eq!(menu.farm_section, FarmSection::Chests);
+    }
+
+    #[test]
+    fn the_action_keys_start_the_section_on_screen_and_follow_the_tab_last_used() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            schematic_files: vec!["house.schem".into()],
+            hotkeys: ["KEYPAD 1", "KEYPAD 2", "KEYPAD 3", "KEYPAD 4"].map(str::to_owned),
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        menu.baritone_mine_cache = vec!["minecraft:stone".into()];
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("1".into(), "64".into(), "2".into());
+        for (section, check) in [
+            (
+                BaritoneSection::Navigation,
+                matches!(
+                    menu.clone_for(BaritoneSection::Navigation).baritone_request(true),
+                    Ok(Action::Baritone(l)) if l == "goto 1 64 2"
+                ),
+            ),
+            (
+                BaritoneSection::Mining,
+                matches!(
+                    menu.clone_for(BaritoneSection::Mining).baritone_request(true),
+                    Ok(Action::BaritoneMine(l)) if l == ["minecraft:stone"]
+                ),
+            ),
+            (
+                BaritoneSection::Tunnel,
+                matches!(
+                    menu.clone_for(BaritoneSection::Tunnel)
+                        .baritone_request(true),
+                    Ok(Action::BaritoneTunnel { floor: true, .. })
+                ),
+            ),
+            (
+                BaritoneSection::Bridge,
+                matches!(
+                    menu.clone_for(BaritoneSection::Bridge)
+                        .baritone_request(true),
+                    Ok(Action::BaritoneBridge { .. })
+                ),
+            ),
+            (
+                BaritoneSection::Build,
+                matches!(
+                    menu.clone_for(BaritoneSection::Build).baritone_request(true),
+                    Ok(Action::BaritoneBuild { file, origin: Some([1, 64, 2]) }) if file == "house.schem"
+                ),
+            ),
+            (
+                BaritoneSection::Tasks,
+                matches!(
+                    menu.clone_for(BaritoneSection::Tasks).baritone_request(true),
+                    Ok(Action::Baritone(l)) if l == "resume"
+                ),
+            ),
+        ] {
+            assert!(check, "Start in {section:?}");
+        }
+        assert!(
+            menu.clone_for(BaritoneSection::Settings)
+                .baritone_request(true)
+                .is_err()
+        );
+        // There is no preview anywhere on the tab.
+        for section in BaritoneSection::ALL {
+            assert!(
+                menu.clone_for(section).baritone_request(false).is_err(),
+                "{section:?}"
+            );
+        }
+        // The keys are named on the home page.
+        let rows = menu.layout(&model, 360.0, 200.0);
+        assert!(rows.iter().any(|r| r.text.contains("KEYPAD 2")));
+        // They belong to the tab used last: Baritone, then Automation, then Baritone again.
+        let mut menu = Menu::default();
+        assert!(!menu.keys_scope_is_baritone_tab());
+        menu.activate(&model, 200.0, Control::Tab(Tab::Baritone));
+        assert!(menu.keys_scope_is_baritone_tab());
+        menu.tab = Tab::Waypoints;
+        assert!(menu.keys_scope_is_baritone_tab());
+        menu.activate(&model, 200.0, Control::Tab(Tab::Experimental));
+        assert!(!menu.keys_scope_is_baritone_tab());
+    }
+
+    #[test]
+    fn the_open_tab_and_its_pages_are_kept_and_put_back() {
+        let model = ViewModel {
+            experiments_accepted: true,
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Mining,
             experimental_section: ExperimentalSection::Baritone,
+            helper_category: HelperCategory::Controls,
+            baritone_mode: BaritoneMode::Drain,
+            farm_section: FarmSection::Chests,
+            settings_section: 3,
+            chat_section: ChatSection::Spam,
+            claims_section: ClaimsSection::Colours,
+            party_filter: PartyFilter::Important,
+            trading_group: 2,
+            ..Menu::default()
+        };
+        menu.baritone_section_page = BaritoneSection::Mining.page();
+        let kept = menu.view_state();
+        // A fresh menu (the next opening, or the next session) shows the same.
+        let mut fresh = Menu::default();
+        fresh.restore_view(&kept);
+        assert_eq!(fresh.view_state(), kept);
+        assert_eq!(fresh.tab, Tab::Baritone);
+        assert_eq!(fresh.baritone_section, BaritoneSection::Mining);
+        assert_eq!(fresh.farm_section, FarmSection::Chests);
+        assert_eq!(fresh.chat_section, ChatSection::Spam);
+        assert!(fresh.keys_scope_is_baritone_tab());
+        // Reopening carries it over like the settings.
+        let mut next = Menu::default();
+        next.keep_baritone(&menu);
+        assert_eq!(next.view_state(), kept);
+        // Every tab survives the round trip.
+        for tab in [
+            Tab::Waypoints,
+            Tab::Party,
+            Tab::Claims,
+            Tab::Chat,
+            Tab::Experimental,
+            Tab::Baritone,
+            Tab::Trading,
+            Tab::Settings,
+        ] {
+            let menu = Menu {
+                tab,
+                ..Menu::default()
+            };
+            let mut back = Menu::default();
+            back.restore_view(&menu.view_state());
+            assert_eq!(back.tab, tab);
+        }
+        // Junk is ignored and leaves what was there.
+        let mut menu = Menu::default();
+        menu.restore_view("tab=nowhere;bs=;set=999;chat=x;;=;novalue;fs=chests;claims=9");
+        assert_eq!(menu.tab, Tab::Waypoints);
+        assert_eq!(menu.farm_section, FarmSection::Chests);
+        assert_eq!(menu.settings_section, Menu::default().settings_section);
+        menu.restore_view("");
+        // A tab that needs the experiments consent is not shown without it.
+        let mut menu = Menu::default();
+        menu.restore_view("tab=baritone");
+        menu.reconcile(&ViewModel::default(), &ViewModel::default(), 200.0);
+        assert_eq!(menu.tab, Tab::Waypoints);
+        let mut menu = Menu::default();
+        menu.restore_view("tab=baritone");
+        menu.reconcile(&ViewModel::default(), &model, 200.0);
+        assert_eq!(menu.tab, Tab::Baritone);
+    }
+
+    #[test]
+    fn the_schematic_tools_send_their_actions_and_show_the_second_row_only_in_use() {
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Schematics,
+            ..Menu::default()
+        };
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerify),
+            Some(Action::SchematicVerify)
+        ));
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerifyKind),
+            Some(Action::SchematicVerifyKind)
+        ));
+        assert!(matches!(
+            menu.activate(&model, 400.0, Control::SchematicVerifyReport),
+            Some(Action::SchematicVerifyReport)
+        ));
+        for edit in [
+            SelectionEdit::Corner1,
+            SelectionEdit::Corner2,
+            SelectionEdit::NewBox,
+            SelectionEdit::Save,
+            SelectionEdit::Clear,
+        ] {
+            assert!(matches!(
+                menu.activate(&model, 400.0, Control::SchematicSelect(edit)),
+                Some(Action::SchematicSelection(e)) if e == edit
+            ));
+        }
+        let has = |model: &ViewModel, control: Control| {
+            menu.layout(model, 800.0, 500.0)
+                .iter()
+                .any(|w| w.control == Some(control))
+        };
+        assert!(has(&model, Control::SchematicVerify));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::Save)));
+        assert!(!has(&model, Control::SchematicVerifyKind));
+        assert!(!has(&model, Control::SchematicSelect(SelectionEdit::Clear)));
+        model.schematic_verify = Some("All".into());
+        model.schematic_selection = "3x3x3 · 1 reg.".into();
+        assert!(has(&model, Control::SchematicVerifyKind));
+        assert!(has(&model, Control::SchematicVerifyReport));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::NewBox)));
+        assert!(has(&model, Control::SchematicSelect(SelectionEdit::Clear)));
+    }
+    #[test]
+    fn the_elytra_switch_makes_go_and_start_fly_to_the_place_or_the_waypoint() {
+        let model = ViewModel {
+            navigation_waypoints: vec![WaypointRow {
+                id: 7,
+                name: "Base".into(),
+                detail: String::new(),
+                color: 0,
+            }],
+            navigation_players: vec![(5, "Alex".into())],
+            ..ViewModel::default()
+        };
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
+            ..Menu::default()
+        };
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("100.5".into(), "70".into(), "-300".into());
+        // Off: Start walks.
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::Baritone(_))
+        ));
+        // The switch itself starts nothing and turns on.
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra))
+                .is_none()
+        );
+        assert!(menu.navigation_elytra);
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneElytra([100, 70, -300]))
+        ));
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Goto)),
+            Some(Action::BaritoneElytra([100, 70, -300]))
+        ));
+        menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
+        assert!(matches!(
+            menu.baritone_request(true),
+            Ok(Action::BaritoneElytraWaypoint(7))
+        ));
+        menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Elytra));
+        assert!(!menu.navigation_elytra);
+    }
+
+    #[test]
+    fn baritone_buttons_build_commands_only_from_valid_input() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        // No input yet: Goto and Mine start nothing, the rest are fixed commands.
+        assert_eq!(menu.baritone_line(BaritoneCmd::Goto), None);
+        assert_eq!(menu.baritone_line(BaritoneCmd::Mine), None);
+        for (cmd, line) in [
+            (BaritoneCmd::Farm, "farm"),
+            (BaritoneCmd::Explore, "explore"),
+            (BaritoneCmd::Follow, "follow players"),
+            (BaritoneCmd::Come, "come"),
+            (BaritoneCmd::Pause, "pause"),
+            (BaritoneCmd::Resume, "resume"),
+            (BaritoneCmd::Cancel, "cancel"),
+        ] {
+            assert_eq!(menu.baritone_line(cmd).as_deref(), Some(line));
+            assert!(matches!(
+                menu.activate(&model, 200.0, Control::BaritoneCmd(cmd)),
+                Some(Action::Baritone(l)) if l == line
+            ));
+        }
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("-0.2".into(), "64".into(), "120".into());
+        assert_eq!(
+            menu.baritone_line(BaritoneCmd::Goto).as_deref(),
+            Some("goto -1 64 120")
+        );
+        menu.navigation_y = "x".into();
+        assert_eq!(menu.baritone_line(BaritoneCmd::Goto), None);
+        menu.baritone_mine_cache = vec![
+            "minecraft:diamond_ore".into(),
+            "minecraft:ancient_debris".into(),
+        ];
+        assert_eq!(
+            menu.baritone_line(BaritoneCmd::Mine).as_deref(),
+            Some("mine diamond_ore ancient_debris")
+        );
+        // The block field takes names only: no '#', no ';', no control characters.
+        menu.baritone_block.clear();
+        menu.focus = Some(Field::BaritoneBlock);
+        for c in "iron_ore#;\n x".chars() {
+            menu.character(c);
+        }
+        assert_eq!(menu.baritone_block, "iron_ore x");
+        // Every section has its controls on the tab, inside it, at compact and wide sizes.
+        for (section, controls) in [
+            (
+                BaritoneSection::Tasks,
+                vec![
+                    Control::BaritoneEnable,
+                    Control::BaritoneCmd(BaritoneCmd::Come),
+                ],
+            ),
+            (
+                BaritoneSection::Navigation,
+                vec![
+                    Control::Field(Field::NavigationX),
+                    Control::BaritoneCmd(BaritoneCmd::Goto),
+                    Control::BaritoneCmd(BaritoneCmd::Elytra),
+                ],
+            ),
+            (
+                BaritoneSection::Mining,
+                vec![
+                    Control::Field(Field::BaritoneBlock),
+                    Control::BaritoneCmd(BaritoneCmd::Mine),
+                ],
+            ),
+            (
+                BaritoneSection::Tunnel,
+                vec![
+                    Control::ConstructLength,
+                    Control::ConstructFloor,
+                    Control::BaritoneCmd(BaritoneCmd::Tunnel),
+                ],
+            ),
+            (
+                BaritoneSection::Bridge,
+                vec![
+                    Control::ConstructLength,
+                    Control::BaritoneCmd(BaritoneCmd::Bridge),
+                ],
+            ),
+            (
+                BaritoneSection::Build,
+                vec![
+                    Control::BaritoneFile(true),
+                    Control::BaritoneCmd(BaritoneCmd::Build),
+                ],
+            ),
+        ] {
+            menu.baritone_section = section;
+            for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+                menu.navigation_menu = false;
+                let rows = menu.layout(&model, width, height);
+                for control in &controls {
+                    let r = rows.iter().find(|r| r.control == Some(*control));
+                    let r = r.unwrap_or_else(|| panic!("{control:?} missing at {width}"));
+                    assert!(r.rect[2] > 20.0 && r.rect[0] + r.rect[2] <= width + 1.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_baritone_section_selector_pages_and_reaches_every_section() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        // Every section is on exactly one page, and the page buttons wrap around.
+        let on_screen = |menu: &Menu| -> Vec<BaritoneSection> {
+            menu.layout(&model, 360.0, 200.0)
+                .iter()
+                .filter_map(|r| match r.control {
+                    Some(Control::BaritoneSection(s)) => Some(s),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut seen = Vec::new();
+        for _ in 0..BaritoneSection::PAGES {
+            let page = on_screen(&menu);
+            assert!(!page.is_empty() && page.len() <= BaritoneSection::PER_PAGE);
+            seen.extend(page);
+            assert!(
+                menu.activate(&model, 200.0, Control::BaritoneSectionPage(true))
+                    .is_none()
+            );
+        }
+        seen.sort_by_key(|s| BaritoneSection::ALL.iter().position(|a| a == s));
+        assert_eq!(seen, BaritoneSection::ALL.to_vec());
+        // Back to where it began, and backwards from the first page lands on the last.
+        assert_eq!(menu.baritone_section_page, 0);
+        menu.activate(&model, 200.0, Control::BaritoneSectionPage(false));
+        assert_eq!(menu.baritone_section_page, BaritoneSection::PAGES - 1);
+        // Choosing a section on screen selects it and keeps its page.
+        let last = *on_screen(&menu).last().unwrap();
+        menu.activate(&model, 200.0, Control::BaritoneSection(last));
+        assert_eq!(menu.baritone_section, last);
+        assert_eq!(menu.baritone_section_page, last.page());
+        // Every label exists in both languages.
+        for s in BaritoneSection::ALL {
+            assert!(
+                !s.label(Language::Russian).is_empty() && s.label(Language::English).is_ascii()
+            );
+        }
+    }
+
+    #[test]
+    fn baritone_tunnel_and_build_start_only_from_valid_input() {
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            ..Menu::default()
+        };
+        // Build: needs a file; X Y Z all empty means "here", all valid means there, a half
+        // typed origin or a file name with a space starts nothing.
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Build))
+                .is_none()
+        );
+        model.schematic_files = vec!["house.schem".into(), "a b.schem".into()];
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Build)),
+            Some(Action::BaritoneBuild { file, origin: None }) if file == "house.schem"
+        ));
+        (menu.navigation_x, menu.navigation_y, menu.navigation_z) =
+            ("1".into(), "64".into(), "-3".into());
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Build)),
+            Some(Action::BaritoneBuild {
+                origin: Some([1, 64, -3]),
+                ..
+            })
+        ));
+        menu.navigation_z.clear();
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Build))
+                .is_none()
+        );
+        // The file buttons wrap around and the second name (with a space) is refused.
+        menu.navigation_x.clear();
+        menu.navigation_y.clear();
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneFile(true))
+                .is_none()
+        );
+        assert_eq!(menu.baritone_file, 1);
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneCmd(BaritoneCmd::Build))
+                .is_none()
+        );
+        menu.activate(&model, 200.0, Control::BaritoneFile(true));
+        assert_eq!(menu.baritone_file, 0);
+        menu.activate(&model, 200.0, Control::BaritoneFile(false));
+        assert_eq!(menu.baritone_file, 1);
+    }
+
+    #[test]
+    fn baritone_settings_toggle_step_and_wait_for_the_port() {
+        use super::super::claim_borders_baritone_walk::{Kind, SETTINGS};
+        let mut model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Settings,
+            ..Menu::default()
+        };
+        // The port is off: nothing to read, so nothing to change.
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneSetting(0, true))
+                .is_none()
+        );
+        model.baritone.values = SETTINGS
+            .iter()
+            .map(|s| match s.kind {
+                Kind::Flag => 1,
+                Kind::Int { .. } => 3,
+            })
+            .collect();
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneSetting(0, true)),
+            Some(Action::BaritoneSetting(0, 0))
+        ));
+        let int = SETTINGS
+            .iter()
+            .position(|s| matches!(s.kind, Kind::Int { .. }))
+            .unwrap();
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneSetting(int, true)),
+            Some(Action::BaritoneSetting(i, 4)) if i == int
+        ));
+        // Already at the lower bound.
+        assert!(matches!(
+            menu.activate(&model, 200.0, Control::BaritoneSetting(int, false)),
+            Some(Action::BaritoneSetting(i, 3)) if i == int
+        ));
+        assert!(
+            menu.activate(&model, 200.0, Control::BaritoneSetting(99, true))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn baritone_sections_fit_every_window_and_show_the_status() {
+        use super::super::claim_borders_baritone_walk::SETTINGS;
+        let mut model = ViewModel {
+            baritone_enabled: true,
+            schematic_files: vec!["house.schem".into()],
+            ..ViewModel::default()
+        };
+        model.baritone.values = vec![0; SETTINGS.len()];
+        model.baritone.process = Some("Mining".into());
+        model.baritone.goal = Some(400.0);
+        for language in [Language::Russian, Language::English] {
+            for section in BaritoneSection::ALL {
+                for (width, height) in [(360.0, 200.0), (800.0, 500.0)] {
+                    let menu = Menu {
+                        tab: Tab::Baritone,
+                        language,
+                        baritone_section: section,
+                        ..Menu::default()
+                    };
+                    let rows = menu.layout(&model, width, height);
+                    let status = rows
+                        .iter()
+                        .find(|r| r.text.starts_with("Mining ·"))
+                        .expect("the status line");
+                    let controls: Vec<_> = rows
+                        .iter()
+                        .filter(|r| r.control.is_some() && r.rect[1] > 50.0)
+                        .collect();
+                    assert!(!controls.is_empty());
+                    let overlaps = |a: [f32; 4], b: [f32; 4]| {
+                        a[0] < b[0] + b[2]
+                            && b[0] < a[0] + a[2]
+                            && a[1] < b[1] + b[3]
+                            && b[1] < a[1] + a[3]
+                    };
+                    for r in &rows {
+                        if r.rect[2] <= 0.0 || r.rect[1] < 50.0 {
+                            continue;
+                        }
+                        // The tab and language buttons of the frame share the foot's row.
+                        if matches!(
+                            r.control,
+                            Some(Control::Tab(_) | Control::Language | Control::Close)
+                        ) {
+                            assert!(
+                                !overlaps(r.rect, status.rect),
+                                "{section:?} {width}x{height}: {} meets the status",
+                                r.text
+                            );
+                            continue;
+                        }
+                        assert!(r.rect[0] >= -1.0 && r.rect[0] + r.rect[2] <= width + 1.0);
+                        // Nothing under the status line, and no control over it.
+                        if r.control.is_some() && r.rect[1] > 50.0 {
+                            assert!(
+                                r.rect[1] + r.rect[3] <= status.rect[1] + 1.0,
+                                "{section:?} {width}x{height}: {} overlaps the status",
+                                r.text
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Off: the foot says so instead of showing a stale task.
+        let menu = Menu {
+            tab: Tab::Baritone,
+            language: Language::English,
+            ..Menu::default()
+        };
+        assert!(
+            menu.layout(&ViewModel::default(), 800.0, 500.0)
+                .iter()
+                .any(|r| r.text == "Baritone is off")
+        );
+    }
+
+    #[test]
+    fn navigation_validates_coordinates_from_three_fields() {
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_x: "-0.2".into(),
             navigation_y: "64".into(),
             navigation_z: "120".into(),
             ..Menu::default()
         };
         assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: Goal::Coordinates([-1, 64, 120]),
-                running: false
-            })
+            menu.baritone_request(true),
+            Ok(Action::Baritone(line)) if line == "goto -1 64 120"
         ));
+        // There is no preview on the Baritone tab.
+        assert!(menu.baritone_request(false).is_err());
         for (x, y, z) in [
             ("", "64", "1"),
             ("1", "", "1"),
@@ -7941,7 +9835,11 @@ mod tests {
             }],
             ..ViewModel::default()
         };
-        let mut menu = Menu::default();
+        let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
+            ..Menu::default()
+        };
         assert!(
             menu.activate(&model, 200.0, Control::NavigationWaypoint)
                 .is_none()
@@ -7950,10 +9848,7 @@ mod tests {
         menu.activate(&model, 200.0, Control::NavigationWaypointChoice(0));
         assert!(matches!(
             menu.baritone_request(true),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Waypoint(41),
-                running: true
-            })
+            Ok(Action::BaritoneWaypoint(41))
         ));
         menu.focus = Some(Field::NavigationX);
         menu.character('1');
@@ -7965,15 +9860,16 @@ mod tests {
     fn navigation_controls_fit_both_languages_in_compact_panels() {
         for language in [Language::Russian, Language::English] {
             let menu = Menu {
-                tab: Tab::Experimental,
-                experimental_section: ExperimentalSection::Baritone,
+                tab: Tab::Baritone,
+                baritone_section: BaritoneSection::Navigation,
                 language,
                 ..Menu::default()
             };
-            let model = ViewModel {
-                navigation_status: "Navigation status".into(),
+            let mut model = ViewModel {
+                baritone_enabled: true,
                 ..ViewModel::default()
             };
+            model.baritone.process = Some("Navigation status".into());
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
                 let controls: Vec<_> = rows
@@ -7991,65 +9887,10 @@ mod tests {
                     })
                     .collect();
                 assert_eq!(controls.len(), 5);
-                let status = rows.iter().find(|w| w.text == "Navigation status").unwrap();
-                for (i, a) in controls.iter().enumerate() {
-                    assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
-                    for b in controls.iter().skip(i + 1) {
-                        assert!(
-                            a.rect[0] + a.rect[2] <= b.rect[0]
-                                || b.rect[0] + b.rect[2] <= a.rect[0]
-                                || a.rect[1] + a.rect[3] <= b.rect[1]
-                                || b.rect[1] + b.rect[3] <= a.rect[1]
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn mining_controls_are_explicit_and_fit_compact_panels() {
-        for language in [Language::Russian, Language::English] {
-            let menu = Menu {
-                tab: Tab::Experimental,
-                experimental_section: ExperimentalSection::Baritone,
-                baritone_mode: BaritoneMode::Mining,
-                language,
-                ..Menu::default()
-            };
-            let mut model = ViewModel {
-                navigation_status: "Mining status".into(),
-                experiments_accepted: true,
-                ..ViewModel::default()
-            };
-            assert!(matches!(
-                menu.baritone_request(false),
-                Ok(Action::Navigate {
-                    goal: super::super::claim_borders_navigation::Goal::Mine {
-                        ore: 0,
-                        targets: 1,
-                        limit: 0
-                    },
-                    running: false
-                })
-            ));
-            for height in [200.0, 216.0, 300.0, 500.0] {
-                let rows = menu.layout(&model, 360.0, height);
-                let controls: Vec<_> = rows
+                let status = rows
                     .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.control,
-                            Some(
-                                Control::MiningTarget(_)
-                                    | Control::MiningPage
-                                    | Control::BaritoneMode(_)
-                            )
-                        )
-                    })
-                    .collect();
-                assert!(controls.len() >= 8);
-                let status = rows.iter().find(|w| w.text == "Mining status").unwrap();
+                    .find(|w| w.text.starts_with("Navigation status ·"))
+                    .unwrap();
                 for (i, a) in controls.iter().enumerate() {
                     assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
                     for b in controls.iter().skip(i + 1) {
@@ -8061,91 +9902,6 @@ mod tests {
                         );
                     }
                 }
-            }
-            model.experiments_accepted = false;
-            assert!(!model.experiments_accepted);
-        }
-    }
-
-    #[test]
-    fn construction_modes_validate_consent_and_compact_geometry() {
-        for language in [Language::Russian, Language::English] {
-            for mode in [BaritoneMode::Tunnel, BaritoneMode::Bridge] {
-                let menu = Menu {
-                    tab: Tab::Experimental,
-                    experimental_section: ExperimentalSection::Baritone,
-                    baritone_mode: mode,
-                    language,
-                    ..Menu::default()
-                };
-                let mut model = ViewModel {
-                    navigation_status: "Build status".into(),
-                    experiments_accepted: true,
-                    ..ViewModel::default()
-                };
-                assert!(
-                    menu.construct_floor,
-                    "tunnel floor must be enabled by default"
-                );
-                assert!(matches!(
-                    menu.baritone_request(false),
-                    Ok(Action::Navigate {
-                        goal: super::super::claim_borders_navigation::Goal::Construct(_),
-                        running: false
-                    })
-                ));
-                for height in [200., 216., 300., 500.] {
-                    let rows = menu.layout(&model, 360., height);
-                    let controls: Vec<_> = rows
-                        .iter()
-                        .filter(|w| {
-                            matches!(
-                                w.control,
-                                Some(
-                                    Control::ConstructDirection
-                                        | Control::ConstructLength
-                                        | Control::ConstructWidth
-                                        | Control::ConstructHeight
-                                        | Control::ConstructFloor
-                                        | Control::BaritoneMode(_)
-                                )
-                            )
-                        })
-                        .collect();
-                    assert!(controls.len() >= if mode == BaritoneMode::Tunnel { 11 } else { 7 });
-                    if mode == BaritoneMode::Tunnel && height < 320.0 {
-                        let control_rect = |control| {
-                            controls
-                                .iter()
-                                .find(|w| w.control == Some(control))
-                                .unwrap()
-                                .rect
-                        };
-                        let length = control_rect(Control::ConstructLength);
-                        let width = control_rect(Control::ConstructWidth);
-                        let tunnel_height = control_rect(Control::ConstructHeight);
-                        let floor = control_rect(Control::ConstructFloor);
-                        assert_eq!(length[1], width[1]);
-                        assert_eq!(tunnel_height[1], floor[1]);
-                        assert!(length[0] < width[0]);
-                        assert!(tunnel_height[0] < floor[0]);
-                        assert!(length[1] < tunnel_height[1]);
-                    }
-                    let status = rows.iter().find(|w| w.text == "Build status").unwrap();
-                    for (i, a) in controls.iter().enumerate() {
-                        assert!(a.rect[1] + a.rect[3] <= status.rect[1]);
-                        for b in controls.iter().skip(i + 1) {
-                            assert!(
-                                a.rect[0] + a.rect[2] <= b.rect[0]
-                                    || b.rect[0] + b.rect[2] <= a.rect[0]
-                                    || a.rect[1] + a.rect[3] <= b.rect[1]
-                                    || b.rect[1] + b.rect[3] <= a.rect[1]
-                            );
-                        }
-                    }
-                }
-                model.experiments_accepted = false;
-                assert!(!model.experiments_accepted);
             }
         }
     }
@@ -8158,6 +9914,8 @@ mod tests {
             ..ViewModel::default()
         };
         let mut menu = Menu {
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_waypoint: Some(7),
             ..Menu::default()
         };
@@ -8168,17 +9926,16 @@ mod tests {
         assert_eq!(menu.navigation_player, Some(71));
         assert!(matches!(
             menu.baritone_request(true),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Follow(71),
-                running: true
-            })
+            Ok(Action::Baritone(line)) if line == "follow player Alice"
         ));
         menu.activate(&model, 200.0, Control::NavigationPlayer);
         menu.activate(&model, 200.0, Control::NavigationPlayerChoice(1));
         assert_eq!(menu.navigation_player, Some(82));
+        assert_eq!(menu.navigation_player_name.as_deref(), Some("Bob"));
         menu.focus = Some(Field::NavigationY);
         menu.character('2');
         assert_eq!(menu.navigation_player, None);
+        assert_eq!(menu.navigation_player_name, None);
         assert_eq!(menu.navigation_y, "2");
     }
 
@@ -8212,7 +9969,10 @@ mod tests {
             for player in [false, true] {
                 let mut menu = Menu {
                     language,
+                    tab: Tab::Baritone,
+                    baritone_section: BaritoneSection::Navigation,
                     navigation_player: player.then_some(117),
+                    navigation_player_name: player.then(|| "Gone".to_owned()),
                     navigation_waypoint: (!player).then_some(41),
                     navigation_x: "120".into(),
                     navigation_y: "64".into(),
@@ -8236,9 +9996,8 @@ mod tests {
     fn empty_navigation_dropdown_shows_non_actionable_placeholder() {
         let model = ViewModel::default();
         let menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
-            baritone_mode: BaritoneMode::Navigation,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             navigation_choices: Some(true),
             ..Menu::default()
         };
@@ -8275,8 +10034,8 @@ mod tests {
             ..ViewModel::default()
         };
         let mut menu = Menu {
-            tab: Tab::Experimental,
-            baritone_mode: BaritoneMode::Navigation,
+            tab: Tab::Baritone,
+            baritone_section: BaritoneSection::Navigation,
             ..Menu::default()
         };
         menu.activate(&model, 200.0, Control::NavigationWaypoint);
@@ -9331,18 +11090,18 @@ mod tests {
         }
     }
     #[test]
-    fn rail_keeps_seven_destinations_and_settings_apart_at_its_smallest_height() {
+    fn rail_keeps_nine_destinations_and_settings_apart_at_its_smallest_height() {
         let model = ViewModel::default();
-        // The rail is only used where every destination keeps the target height six had.
+        // The rail is only used where every destination keeps a readable target height.
         for height in [RAIL_MIN_HEIGHT + 16.0, 400.0 + 16.0] {
             let rows = Menu::default().layout(&model, 640.0, height);
             let tabs: Vec<_> = rows
                 .iter()
                 .filter(|w| matches!(w.control, Some(Control::Tab(_))))
                 .collect();
-            assert_eq!(tabs.len(), 8);
+            assert_eq!(tabs.len(), 10);
             for (i, a) in tabs.iter().enumerate() {
-                assert!(a.rect[3] >= 19.0, "{:?}", a.rect);
+                assert!(a.rect[3] >= 18.0, "{:?}", a.rect);
                 for b in &tabs[i + 1..] {
                     let apart =
                         a.rect[1] + a.rect[3] <= b.rect[1] || b.rect[1] + b.rect[3] <= a.rect[1];
@@ -9352,53 +11111,6 @@ mod tests {
         }
         assert_eq!(rail_width(640.0, RAIL_MIN_HEIGHT - 1.0), 0.0);
         assert_eq!(rail_width(640.0, RAIL_MIN_HEIGHT), RAIL_WIDTH);
-    }
-    #[test]
-    fn mining_targets_toggle_like_filters_and_several_mine_together() {
-        use super::super::claim_borders_mining as mining;
-        let model = ViewModel::default();
-        let mut menu = Menu {
-            tab: Tab::Experimental,
-            experimental_section: ExperimentalSection::Baritone,
-            baritone_mode: BaritoneMode::Mining,
-            ..Menu::default()
-        };
-        menu.activate(&model, 300.0, Control::MiningTarget(0));
-        assert!(menu.baritone_request(false).is_err());
-        menu.activate(&model, 300.0, Control::MiningTarget(3));
-        assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Mine {
-                    ore: 3,
-                    targets: 8,
-                    ..
-                },
-                ..
-            })
-        ));
-        menu.activate(&model, 300.0, Control::MiningTarget(12));
-        assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Mine {
-                    ore: mining::ANY,
-                    ..
-                },
-                ..
-            })
-        ));
-        // Every target is reachable through the pages at the smallest panel.
-        let mut seen = std::collections::BTreeSet::new();
-        for _ in 0..mining::COUNT {
-            for w in menu.layout(&model, 360.0, 200.0) {
-                if let Some(Control::MiningTarget(i)) = w.control {
-                    seen.insert(i);
-                }
-            }
-            menu.activate(&model, 200.0, Control::MiningPage);
-        }
-        assert_eq!(seen.len(), mining::COUNT);
     }
     #[test]
     fn action_keys_reach_the_baritone_tab_unless_a_field_is_being_edited() {
@@ -9435,12 +11147,11 @@ mod tests {
         ));
         menu.baritone_mode = BaritoneMode::Drain;
         assert!(matches!(
-            menu.baritone_request(false),
-            Ok(Action::Navigate {
-                goal: super::super::claim_borders_navigation::Goal::Drain(c),
-                running: false
-            }) if c.radius == 6
+            menu.baritone_request(true),
+            Ok(Action::BaritoneDrain(c)) if c.radius == 6
         ));
+        // There is no preview: the port draws its own path.
+        assert!(menu.baritone_request(false).is_err());
         menu.activate(&model, 200.0, Control::DrainRadius);
         assert_eq!(menu.drain_radius, 9);
         menu.activate(&model, 200.0, Control::DrainPattern);
@@ -9456,7 +11167,7 @@ mod tests {
             menu.activate(&model, 200.0, Control::DrainRadius);
         }
         assert_eq!(menu.drain_radius, 6);
-        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.tab = Tab::Schematics;
         menu.activate(&model, 200.0, Control::SchematicChoice(0));
         assert_eq!(menu.schematic_file.as_deref(), Some("demo.schem"));
         for value in ["", "1.5 64 0", "1 64", "NaN 64 0", "30000001 64 0"] {
@@ -9474,11 +11185,7 @@ mod tests {
                 ..
             })
         ));
-        for mode in [
-            BaritoneMode::Farm,
-            BaritoneMode::Drain,
-            BaritoneMode::Schematic,
-        ] {
+        for mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
             menu.baritone_mode = mode;
             for height in [200.0, 216.0, 300.0, 500.0] {
                 let rows = menu.layout(&model, 360.0, height);
@@ -9525,7 +11232,7 @@ mod tests {
                 }
             }
         }
-        menu.baritone_mode = BaritoneMode::Schematic;
+        menu.tab = Tab::Schematics;
         menu.key("key.keyboard.tab", 0);
         assert_eq!(menu.focus, Some(Field::SchematicOrigin));
         model.experiments_accepted = false;

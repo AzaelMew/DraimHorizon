@@ -2,8 +2,8 @@ use claim_borders::{
     economy,
     economy_ui::{DetailScroll, Panel},
     menu::{
-        self, Action, BaritoneMode, Control, ExperimentalSection, Helper, HelperCategory, Language,
-        Menu, Tab, ViewModel,
+        self, Action, BaritoneMode, Control, ExperimentalSection, FarmSection, Helper,
+        HelperCategory, Language, Menu, Tab, ViewModel,
     },
     outgoing::{TranslationControl, TranslationField, TranslationScreen, TranslationTargets},
     ui_style::{DialogLayout, PagedPanel},
@@ -72,7 +72,6 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                     Default::default()
                 },
                 farm_storage: [Some([120, 64, -350]), None, None],
-                mining_custom: vec!["minecraft:prismarine".into()],
                 schematic_places: (0..6)
                     .map(|index| (index, format!("Preview {index}"), true, false))
                     .collect(),
@@ -86,14 +85,12 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                 [800.0, 500.0],
                 [1280.0, 720.0],
             ] {
-                for mode in [BaritoneMode::Mining, BaritoneMode::Schematic] {
+                {
                     for page in 0..4 {
                         let mut menu = Menu::default();
                         menu.language = language;
-                        menu.tab = Tab::Experimental;
-                        menu.experimental_section = ExperimentalSection::Baritone;
-                        menu.baritone_mode = mode;
-                        menu.mining_page = page;
+                        menu.tab = Tab::Schematics;
+                        let _ = page;
                         let widgets = menu.layout(&model, size[0], size[1]);
                         let mut footer_count = 0;
                         for (i, widget) in widgets.iter().enumerate() {
@@ -105,11 +102,7 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 || widget.text == model.navigation_status
                                 || matches!(
                                     widget.control,
-                                    Some(
-                                        Control::AutoEat
-                                            | Control::MiningCustom
-                                            | Control::FarmStorage(_)
-                                    )
+                                    Some(Control::AutoEat | Control::FarmStorage(_))
                                 );
                             if !footer {
                                 continue;
@@ -120,7 +113,7 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 if i != j && !other.text.is_empty() {
                                     assert!(
                                         separate(widget.rect, other.rect),
-                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {mode:?}, {language:?}",
+                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {language:?}",
                                         widget.control,
                                         widget.text,
                                         other.control,
@@ -129,9 +122,8 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 }
                             }
                         }
-                        // Mining keeps its two action buttons in the footer; the Schematics tab has
-                        // its folder and materials buttons in its own panel.
-                        let expected = if mode == BaritoneMode::Mining { 5 } else { 3 };
+                        // The Schematics tab has its folder and materials buttons in its own panel.
+                        let expected = 3;
                         assert_eq!(
                             footer_count, expected,
                             "actions, status, auto-eat and key hint must all remain visible"
@@ -252,7 +244,7 @@ fn compact_navigation_reaches_every_destination_without_starting_a_task() {
     }
 }
 
-/// The helper controls that moved from Experiments → Helpers into the QOL tab.
+/// Every helper control the QOL tab hosts (they were Experiments → Helpers at the old base).
 fn qol_controls() -> Vec<Control> {
     vec![
         Control::AutoEat,
@@ -263,11 +255,6 @@ fn qol_controls() -> Vec<Control> {
         Control::Helper(Helper::Totem),
         Control::Helper(Helper::Fill),
         Control::Helper(Helper::Tools),
-    ]
-}
-/// The automation helpers, which stay under Experiments → Automation and never join QOL.
-fn automation_controls() -> Vec<Control> {
-    vec![
         Control::Helper(Helper::Resume),
         Control::Helper(Helper::HumanLook),
         Control::Helper(Helper::AutoClick),
@@ -275,36 +262,18 @@ fn automation_controls() -> Vec<Control> {
         Control::AutoClickRate,
     ]
 }
-/// Opens Experiments → Automation and walks its pages through the real Back/Next actions.
-fn walk_automation(
-    menu: &mut Menu,
-    model: &ViewModel,
-    size: [f32; 2],
-) -> Vec<(usize, Vec<claim_borders::menu::Widget>)> {
-    menu.tab = Tab::Experimental;
-    click(
-        menu,
-        model,
-        size,
-        Control::ExperimentalTab(ExperimentalSection::Automation),
-    );
-    assert_eq!(menu.experimental_section, ExperimentalSection::Automation);
-    assert_eq!(menu.helper_page, 0);
-    let mut seen = Vec::new();
-    loop {
-        let widgets = menu.layout(model, size[0], size[1]);
-        let next = widgets
-            .iter()
-            .filter_map(|w| match w.control {
-                Some(Control::HelperPage(page)) if page > menu.helper_page => Some(page),
-                _ => None,
-            })
-            .max();
-        seen.push((menu.helper_page, widgets));
-        let Some(next) = next else { break };
-        click(menu, model, size, Control::HelperPage(next));
-    }
-    seen
+/// What Experiments → Automation (Farm and Drain), the Baritone tab and the Schematics tab own.
+/// None of it belongs in QOL.
+fn upstream_automation_controls() -> Vec<Control> {
+    let mut all = vec![
+        Control::BaritoneMode(BaritoneMode::Farm),
+        Control::BaritoneMode(BaritoneMode::Drain),
+        Control::DrainRadius,
+        Control::DrainPattern,
+        Control::BaritoneEnable,
+    ];
+    all.extend(FarmSection::ALL.map(Control::FarmSection));
+    all
 }
 /// Walks every category and page of the Helpers tab through the real Back/Next actions.
 fn walk_helpers(
@@ -372,7 +341,7 @@ fn helpers_are_a_top_level_tab_and_no_longer_an_experiments_section() {
             );
             click(&mut menu, &model, size, Control::Tab(Tab::Helpers));
             assert_eq!(menu.tab, Tab::Helpers);
-            // The Experiments tab keeps only its own sections.
+            // Experiments keeps its own sections: Ores and Automation (Farm, Drain).
             menu.tab = Tab::Experimental;
             let sections: Vec<_> = menu
                 .layout(&model, size[0], size[1])
@@ -382,34 +351,20 @@ fn helpers_are_a_top_level_tab_and_no_longer_an_experiments_section() {
                 .collect();
             assert_eq!(
                 sections,
-                [
-                    ExperimentalSection::Ores,
-                    ExperimentalSection::Baritone,
-                    ExperimentalSection::Automation
-                ]
-                .map(|s| Some(Control::ExperimentalTab(s)))
+                [ExperimentalSection::Ores, ExperimentalSection::Baritone]
+                    .map(|s| Some(Control::ExperimentalTab(s)))
             );
-            // The QOL helpers left Experiments; only the automation ones are there.
+            // No QOL helper is listed under Experiments (the Baritone footer's own "Eat"
+            // switch was always there).
             for section in [ExperimentalSection::Ores, ExperimentalSection::Baritone] {
                 menu.experimental_section = section;
                 for w in menu.layout(&model, size[0], size[1]) {
                     let control = w.control.unwrap_or(Control::Close);
-                    // The Baritone footer's own "Eat" switch was always there.
                     let footer_eat =
                         control == Control::AutoEat && section == ExperimentalSection::Baritone;
                     assert!(
-                        (!qol_controls().contains(&control) || footer_eat)
-                            && !automation_controls().contains(&control),
+                        !qol_controls().contains(&control) || footer_eat,
                         "{:?} in {section:?}",
-                        w.control
-                    );
-                }
-            }
-            for (_, widgets) in walk_automation(&mut menu, &model, size) {
-                for w in widgets {
-                    assert!(
-                        !qol_controls().contains(&w.control.unwrap_or(Control::Close)),
-                        "{:?} listed under Experiments",
                         w.control
                     );
                 }
@@ -464,10 +419,10 @@ fn every_original_helper_control_is_reachable_by_category_and_page_at_all_sizes(
                     "lost {control:?} at {size:?} in {language:?}"
                 );
             }
-            for control in automation_controls() {
+            for control in upstream_automation_controls() {
                 assert!(
                     !found.contains(&control),
-                    "{control:?} must stay under Experiments, found in QOL at {size:?}"
+                    "{control:?} belongs to Automation, found in QOL at {size:?}"
                 );
             }
             // A category row is always among the controls, never paged away.
@@ -511,7 +466,23 @@ fn helper_categories_keep_each_switch_with_the_choices_that_depend_on_it() {
                 Control::AutoToolsFromInventory,
             ],
         ),
-        (HelperCategory::Connection, vec![Control::ToggleReconnect]),
+        (
+            HelperCategory::Controls,
+            vec![
+                Control::Helper(Helper::AutoClick),
+                Control::AutoClickButton,
+                Control::AutoClickRate,
+            ],
+        ),
+        (
+            HelperCategory::Controls,
+            vec![Control::Helper(Helper::Resume)],
+        ),
+        (
+            HelperCategory::Controls,
+            vec![Control::Helper(Helper::HumanLook)],
+        ),
+        (HelperCategory::Controls, vec![Control::ToggleReconnect]),
     ];
     for (category, controls) in groups {
         let (_, _, widgets) = pages.iter().find(|(c, _, _)| *c == category).unwrap();
@@ -683,7 +654,7 @@ fn helpers_keyboard_walks_categories_pages_and_leaves_the_picker() {
     assert_eq!(menu.helper_category, HelperCategory::Gear);
     assert!(menu.key("key.keyboard.tab", 1));
     assert!(menu.key("key.keyboard.tab", 1));
-    assert_eq!(menu.helper_category, HelperCategory::Connection);
+    assert_eq!(menu.helper_category, HelperCategory::Controls);
     assert!(menu.key("key.keyboard.tab", 0));
     assert_eq!(menu.helper_category, HelperCategory::Survival);
     assert!(menu.focus.is_none());
@@ -780,7 +751,8 @@ fn helper_rail_and_compact_navigation_keep_usable_targets_for_every_destination(
     let model = ViewModel::default();
     for (size, rail) in [
         ([800.0, 500.0], true),
-        ([800.0, 300.0], true),
+        ([800.0, 330.0], true),
+        ([800.0, 300.0], false),
         ([800.0, 280.0], false),
         ([240.0, 216.0], false),
     ] {
@@ -802,14 +774,14 @@ fn helper_rail_and_compact_navigation_keep_usable_targets_for_every_destination(
             tabs.iter()
                 .filter(|w| matches!(w.control, Some(Control::Tab(_))))
                 .count(),
-            8,
+            10,
             "{size:?}"
         );
         for (i, a) in tabs.iter().enumerate() {
             bounded(a.rect, size);
             if rail {
                 assert!(
-                    a.rect[3] >= 19.0 || a.control == Some(Control::Close),
+                    a.rect[3] >= 18.0 || a.control == Some(Control::Close),
                     "{:?} {:?}",
                     a.control,
                     a.rect
@@ -1119,6 +1091,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
             menu.tab = Tab::Experimental;
             menu.experimental_section = ExperimentalSection::Baritone;
             menu.baritone_mode = BaritoneMode::Farm;
+            menu.farm_section = FarmSection::Plots;
             let widgets = menu.layout(&model, size[0], size[1]);
             let plot = |c: Option<Control>| {
                 matches!(
@@ -1180,6 +1153,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
                 menu.tab = Tab::Experimental;
                 menu.experimental_section = ExperimentalSection::Baritone;
                 menu.baritone_mode = BaritoneMode::Farm;
+                menu.farm_section = FarmSection::Plots;
                 for (control, action) in [
                     (Control::FarmPlotFarm(index), Action::FarmPlotFarm(index)),
                     (Control::FarmPlotShow(index), Action::FarmPlotShow(index)),
@@ -1203,6 +1177,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
         menu.tab = Tab::Experimental;
         menu.experimental_section = ExperimentalSection::Baritone;
         menu.baritone_mode = BaritoneMode::Farm;
+        menu.farm_section = FarmSection::Plots;
         let widgets = menu.layout(&empty, 800.0, 500.0);
         assert!(widgets.iter().any(|w| w.text.contains("/dfarm pos1")));
         assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
@@ -1234,9 +1209,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
         ] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             for (i, w) in widgets.iter().enumerate() {
                 if !matches!(
@@ -1291,9 +1264,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert_eq!(own.len(), 2, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // No select or delete for a friend's preview: only show or hide.
                 let mut label = false;
                 for _ in 0..8 {
@@ -1313,9 +1284,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert!(label, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // Paged to the friend's row, its button acts on it.
                 while !menu
                     .layout(&model, size[0], size[1])
@@ -1345,9 +1314,7 @@ fn schematics_tab_lists_files_and_keeps_the_preview_controls_beside_them() {
         for size in [[536.0, 300.0], [800.0, 500.0], [1280.0, 720.0]] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             let find = |c: Control| widgets.iter().find(|w| w.control == Some(c));
             for c in [
@@ -1402,7 +1369,7 @@ const MOVED: [(Control, HelperCategory); 4] = [
     (Control::ProtectGlowBerries, HelperCategory::Survival),
     (Control::ShowInvisibleEntities, HelperCategory::Survival),
     (Control::ToggleShulkerPeek, HelperCategory::Gear),
-    (Control::ToggleReconnect, HelperCategory::Connection),
+    (Control::ToggleReconnect, HelperCategory::Controls),
 ];
 
 #[test]
@@ -1729,125 +1696,137 @@ fn default_on_auto_eat_is_inactive_without_consent_but_foods_can_be_chosen_ahead
 }
 
 #[test]
-fn automation_stays_in_experiments_reachable_at_every_size_and_language() {
+fn upstream_automation_baritone_and_schematics_stay_where_they_were_and_apart_from_qol() {
     let model = ViewModel {
         experiments_accepted: true,
+        baritone_enabled: true,
         ..ViewModel::default()
     };
     for language in [Language::Russian, Language::English] {
-        for size in [
-            [240.0_f32, 216.0],
-            [320.0, 240.0],
-            [400.0, 280.0],
-            [640.0, 300.0],
-            [800.0, 500.0],
-        ] {
-            let mut menu = menu_with(|m| m.language = language);
-            // Reached through the Experiments tab, like every other Experiments section.
+        for size in [[800.0_f32, 500.0], [240.0, 216.0]] {
             let has_rail = menu::rail_width(
                 (size[0] - 16.0).clamp(220.0, 720.0),
                 (size[1] - 16.0).clamp(200.0, 400.0),
             ) > 0.0;
-            if !has_rail {
-                click(&mut menu, &model, size, Control::NavigationMenu);
-            }
-            click(&mut menu, &model, size, Control::Tab(Tab::Experimental));
-            assert_eq!(menu.tab, Tab::Experimental);
-            let walked = walk_automation(&mut menu, &model, size);
-            let mut found = Vec::new();
-            for (_, widgets) in &walked {
-                let controls: Vec<_> = widgets.iter().filter(|w| w.control.is_some()).collect();
-                for (i, a) in controls.iter().enumerate() {
-                    bounded(a.rect, size);
-                    for b in &controls[i + 1..] {
-                        assert!(
-                            separate(a.rect, b.rect),
-                            "{:?} overlaps {:?} at {size:?}",
-                            a.control,
-                            b.control
-                        );
-                    }
-                    found.push(a.control.unwrap());
+            let mut menu = menu_with(|m| m.language = language);
+            let open = |menu: &mut Menu, tab: Tab| {
+                if !has_rail {
+                    click(menu, &model, size, Control::NavigationMenu);
                 }
+                click(menu, &model, size, Control::Tab(tab))
+            };
+            // Experiments → Automation is still Farm and Drain, under its own name.
+            open(&mut menu, Tab::Experimental);
+            let widgets = menu.layout(&model, size[0], size[1]);
+            let label = match language {
+                Language::Russian => "Автоматизация",
+                Language::English => "Automation",
+            };
+            assert!(widgets.iter().any(|w| {
+                w.control == Some(Control::ExperimentalTab(ExperimentalSection::Baritone))
+                    && w.text == label
+            }));
+            click(
+                &mut menu,
+                &model,
+                size,
+                Control::ExperimentalTab(ExperimentalSection::Baritone),
+            );
+            for mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
+                click(&mut menu, &model, size, Control::BaritoneMode(mode));
+                assert_eq!(menu.baritone_mode, mode);
             }
-            for control in automation_controls() {
-                assert!(found.contains(&control), "lost {control:?} at {size:?}");
+            click(
+                &mut menu,
+                &model,
+                size,
+                Control::BaritoneMode(BaritoneMode::Farm),
+            );
+            for section in FarmSection::ALL {
+                click(&mut menu, &model, size, Control::FarmSection(section));
+                assert_eq!(menu.farm_section, section);
             }
-            // Every section selector stays reachable, and no QOL helper leaks in.
-            for section in [
-                ExperimentalSection::Ores,
-                ExperimentalSection::Baritone,
-                ExperimentalSection::Automation,
-            ] {
-                assert!(found.contains(&Control::ExperimentalTab(section)));
-            }
-            for control in qol_controls().into_iter().chain([Control::ToggleReconnect]) {
-                assert!(!found.contains(&control), "{control:?} in Automation");
-            }
-            // Switch captions carry a localized state; choices keep their name: value form.
-            for (_, widgets) in &walked {
+            // Baritone and Schematics keep their own top-level tabs.
+            open(&mut menu, Tab::Baritone);
+            assert_eq!(menu.tab, Tab::Baritone);
+            assert!(
+                menu.layout(&model, size[0], size[1])
+                    .iter()
+                    .any(|w| w.control == Some(Control::BaritoneEnable))
+            );
+            let refresh = open(&mut menu, Tab::Schematics);
+            assert_eq!(menu.tab, Tab::Schematics);
+            assert_eq!(refresh, Some(Action::RefreshSchematics));
+            // QOL hosts helpers only: no Farm, Drain or Baritone control is in it.
+            open(&mut menu, Tab::Helpers);
+            for (_, _, widgets) in walk_helpers(&mut menu, &model, size) {
                 for w in widgets {
-                    if let Some(Control::Helper(_)) = w.control {
-                        let (_, shown) = claim_borders::ui_style::switch_label(&w.text)
-                            .unwrap_or_else(|| panic!("not a switch: {}", w.text));
-                        assert_eq!(shown, w.selected);
-                    }
+                    let control = w.control.unwrap_or(Control::Close);
+                    assert!(
+                        !upstream_automation_controls().contains(&control),
+                        "{control:?} in QOL"
+                    );
+                    assert!(
+                        !matches!(
+                            control,
+                            Control::BaritoneCmd(_) | Control::BaritoneSection(_)
+                        ),
+                        "{control:?} in QOL"
+                    );
                 }
             }
-            // Paging: keys and the wheel move the same pages as the buttons.
-            if walked.len() > 1 {
-                menu.helper_page = 0;
-                assert!(menu.dispatch_key(&model, size, "key.keyboard.page.down", 0));
-                assert_eq!(menu.helper_page, 1, "{size:?}");
-                assert!(menu.dispatch_key(&model, size, "key.keyboard.page.up", 0));
-                assert_eq!(menu.helper_page, 0);
-            }
-            // Tab never focuses a hidden text field here.
-            assert!(menu.key("key.keyboard.tab", 0));
-            assert!(menu.focus.is_none());
         }
     }
 }
 
 #[test]
-fn automation_actions_and_defaults_are_unchanged_and_need_no_extra_consent() {
-    let size = [800.0, 500.0];
-    let model = ViewModel {
-        experiments_accepted: true,
-        ..ViewModel::default()
-    };
-    let mut menu = menu_with(|m| m.tab = Tab::Experimental);
-    for helper in [Helper::Resume, Helper::HumanLook, Helper::AutoClick] {
-        let on = model.helpers[helper.index()];
-        click(
-            &mut menu,
-            &model,
-            size,
-            Control::ExperimentalTab(ExperimentalSection::Automation),
-        );
-        assert_eq!(
-            click(&mut menu, &model, size, Control::Helper(helper)),
-            Some(Action::SetHelper(helper, !on))
-        );
+fn saved_views_restore_the_new_tab_and_the_old_helpers_path() {
+    // The current format keeps the QOL tab and its category.
+    let mut kept = menu_with(|m| {
+        m.tab = Tab::Helpers;
+        m.helper_category = HelperCategory::Controls;
+    });
+    let text = kept.view_state();
+    assert!(
+        text.contains("tab=helpers") && text.contains("hc=controls"),
+        "{text}"
+    );
+    let mut fresh = Menu::default();
+    fresh.restore_view(&text);
+    assert_eq!(
+        (fresh.tab, fresh.helper_category),
+        (Tab::Helpers, HelperCategory::Controls)
+    );
+    assert_eq!(fresh.view_state(), text);
+    // What the published version saved for Experiments → Helpers opens the QOL tab.
+    let mut old = Menu::default();
+    old.restore_view("tab=experimental;exp=helpers;bs=tasks;bm=farm;fs=crops;set=0;chat=0;claims=0;party=1;trade=0");
+    assert_eq!(old.tab, Tab::Helpers);
+    // The other published views are untouched, including Automation (Farm, Drain).
+    let mut automation = Menu::default();
+    automation.restore_view("tab=experimental;exp=automation;bm=drain;fs=plots");
+    assert_eq!(automation.tab, Tab::Experimental);
+    assert_eq!(
+        automation.experimental_section,
+        ExperimentalSection::Baritone
+    );
+    assert_eq!(automation.baritone_mode, BaritoneMode::Drain);
+    assert_eq!(automation.farm_section, FarmSection::Plots);
+    for (saved, tab) in [
+        ("tab=baritone", Tab::Baritone),
+        ("tab=schematics", Tab::Schematics),
+        ("tab=trading", Tab::Trading),
+    ] {
+        let mut menu = Menu::default();
+        menu.restore_view(saved);
+        assert_eq!(menu.tab, tab);
     }
+    // A view saved without the new key, and unknown ones, still restore.
+    let mut menu = Menu::default();
+    menu.restore_view("tab=helpers;future=1;hc=nonsense");
     assert_eq!(
-        click(&mut menu, &model, size, Control::AutoClickButton),
-        Some(Action::SetAutoClickButton(!model.click_right))
+        (menu.tab, menu.helper_category),
+        (Tab::Helpers, HelperCategory::Survival)
     );
-    assert!(matches!(
-        click(&mut menu, &model, size, Control::AutoClickRate),
-        Some(Action::SetAutoClickRate(_))
-    ));
-    // The Experiments tab itself still asks for the warning before it opens.
-    let fresh = ViewModel::default();
-    let mut menu = menu_with(|m| m.tab = Tab::Waypoints);
-    click(&mut menu, &fresh, size, Control::Tab(Tab::Experimental));
-    assert!(menu.experiments_prompt);
-    assert_eq!(menu.tab, Tab::Waypoints);
-    // Reconnect is the only automation-like control that stays outside: it is in QOL.
-    let mut menu = menu_with(|m| m.tab = Tab::Helpers);
-    assert_eq!(
-        press(&mut menu, &fresh, size, Control::ToggleReconnect),
-        Some(Action::ToggleReconnect)
-    );
+    kept.helper_page = 0;
 }

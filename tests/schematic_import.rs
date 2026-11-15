@@ -109,4 +109,171 @@ mod tests {
         }
         assert!(safe_filename("Дом.litematic"));
     }
+    #[test]
+    fn a_mirrored_preview_flips_cells_and_states_the_way_the_game_mirrors_them() {
+        use claim_borders::schematic_places::{place, unplace};
+        let st = |t: &str| BlockState::parse(t).unwrap();
+        // Across Z: north and south change places, east and west stay.
+        let across_z = st("minecraft:furnace[facing=north]").mirrored(1);
+        assert_eq!(across_z.properties["facing"], "south");
+        assert_eq!(
+            st("minecraft:furnace[facing=east]").mirrored(1).properties["facing"],
+            "east"
+        );
+        assert_eq!(
+            st("minecraft:furnace[facing=east]").mirrored(2).properties["facing"],
+            "west"
+        );
+        // A sign's 16 steps: 0 (south) stays across X, 8 (north) goes to 0 across Z.
+        assert_eq!(
+            st("minecraft:oak_sign[rotation=4]").mirrored(1).properties["rotation"],
+            "4"
+        );
+        assert_eq!(
+            st("minecraft:oak_sign[rotation=4]").mirrored(2).properties["rotation"],
+            "12"
+        );
+        // Doors swap their hinge, stairs corners their side, rails their slope.
+        assert_eq!(
+            st("minecraft:oak_door[facing=east,hinge=left]")
+                .mirrored(1)
+                .properties["hinge"],
+            "right"
+        );
+        let stair = st("minecraft:oak_stairs[facing=north,shape=inner_left]").mirrored(1);
+        assert_eq!(
+            (
+                stair.properties["facing"].as_str(),
+                stair.properties["shape"].as_str()
+            ),
+            ("south", "inner_right")
+        );
+        assert_eq!(
+            st("minecraft:oak_stairs[facing=east,shape=inner_left]")
+                .mirrored(1)
+                .properties["shape"],
+            "inner_left"
+        );
+        assert_eq!(
+            st("minecraft:rail[shape=ascending_north]")
+                .mirrored(1)
+                .properties["shape"],
+            "ascending_south"
+        );
+        // A mirror twice is no mirror, and a turn comes after it.
+        let s = st("minecraft:furnace[facing=north]");
+        assert_eq!(s.mirrored(1).mirrored(1), s);
+        assert_eq!(s.transformed(4 + 1).properties["facing"], "west");
+        // Cells: place and unplace undo each other for every turn and mirror.
+        for code in 0..12 {
+            for at in [[3, 1, -2], [0, 5, 7], [-4, 0, 0]] {
+                let w = place(at, [10, 64, -20], code);
+                assert_eq!(unplace(w, [10, 64, -20], code), at, "{code}");
+            }
+        }
+        assert_eq!(place([3, 0, 2], [0, 0, 0], 4), [3, 0, -2]);
+        assert_eq!(place([3, 0, 2], [0, 0, 0], 8), [-3, 0, 2]);
+    }
+}
+#[cfg(test)]
+mod items_tests {
+    use claim_borders::schematic::BlockState;
+    #[test]
+    fn blocks_become_the_items_that_place_them() {
+        let st = |t: &str| BlockState::parse(t).unwrap();
+        let one = |t: &str| st(t).items();
+        assert_eq!(
+            one("minecraft:oak_slab[type=double]"),
+            [("minecraft:oak_slab".to_owned(), 2)]
+        );
+        assert_eq!(
+            one("minecraft:oak_slab[type=top]"),
+            [("minecraft:oak_slab".to_owned(), 1)]
+        );
+        assert!(one("minecraft:oak_door[half=upper]").is_empty());
+        assert!(one("minecraft:red_bed[part=head]").is_empty());
+        assert_eq!(
+            one("minecraft:wall_torch[facing=north]"),
+            [("minecraft:torch".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:oak_wall_sign[facing=north]"),
+            [("minecraft:oak_sign".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:redstone_wire[power=0]"),
+            [("minecraft:redstone".to_owned(), 1)]
+        );
+        assert_eq!(
+            one("minecraft:sea_pickle[pickles=3]"),
+            [("minecraft:sea_pickle".to_owned(), 3)]
+        );
+        assert_eq!(
+            one("minecraft:potted_poppy"),
+            [
+                ("minecraft:flower_pot".to_owned(), 1),
+                ("minecraft:poppy".to_owned(), 1)
+            ]
+        );
+        assert_eq!(
+            one("minecraft:water[level=0]"),
+            [("minecraft:water_bucket".to_owned(), 1)]
+        );
+        assert!(one("minecraft:water[level=3]").is_empty());
+        assert!(one("minecraft:air").is_empty());
+        assert!(st("minecraft:oak_stairs[waterlogged=true]").waterlogged());
+    }
+}
+#[cfg(test)]
+mod writer_tests {
+    use claim_borders::litematica_writer as w;
+    use claim_borders::schematic::decode;
+    use std::collections::BTreeMap;
+    #[test]
+    fn a_written_litematic_is_read_back_block_for_block() {
+        let state = |name: &str, props: &[(&str, &str)]| w::State {
+            name: name.into(),
+            properties: props
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect::<BTreeMap<_, _>>(),
+        };
+        let mut a = w::Region::new("one", [0, 0, 0], [3, 2, 4]).unwrap();
+        a.set(0, 0, 0, &state("minecraft:stone", &[]));
+        a.set(
+            2,
+            1,
+            3,
+            &state(
+                "minecraft:oak_stairs",
+                &[("facing", "east"), ("half", "top")],
+            ),
+        );
+        a.set(1, 1, 2, &state("minecraft:dirt", &[]));
+        let mut b = w::Region::new("two", [5, 0, 1], [2, 2, 2]).unwrap();
+        b.set(1, 1, 1, &state("minecraft:glass", &[]));
+        let meta = w::Metadata {
+            name: "t".into(),
+            author: "me".into(),
+            description: String::new(),
+            time_ms: 1_700_000_000_000,
+            data_version: 4000,
+        };
+        let bytes = w::write(&meta, &[a, b]);
+        let blueprint = decode(&bytes).expect("our reader reads what the writer wrote");
+        assert_eq!(blueprint.format, "litematic");
+        assert_eq!(blueprint.data_version, 4000);
+        let blocks: BTreeMap<[i32; 3], String> = blueprint
+            .blocks
+            .iter()
+            .filter(|(_, s)| !s.air())
+            .map(|(p, s)| (*p, format!("{}{:?}", s.name, s.properties)))
+            .collect();
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[&[0, 0, 0]], "minecraft:stone{}");
+        assert!(blocks[&[2, 1, 3]].starts_with("minecraft:oak_stairs"));
+        assert!(blocks[&[2, 1, 3]].contains("\"east\""));
+        assert_eq!(blocks[&[1, 1, 2]], "minecraft:dirt{}");
+        assert_eq!(blocks[&[6, 1, 2]], "minecraft:glass{}");
+    }
 }

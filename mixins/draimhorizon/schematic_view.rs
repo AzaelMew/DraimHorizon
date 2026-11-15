@@ -121,7 +121,7 @@ pub(super) fn preview(game: &Game<'_>, file: String, origin: places::Pos, rotati
         };
         if let Some(pl) = p.list.get_mut(index) {
             pl.origin = origin;
-            pl.rotation = rotation % 4;
+            pl.rotation = rotation % 12;
             pl.visible = true;
         }
         p.active = Some(index);
@@ -191,7 +191,7 @@ pub(super) fn remove(game: &Game<'_>, index: usize) {
     });
 }
 /// The file's blocks for drawing, read in the background the first time.
-fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
+pub(super) fn shape(game: &Game<'_>, file: &str) -> Option<Arc<Shape>> {
     shape_in(workshop::folder(game), file, file)
 }
 /// A file of `folder` read for drawing, kept under `key` (a friend's file is kept apart from the
@@ -322,6 +322,8 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     if game.title.is_some() || game.ui.hide_gui {
         return;
     }
+    crate::game::claim_borders_schematic_verify::render(game, g);
+    crate::game::claim_borders_schematic_capture::render(game, g);
     let (mode, layer) = layers(game);
     for (pl, shape, selected) in shown(game) {
         let (lo, hi) = places::bounds(shape.min, shape.max, pl.origin, pl.rotation);
@@ -348,7 +350,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     }
 }
 /// The editor's keys: (id, default key, Russian name, English name).
-pub(super) const KEYS: [(&str, &str, &str, &str); 9] = [
+pub(super) const KEYS: [(&str, &str, &str, &str); 10] = [
     (
         "schematic_toggle",
         "key.keyboard.insert",
@@ -403,8 +405,14 @@ pub(super) const KEYS: [(&str, &str, &str, &str); 9] = [
         "Схема: вверх (с Shift вниз)",
         "Schematic: up (Shift: down)",
     ),
+    (
+        "schematic_down",
+        "key.keyboard.page.down",
+        "Схема: вниз",
+        "Schematic: down",
+    ),
 ];
-static DOWN: Mutex<[bool; 9]> = Mutex::new([false; 9]);
+static DOWN: Mutex<[bool; 10]> = Mutex::new([false; 10]);
 /// Every tick while playing: the editor's keys act on the selected preview of this world.
 pub(super) fn keys(game: &mut Game<'_>) {
     let playing = game.native_on(claims::ID)
@@ -420,8 +428,8 @@ pub(super) fn keys(game: &mut Game<'_>) {
                 .is_some_and(|code| game.physical_keys.contains(&code))
         })
         .collect();
-    let mut fresh = [false; 9];
-    for i in 0..9 {
+    let mut fresh = [false; 10];
+    for i in 0..10 {
         fresh[i] = playing && pressed[i] && !down[i];
         down[i] = pressed[i];
     }
@@ -454,7 +462,7 @@ pub(super) fn keys(game: &mut Game<'_>) {
             }
             if shown {
                 if fresh[2] {
-                    pl.rotation = (pl.rotation + 1) % 4;
+                    pl.rotation = pl.rotation / 4 * 4 + (pl.rotation % 4 + 1) % 4;
                 }
                 if fresh[3]
                     && let Some(feet) = feet
@@ -463,11 +471,12 @@ pub(super) fn keys(game: &mut Game<'_>) {
                 }
                 let forward = i32::from(fresh[4]) - i32::from(fresh[5]);
                 let right = i32::from(fresh[7]) - i32::from(fresh[6]);
+                // Page Up goes up (with Shift down), Page Down goes down.
                 let up = if fresh[8] {
                     if shift { -1 } else { 1 }
                 } else {
                     0
-                };
+                } - i32::from(fresh[9]);
                 pl.origin = places::nudge(pl.origin, yaw, forward, right, up);
             }
             if fresh[1] {
@@ -523,7 +532,15 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         (places::LayerMode::Single, n) => format!(" · {} {}", text("слой", "layer"), n + 1),
         (places::LayerMode::Below, n) => format!(" · {} 1–{}", text("слои", "layers"), n + 1),
     };
-    let place = format!("XYZ {x} {y} {z} · {}°{layer}", u16::from(pl.rotation) * 90);
+    let mirror = match pl.rotation / 4 {
+        1 => format!(" · {}", text("зеркало Z", "mirror Z")),
+        2 => format!(" · {}", text("зеркало X", "mirror X")),
+        _ => String::new(),
+    };
+    let place = format!(
+        "XYZ {x} {y} {z} · {}°{mirror}{layer}",
+        u16::from(pl.rotation % 4) * 90
+    );
     // Status chips: (colour, text).
     let mut chips: Vec<(u32, String)> = Vec::new();
     match (&error, blocks) {
@@ -559,6 +576,36 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
             }
         }
     }
+    // The verifier's numbers, when it is on (Litematica's types and colours).
+    if let Some((percent, last)) = crate::game::claim_borders_schematic_verify::summary() {
+        match last {
+            Some(t) => {
+                let names = [
+                    (0x00ffffu32, text("нет", "missing")),
+                    (0xff00cf, text("лишних", "extra")),
+                    (0xff0000, text("не тот блок", "wrong block")),
+                    (0xffaf00, text("не то сост.", "wrong state")),
+                    (0xfaf000, text("другой блок", "different")),
+                ];
+                chips.push((
+                    style::GOOD,
+                    format!("{} {}/{}", text("Верно", "Right"), t.correct, t.wanted),
+                ));
+                for (i, (color, name)) in names.into_iter().enumerate() {
+                    if t.counts[i] > 0 {
+                        chips.push((0xff00_0000 | color, format!("{} {}", name, t.counts[i])));
+                    }
+                }
+                if percent < 100 {
+                    chips.push((style::MUTED, format!("{percent}%")));
+                }
+            }
+            None => chips.push((
+                style::MUTED,
+                format!("{} {percent}%", text("Проверка", "Verifying")),
+            )),
+        }
+    }
     // The four move keys get a row of their own; the rest sit in two columns below.
     let moves = [key(4), key(5), key(6), key(7)];
     let move_label = text("Двигать", "Move");
@@ -567,7 +614,10 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         (key(3), text("Ко мне", "To me")),
         (key(0), text("Скрыть", "Hide")),
         (key(1), text("Убрать", "Remove")),
-        (key(8), text("Выше · Shift ниже", "Up · Shift down")),
+        (
+            format!("{} {}", key(8), key(9)),
+            text("Выше · ниже", "Up · down"),
+        ),
     ];
     // Sizes.
     let pad = 8.0;
@@ -762,7 +812,13 @@ pub(super) fn edit_active(
             }
             E::Rotate => {
                 let pl = &mut p.list[index];
-                pl.rotation = (pl.rotation + 1) % 4;
+                // The turn is the low two bits, the mirror above them.
+                pl.rotation = pl.rotation / 4 * 4 + (pl.rotation % 4 + 1) % 4;
+                pl.visible = true;
+            }
+            E::Mirror => {
+                let pl = &mut p.list[index];
+                pl.rotation = (pl.rotation / 4 + 1) % 3 * 4 + pl.rotation % 4;
                 pl.visible = true;
             }
             E::Here => {

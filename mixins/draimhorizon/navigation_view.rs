@@ -65,6 +65,11 @@ pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) -> bool {
 /// server-confirmation gates, and a press while a task is running does nothing, so an
 /// active dig never loses its ACK state.
 pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    // On the Baritone tab the keys drive the port: Start runs the section on screen, Pause and
+    // Stop pause and cancel its task.
+    if crate::game::claim_borders_menu_view::baritone_scope() {
+        return run_baritone_key(game, action);
+    }
     match action {
         model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
         model::Hotkey::Start => {
@@ -92,6 +97,44 @@ pub(super) fn run(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, St
         }
     }
 }
+/// The action keys while the Baritone tab is the one they belong to.
+fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, String> {
+    let line = |game: &mut Game<'_>, line: &str| {
+        if crate::game::baritone::enabled(game) {
+            crate::game::baritone::run_line(game, line);
+        }
+    };
+    match action {
+        model::Hotkey::Preview => start_from_menu(game, false).map(|()| false),
+        model::Hotkey::Start => {
+            // After Pause the same task goes on; a new start would leave the port paused.
+            if crate::game::claim_borders_baritone_walk::start_key(
+                crate::game::claim_borders_baritone_bridge::paused(game),
+            ) == crate::game::claim_borders_baritone_walk::StartKey::Resume
+            {
+                line(game, "resume");
+                crate::game::claim_borders_baritone_bridge::notice("Далее", "Resume");
+                return Ok(true);
+            }
+            let started = start_from_menu(game, true);
+            if started.is_ok() {
+                crate::game::claim_borders_baritone_bridge::notice("Старт", "Start");
+            }
+            started.map(|()| true)
+        }
+        model::Hotkey::Pause => {
+            line(game, "pause");
+            crate::game::claim_borders_baritone_bridge::notice("Пауза", "Pause");
+            Ok(false)
+        }
+        model::Hotkey::Stop => {
+            line(game, "cancel");
+            crate::game::claim_borders_baritone_bridge::walk_cancel();
+            crate::game::claim_borders_baritone_bridge::notice("Стоп", "Stop");
+            Ok(false)
+        }
+    }
+}
 /// Start or preview the task of the Baritone tab that was last on screen.
 fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     use crate::game::claim_borders_menu::Action;
@@ -99,12 +142,24 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
     // Schematics: Start builds the selected preview of this world as it stands (moved and
     // turned with the editor keys); with none, the file and place chosen in the menu.
     if running
+        && !crate::game::claim_borders_menu_view::baritone_scope()
         && crate::game::claim_borders_menu_view::schematic_mode()
         && let Some((file, origin, rotation)) = preview::build_target(game)
     {
         return crate::game::claim_borders_workshop_view::load(game, file, origin, rotation, true);
     }
     match crate::game::claim_borders_menu_view::baritone_request(running)? {
+        action @ (Action::Baritone(_)
+        | Action::BaritoneWaypoint(_)
+        | Action::BaritoneMine(_)
+        | Action::BaritoneTunnel { .. }
+        | Action::BaritoneBridge { .. }
+        | Action::BaritoneDrain(_)
+        | Action::BaritoneElytra(_)
+        | Action::BaritoneElytraWaypoint(_)
+        | Action::BaritoneBuild { .. }) => {
+            crate::game::claim_borders_client::run_menu_action(game, action)
+        }
         Action::Navigate { goal, running } => start(game, goal, running),
         Action::LoadSchematic {
             filename,
@@ -151,7 +206,8 @@ pub(super) fn keep_running_unfocused(game: &mut Game<'_>) {
     } else if !focused {
         WAS_FOCUSED.store(false, Relaxed);
     }
-    let busy = game.native_on(claims::ID) && control().0;
+    let busy = game.native_on(claims::ID)
+        && (control().0 || crate::game::claim_borders_baritone_bridge::busy());
     let off = FOCUS_PAUSE_OFF.load(Relaxed);
     if busy && !off && game.settings.file.bool("pauseOnLostFocus") {
         game.settings.file.set(
@@ -902,16 +958,66 @@ fn leg_point(
         leg_cell(game, near, from_y, want_y).map(|at| (at, false, attempt))
     })
 }
+/// Who the current workshop walk was handed to the port for ("farm", "haul"), or None when it is
+/// our own walk (so a lost walk of the port is a failed one, and the old walk's state is not
+/// read for it).
+static WALK_OWNER: Mutex<Option<&'static str>> = Mutex::new(None);
 pub(super) fn workshop_walk(
     game: &Game<'_>,
     goal: model::Pos,
     flat: bool,
     level: bool,
 ) -> Result<(), String> {
+    workshop_walk_for(game, goal, flat, level, "farm")
+}
+/// `workshop_walk` for another job: `owner` names who the walk is the port's for, so one job's
+/// walk is not cancelled by another's bookkeeping (a trip to the storage is the "haul").
+pub(super) fn workshop_walk_for(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+    owner: &'static str,
+) -> Result<(), String> {
+    workshop_walk_near(game, goal, flat, level, owner, 0)
+}
+/// As `workshop_walk_for`, but with the port it is enough to come within `radius` blocks of the
+/// goal (an item to pick up, which a walk onto the very block can miss); our own walk ignores it.
+pub(super) fn workshop_walk_near(
+    game: &Game<'_>,
+    goal: model::Pos,
+    flat: bool,
+    level: bool,
+    owner: &'static str,
+    radius: i32,
+) -> Result<(), String> {
     let from = game.native_player().map_or([0.0; 3], |p| [p.x, p.y, p.z]);
     let here = model::block(from);
     let g = model::center(goal);
     let distance = (g[0] - from[0]).hypot(g[2] - from[2]);
+    // With the Baritone engine on, the port plans and walks the way; harvesting never breaks or
+    // places blocks on it. Without it, or when it cannot start, the walk below is the farm's own.
+    if crate::game::claim_borders_baritone_bridge::engine(game) {
+        clear_construction_driver();
+        *LEGS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let far = (g[0] - from[0])
+            .hypot((g[1] - from[1]).abs())
+            .hypot(g[2] - from[2]);
+        if crate::game::claim_borders_baritone_bridge::walk_to(
+            game,
+            owner,
+            goal,
+            radius,
+            &crate::game::claim_borders_baritone_walk::FARM_WALK,
+            far,
+        )
+        .is_ok()
+        {
+            *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = Some(owner);
+            return Ok(());
+        }
+    }
+    *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = None;
     begin_trail(game, here, goal);
     // A way walked before between here and there is followed point by point.
     let via = remembered_via(game, here, goal);
@@ -1031,6 +1137,18 @@ fn walk_to(game: &Game<'_>, goal: model::Pos, flat: bool, level: bool) -> Result
     })
 }
 pub(super) fn workshop_walk_result() -> Option<bool> {
+    let owner = *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(owner) = owner {
+        if crate::game::claim_borders_baritone_bridge::walking_for(owner) {
+            return None;
+        }
+        // Over: it arrived or failed, or it was cancelled or replaced (the port switched off,
+        // another task's walk): then it did not arrive, and nothing of the old walk is read.
+        *WALK_OWNER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        return Some(
+            crate::game::claim_borders_baritone_bridge::take_result(owner).unwrap_or(false),
+        );
+    }
     let more = LEGS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1161,6 +1279,11 @@ fn free_slot(game: &Game<'_>) -> bool {
 /// Whether what a mining job breaks can still be picked up: a free slot, or a stack of the same
 /// kind that is not full (sand laid one by one across the inventory still has room). The
 /// inventory is full only when every slot is taken and every stack of the kind is at its limit.
+/// Whether the inventory has no room for what is mined (`ore` is a target, `mining::CUSTOM` for the
+/// blocks chosen in the Baritone tab): every slot taken, or no free one for the other drops.
+pub(super) fn inventory_full_for(game: &Game<'_>, ore: u8) -> bool {
+    !room_for_mining(game, ore) || !free_slot(game)
+}
 fn room_for_mining(game: &Game<'_>, ore: u8) -> bool {
     free_slot(game)
         || (0..36).any(|slot| {
@@ -1324,6 +1447,15 @@ fn chain_target(game: &Game<'_>, job: &mining::Job, position: [f64; 3]) -> Optio
     mining::next_in_reach(job.last, eye, &found)
 }
 fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
+    // The port walks only while the job is approaching its ore.
+    if crate::game::claim_borders_baritone_bridge::walking_for("mining")
+        && !s
+            .mining
+            .as_ref()
+            .is_some_and(|j| j.active && j.phase == mining::Phase::Approaching)
+    {
+        crate::game::claim_borders_baritone_bridge::walk_cancel();
+    }
     let Some(job) = s.mining.as_mut().filter(|j| j.active) else {
         return;
     };
@@ -1386,6 +1518,24 @@ fn mining_tick(game: &Game<'_>, s: &mut State, position: [f64; 3]) {
             }
         }
         mining::Phase::Approaching => {
+            // The port walked to the standing place: how it ended is the answer of the route.
+            if let Some(arrived) = crate::game::claim_borders_baritone_bridge::take_result("mining")
+            {
+                s.nav.running = true;
+                s.nav.status = if arrived {
+                    model::Status::Arrived
+                } else {
+                    model::Status::NoPath
+                };
+            }
+            // A walk the port was given that is gone without an answer (the engine switched off,
+            // the port turned off) did not arrive: the route has no way.
+            if s.nav.status == model::Status::Walking
+                && s.nav.path.is_empty()
+                && !crate::game::claim_borders_baritone_bridge::walking_for("mining")
+            {
+                s.nav.status = model::Status::NoPath;
+            }
             if matches!(s.nav.status, model::Status::NoPath | model::Status::Stuck)
                 || job
                     .target
@@ -2850,7 +3000,7 @@ pub(super) fn tick(game: &Game<'_>) {
                                 // Retry from the current position with a bounded recovery
                                 // budget. Never turn a failed plan into unbounded movement.
                                 s.nav.blocked(position);
-                            } else {
+                            } else if !mining_walk_by_port(game, s, &answer.path, position) {
                                 s.nav.accept(answer.path);
                             }
                         }
@@ -3155,6 +3305,49 @@ fn assist_replan(game: &Game<'_>, a: Assist, failed: bool) {
             s.nav.replan();
         }
     });
+}
+/// With the Baritone engine on, the walk of a mining job to its ore is the port's: it goes to the
+/// standing place the planner found, breaking and placing nothing (the job breaks the ore). True
+/// when the port took the walk; the job then waits for `take_result` in its Approaching phase.
+fn mining_walk_by_port(
+    game: &Game<'_>,
+    s: &mut State,
+    path: &Option<model::Path>,
+    position: [f64; 3],
+) -> bool {
+    if !s.nav.running
+        || !s
+            .mining
+            .as_ref()
+            .is_some_and(|j| j.active && j.phase == mining::Phase::Approaching)
+        || !crate::game::claim_borders_baritone_bridge::engine(game)
+    {
+        return false;
+    }
+    let Some(stand) = path
+        .as_ref()
+        .filter(|p| p.complete)
+        .and_then(|p| p.nodes.last().copied())
+    else {
+        return false;
+    };
+    let far = model::distance(position, model::center(stand));
+    if crate::game::claim_borders_baritone_bridge::walk_to(
+        game,
+        "mining",
+        stand,
+        0,
+        &crate::game::claim_borders_baritone_walk::MINING_WALK,
+        far,
+    )
+    .is_err()
+    {
+        return false;
+    }
+    s.nav.path.clear();
+    s.nav.goal = Some(stand);
+    s.nav.status = model::Status::Walking;
+    true
 }
 fn assist_tick(game: &Game<'_>) {
     let Some(mut a) = assist_slot(Option::take) else {
@@ -3984,6 +4177,11 @@ pub(super) fn movement(
     jump: &mut bool,
     sneak: &mut bool,
 ) {
+    // The port is walking for the farm or mining: it drives, and our own movement stays out
+    // (its keys must not read as the player's). Pause, Stop and Cancel end the walk.
+    if crate::game::claim_borders_baritone_bridge::walking() {
+        return;
+    }
     crate::game::claim_borders_workshop_view::manual_movement(*forward, *strafe, *jump, *sneak);
     // The storage window is open on purpose: nothing here may pause the trip.
     if crate::game::claim_borders_workshop_view::storing() {

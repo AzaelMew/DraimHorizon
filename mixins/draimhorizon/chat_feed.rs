@@ -5,6 +5,27 @@ use std::collections::VecDeque;
 
 pub const MAX_ENTRIES: usize = 500;
 
+/// Whether the "global chat off" switch hides a line: a public message (not a whisper, a system
+/// line or an event) from someone who is neither a friend nor an important player.
+pub fn hidden_by_global_off(preferences: Preferences, kind: Kind, important: bool) -> bool {
+    preferences.hide_global && kind == Kind::Message && !important
+}
+
+/// The same for a raw line of chat, whoever delivered it (a player's signed chat, or a server
+/// plugin that sends `<name> message` as a plain line): the line is classified and, when it is a
+/// public message, the sender asked about. Whispers come as components and are never text here.
+pub fn line_hidden_by_global_off(
+    preferences: Preferences,
+    line: &str,
+    important: impl Fn(&str) -> bool,
+) -> bool {
+    if !preferences.hide_global {
+        return false;
+    }
+    let (kind, name, _, _) = classify(line);
+    hidden_by_global_off(preferences, kind, important(&name))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Message,
@@ -1783,5 +1804,65 @@ mod tests {
         }
         refresh_heads(&mut heads, roster(&[("Kim", 2, "skins/k")]));
         assert_eq!(heads.len(), 1);
+    }
+
+    #[test]
+    fn global_chat_off_hides_only_public_messages_of_strangers() {
+        let off = Preferences {
+            hide_global: true,
+            ..Preferences::default()
+        };
+        let on = Preferences::default();
+        for kind in [
+            Kind::Message,
+            Kind::Whisper(Whisper::Incoming),
+            Kind::Whisper(Whisper::Outgoing),
+            Kind::Presence,
+            Kind::Death,
+            Kind::System,
+        ] {
+            // With global chat on nothing is hidden.
+            assert!(!hidden_by_global_off(on, kind, false), "{kind:?}");
+            // A friend or an important player is always shown.
+            assert!(!hidden_by_global_off(off, kind, true), "{kind:?}");
+            // Off: only a stranger's public message goes.
+            assert_eq!(
+                hidden_by_global_off(off, kind, false),
+                kind == Kind::Message,
+                "{kind:?}"
+            );
+        }
+        // A public line classifies as a message and a join as presence; whispers are classified
+        // from their components, not from text.
+        assert_eq!(classify("<Steve> hello").0, Kind::Message);
+        assert_eq!(classify("Steve joined the game").0, Kind::Presence);
+    }
+
+    #[test]
+    fn global_chat_off_acts_on_a_raw_line_whoever_delivered_it() {
+        let off = Preferences {
+            hide_global: true,
+            ..Preferences::default()
+        };
+        let friends = |name: &str| name.eq_ignore_ascii_case("Alex");
+        // A stranger's public line is hidden, a friend's is not, and the switch must be on.
+        assert!(line_hidden_by_global_off(off, "<Steve> hello", friends));
+        assert!(!line_hidden_by_global_off(off, "<Alex> hello", friends));
+        assert!(!line_hidden_by_global_off(
+            Preferences::default(),
+            "<Steve> hello",
+            friends
+        ));
+        // Joins and plain server lines are not public chat.
+        assert!(!line_hidden_by_global_off(
+            off,
+            "Steve joined the game",
+            friends
+        ));
+        assert!(!line_hidden_by_global_off(
+            off,
+            "Server restarts in 5 minutes",
+            friends
+        ));
     }
 }

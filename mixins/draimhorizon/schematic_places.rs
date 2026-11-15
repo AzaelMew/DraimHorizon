@@ -30,7 +30,7 @@ pub fn encode(list: &[Placement]) -> String {
                 p.origin[0],
                 p.origin[1],
                 p.origin[2],
-                p.rotation % 4,
+                p.rotation % 12,
                 u8::from(p.visible)
             )
         })
@@ -49,13 +49,34 @@ pub fn decode(text: &str) -> Vec<Placement> {
                 scope: scope.to_owned(),
                 file: file.to_owned(),
                 origin: [x.parse().ok()?, y.parse().ok()?, z.parse().ok()?],
-                rotation: rotation.parse::<u8>().ok()? % 4,
+                rotation: rotation.parse::<u8>().ok()? % 12,
                 visible: visible == "1",
             })
         })
         .filter(|p| !p.file.is_empty())
         .take(MAX)
         .collect()
+}
+/// `YYYYMMDD-HHMMSS` (UTC) of a time in seconds since 1970: the name of a saved selection.
+pub fn file_stamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rest = secs % 86_400;
+    // Civil date from a day count (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}{month:02}{day:02}-{:02}{:02}{:02}",
+        rest / 3600,
+        rest / 60 % 60,
+        rest % 60
+    )
 }
 /// A world kept by an older version, `server#account#dimension#generation` (or
 /// `save#dimension#generation` in single player), as it is kept now: `server#dimension`
@@ -84,6 +105,11 @@ pub fn stable_world(scope: &str) -> String {
 /// builder turns it (`Blueprint::transformed`).
 pub fn place(relative: Pos, origin: Pos, rotation: u8) -> Pos {
     let mut at = relative;
+    match rotation / 4 % 3 {
+        1 => at[2] = -at[2],
+        2 => at[0] = -at[0],
+        _ => {}
+    }
     for _ in 0..rotation % 4 {
         at = [-at[2], at[1], at[0]];
     }
@@ -103,6 +129,11 @@ pub fn unplace(world: Pos, origin: Pos, rotation: u8) -> Pos {
     ];
     for _ in 0..rotation % 4 {
         at = [at[2], at[1], -at[0]];
+    }
+    match rotation / 4 % 3 {
+        1 => at[2] = -at[2],
+        2 => at[0] = -at[0],
+        _ => {}
     }
     at
 }
@@ -206,6 +237,12 @@ pub fn key_cap(id: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_saved_selection_is_named_by_its_utc_time() {
+        assert_eq!(file_stamp(0), "19700101-000000");
+        assert_eq!(file_stamp(1_700_000_000), "20231114-221320");
+        assert_eq!(file_stamp(951_782_400 + 86_399), "20000229-235959");
+    }
     use super::*;
     #[test]
     fn worlds_kept_by_older_versions_read_as_now() {
