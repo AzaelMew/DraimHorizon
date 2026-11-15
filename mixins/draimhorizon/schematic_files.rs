@@ -46,9 +46,18 @@ pub fn spawn(
                     if bytes.len() > 8 * 1024 * 1024 {
                         return Err("compressed schematic exceeds 8 MiB".into());
                     }
-                    let data = horizon_world::compression::Compression::Gzip
-                        .decode(&bytes, model::MAX_BYTES)
-                        .map_err(|e| e.to_string())?;
+                    // A file shared by a friend is kept as plain NBT (it starts with a compound tag);
+                    // the usual ones are GZip.
+                    let data = if bytes.first() == Some(&10) {
+                        if bytes.len() > model::MAX_BYTES {
+                            return Err("schematic exceeds the size limit".into());
+                        }
+                        bytes
+                    } else {
+                        horizon_world::compression::Compression::Gzip
+                            .decode(&bytes, model::MAX_BYTES)
+                            .map_err(|e| e.to_string())?
+                    };
                     let document = model::decode(&data)?.transformed(origin, rotation)?;
                     if document.data_version > horizon_world::DATA_VERSION {
                         return Err("schematic data version is newer than this client".into());
