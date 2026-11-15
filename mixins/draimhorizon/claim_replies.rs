@@ -6,7 +6,7 @@
 // budget and then the window closes. A `/claims` the player types cancels the window at once, so
 // its list is shown. The window lives here, not in the Economy module, so it does not depend on
 // the Economy module being enabled. Map and claim state are updated by the parser either way.
-use super::claim_borders_economy_requests::{BUDGET, EXPIRY_MS, MANUAL_HOLD_MS};
+use super::claim_borders_economy_requests::{BUDGET, EXPIRY_MS, MANUAL_HOLD_MS, MANUAL_WAIT_MS};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Default)]
@@ -14,19 +14,40 @@ pub struct Replies {
     /// (opened at, messages left)
     window: Option<(u64, u8)>,
     hold_until: u64,
+    /// A typed command is still waiting for its reply until this time ...
+    awaiting_until: u64,
+    /// ... or until this many recognized replies have been shown: its own, plus one for each
+    /// automatic request already in flight (whose reply looks exactly the same).
+    awaiting_replies: u8,
+    /// More typed commands than the count can hold: wait until the deadline whatever is shown.
+    awaiting_overflow: bool,
     /// The text of the delivery the parser just accepted as a claims list; taken once.
     recognized: Option<String>,
     /// The connection scope this state belongs to; `None` until the first frame binds it.
     session: Option<String>,
 }
 impl Replies {
+    /// An empty state, usable in a `static`.
+    pub const fn new() -> Self {
+        Self {
+            window: None,
+            hold_until: 0,
+            awaiting_until: 0,
+            awaiting_replies: 0,
+            awaiting_overflow: false,
+            recognized: None,
+            session: None,
+        }
+    }
     fn live(&self, now: u64) -> bool {
         self.window
             .is_some_and(|(at, left)| left > 0 && now.saturating_sub(at) < EXPIRY_MS)
     }
     /// Whether a new automatic send should wait: a window is open or a typed command was just run.
     pub fn busy(&self, now: u64) -> bool {
-        self.live(now) || now < self.hold_until
+        self.live(now)
+            || now < self.hold_until
+            || (now < self.awaiting_until && (self.awaiting_replies > 0 || self.awaiting_overflow))
     }
     /// An automatic `/claims` was actually sent. Never overwrites an open window, and never arms
     /// right after a typed command.
@@ -41,9 +62,23 @@ impl Replies {
     /// does not need the connection to be bound yet: a command typed before the first frame
     /// of a connection keeps its protection when that frame binds the scope.
     pub fn manual(&mut self, now: u64) {
+        // A reply already in flight for an automatic request arrives looking just like this
+        // command's own, so one more recognized reply is waited for; several typed commands
+        // add up, up to a small bound.
+        let in_flight = u8::from(self.live(now));
+        let waiting = now < self.awaiting_until;
+        if !waiting {
+            self.awaiting_replies = 0;
+            self.awaiting_overflow = false;
+        }
+        let total = self.awaiting_replies.saturating_add(1 + in_flight);
+        // Past the bound the count cannot say how many replies are owed: hold until the deadline.
+        self.awaiting_overflow |= total > 4;
+        self.awaiting_replies = total.min(4);
         self.window = None;
         self.recognized = None;
         self.hold_until = now.saturating_add(MANUAL_HOLD_MS);
+        self.awaiting_until = now.saturating_add(MANUAL_WAIT_MS);
     }
     /// The connection ended or the mod was switched off: nothing carries over.
     pub fn leave(&mut self) {
@@ -61,6 +96,10 @@ impl Replies {
             None => self.session = Some(scope.to_owned()),
         }
     }
+    /// Remember that the delivery about to be shown is recognized output of this command family.
+    pub fn recognize(&mut self, text: &str) {
+        self.recognized = Some(text.to_owned());
+    }
     /// The chat hook, for one server line: remember it when it is a complete valid claims list.
     pub fn observe(&mut self, text: &str) {
         use super::claim_borders as claims;
@@ -74,6 +113,15 @@ impl Replies {
     pub fn deliver(&mut self, text: &str, quiet: bool, now: u64) -> bool {
         let text = super::claim_borders::strip_formatting(text);
         let recognized = self.recognized.take().is_some_and(|line| line == text);
+        if recognized
+            && now < self.awaiting_until
+            && (self.awaiting_replies > 0 || self.awaiting_overflow)
+        {
+            // A reply to a typed command is being observed now: its remaining lines get their
+            // grace from now. Ordinary automatic lines never extend anything.
+            self.hold_until = self.hold_until.max(now.saturating_add(MANUAL_HOLD_MS));
+            self.awaiting_replies = self.awaiting_replies.saturating_sub(1);
+        }
         if !self.live(now) {
             self.window = None;
             return false;
@@ -97,12 +145,7 @@ impl Replies {
         }
     }
 }
-static STATE: Mutex<Replies> = Mutex::new(Replies {
-    window: None,
-    hold_until: 0,
-    recognized: None,
-    session: None,
-});
+static STATE: Mutex<Replies> = Mutex::new(Replies::new());
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -180,9 +223,105 @@ mod tests {
         assert!(!r.deliver(LIST, true, 102));
         assert!(!r.arm(102), "no rearm inside the hold");
         assert!(r.busy(102));
-        assert!(!r.busy(101 + MANUAL_HOLD_MS));
+        // The typed command's reply is still awaited, so automatic sends keep waiting past the
+        // hold, but only up to a bound.
+        assert!(r.busy(101 + MANUAL_HOLD_MS));
+        assert!(!r.busy(101 + MANUAL_WAIT_MS));
         let mut r = Replies::default();
         assert!(!shown(&mut r, LIST, true, 100), "no window at all");
+    }
+    #[test]
+    fn a_list_already_in_flight_for_the_automatic_refresh_does_not_release_the_typed_commands_wait()
+    {
+        let mut r = Replies::default();
+        assert!(r.arm(100));
+        r.manual(101); // typed while the automatic list may still be coming
+        assert!(
+            !shown(&mut r, LIST, true, 150),
+            "the first list may be the automatic one"
+        );
+        assert!(r.busy(101 + MANUAL_HOLD_MS + 500));
+        assert!(!shown(&mut r, LIST, true, 160));
+        assert!(
+            !r.busy(101 + MANUAL_HOLD_MS + 500),
+            "the second list is the typed one's"
+        );
+        // Typed twice with nothing in flight: two lists are waited for, never more than a bound.
+        let mut r = Replies::default();
+        r.manual(100);
+        r.manual(110);
+        shown(&mut r, LIST, true, 200);
+        assert!(r.busy(100 + MANUAL_HOLD_MS + 500));
+        shown(&mut r, LIST, true, 210);
+        assert!(!r.busy(100 + MANUAL_HOLD_MS + 500));
+        let mut r = Replies::default();
+        for i in 0..50 {
+            r.manual(100 + i);
+        }
+        assert!(r.busy(100 + MANUAL_HOLD_MS + 500));
+        assert!(!r.busy(100 + MANUAL_WAIT_MS + 60));
+    }
+    #[test]
+    fn a_seen_reply_ends_the_wait_and_a_slow_one_is_not_overtaken_by_an_automatic_refresh() {
+        let mut r = Replies::default();
+        r.manual(1_000);
+        // The reply is slower than the 3 s hold; an automatic refresh must still not arm.
+        assert!(!r.arm(5_000), "typed reply still awaited");
+        // It arrives and is shown at 5.5 s: the wait ends, but the grace for the rest of its
+        // output starts now, not at the 1 s the command was typed.
+        assert!(!shown(&mut r, LIST, true, 5_500));
+        assert!(r.busy(5_600), "grace from the observed reply");
+        assert!(!r.arm(5_600));
+        assert!(r.busy(5_500 + MANUAL_HOLD_MS - 1));
+        assert!(
+            r.arm(5_500 + MANUAL_HOLD_MS),
+            "only after 8.5 s may automatic resume"
+        );
+        assert!(
+            shown(&mut r, LIST, true, 5_500 + MANUAL_HOLD_MS + 100),
+            "now an automatic reply may hide"
+        );
+    }
+    #[test]
+    fn ordinary_automatic_lines_never_extend_the_hold() {
+        let mut r = Replies::default();
+        assert!(r.arm(100));
+        assert!(shown(&mut r, LIST, true, 150));
+        assert!(!shown(&mut r, "<Steve> hi", true, 151)); // the window is spent
+        assert!(!r.busy(152), "an automatic reply starts no grace");
+        // Nor does a list shown when nothing typed is awaited.
+        let mut r = Replies::default();
+        assert!(!shown(&mut r, LIST, true, 100));
+        assert!(!r.busy(101));
+    }
+    #[test]
+    fn more_typed_commands_than_the_count_holds_wait_until_the_deadline() {
+        let mut r = Replies::default();
+        for i in 0..5 {
+            r.manual(1_000 + i);
+        }
+        // Five replies are owed but only four fit: the first four cannot release the wait.
+        for i in 0..4 {
+            shown(&mut r, LIST, true, 2_000 + i);
+        }
+        assert!(r.busy(2_000 + MANUAL_HOLD_MS + 500));
+        assert!(r.busy(1_004 + MANUAL_WAIT_MS - 1));
+        assert!(!r.busy(1_004 + MANUAL_WAIT_MS));
+        // The overflow resets with the session.
+        let mut r = Replies::default();
+        for i in 0..6 {
+            r.manual(1_000 + i);
+        }
+        r.leave();
+        assert!(!r.busy(1_100));
+        // And a command typed after the deadline starts clean.
+        let mut r = Replies::default();
+        for i in 0..6 {
+            r.manual(1_000 + i);
+        }
+        r.manual(1_005 + MANUAL_WAIT_MS + 10);
+        shown(&mut r, LIST, true, 1_005 + MANUAL_WAIT_MS + 20);
+        assert!(!r.busy(1_005 + MANUAL_WAIT_MS + 20 + MANUAL_HOLD_MS));
     }
     #[test]
     fn nothing_hides_when_unrecognized_quiet_off_expired_or_left() {
@@ -226,13 +365,19 @@ mod tests {
         assert!(!r.arm(1_100));
         // The list the typed command asked for is shown, and nothing is armed behind it.
         assert!(!shown(&mut r, LIST, true, 1_200));
-        // Once the hold is over the refresh goes out once and arms.
-        r.refresh(&mut due, 1_000 + MANUAL_HOLD_MS, || {
+        // The list was observed at 1.2 s, so the grace runs from then; once it is over the
+        // refresh goes out once and arms.
+        r.refresh(&mut due, 1_200 + MANUAL_HOLD_MS - 1, || {
+            sent = true;
+            true
+        });
+        assert!(!sent && due, "still inside the grace");
+        r.refresh(&mut due, 1_200 + MANUAL_HOLD_MS, || {
             sent = true;
             true
         });
         assert!(sent && !due);
-        assert!(shown(&mut r, LIST, true, 1_000 + MANUAL_HOLD_MS + 1));
+        assert!(shown(&mut r, LIST, true, 1_200 + MANUAL_HOLD_MS + 1));
     }
     #[test]
     fn a_refresh_that_did_not_go_out_arms_nothing_and_is_not_retried() {

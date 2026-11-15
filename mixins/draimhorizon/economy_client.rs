@@ -121,7 +121,6 @@ struct State {
     queue: VecDeque<String>,
     issuing: bool,
     replies: crate::game::claim_borders_economy_requests::Replies,
-    quiet: VecDeque<(String, u64)>,
     /// The line the book recognized in the delivery now being shown; taken once by `deliver`.
     recognized: Option<String>,
     scanner: scan::Scanner,
@@ -163,7 +162,6 @@ impl Default for State {
             queue: VecDeque::new(),
             issuing: false,
             replies: Default::default(),
-            quiet: VecDeque::new(),
             recognized: None,
             scanner: scan::Scanner::default(),
             menu_token: String::new(),
@@ -226,31 +224,9 @@ pub(super) fn flush() {
         }
     });
 }
-pub(super) fn silence(text: &str) {
-    let text = claims::strip_formatting(text);
-    let time = now();
-    state(|s| {
-        if !s.pref.flag("quiet") {
-            return;
-        }
-        s.quiet.retain(|(_, t)| time.saturating_sub(*t) < 3000);
-        if s.quiet.len() >= 48 {
-            s.quiet.pop_front();
-        }
-        s.quiet.push_back((text, time));
-    });
-}
 /// The "Hide routine command replies" preference, whether or not the Economy module is on.
 pub(super) fn quiet_enabled() -> bool {
     state(|s| s.pref.flag("quiet"))
-}
-pub(super) fn quiet(text: &str) -> bool {
-    let text = claims::strip_formatting(text);
-    let now = now();
-    state(|s| {
-        s.quiet.retain(|(_, t)| now.saturating_sub(*t) < 3000);
-        s.quiet.iter().any(|(line, _)| *line == text)
-    })
 }
 /// A server line before it is shown: parsed into the book whether or not it is hidden. Which
 /// delivery it belongs to is settled at `deliver`, which runs for the same line right after.
@@ -298,7 +274,8 @@ pub(super) fn command(command: &str) {
             s.opening = None;
             s.status.message = Message::StoppedByCommand;
         }
-        // Only the routine window is cancelled; the lines other producers silenced stay so.
+        // Only the routine window is cancelled, and the typed command is remembered so that its
+        // own answer is waited for before the mod queries again.
         s.replies.manual(command, now());
         s.recognized = None;
         if command.starts_with("sell ") || command.starts_with("buy ") {
@@ -1165,7 +1142,12 @@ mod reply_window_tests {
     /// What the two hooks do for one shown server message.
     fn shown(text: &str) -> bool {
         server(text);
-        deliver(text) || quiet(text)
+        deliver(text)
+    }
+    /// The typed command's reply was seen, so the next automatic query may go out.
+    fn auto_after_manual_wait() {
+        state(|s| s.replies.clear());
+        auto("bal");
     }
     fn auto(command: &str) {
         let now = now();
@@ -1213,16 +1195,17 @@ mod reply_window_tests {
         );
     }
     #[test]
-    fn manual_commands_leave_other_silence_producers_alone() {
+    fn a_typed_bal_is_visible_and_there_is_no_shared_recently_hidden_text_list() {
         let _g = fresh();
-        silence("Claim list line");
         auto("bal");
         command("bal");
-        assert!(
-            quiet("Claim list line"),
-            "claims silence survives a manual bal"
-        );
         assert!(!shown("Balance: 5 coins"));
+        // An identical line after the window is a delivery of its own and is never hidden.
+        auto_after_manual_wait();
+        assert!(shown("Balance: 5 coins"), "the automatic reply is hidden");
+        // The second message of the two-message window is judged on its own recognition too.
+        assert!(shown("Balance: 5 coins"));
+        assert!(!shown("Balance: 5 coins"), "never hidden indefinitely");
     }
     #[test]
     fn disabled_or_quiet_off_or_no_scope_hides_nothing() {

@@ -26,8 +26,12 @@ fn horizon_chat_capture(
                 &text,
                 crate::game::claim_borders_economy_client::quiet_enabled(),
             );
+            let trust = crate::game::claim_borders_auto_trust_view::deliver(&text);
+            let info = crate::game::claim_borders_claim_observations_view::deliver(&text);
+            // Every one of these decides about this delivery alone and consumes its own state;
+            // there is no shared "recently hidden" text list any more.
             if source == horizon_client::chat::ChatSource::Server
-                && (routine || claims || crate::game::claim_borders_economy_client::quiet(&text))
+                && (routine || claims || trust || info)
             {
                 return core::ops::ControlFlow::Break(false);
             }

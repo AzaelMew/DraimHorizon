@@ -131,6 +131,8 @@ pub enum BorderOption {
 pub struct ViewModel {
     /// The contents of a shulker box in its tooltip (on by default).
     pub shulker_peek: bool,
+    /// Hide the server's reply to a typed `/claim info` (off by default).
+    pub hide_claim_info: bool,
     /// Eating on its own (on by default).
     pub auto_eat: bool,
     /// Auto Eat may overfill the bar while below maximum health (off by default).
@@ -356,6 +358,7 @@ pub enum Action {
     /// The auto-clicker's pace, an index into `autoclick::RATES`.
     SetAutoClickRate(u8),
     SetShulkerPeek(bool),
+    SetHideClaimInfo(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage(super::claim_borders_farm_storage::Role),
     /// The safe point of the farm: set to where the player stands, or cleared.
@@ -568,6 +571,7 @@ impl std::fmt::Debug for Action {
                 f.debug_tuple("SetHelper").field(helper).field(on).finish()
             }
             Self::SetShulkerPeek(on) => f.debug_tuple("SetShulkerPeek").field(on).finish(),
+            Self::SetHideClaimInfo(on) => f.debug_tuple("SetHideClaimInfo").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
@@ -1010,6 +1014,8 @@ pub enum Control {
     AutoClickRate,
     /// Switches the contents preview in shulker box tooltips.
     ToggleShulkerPeek,
+    /// Hides the reply to a typed `/claim info` (Map and claims → Storage).
+    HideClaimInfo,
     /// Cycles who may pat this player.
     PatPolicy,
     /// Switches the notification of a received pat.
@@ -3623,6 +3629,15 @@ impl Menu {
                     ),
                     Control::MapProfile,
                 )],
+                vec![(
+                    localized!(
+                        self.language,
+                        "Скрывать ответ /claim info: {}",
+                        "Hide /claim info replies: {}",
+                        self.on(model.hide_claim_info)
+                    ),
+                    Control::HideClaimInfo,
+                )],
             ],
             ClaimsSection::Borders => vec![
                 pair(
@@ -3788,12 +3803,13 @@ impl Menu {
             .into_iter()
             .enumerate()
             {
-                out.push(widget(
-                    [x, 150.0 + i as f32 * 12.0, w, 10.0],
-                    text,
-                    None,
-                    false,
-                ));
+                // The notes sit under the rows and are left out where they would run into the
+                // footer buttons.
+                let y = 172.0 + i as f32 * 12.0;
+                if y + 10.0 > height - 26.0 {
+                    break;
+                }
+                out.push(widget([x, y, w, 10.0], text, None, false));
             }
         }
         let step = ((height - 88.0) / rows.len() as f32).clamp(12.0, 20.0);
@@ -6388,6 +6404,7 @@ impl Menu {
                 super::claim_borders_autoclick::next_rate(model.click_rate),
             )),
             Control::ToggleShulkerPeek => Some(Action::SetShulkerPeek(!model.shulker_peek)),
+            Control::HideClaimInfo => Some(Action::SetHideClaimInfo(!model.hide_claim_info)),
             Control::PatPolicy => Some(Action::SetPatPolicy(model.pat_policy.next())),
             Control::PatNotify => Some(Action::SetPatNotify(!model.pat_notify)),
             Control::ProtectGlowBerries => {

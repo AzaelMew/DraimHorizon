@@ -188,3 +188,37 @@ fn production_calls_in_order_a_reconnect_with_cached_land_starts_clean() {
     assert!(!replies::on_shown_line(LIST, true), "no stale recognition");
     assert!(replies::arm(), "no stale hold either");
 }
+
+#[test]
+fn there_is_no_shared_recently_hidden_text_list_and_every_family_decides_per_delivery() {
+    let capture = source("chat_capture_hook.rs");
+    for call in [
+        "economy_client::deliver",
+        "claim_replies::on_shown_line",
+        "auto_trust_view::deliver",
+        "claim_observations_view::deliver",
+    ] {
+        assert!(capture.contains(call), "capture hook lacks {call}");
+    }
+    assert!(
+        !capture.contains("economy_client::quiet("),
+        "the exact-text bridge is gone"
+    );
+    let economy = source("economy_client.rs");
+    assert!(!economy.contains("fn silence("));
+    assert!(!economy.contains("fn quiet("));
+    for file in [
+        "chat.rs",
+        "auto_trust_view.rs",
+        "claim_observations_view.rs",
+    ] {
+        assert!(!source(file).contains("economy_client::silence"), "{file}");
+    }
+    // Manual commands reach every family before they are sent.
+    assert!(source("command.rs").contains("auto_trust_view::manual"));
+    assert!(source("auto_trust_view.rs").contains("replies(|r| r.manual("));
+    // The /claim info switch is off unless saved as true, and applied at once on change.
+    let client = source("client.rs");
+    assert!(client.contains("\"hide_claim_info\"") && client.contains("== Some(\"true\")"));
+    assert!(client.contains("set_hide_info(on)"));
+}

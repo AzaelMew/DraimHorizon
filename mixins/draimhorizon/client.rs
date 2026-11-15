@@ -1726,6 +1726,10 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
                 .native_setting(claims::SETTINGS_ID, "shulker_peek")
                 .as_deref()
                 != Some("false"),
+            hide_claim_info: game
+                .native_setting(claims::SETTINGS_ID, "hide_claim_info")
+                .as_deref()
+                == Some("true"),
             hotkeys,
             navigation_waypoints: c
                 .waypoints
@@ -1943,6 +1947,16 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "shulker_peek",
                 if on { "true" } else { "false" },
             );
+            Ok(Vec::new())
+        }
+        Action::SetHideClaimInfo(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                crate::game::claim_borders_claim_observations_view::HIDE_KEY,
+                if on { "true" } else { "false" },
+            );
+            // Takes effect at once, with no reconnect and no waiting for the next frame.
+            crate::game::claim_borders_claim_observations_view::set_hide_info(on);
             Ok(Vec::new())
         }
         Action::SetAutoClickButton(right) => {

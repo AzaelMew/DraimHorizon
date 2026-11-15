@@ -1830,3 +1830,74 @@ fn saved_views_restore_the_new_tab_and_the_old_helpers_path() {
     );
     kept.helper_page = 0;
 }
+
+#[test]
+fn hide_claim_info_is_an_off_by_default_switch_in_map_and_claims_storage() {
+    use claim_borders::menu::ClaimsSection;
+    assert!(
+        !ViewModel::default().hide_claim_info,
+        "absent key means off"
+    );
+    for language in [Language::Russian, Language::English] {
+        for size in [[800.0_f32, 500.0], [400.0, 300.0], [240.0, 216.0]] {
+            for on in [false, true] {
+                let model = ViewModel {
+                    hide_claim_info: on,
+                    ..ViewModel::default()
+                };
+                let mut menu = menu_with(|m| {
+                    m.tab = Tab::Claims;
+                    m.claims_section = ClaimsSection::Storage;
+                    m.language = language;
+                });
+                // Small menus page the section; walk the real Back/Next actions to the row.
+                let mut widgets = menu.layout(&model, size[0], size[1]);
+                for _ in 0..8 {
+                    if widgets
+                        .iter()
+                        .any(|w| w.control == Some(Control::HideClaimInfo))
+                    {
+                        break;
+                    }
+                    let next = widgets
+                        .iter()
+                        .filter_map(|w| match w.control {
+                            Some(Control::SettingsContentPage(p)) if p > menu.settings_page => {
+                                Some(p)
+                            }
+                            _ => None,
+                        })
+                        .max();
+                    let Some(next) = next else { break };
+                    click(&mut menu, &model, size, Control::SettingsContentPage(next));
+                    widgets = menu.layout(&model, size[0], size[1]);
+                }
+                let row = widgets
+                    .iter()
+                    .find(|w| w.control == Some(Control::HideClaimInfo))
+                    .unwrap_or_else(|| panic!("switch missing at {size:?}"));
+                bounded(row.rect, size);
+                let (name, shown) = claim_borders::ui_style::switch_label(&row.text)
+                    .unwrap_or_else(|| panic!("not a switch: {}", row.text));
+                assert_eq!(shown, on);
+                assert_eq!(
+                    name,
+                    match language {
+                        Language::Russian => "Скрывать ответ /claim info",
+                        Language::English => "Hide /claim info replies",
+                    }
+                );
+                // No other control overlaps it.
+                for other in widgets.iter().filter(|w| w.control.is_some()) {
+                    if other.control != row.control {
+                        assert!(separate(row.rect, other.rect), "{:?}", other.control);
+                    }
+                }
+                assert_eq!(
+                    click(&mut menu, &model, size, Control::HideClaimInfo),
+                    Some(Action::SetHideClaimInfo(!on))
+                );
+            }
+        }
+    }
+}
