@@ -370,7 +370,9 @@ pub(super) fn frame(game: &mut Game<'_>) {
                     name: pl.file.chars().take(48).collect(),
                     dimension: here.clone(),
                     origin: pl.origin,
-                    rotation: pl.rotation,
+                    // Friends on older builds drop the whole list for a turn above 3 (the mirror
+                    // lives there), so only the turn is sent: a mirrored preview shows unmirrored.
+                    rotation: pl.rotation % 4,
                     hash: *hash,
                     size: bytes.len() as u32,
                 });

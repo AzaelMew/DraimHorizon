@@ -8,6 +8,7 @@ fn claim_borders_hud(
     }
     crate::game::claim_borders_map_view::hud(game, batch, corners);
     crate::game::claim_borders_navigation_view::hud(game, batch);
+    crate::game::claim_borders_baritone_bridge::hud(game, batch);
     crate::game::claim_borders_schematic_view::hud(game, batch);
     crate::game::claim_borders_server_ui::sidebar(game, batch, corners);
     crate::game::claim_borders_economy_view::hud(game, batch, corners);

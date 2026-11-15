@@ -46,6 +46,15 @@ pub use autoclick as claim_borders_autoclick;
 #[path = "../mixins/draimhorizon/schematic_share.rs"]
 pub mod schematic_share;
 pub use schematic_share as claim_borders_schematic_share;
+// Litematica ports (LGPL-3.0, see mixins/draimhorizon/litematica/NOTICE.md).
+#[path = "../mixins/draimhorizon/litematica/materials.rs"]
+pub mod litematica_materials;
+#[path = "../mixins/draimhorizon/litematica/selection.rs"]
+pub mod litematica_selection;
+#[path = "../mixins/draimhorizon/litematica/verifier.rs"]
+pub mod litematica_verifier;
+#[path = "../mixins/draimhorizon/litematica/writer.rs"]
+pub mod litematica_writer;
 #[path = "../mixins/draimhorizon/schematic_places.rs"]
 pub mod schematic_places;
 pub use schematic_places as claim_borders_schematic_places;
@@ -160,3 +169,166 @@ pub mod reconnect;
 #[path = "../mixins/draimhorizon/patting.rs"]
 pub mod patting;
 pub use patting as claim_borders_patting;
+
+#[path = "../mixins/draimhorizon/baritone_walk.rs"]
+pub mod baritone_walk;
+pub use baritone_walk as claim_borders_baritone_walk;
+
+#[path = "../mixins/draimhorizon/baritone_profile.rs"]
+pub mod baritone_profile;
+pub use baritone_profile as claim_borders_baritone_profile;
+
+#[path = "../mixins/draimhorizon/mine_picker.rs"]
+pub mod mine_picker;
+pub use mine_picker as claim_borders_mine_picker;
+
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/schematic/mask.rs"]
+pub mod baritone_schematic_mask;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/schematic/schematic.rs"]
+pub mod baritone_schematic;
+#[path = "../mixins/draimhorizon/baritone_shapes.rs"]
+pub mod baritone_shapes;
+pub use baritone_shapes as claim_borders_baritone_shapes;
+
+// Baritone navigation (LGPL-3.0, see mixins/draimhorizon/baritone/NOTICE.md).
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/api/utils.rs"]
+pub mod baritone_utils;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/costs.rs"]
+pub mod baritone_costs;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/api/goals.rs"]
+pub mod baritone_goals;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/api/block_optional_meta.rs"]
+pub mod baritone_bom;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/cache/world_scanner.rs"]
+pub mod baritone_world_scanner;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/cache/cached_world.rs"]
+pub mod baritone_cached_world;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/api/settings.rs"]
+pub mod baritone_settings;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/cache/waypoints.rs"]
+pub mod baritone_waypoints;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/utils/block_state.rs"]
+pub mod baritone_block_state;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/utils/block_state_interface.rs"]
+pub mod baritone_block_state_interface;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/calculation_context.rs"]
+pub mod baritone_calculation_context;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movement_helper.rs"]
+pub mod baritone_movement_helper;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/traverse.rs"]
+pub mod baritone_movement_traverse;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/ascend.rs"]
+pub mod baritone_movement_ascend;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/descend.rs"]
+pub mod baritone_movement_descend;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/diagonal.rs"]
+pub mod baritone_movement_diagonal;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/downward.rs"]
+pub mod baritone_movement_downward;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/parkour.rs"]
+pub mod baritone_movement_parkour;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movements/pillar.rs"]
+pub mod baritone_movement_pillar;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/moves.rs"]
+pub mod baritone_moves;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movement.rs"]
+pub mod baritone_movement;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/calc/a_star.rs"]
+pub mod baritone_astar;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/calc/path.rs"]
+pub mod baritone_calc_path;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/utils/rotation.rs"]
+pub mod baritone_rotation;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/behavior/aim.rs"]
+pub mod baritone_aim;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/behavior/look.rs"]
+pub mod baritone_look;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/behavior/movement_state.rs"]
+pub mod baritone_movement_state;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/behavior/player_context.rs"]
+pub mod baritone_player_context;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/movement/movement_exec.rs"]
+pub mod baritone_movement_exec;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/avoidance.rs"]
+pub mod baritone_avoidance;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/path/sprint_jump.rs"]
+pub mod baritone_sprint_jump;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/pathing/path/executor.rs"]
+pub mod baritone_executor;
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/behavior/pathing_behavior.rs"]
+pub mod baritone_pathing_behavior;
+#[cfg(test)]
+#[rustfmt::skip]
+#[allow(clippy::all, dead_code, unused_mut)]
+#[path = "../mixins/draimhorizon/baritone/tests_pathing.rs"]
+mod baritone_tests_pathing;

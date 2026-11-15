@@ -26,6 +26,14 @@ fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         .unwrap_or_else(|p| p.into_inner());
     f(&mut state)
 }
+/// What the menu shows, to be kept (tab and pages).
+pub(super) fn view_state() -> String {
+    state(|s| s.menu.view_state())
+}
+/// Puts back a kept view (the first opening of a session).
+pub(super) fn restore_view(text: &str) {
+    state(|s| s.menu.restore_view(text));
+}
 pub(super) fn claims_settings() {
     state(|s| {
         s.menu.tab = model::Tab::Claims;
@@ -61,9 +69,13 @@ pub(super) fn reset() {
 pub(super) fn baritone_request(running: bool) -> Result<model::Action, String> {
     state(|s| s.menu.baritone_request(running))
 }
+/// Whether the action keys act on the Baritone tab (rather than on Automation).
+pub(super) fn baritone_scope() -> bool {
+    state(|s| s.menu.keys_scope_is_baritone_tab())
+}
 /// Whether the Baritone tab last on screen is Schematics.
 pub(super) fn schematic_mode() -> bool {
-    state(|s| s.menu.baritone_mode == model::BaritoneMode::Schematic)
+    state(|s| s.menu.tab == model::Tab::Schematics)
 }
 pub(super) fn open() {
     state(|s| {
@@ -229,6 +241,16 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             );
         }
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
+        // The rows of the Mining picker, worked out once a frame, for the icons of its tiles.
+        let mine_rows = (s.menu.tab == model::Tab::Baritone
+            && s.menu.baritone_section == model::BaritoneSection::Mining)
+            .then(|| {
+                crate::game::claim_borders_mine_picker::entries(
+                    &s.model.blocks,
+                    s.menu.language,
+                    &s.menu.baritone_block,
+                )
+            });
         for widget in widgets {
             if !s.menu.experiments_prompt
                 && s.menu.tab == model::Tab::Waypoints
@@ -317,6 +339,14 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     model::Tab::Experimental => (
                         "Автоматизация, помощники и расширенные инструменты",
                         "Automation, helpers and advanced tools",
+                    ),
+                    model::Tab::Baritone => (
+                        "Навигация Baritone: маршруты, обходы, прыжки и подъёмы",
+                        "Baritone navigation: routes, detours, jumps and climbs",
+                    ),
+                    model::Tab::Schematics => (
+                        "Схемы: показ, друзья, слои и постройка",
+                        "Schematics: preview, friends, layers and building",
                     ),
                     model::Tab::Settings => (
                         "Оформление, связь, список игроков и боковая панель",
@@ -482,13 +512,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 && w < 56.0
             {
                 let icon = match mode {
-                    model::BaritoneMode::Navigation => ui::Icon::Map,
-                    model::BaritoneMode::Mining => ui::Icon::Search,
-                    model::BaritoneMode::Tunnel => ui::Icon::Layers,
-                    model::BaritoneMode::Bridge => ui::Icon::Fill,
                     model::BaritoneMode::Farm => ui::Icon::Restock,
                     model::BaritoneMode::Drain => ui::Icon::Grid,
-                    model::BaritoneMode::Schematic => ui::Icon::Home,
                 };
                 ui::icon(
                     game,
@@ -580,7 +605,11 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     && (w >= game.native_text_width(caption) + 22.0
                         || matches!(
                             widget.control,
-                            Some(model::Control::Tab(model::Tab::Experimental))
+                            Some(model::Control::Tab(
+                                model::Tab::Experimental
+                                    | model::Tab::Baritone
+                                    | model::Tab::Schematics
+                            ))
                         ))
                 {
                     ui::icon(
@@ -677,8 +706,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
             }
             // Mining targets are item icons; the name is shown as a tooltip.
             if let Some(
-                control @ (model::Control::MiningTarget(_)
-                | model::Control::FarmCropPick(_)
+                control @ (model::Control::FarmCropPick(_)
+                | model::Control::BaritoneMineRow(_)
                 | model::Control::AutoEatFood(_)
                 | model::Control::ExperimentalOreToggle(_)),
             ) = widget.control
@@ -687,11 +716,21 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                     request_tip = Some(widget.text.clone());
                 }
                 let icon = match control {
-                    model::Control::MiningTarget(index)
-                    | model::Control::ExperimentalOreToggle(index) => {
+                    model::Control::ExperimentalOreToggle(index) => {
                         crate::game::claim_borders_mining::icon(index)
                     }
                     model::Control::FarmCropPick(crop) => Some(crop.icon()),
+                    model::Control::BaritoneMineRow(index) => mine_rows
+                        .as_ref()
+                        .and_then(|rows| rows.get(index))
+                        .and_then(|row| match row {
+                            crate::game::claim_borders_mine_picker::Entry::Preset(i) => {
+                                crate::game::claim_borders_mining::icon(*i)
+                            }
+                            crate::game::claim_borders_mine_picker::Entry::Block(id) => {
+                                Some(id.as_str())
+                            }
+                        }),
                     model::Control::AutoEatFood(index) => s
                         .model
                         .auto_eat_options
@@ -835,6 +874,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         Some(model::Field::NavigationX) => ("X: ", "X: "),
                         Some(model::Field::NavigationY) => ("Y: ", "Y: "),
                         Some(model::Field::NavigationZ) => ("Z: ", "Z: "),
+                        Some(model::Field::BaritoneBlock) => ("Блок: ", "Block: "),
                         Some(model::Field::ClaimOwner) => ("Игрок: ", "Player: "),
                         Some(model::Field::Name) => ("Имя: ", "Name: "),
                         Some(model::Field::Color | model::Field::PriorityColor) => {
@@ -863,6 +903,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                                 model::Tab::Claims => ("Карта и приваты", "Map and claims"),
                                 model::Tab::Chat => ("Чат", "Chat"),
                                 model::Tab::Experimental => ("Эксперименты", "Experiments"),
+                                model::Tab::Baritone => ("Baritone", "Baritone"),
+                                model::Tab::Schematics => ("Схемы", "Schematics"),
                                 model::Tab::Settings => ("Настройки", "Settings"),
                                 model::Tab::Trading => ("Торговля", "Trading"),
                             };

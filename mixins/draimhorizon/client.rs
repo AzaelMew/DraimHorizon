@@ -153,6 +153,8 @@ enum Relay {
 }
 
 struct Client {
+    /// The game tick the map's source was last rebuilt at (see `frame`).
+    map_tick: u64,
     reconnect_initialized: bool,
     scope: String,
     own: u128,
@@ -199,6 +201,7 @@ struct Client {
 impl Default for Client {
     fn default() -> Self {
         Self {
+            map_tick: u64::MAX,
             reconnect_initialized: false,
             scope: String::new(),
             own: 0,
@@ -252,6 +255,37 @@ fn state<T>(f: impl FnOnce(&mut Client) -> T) -> T {
     f(&mut client)
 }
 
+/// Every block the Mining picker lists, worked out once per game (the registry does not change
+/// while it runs) and shared.
+fn block_catalogue(game: &Game<'_>) -> std::sync::Arc<Vec<String>> {
+    static CACHE: Mutex<Option<(usize, std::sync::Arc<Vec<String>>)>> = Mutex::new(None);
+    let facts = game.res.facts();
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((len, list)) = cache.as_ref()
+        && *len == facts.states.len()
+    {
+        return list.clone();
+    }
+    // Only blocks that have an item: the picker shows an icon for each.
+    let items = game.res.items();
+    let list = std::sync::Arc::new(crate::game::claim_borders_mine_picker::catalogue(
+        facts
+            .states
+            .iter()
+            .map(|s| &*s.name)
+            .filter(|name| items.get(name).is_some()),
+    ));
+    *cache = Some((facts.states.len(), list.clone()));
+    list
+}
+fn baritone_off() -> String {
+    crate::game::claim_borders_chat_view::current_language()
+        .text(
+            "Сначала включите Baritone на его вкладке",
+            "Turn Baritone on in its tab first",
+        )
+        .into()
+}
 pub(super) fn scope(game: &Game<'_>) -> Option<(String, u128)> {
     game.native_player()?;
     if let Some(remote) = &game.remote {
@@ -384,20 +418,46 @@ pub(super) fn frame(game: &mut Game<'_>) {
             game.native_set_setting(claims::SETTINGS_ID, "auto_reconnect_initialized", "true");
         }
     }
-    crate::game::claim_borders_chat_view::frame(game);
-    crate::game::claim_borders_ore_view::frame(game);
-    crate::game::claim_borders_auto_trust_view::frame(game);
-    crate::game::claim_borders_economy_client::frame(game);
-    crate::game::claim_borders_outgoing_view::frame(game);
-    crate::game::claim_borders_teleport_view::frame(game);
-    crate::game::claim_borders_claim_memory::frame(game);
-    crate::game::claim_borders_claim_observations_view::frame(game);
-    crate::game::claim_borders_seed_found_view::frame(game);
-    crate::game::claim_borders_schematic_share_view::frame(game);
-    service_menu(game);
-    crate::game::claim_borders_waypoint_view::frame(game);
-    crate::game::claim_borders_inventory_search_view::frame(game);
-    crate::game::claim_borders_inventory_sort_view::frame(game);
+    crate::game::claim_borders_baritone_profile::time("frame: chat_view", || {
+        crate::game::claim_borders_chat_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: ore_view", || {
+        crate::game::claim_borders_ore_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: auto_trust_view", || {
+        crate::game::claim_borders_auto_trust_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: economy_client", || {
+        crate::game::claim_borders_economy_client::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: outgoing_view", || {
+        crate::game::claim_borders_outgoing_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: teleport_view", || {
+        crate::game::claim_borders_teleport_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: claim_memory", || {
+        crate::game::claim_borders_claim_memory::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: claim_observations_view", || {
+        crate::game::claim_borders_claim_observations_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: seed_found_view", || {
+        crate::game::claim_borders_seed_found_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: schematic_share_view", || {
+        crate::game::claim_borders_schematic_share_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: service_menu", || service_menu(game));
+    crate::game::claim_borders_baritone_profile::time("frame: waypoint_view", || {
+        crate::game::claim_borders_waypoint_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: inventory_search_view", || {
+        crate::game::claim_borders_inventory_search_view::frame(game)
+    });
+    crate::game::claim_borders_baritone_profile::time("frame: inventory_sort_view", || {
+        crate::game::claim_borders_inventory_sort_view::frame(game)
+    });
     if !game.native_on(claims::ID) {
         crate::game::claim_borders_map_view::reset();
         return;
@@ -421,9 +481,26 @@ pub(super) fn frame(game: &mut Game<'_>) {
             }
             poll_network(game);
         }
-        prepare_avatars(game);
-        let source = map_snapshot(game);
-        crate::game::claim_borders_map_view::sync(game, source);
+        // The map's source (every claim, mark and mob, the avatars) is built again a tick at a
+        // time, not every frame: it was a quarter of a frame at 300 frames a second. While the mod's
+        // screen is open it follows every frame, and the player's own place on the minimap always does.
+        let ticks = game.ticks as u64;
+        let rebuild = game.native_mod_screen() == Some(claims::ID)
+            || state(|c| std::mem::replace(&mut c.map_tick, ticks) != ticks);
+        if rebuild {
+            crate::game::claim_borders_baritone_profile::time("frame: avatars", || {
+                prepare_avatars(game)
+            });
+            let source =
+                crate::game::claim_borders_baritone_profile::time("frame: map snapshot", || {
+                    map_snapshot(game)
+                });
+            crate::game::claim_borders_baritone_profile::time("frame: map sync", || {
+                crate::game::claim_borders_map_view::sync(game, source)
+            });
+        } else if let Some(p) = game.native_player() {
+            crate::game::claim_borders_map_view::pose([p.x, p.y, p.z], game.yaw);
+        }
     }
     for (dimension, position) in crate::game::claim_borders_map_view::take_points() {
         if let Err(e) = add_map_waypoint(game, &dimension, position) {
@@ -1559,6 +1636,13 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames_read(game),
             schematic_layers: crate::game::claim_borders_schematic_view::layers(game),
+            schematic_selection: crate::game::claim_borders_schematic_capture::status(),
+            schematic_verify: crate::game::claim_borders_schematic_verify::active().then(|| {
+                crate::game::claim_borders_schematic_verify::kind_name(
+                    crate::game::claim_borders_schematic_verify::kind(),
+                )
+                .to_owned()
+            }),
             navigation_status,
             farm_storage: crate::game::claim_borders_workshop_view::storages(game),
             farm_safe: crate::game::claim_borders_workshop_view::safe_point(game).map(|at| at),
@@ -1566,11 +1650,29 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
             schematic_friend_places: crate::game::claim_borders_schematic_share_view::rows(game),
-            mining_custom: {
-                crate::game::claim_borders_navigation_view::load_custom_blocks(game);
-                crate::game::claim_borders_mining::custom()
-            },
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_enabled(game),
+            blocks: block_catalogue(game),
+            baritone_enabled: game
+                .native_setting(claims::SETTINGS_ID, "baritone_enabled")
+                .as_deref()
+                == Some("true"),
+            baritone: {
+                let read = crate::game::claim_borders_baritone_bridge::snapshot();
+                menu::BaritoneView {
+                    process: read.process,
+                    segment: read.segment,
+                    goal: read.goal,
+                    values: read.values,
+                    profile: game
+                        .native_setting(claims::SETTINGS_ID, "baritone_profile")
+                        .as_deref()
+                        == Some("true"),
+                    mine: game
+                        .native_setting(claims::SETTINGS_ID, "baritone_mine_blocks")
+                        .map(|text| crate::game::claim_borders_mine_picker::decode(&text))
+                        .unwrap_or_default(),
+                }
+            },
             auto_eat_foods: crate::game::claim_borders_navigation_view::auto_eat_foods(game),
             auto_eat_options: {
                 let mut foods: Vec<_> = game
@@ -1701,12 +1803,25 @@ pub(super) fn open_trades(game: &mut Game<'_>) {
     }
 }
 
+/// The first opening of a session shows the tab the menu was left on last time.
+fn restore_view_once(game: &Game<'_>) {
+    static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !DONE.swap(true, std::sync::atomic::Ordering::Relaxed)
+        && let Some(text) = game.native_setting(claims::SETTINGS_ID, "menu_view")
+    {
+        menu_view::restore_view(&text);
+        *SAVED_VIEW.lock().unwrap_or_else(|e| e.into_inner()) = text;
+    }
+}
+/// The view last written to the settings (so it is written only when it changes).
+static SAVED_VIEW: Mutex<String> = Mutex::new(String::new());
 pub(super) fn open_menu(game: &mut Game<'_>) {
     if !game.native_on(claims::ID) || !ensure(game) {
         return;
     }
     if game.native_mod_screen_open(claims::ID) {
         menu_view::open();
+        restore_view_once(game);
         menu_view::sync(menu_snapshot(game));
     }
 }
@@ -1725,6 +1840,14 @@ pub(super) fn open_menu_from_options(game: &mut Game<'_>) {
     }
 }
 
+/// An action of the menu run from outside it (the action keys, with the menu closed): what it
+/// says goes to the chat.
+pub(super) fn run_menu_action(game: &mut Game<'_>, action: menu::Action) -> Result<(), String> {
+    for line in execute_menu(game, action)? {
+        game.native_chat(&line);
+    }
+    Ok(())
+}
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
@@ -1755,6 +1878,29 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
             )])
         }
+        Action::SchematicSelection(edit) => {
+            let message = crate::game::claim_borders_schematic_capture::edit(game, edit)?;
+            Ok(if message.is_empty() {
+                Vec::new()
+            } else {
+                vec![message]
+            })
+        }
+        Action::SchematicVerify => {
+            crate::game::claim_borders_schematic_verify::toggle(game)?;
+            Ok(Vec::new())
+        }
+        Action::SchematicVerifyKind => {
+            crate::game::claim_borders_schematic_verify::cycle_kind();
+            Ok(Vec::new())
+        }
+        Action::SchematicVerifyReport => {
+            use horizon_client::clipboard::Clipboard;
+            let report = crate::game::claim_borders_schematic_verify::report(game)
+                .ok_or_else(|| tr!("Проверка не включена", "The verifier is off").to_string())?;
+            game.clipboard.set(&report);
+            Ok(Vec::new())
+        }
         Action::SchematicInfo(folder) => {
             use horizon_client::clipboard::Clipboard;
             let text = if folder {
@@ -1762,7 +1908,10 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                     .display()
                     .to_string()
             } else {
-                crate::game::claim_borders_workshop_view::materials()
+                // The selected preview's list (with what is missing and what you hold); a
+                // loaded build's own totals when there is no preview.
+                crate::game::claim_borders_schematic_materials::report(game)
+                    .unwrap_or_else(|_| crate::game::claim_borders_workshop_view::materials())
             };
             game.clipboard.set(&text);
             Ok(Vec::new())
@@ -1843,6 +1992,176 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 "auto_eat",
                 if on { "true" } else { "false" },
             );
+            Ok(Vec::new())
+        }
+        Action::SetBaritone(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "baritone_enabled",
+                if on { "true" } else { "false" },
+            );
+            crate::game::baritone::invalidate_enabled();
+            if !on {
+                crate::game::baritone::stop(game);
+            }
+            Ok(Vec::new())
+        }
+        Action::Baritone(line) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::baritone::run_line(game, &line);
+            Ok(Vec::new())
+        }
+        Action::BaritoneBuild { file, origin } => {
+            use crate::game::claim_borders_workshop_view as workshop;
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            // The port reads one word from its own schematics folder: the file is copied there
+            // (a path with spaces, as in a Windows user folder, could not be given to it).
+            let from = workshop::folder(game).join(&file);
+            let into = crate::game::baritone::data_dir(game).join("schematics");
+            // A small file, copied only when the copy is missing, of another size or older: the game
+            // thread must not stall on a big one.
+            const MAX_COPY: u64 = 4 << 20;
+            let source = std::fs::metadata(&from).map_err(|e| format!("{file}: {e}"))?;
+            let size = source.len();
+            if size > MAX_COPY {
+                return Err(format!(
+                    "{file}: {}",
+                    crate::game::claim_borders_chat_view::current_language()
+                        .text("файл больше 4 МБ", "the file is over 4 MB")
+                ));
+            }
+            let target = into.join(&file);
+            let fresh = std::fs::metadata(&target).is_ok_and(|t| {
+                t.len() == size
+                    && matches!((t.modified(), source.modified()), (Ok(a), Ok(b)) if a >= b)
+            });
+            if !fresh {
+                std::fs::create_dir_all(&into)
+                    .and_then(|()| std::fs::copy(&from, &target))
+                    .map_err(|e| format!("{file}: {e}"))?;
+            }
+            let line = match origin {
+                Some([x, y, z]) => format!("build {file} {x} {y} {z}"),
+                None => format!("build {file}"),
+            };
+            crate::game::baritone::run_line(game, &line);
+            Ok(Vec::new())
+        }
+        Action::BaritoneSetting(index, value) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::set_setting(game, index, value)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneTunnel {
+            length,
+            width,
+            height,
+            floor,
+        } => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::tunnel(game, length, width, height, floor)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneBridge { length, width } => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::bridge(game, length, width)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneDrain(config) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::drain(game, config)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneMineSet(list) => {
+            let text = crate::game::claim_borders_mine_picker::encode(&list);
+            game.native_set_setting(claims::SETTINGS_ID, "baritone_mine_blocks", &text);
+            Ok(Vec::new())
+        }
+        Action::BaritoneMine(names) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::mine_start(game, names)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneElytra(at) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            crate::game::claim_borders_baritone_bridge::elytra(game, at)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneElytraWaypoint(id) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let dimension = game
+                .native_player()
+                .map(|p| p.dimension.to_owned())
+                .ok_or_else(|| {
+                    l.text("Сначала зайдите в мир", "Join a world first")
+                        .to_owned()
+                })?;
+            let waypoint = own_waypoints()
+                .into_iter()
+                .find(|w| w.id == id && w.dimension == dimension)
+                .ok_or_else(|| {
+                    l.text(
+                        "Метка недоступна в этом измерении",
+                        "Waypoint unavailable in this dimension",
+                    )
+                    .to_owned()
+                })?;
+            let at = crate::game::claim_borders_navigation::block(waypoint.position);
+            crate::game::claim_borders_baritone_bridge::elytra(game, at)?;
+            Ok(Vec::new())
+        }
+        Action::BaritoneWaypoint(id) => {
+            if !crate::game::baritone::enabled(game) {
+                return Err(baritone_off());
+            }
+            let l = crate::game::claim_borders_chat_view::current_language();
+            let dimension = game
+                .native_player()
+                .map(|p| p.dimension.to_owned())
+                .ok_or_else(|| {
+                    l.text("Сначала зайдите в мир", "Join a world first")
+                        .to_owned()
+                })?;
+            let waypoint = own_waypoints()
+                .into_iter()
+                .find(|w| w.id == id && w.dimension == dimension)
+                .ok_or_else(|| {
+                    l.text(
+                        "Метка недоступна в этом измерении",
+                        "Waypoint unavailable in this dimension",
+                    )
+                    .to_owned()
+                })?;
+            let [x, y, z] = crate::game::claim_borders_navigation::block(waypoint.position);
+            crate::game::baritone::run_line(game, &format!("goto {x} {y} {z}"));
+            Ok(Vec::new())
+        }
+        Action::SetBaritoneProfile(on) => {
+            game.native_set_setting(
+                claims::SETTINGS_ID,
+                "baritone_profile",
+                if on { "true" } else { "false" },
+            );
+            crate::game::baritone::invalidate_enabled();
             Ok(Vec::new())
         }
         Action::SetAutoEatFood(item, on) => {
@@ -1927,38 +2246,6 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             crate::game::claim_borders_farm_plots_view::remove(game, i);
             Ok(Vec::new())
         }
-        Action::MiningCustom => {
-            use crate::game::claim_borders_mining as mining;
-            let l = crate::game::claim_borders_chat_view::current_language();
-            let name = l.text("Свой блок", "Own block");
-            let picked = game
-                .pick()
-                .map(|hit| game.native_block(hit.pos))
-                .filter(|b| !b.ends_with(":air") && !b.ends_with("cave_air"));
-            let message = match picked {
-                Some(block) => {
-                    let short = block
-                        .strip_prefix("minecraft:")
-                        .unwrap_or(&block)
-                        .to_owned();
-                    if mining::toggle_custom(&block) {
-                        format!("{name}: + {short}")
-                    } else {
-                        format!("{name}: − {short}")
-                    }
-                }
-                None => {
-                    mining::set_custom(Vec::new());
-                    format!("{name}: {}", l.text("список очищен", "list cleared"))
-                }
-            };
-            game.native_set_setting(
-                claims::SETTINGS_ID,
-                "mining_custom",
-                &mining::custom().join(","),
-            );
-            Ok(vec![message])
-        }
         Action::FarmSafe => {
             use crate::game::claim_borders_workshop_view as workshop;
             let l = crate::game::claim_borders_chat_view::current_language();
@@ -1998,7 +2285,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 Ok([x, y, z]) => Ok(vec![format!("{name}: {x} {y} {z}")]),
                 // Aiming at nothing useful while one is set: forget it.
                 Err(_) if workshop::storage_of(game, role).is_some() => {
-                    workshop::clear_storage(role);
+                    workshop::clear_storage(game, role);
                     Ok(vec![format!("{name}: {}", l.text("сброшен", "cleared"))])
                 }
                 Err(e) => Err(e),
@@ -2318,6 +2605,15 @@ pub(super) fn service_menu(game: &mut Game<'_>) {
     }
     if !ensure(game) {
         return;
+    }
+    // The tab and its pages are kept for the next opening, and for the next session.
+    let view = menu_view::view_state();
+    {
+        let mut saved = SAVED_VIEW.lock().unwrap_or_else(|e| e.into_inner());
+        if *saved != view {
+            game.native_set_setting(claims::SETTINGS_ID, "menu_view", &view);
+            *saved = view;
+        }
     }
     for action in menu_view::drain_actions() {
         if game.native_mod_screen() != Some(claims::ID) {

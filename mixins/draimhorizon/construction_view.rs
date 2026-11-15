@@ -23,6 +23,8 @@ struct State {
     /// point of it was in the line of sight.
     interact: Option<nav::Pos>,
     interact_miss: u32,
+    /// What the aim at the container met instead of it, kept to say why it could not be opened.
+    interact_hit: String,
     /// An item to hold and use on a block (bone meal on a crop), and how that went: `Some(true)`
     /// once the use click was made, `Some(false)` when the item is missing or the block cannot
     /// be hit.
@@ -48,6 +50,7 @@ impl Default for State {
         Self {
             interact: None,
             interact_miss: 0,
+            interact_hit: String::new(),
             use_item: None,
             use_result: None,
             idle_since: None,
@@ -1158,8 +1161,30 @@ fn interact_input(game: &mut Game<'_>) -> Option<bool> {
             return Some(true);
         }
     }
-    state(|s| s.interact_miss += 1);
+    // The aim is as it was after the last try: what it points at, to say why nothing opened.
+    let hit = game.pick().map_or_else(
+        || "nothing".to_owned(),
+        |h| {
+            format!(
+                "{} {} {} {}",
+                game.native_block(h.pos)
+                    .trim_start_matches("minecraft:")
+                    .to_owned(),
+                h.pos[0],
+                h.pos[1],
+                h.pos[2]
+            )
+        },
+    );
+    state(|s| {
+        s.interact_miss += 1;
+        s.interact_hit = hit;
+    });
     None
+}
+/// What the aim at the container met instead of it the last time it failed.
+pub(super) fn container_hit() -> String {
+    state(|s| s.interact_hit.clone())
 }
 /// Asks for `item` to be held and used once on the block at `pos` (bone meal on a crop): the
 /// next ticks put it in hand, aim at the block and click; `use_result` says how it went.

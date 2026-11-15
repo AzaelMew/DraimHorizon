@@ -2,7 +2,8 @@ use claim_borders::{
     economy,
     economy_ui::{DetailScroll, Panel},
     menu::{
-        Action, BaritoneMode, Control, ExperimentalSection, Helper, Language, Menu, Tab, ViewModel,
+        Action, BaritoneMode, Control, ExperimentalSection, FarmSection, Helper, Language, Menu,
+        Tab, ViewModel,
     },
     outgoing::{TranslationControl, TranslationField, TranslationScreen, TranslationTargets},
     ui_style::{DialogLayout, PagedPanel},
@@ -46,7 +47,6 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                     Default::default()
                 },
                 farm_storage: [Some([120, 64, -350]), None, None],
-                mining_custom: vec!["minecraft:prismarine".into()],
                 schematic_places: (0..6)
                     .map(|index| (index, format!("Preview {index}"), true, false))
                     .collect(),
@@ -60,14 +60,12 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                 [800.0, 500.0],
                 [1280.0, 720.0],
             ] {
-                for mode in [BaritoneMode::Mining, BaritoneMode::Schematic] {
+                {
                     for page in 0..4 {
                         let mut menu = Menu::default();
                         menu.language = language;
-                        menu.tab = Tab::Experimental;
-                        menu.experimental_section = ExperimentalSection::Baritone;
-                        menu.baritone_mode = mode;
-                        menu.mining_page = page;
+                        menu.tab = Tab::Schematics;
+                        let _ = page;
                         let widgets = menu.layout(&model, size[0], size[1]);
                         let mut footer_count = 0;
                         for (i, widget) in widgets.iter().enumerate() {
@@ -79,11 +77,7 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 || widget.text == model.navigation_status
                                 || matches!(
                                     widget.control,
-                                    Some(
-                                        Control::AutoEat
-                                            | Control::MiningCustom
-                                            | Control::FarmStorage(_)
-                                    )
+                                    Some(Control::AutoEat | Control::FarmStorage(_))
                                 );
                             if !footer {
                                 continue;
@@ -94,7 +88,7 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 if i != j && !other.text.is_empty() {
                                     assert!(
                                         separate(widget.rect, other.rect),
-                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {mode:?}, {language:?}",
+                                        "footer {:?} {:?} overlaps {:?} {:?} at {size:?}, {language:?}",
                                         widget.control,
                                         widget.text,
                                         other.control,
@@ -103,9 +97,8 @@ fn baritone_footer_text_and_controls_have_separate_rows_in_both_languages() {
                                 }
                             }
                         }
-                        // Mining keeps its two action buttons in the footer; the Schematics tab has
-                        // its folder and materials buttons in its own panel.
-                        let expected = if mode == BaritoneMode::Mining { 5 } else { 3 };
+                        // The Schematics tab has its folder and materials buttons in its own panel.
+                        let expected = 3;
                         assert_eq!(
                             footer_count, expected,
                             "actions, status, auto-eat and key hint must all remain visible"
@@ -558,6 +551,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
             menu.tab = Tab::Experimental;
             menu.experimental_section = ExperimentalSection::Baritone;
             menu.baritone_mode = BaritoneMode::Farm;
+            menu.farm_section = FarmSection::Plots;
             let widgets = menu.layout(&model, size[0], size[1]);
             let plot = |c: Option<Control>| {
                 matches!(
@@ -619,6 +613,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
                 menu.tab = Tab::Experimental;
                 menu.experimental_section = ExperimentalSection::Baritone;
                 menu.baritone_mode = BaritoneMode::Farm;
+                menu.farm_section = FarmSection::Plots;
                 for (control, action) in [
                     (Control::FarmPlotFarm(index), Action::FarmPlotFarm(index)),
                     (Control::FarmPlotShow(index), Action::FarmPlotShow(index)),
@@ -642,6 +637,7 @@ fn farm_plots_are_listed_without_overlap_and_their_buttons_act() {
         menu.tab = Tab::Experimental;
         menu.experimental_section = ExperimentalSection::Baritone;
         menu.baritone_mode = BaritoneMode::Farm;
+        menu.farm_section = FarmSection::Plots;
         let widgets = menu.layout(&empty, 800.0, 500.0);
         assert!(widgets.iter().any(|w| w.text.contains("/dfarm pos1")));
         assert!(!widgets.iter().any(|w| w.text.contains("0 = ∞")));
@@ -673,9 +669,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
         ] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             for (i, w) in widgets.iter().enumerate() {
                 if !matches!(
@@ -730,9 +724,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert_eq!(own.len(), 2, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // No select or delete for a friend's preview: only show or hide.
                 let mut label = false;
                 for _ in 0..8 {
@@ -752,9 +744,7 @@ fn friends_previews_are_listed_after_own_ones_with_only_show_and_hide() {
                 assert!(label, "{size:?}");
                 let mut menu = Menu::default();
                 menu.language = language;
-                menu.tab = Tab::Experimental;
-                menu.experimental_section = ExperimentalSection::Baritone;
-                menu.baritone_mode = BaritoneMode::Schematic;
+                menu.tab = Tab::Schematics;
                 // Paged to the friend's row, its button acts on it.
                 while !menu
                     .layout(&model, size[0], size[1])
@@ -784,9 +774,7 @@ fn schematics_tab_lists_files_and_keeps_the_preview_controls_beside_them() {
         for size in [[536.0, 300.0], [800.0, 500.0], [1280.0, 720.0]] {
             let mut menu = Menu::default();
             menu.language = language;
-            menu.tab = Tab::Experimental;
-            menu.experimental_section = ExperimentalSection::Baritone;
-            menu.baritone_mode = BaritoneMode::Schematic;
+            menu.tab = Tab::Schematics;
             let widgets = menu.layout(&model, size[0], size[1]);
             let find = |c: Control| widgets.iter().find(|w| w.control == Some(c));
             for c in [

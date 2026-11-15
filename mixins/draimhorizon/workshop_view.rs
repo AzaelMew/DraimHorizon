@@ -130,7 +130,6 @@ struct State {
     scope: String,
     task: Option<Task>,
     pending: Option<Pending>,
-    files: Vec<String>,
     active: bool,
     preview: bool,
     phase: Phase,
@@ -212,7 +211,6 @@ impl Default for State {
             scope: String::new(),
             task: None,
             pending: None,
-            files: Vec::new(),
             active: false,
             preview: false,
             phase: Phase::Ready,
@@ -286,6 +284,7 @@ pub(super) fn control() -> Option<(bool, bool)> {
     })
 }
 pub(super) fn pause() {
+    crate::game::claim_borders_baritone_bridge::walk_cancel();
     state(|s| {
         s.active = false;
         if let Some(p) = s.pending.as_mut() {
@@ -301,19 +300,50 @@ pub(super) fn manual_movement(f: f32, s: f32, j: bool, c: bool) {
 pub(super) fn folder(game: &Game<'_>) -> PathBuf {
     game.native_data_dir(claims::SETTINGS_ID).join("schematics")
 }
-pub(super) fn filenames() -> Vec<String> {
-    state(|s| s.files.clone())
+/// The files of the schematics folder as last read. Kept apart from the job state: that is
+/// dropped whenever the world's scope changes or a task starts, and the list used to vanish a
+/// moment after it was read.
+struct Listing {
+    files: Vec<String>,
+    rx: Option<std::sync::mpsc::Receiver<Result<files::Response, String>>>,
+    last: Option<Instant>,
+}
+static LISTING: Mutex<Listing> = Mutex::new(Listing {
+    files: Vec::new(),
+    rx: None,
+    last: None,
+});
+fn listing_start(listing: &mut Listing, game: &Game<'_>) -> Result<(), String> {
+    listing.rx = Some(files::spawn(folder(game), None, [0; 3], 0)?);
+    listing.last = Some(Instant::now());
+    Ok(())
+}
+fn listing_poll(listing: &mut Listing) {
+    let Some(rx) = &listing.rx else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(Ok(files::Response::Files(names))) => {
+            listing.files = names;
+            listing.rx = None;
+        }
+        Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => listing.rx = None,
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    }
 }
 /// The files of the schematics folder, read again every few seconds while they are asked for
-/// (the menu is open): a list that was read in another world (a server, then single player)
-/// was dropped with that world's state, and the tab said the folder was empty until Refresh.
+/// (the menu is open).
 pub(super) fn filenames_read(game: &Game<'_>) -> Vec<String> {
-    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if last.is_none_or(|t| t.elapsed() > Duration::from_secs(4)) && refresh(game).is_ok() {
-        *last = Some(Instant::now());
+    let mut listing = LISTING.lock().unwrap_or_else(|e| e.into_inner());
+    listing_poll(&mut listing);
+    if listing.rx.is_none()
+        && listing
+            .last
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(4))
+    {
+        let _ = listing_start(&mut listing, game);
     }
-    filenames()
+    listing.files.clone()
 }
 fn guard(game: &Game<'_>) -> Result<String, String> {
     if !game.native_on(claims::ID)
@@ -341,19 +371,8 @@ fn guard(game: &Game<'_>) -> Result<String, String> {
     driver::scope(game).ok_or_else(|| "Join a world first".into())
 }
 pub(super) fn refresh(game: &Game<'_>) -> Result<(), String> {
-    let scope = driver::scope(game).ok_or("Join a world first")?;
-    if state(|s| s.pending.is_some()) {
-        return Err(text("Загрузка уже выполняется", "Import already running").into());
-    }
-    let rx = files::spawn(folder(game), None, [0; 3], 0)?;
-    state(|s| {
-        if s.scope != scope {
-            *s = State::default();
-        }
-        s.scope = scope;
-        s.pending = Some(Pending { rx, run: false });
-    });
-    Ok(())
+    let mut listing = LISTING.lock().unwrap_or_else(|e| e.into_inner());
+    listing_start(&mut listing, game)
 }
 pub(super) fn load(
     game: &Game<'_>,
@@ -374,9 +393,7 @@ pub(super) fn load(
     driver::clear_construction_driver();
     placement::reset();
     state(|s| {
-        let names = std::mem::take(&mut s.files);
         *s = State::default();
-        s.files = names;
         s.scope = scope;
         s.pending = Some(Pending { rx, run });
         s.message = text("Загрузка", "Loading").into();
@@ -529,14 +546,43 @@ pub(super) fn resume(game: &Game<'_>) -> Result<(), String> {
         Ok(())
     })
 }
-/// The containers the player set, one per role, in the current world.
-static STORAGE: Mutex<[Option<(String, nav::Pos)>; 3]> = Mutex::new([None, None, None]);
+/// The containers the player set, per world and role. Kept in the settings, so they are
+/// remembered after a restart.
+struct Saved {
+    loaded: bool,
+    list: Vec<store::Saved>,
+}
+static STORAGE: Mutex<Saved> = Mutex::new(Saved {
+    loaded: false,
+    list: Vec::new(),
+});
+const STORAGE_SETTING: &str = "farm_storage";
+fn with_storage<T>(game: &Game<'_>, f: impl FnOnce(&mut Saved) -> T) -> T {
+    let mut s = STORAGE.lock().unwrap_or_else(|e| e.into_inner());
+    if !s.loaded {
+        s.loaded = true;
+        s.list = game
+            .native_setting(claims::SETTINGS_ID, STORAGE_SETTING)
+            .map(|v| store::decode_saved(&v))
+            .unwrap_or_default();
+    }
+    f(&mut s)
+}
+fn save_storage(game: &Game<'_>, list: &[store::Saved]) {
+    game.native_set_setting(
+        claims::SETTINGS_ID,
+        STORAGE_SETTING,
+        &store::encode_saved(list),
+    );
+}
 pub(super) fn storage_of(game: &Game<'_>, role: store::Role) -> Option<nav::Pos> {
     let scope = driver::scope(game)?;
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()]
-        .as_ref()
-        .filter(|(s, _)| *s == scope)
-        .map(|(_, at)| *at)
+    with_storage(game, |s| {
+        s.list
+            .iter()
+            .find(|(w, r, _)| *w == scope && *r == role)
+            .map(|(_, _, at)| *at)
+    })
 }
 /// The harvest container (the one mining unloads into as well).
 pub(super) fn storage(game: &Game<'_>) -> Option<nav::Pos> {
@@ -559,11 +605,23 @@ pub(super) fn set_storage(game: &Game<'_>, role: store::Role) -> Result<nav::Pos
     if !store::is_container(&game.native_block(hit.pos)) {
         return Err(aimed().into());
     }
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()] = Some((scope, hit.pos));
+    with_storage(game, |s| {
+        s.list.retain(|(w, r, _)| !(*w == scope && *r == role));
+        s.list.push((scope, role, hit.pos));
+        let extra = s.list.len().saturating_sub(store::MAX_SAVED);
+        s.list.drain(..extra);
+        save_storage(game, &s.list);
+    });
     Ok(hit.pos)
 }
-pub(super) fn clear_storage(role: store::Role) {
-    STORAGE.lock().unwrap_or_else(|e| e.into_inner())[role.index()] = None;
+pub(super) fn clear_storage(game: &Game<'_>, role: store::Role) {
+    let Some(scope) = driver::scope(game) else {
+        return;
+    };
+    with_storage(game, |s| {
+        s.list.retain(|(w, r, _)| !(*w == scope && *r == role));
+        save_storage(game, &s.list);
+    });
 }
 /// The container a trip for `purpose` goes to. Seeds go to the seeds container, or to the
 /// harvest one when there is none; bone meal only has its own.
@@ -1087,11 +1145,25 @@ pub(super) fn store_frame(game: &mut Game<'_>) {
                 || t.since.elapsed() > Duration::from_millis(2500)
             {
                 if t.tries >= 3 {
+                    // Where the container is, and what the aim met instead of it: with the
+                    // block it hit named, a neighbour in the way (a composter beside or below
+                    // it) can be told from a crop or a wall.
+                    let at = state(|s| s.target)
+                        .map_or_else(String::new, |c| format!("{} {} {}", c[0], c[1], c[2]));
+                    let detail = format!(
+                        "{}: {at}; {}: {}",
+                        text("склад", "container"),
+                        text("прицел попал в", "the aim hit"),
+                        placement::container_hit()
+                    );
                     end_store(
                         game,
-                        Some(text(
-                            "Не удалось открыть склад: к нему нет свободного пути взгляда",
-                            "Could not open the storage: no clear line of sight to it",
+                        Some(&format!(
+                            "{} ({detail})",
+                            text(
+                                "Не удалось открыть склад: к нему нет свободного пути взгляда",
+                                "Could not open the storage: no clear line of sight to it",
+                            )
                         )),
                     );
                 } else {
@@ -1852,7 +1924,9 @@ fn loot_step(game: &Game<'_>, s: &mut State) -> bool {
             walking: false,
         });
         if !close {
-            match driver::workshop_walk(game, nav::block(item), true, false) {
+            // Within a block of the item is enough for the pickup, and a walk onto the very block
+            // (a crop was just replanted there) may have no way.
+            match driver::workshop_walk_near(game, nav::block(item), true, false, "farm", 1) {
                 Ok(()) => {
                     if let Some(l) = s.loot.as_mut() {
                         l.walking = true;
@@ -2223,6 +2297,10 @@ pub(super) fn tick(game: &Game<'_>) {
         reset();
         return;
     }
+    // A walk the port was given for the farm ends with the job.
+    if crate::game::claim_borders_baritone_bridge::walking_for("farm") && !state(|s| s.active) {
+        crate::game::claim_borders_baritone_bridge::walk_cancel();
+    }
     state(|s| {
         if s.scope.is_empty() {
             return;
@@ -2235,7 +2313,7 @@ pub(super) fn tick(game: &Game<'_>) {
         if let Some(answer) = answer {
             let pending = s.pending.take().unwrap();
             match answer {
-                Ok(files::Response::Files(names)) => s.files = names,
+                Ok(files::Response::Files(_)) => {}
                 Ok(files::Response::Loaded(document)) => {
                     let ignored = document.ignored_data;
                     s.task = Some(Task::Build {

@@ -15,6 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 GAME = "26.3"
 
 
+# The LGPL-3.0 texts of the Baritone port travel with its source (see baritone/NOTICE.md).
+LICENSE_FILES = {
+    "baritone/LICENSE",
+    "baritone/COPYING",
+    "baritone/LICENSE-Part-2.jpg",
+    "baritone/NOTICE.md",
+    "litematica/LICENSE",
+    "litematica/NOTICE.md",
+}
+
+
 def package():
     compat = json.loads((ROOT / "compatibility.json").read_text())
     manifests = sorted((ROOT / "mixins").glob("*/horizon-mixin.toml"))
@@ -35,11 +46,14 @@ def package():
     manifest = dict(schema=1, id=mod["id"], version=mod["version"], game=GAME,
                     horizon=compat["horizon_revision"], mixins=compat["horizon_mixins_revision"])
     files = {"horizon-native.json": (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()}
+    missing = sorted(name for name in LICENSE_FILES if not (bundle / name).is_file())
+    if missing:
+        raise ValueError(f"the licence files of the ported code are missing from the bundle: {', '.join(missing)}")
     for path in sorted(bundle.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"bundle must not contain symbolic links: {path.relative_to(ROOT)}")
         if path.is_file():
-            if path.suffix not in (".rs", ".toml"):
+            if path.suffix not in (".rs", ".toml") and path.relative_to(bundle).as_posix() not in LICENSE_FILES:
                 raise ValueError(f"source bundle contains unsupported file: {path.relative_to(ROOT)}")
             files[path.relative_to(ROOT).as_posix()] = path.read_bytes()
     out = ROOT / "target" / f"draimhorizons-{mod['version']}.hnmod"

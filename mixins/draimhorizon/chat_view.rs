@@ -111,10 +111,26 @@ impl State {
                 )
                 .is_some()
     }
+    /// Friends and the players the priority rules list are important.
+    fn important(&self, name: &str) -> bool {
+        self.priority
+            .rule(name, self.friends.contains(&name.to_ascii_lowercase()))
+            .is_some()
+    }
+    /// Whether "global chat off" hides the entry.
+    fn global_hidden(&self, entry: &model::Entry) -> bool {
+        model::hidden_by_global_off(
+            self.settings.preferences,
+            entry.kind,
+            self.important(&entry.name),
+        )
+    }
     fn shows(&self, entry: &model::Entry) -> bool {
-        self.tabs
-            .selected
-            .shows_with_friends(entry, self.friend_message(entry))
+        !self.global_hidden(entry)
+            && self
+                .tabs
+                .selected
+                .shows_with_friends(entry, self.friend_message(entry))
     }
 }
 fn state<T>(f: impl FnOnce(&mut State) -> T) -> T {
@@ -491,6 +507,21 @@ pub(super) fn capture_content(
     };
     capture_inner(game, &text.plain(), component.as_ref(), false);
 }
+/// Whether a line of public chat is dropped on arrival because "global chat off" is on and the
+/// sender is neither a friend nor an important player. Whispers, system lines and events are
+/// never dropped. The friends are read from the client each time: this runs before the first frame
+/// of a session as well.
+pub(super) fn global_hidden(game: &Game<'_>, text: &str) -> bool {
+    if !game.native_on(claims::ID) || !settings(game).preferences.hide_global {
+        return false;
+    }
+    // Friends are read from the client each time (cheap: a short list).
+    let friends = crate::game::claim_borders_client::friend_ids();
+    model::line_hidden_by_global_off(settings(game).preferences, text, |name| {
+        let friend = friends.iter().any(|(_, n)| n.eq_ignore_ascii_case(name));
+        state(|s| s.priority.rule(name, friend).is_some())
+    })
+}
 pub(super) fn capture(game: &Game<'_>, text: &str) {
     capture_inner(game, text, None, false);
 }
@@ -533,6 +564,7 @@ fn capture_inner(
         };
         if added.is_some()
             && let Some(entry) = s.feed.entries.back()
+            && !s.global_hidden(entry)
             && entry.kind != model::Kind::Whisper(model::Whisper::Outgoing)
             && (entry.channel != model::Channel::Whisper
                 || game.ui.chat.shows(horizon_client::chat::ChatSource::Player))
@@ -1241,6 +1273,11 @@ pub(super) fn draw(game: &mut Game<'_>, batch: &mut HudBatch) -> bool {
         .rev()
         .filter(|e| {
             main_entry(e, p)
+                && !model::hidden_by_global_off(
+                    p,
+                    e.kind,
+                    important_names.contains(&e.name.to_ascii_lowercase()),
+                )
                 && channel
                     .shows_with_friends(e, important_names.contains(&e.name.to_ascii_lowercase()))
                 && (show_players || !e.kind.is_chat())

@@ -127,6 +127,211 @@ impl BlockState {
         }
         state
     }
+    /// The state mirrored the way the game mirrors a block: `1` across the Z axis (north and
+    /// south change places, `Mirror.LEFT_RIGHT`), `2` across the X axis (east and west,
+    /// `Mirror.FRONT_BACK`); `0` leaves it as it is.
+    pub fn mirrored(&self, mirror: u8) -> Self {
+        let mut state = self.clone();
+        if mirror == 0 || mirror > 2 {
+            return state;
+        }
+        let across_z = mirror == 1;
+        let flip = |d: &str| -> String {
+            match (across_z, d) {
+                (true, "north") => "south",
+                (true, "south") => "north",
+                (false, "east") => "west",
+                (false, "west") => "east",
+                _ => d,
+            }
+            .to_owned()
+        };
+        let swap = |a: &str, b: &str, state: &mut Self| {
+            let (x, y) = (state.properties.remove(a), state.properties.remove(b));
+            if let Some(v) = y {
+                state.properties.insert(a.into(), v);
+            }
+            if let Some(v) = x {
+                state.properties.insert(b.into(), v);
+            }
+        };
+        let facing = self.properties.get("facing").cloned();
+        let facing_on_axis = facing.as_deref().is_some_and(|f| flip(f) != f);
+        if let Some(f) = &facing {
+            state.properties.insert("facing".into(), flip(f));
+        }
+        if let Some(r) = self
+            .properties
+            .get("rotation")
+            .and_then(|v| v.parse::<i32>().ok())
+        {
+            let r = if across_z { 8 - r } else { 16 - r };
+            state
+                .properties
+                .insert("rotation".into(), r.rem_euclid(16).to_string());
+        }
+        if across_z {
+            swap("north", "south", &mut state);
+        } else {
+            swap("east", "west", &mut state);
+        }
+        let opposite = |v: &str, a: &str, b: &str| -> Option<String> {
+            if v == a {
+                Some(b.into())
+            } else if v == b {
+                Some(a.into())
+            } else {
+                None
+            }
+        };
+        if self.name.ends_with("_stairs")
+            && let Some(shape) = self.properties.get("shape")
+        {
+            // Across the mirror a corner swaps its side (its facing was flipped above, as the
+            // game turns a straight stair round); a stair along the mirror is left alone.
+            if facing_on_axis
+                && let Some(shape) = opposite(shape, "inner_left", "inner_right")
+                    .or_else(|| opposite(shape, "outer_left", "outer_right"))
+            {
+                state.properties.insert("shape".into(), shape);
+            }
+        }
+        if self.name.ends_with("_door")
+            && let Some(hinge) = self.properties.get("hinge")
+            && let Some(h) = opposite(hinge, "left", "right")
+        {
+            state.properties.insert("hinge".into(), h);
+        }
+        if self.name.ends_with("chest")
+            && let Some(kind) = self.properties.get("type")
+            && let Some(k) = opposite(kind, "left", "right")
+        {
+            state.properties.insert("type".into(), k);
+        }
+        if self.name.ends_with("rail")
+            && let Some(shape) = self.properties.get("shape")
+        {
+            let pairs: [(&str, &str); 3] = if across_z {
+                [
+                    ("ascending_north", "ascending_south"),
+                    ("north_east", "south_east"),
+                    ("north_west", "south_west"),
+                ]
+            } else {
+                [
+                    ("ascending_east", "ascending_west"),
+                    ("north_east", "north_west"),
+                    ("south_east", "south_west"),
+                ]
+            };
+            if let Some(v) = pairs.iter().find_map(|(a, b)| opposite(shape, a, b)) {
+                state.properties.insert("shape".into(), v);
+            }
+        }
+        state
+    }
+    /// The items one block of this state takes to place, `(item id, count)`; none for a block no
+    /// item places (the other half of a door, a bed's head, fluids that are not placed, fire).
+    pub fn items(&self) -> Vec<(String, usize)> {
+        let bare = self.name.strip_prefix("minecraft:").unwrap_or(&self.name);
+        let prop = |k: &str| self.properties.get(k).map(String::as_str);
+        if self.air()
+            || prop("half") == Some("upper")
+            || prop("part") == Some("head")
+            || matches!(
+                bare,
+                "water"
+                    | "lava"
+                    | "fire"
+                    | "soul_fire"
+                    | "bubble_column"
+                    | "nether_portal"
+                    | "end_portal"
+                    | "end_gateway"
+                    | "moving_piston"
+                    | "piston_head"
+                    | "frosted_ice"
+                    | "light"
+                    | "void_air"
+            )
+        {
+            // Water and lava stand for a bucket of each where they are placed as sources.
+            return match (bare, prop("level")) {
+                ("water", Some("0")) => vec![("minecraft:water_bucket".into(), 1)],
+                ("lava", Some("0")) => vec![("minecraft:lava_bucket".into(), 1)],
+                _ => Vec::new(),
+            };
+        }
+        let mut item = bare.to_owned();
+        let mut out: Vec<(String, usize)> = Vec::new();
+        if let Some(rest) = bare.strip_prefix("potted_") {
+            out.push(("minecraft:flower_pot".into(), 1));
+            item = rest.to_owned();
+        }
+        // A block on a wall is placed by the item of the free-standing one.
+        for (from, to) in [
+            ("_wall_torch", "_torch"),
+            ("wall_torch", "torch"),
+            ("_wall_sign", "_sign"),
+            ("_wall_hanging_sign", "_hanging_sign"),
+            ("_wall_banner", "_banner"),
+            ("_wall_head", "_head"),
+            ("_wall_skull", "_skull"),
+            ("_wall_fan", "_fan"),
+        ] {
+            if let Some(stem) = item.strip_suffix(from) {
+                item = format!("{stem}{to}");
+                break;
+            }
+        }
+        item = match item.as_str() {
+            "redstone_wire" => "redstone",
+            "tripwire" => "string",
+            "carrots" => "carrot",
+            "potatoes" => "potato",
+            "beetroots" => "beetroot_seeds",
+            "wheat" => "wheat_seeds",
+            "melon_stem" | "attached_melon_stem" => "melon_seeds",
+            "pumpkin_stem" | "attached_pumpkin_stem" => "pumpkin_seeds",
+            "sweet_berry_bush" => "sweet_berries",
+            "cocoa" => "cocoa_beans",
+            "kelp_plant" => "kelp",
+            "tall_seagrass" => "seagrass",
+            "bamboo_sapling" => "bamboo",
+            "water_cauldron" | "lava_cauldron" | "powder_snow_cauldron" => "cauldron",
+            "big_dripleaf_stem" => "big_dripleaf",
+            "cave_vines" | "cave_vines_plant" => "glow_berries",
+            "weeping_vines_plant" => "weeping_vines",
+            "twisting_vines_plant" => "twisting_vines",
+            other => other,
+        }
+        .to_owned();
+        // Blocks that stand for several of an item: a double slab, pickles, candles, eggs.
+        let count = if prop("type") == Some("double") {
+            2
+        } else if let Some(n) = ["pickles", "candles", "eggs"]
+            .iter()
+            .find_map(|k| prop(k))
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            n.max(1)
+        } else {
+            1
+        };
+        out.push((format!("minecraft:{item}"), count));
+        out
+    }
+    /// Whether the state holds water (a waterlogged block).
+    pub fn waterlogged(&self) -> bool {
+        self.properties
+            .get("waterlogged")
+            .is_some_and(|v| v == "true")
+    }
+    /// The state as a preview turned by `code` shows it: mirrored first (`code / 4`), then turned
+    /// `code % 4` quarters clockwise.
+    pub fn transformed(&self, code: u8) -> Self {
+        self.mirrored(code / 4 % 3).rotated(code % 4)
+    }
     pub fn matches(&self, name: &str, mut property: impl FnMut(&str) -> Option<String>) -> bool {
         self.name == name
             && self.properties.iter().all(|(key, value)| {
@@ -156,6 +361,11 @@ pub struct Blueprint {
 impl Blueprint {
     pub fn transformed(mut self, origin: Pos, rotation: u8) -> Result<Self> {
         for (at, state) in &mut self.blocks {
+            match rotation / 4 % 3 {
+                1 => at[2] = -at[2],
+                2 => at[0] = -at[0],
+                _ => {}
+            }
             for _ in 0..rotation % 4 {
                 *at = [-at[2], at[1], at[0]];
             }
@@ -168,7 +378,7 @@ impl Blueprint {
             {
                 return Err("schematic exceeds world bounds".into());
             }
-            *state = state.rotated(rotation);
+            *state = state.transformed(rotation);
         }
         self.blocks.sort_by_key(|(p, _)| (p[1], p[2], p[0]));
         Ok(self)
