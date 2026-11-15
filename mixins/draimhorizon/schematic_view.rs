@@ -350,7 +350,7 @@ pub(super) fn render(game: &Game<'_>, g: &mut Gizmos) {
     }
 }
 /// The editor's keys: (id, default key, Russian name, English name).
-pub(super) const KEYS: [(&str, &str, &str, &str); 9] = [
+pub(super) const KEYS: [(&str, &str, &str, &str); 10] = [
     (
         "schematic_toggle",
         "key.keyboard.insert",
@@ -405,8 +405,14 @@ pub(super) const KEYS: [(&str, &str, &str, &str); 9] = [
         "Схема: вверх (с Shift вниз)",
         "Schematic: up (Shift: down)",
     ),
+    (
+        "schematic_down",
+        "key.keyboard.page.down",
+        "Схема: вниз",
+        "Schematic: down",
+    ),
 ];
-static DOWN: Mutex<[bool; 9]> = Mutex::new([false; 9]);
+static DOWN: Mutex<[bool; 10]> = Mutex::new([false; 10]);
 /// Every tick while playing: the editor's keys act on the selected preview of this world.
 pub(super) fn keys(game: &mut Game<'_>) {
     let playing = game.native_on(claims::ID)
@@ -422,8 +428,8 @@ pub(super) fn keys(game: &mut Game<'_>) {
                 .is_some_and(|code| game.physical_keys.contains(&code))
         })
         .collect();
-    let mut fresh = [false; 9];
-    for i in 0..9 {
+    let mut fresh = [false; 10];
+    for i in 0..10 {
         fresh[i] = playing && pressed[i] && !down[i];
         down[i] = pressed[i];
     }
@@ -465,11 +471,12 @@ pub(super) fn keys(game: &mut Game<'_>) {
                 }
                 let forward = i32::from(fresh[4]) - i32::from(fresh[5]);
                 let right = i32::from(fresh[7]) - i32::from(fresh[6]);
+                // Page Up goes up (with Shift down), Page Down goes down.
                 let up = if fresh[8] {
                     if shift { -1 } else { 1 }
                 } else {
                     0
-                };
+                } - i32::from(fresh[9]);
                 pl.origin = places::nudge(pl.origin, yaw, forward, right, up);
             }
             if fresh[1] {
@@ -607,7 +614,10 @@ pub(super) fn hud(game: &Game<'_>, batch: &mut horizon_client::hud::HudBatch) {
         (key(3), text("Ко мне", "To me")),
         (key(0), text("Скрыть", "Hide")),
         (key(1), text("Убрать", "Remove")),
-        (key(8), text("Выше · Shift ниже", "Up · Shift down")),
+        (
+            format!("{} {}", key(8), key(9)),
+            text("Выше · ниже", "Up · down"),
+        ),
     ];
     // Sizes.
     let pad = 8.0;
