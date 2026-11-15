@@ -724,7 +724,8 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 }
                 let icon = match control {
                     model::Control::ExperimentalOreToggle(index) => {
-                        crate::game::claim_borders_mining::icon(index)
+                        crate::game::claim_borders_experimental::icon(index)
+                            .or_else(|| crate::game::claim_borders_mining::icon(index))
                     }
                     model::Control::FarmCropPick(crop) => Some(crop.icon()),
                     model::Control::BaritoneMineRow(index) => mine_rows
