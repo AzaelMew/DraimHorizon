@@ -15,7 +15,7 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         return;
     }
     // /shop is /market on this server: the typed command is answered with the one the mod knows.
-    if command.trim() == "shop" {
+    if command.trim() == "shop" && crate::game::claim_borders_client::on_horizon(game) {
         *ran = true;
         crate::game::claim_borders_economy_client::command("market");
         game.send_unattended_command("market");
@@ -65,8 +65,8 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
     }
     match action {
         "refresh" => {
-            if game.remote.is_none() || game.native_player().is_none() {
-                game.native_chat("[DraimHorizons] Join a server before refreshing.");
+            if !crate::game::claim_borders_client::on_horizon(game) || game.native_player().is_none() {
+                game.native_chat("[DraimHorizons] Refreshing claims works only on Horizon SMP (play.playhorizon.dev).");
                 return;
             }
             crate::game::claim_borders_claim_replies::manual();

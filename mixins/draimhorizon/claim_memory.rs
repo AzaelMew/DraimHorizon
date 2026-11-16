@@ -218,7 +218,7 @@ pub(super) fn receive(peer: &claim_borders_relay_client::Peer, body: &str, tab: 
     });
 }
 pub(super) fn frame(game: &mut Game<'_>) {
-    if !game.native_on(claims::ID) || game.remote.is_none() {
+    if !game.native_on(claims::ID) || !client::on_horizon(game) {
         // No connection or the mod is off: no reply attribution carries over to the next one.
         crate::game::claim_borders_claim_replies::leave();
         return;
@@ -268,7 +268,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
         }
         if let Some(land) = land {
             claims::with_state(|s| s.restore(land));
-        } else if game.integrated.is_none() {
+        } else if client::on_horizon(game) {
             // Single player has no claims plugin; asking would raise an unknown-command prompt.
             claims::with_state(|s| s.begin_refresh());
             state(|s| s.refresh_due = true);
@@ -279,7 +279,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
     if state(|s| s.refresh_due) {
         let mut due = true;
         crate::game::claim_borders_claim_replies::refresh(&mut due, || {
-            let allowed = game.remote.is_some()
+            let allowed = client::on_horizon(game)
                 && game.command_prompt.is_none()
                 && game.chat_abilities().allows("/claims");
             game.send_unattended_command("claims");

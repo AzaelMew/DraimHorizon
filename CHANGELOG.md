@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.9
+
+- Server commands are now sent only on Horizon SMP (`play.playhorizon.dev` and its subdomains). In single player and on other servers the mod no longer runs /claims, /bal, /worth or /market by itself, and its manual refresh buttons and `/claimborders refresh` say they work only on Horizon SMP.
+
 ## 0.40.8
 
 - Added the official Lucide `file-box` icon to the Schematics menu destination in English and Russian.

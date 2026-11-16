@@ -209,7 +209,7 @@ fn bind_session(s: &mut State, scope: &str) {
 }
 /// Hooks check the current identity too: accounts can change before the next frame.
 pub(super) fn synchronize(game: &Game<'_>) {
-    if !game.native_on(claims::ID) || game.remote.is_none() {
+    if !game.native_on(claims::ID) || !client::on_horizon(game) {
         suspend();
         return;
     }
@@ -654,7 +654,7 @@ fn window_token(game: &Game<'_>) -> String {
 }
 pub(super) fn frame(game: &mut Game<'_>) {
     synchronize(game);
-    if !game.native_on(claims::ID) || game.remote.is_none() {
+    if !game.native_on(claims::ID) || !client::on_horizon(game) {
         suspend();
         return;
     }
