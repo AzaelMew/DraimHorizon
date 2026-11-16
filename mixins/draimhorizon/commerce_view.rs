@@ -1,8 +1,8 @@
 // Presentation of the live server menu. Transactions are revalidated against the current window.
 use crate::game::{
     Game, Screen, claim_borders as claims, claim_borders_client as client,
-    claim_borders_economy as economy,
-    claim_borders_economy_client as data, claim_borders_economy_scan as scan,
+    claim_borders_economy as economy, claim_borders_economy_client as data,
+    claim_borders_economy_scan as scan,
     claim_borders_input::{Edit, TextInput},
     claim_borders_ui_view as ui,
 };
