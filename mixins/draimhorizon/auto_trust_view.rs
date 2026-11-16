@@ -104,7 +104,7 @@ pub(super) fn server(text: &str) {
     }
 }
 pub(super) fn frame(game: &mut Game<'_>) {
-    if !game.native_on(claims::ID) || game.remote.is_none() || !enabled(game) {
+    if !game.native_on(claims::ID) || !client::on_horizon(game) || !enabled(game) {
         // No connection, the mod or auto trust is off: no attribution carries over.
         replies(|r| r.leave());
         return;

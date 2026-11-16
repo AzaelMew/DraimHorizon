@@ -1,6 +1,9 @@
 use crate::game::claim_borders_ui_view as ui;
 // Heads-up requests can be clicked only with the chat cursor open; actions drain on the game thread.
-use crate::game::{Game, Screen, claim_borders as claims, claim_borders_teleport as model};
+use crate::game::{
+    Game, Screen, claim_borders as claims, claim_borders_client as client,
+    claim_borders_teleport as model,
+};
 use claim_borders_relay_client::translation::Language;
 use horizon_client::hud::HudBatch;
 use std::{
@@ -43,7 +46,7 @@ pub(super) fn capture(text: &str) {
     });
 }
 pub(super) fn frame(game: &mut Game<'_>) {
-    if !game.native_on(claims::ID) || game.remote.is_none() {
+    if !game.native_on(claims::ID) || !client::on_horizon(game) {
         reset();
         return;
     }

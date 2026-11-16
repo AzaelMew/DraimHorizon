@@ -8,13 +8,28 @@ pub const ID: &str = "draimhorizon";
 /// Key under which settings and data were saved before the mod id became `draimhorizon`.
 pub const SETTINGS_ID: &str = "claim_borders";
 pub const NAME: &str = "DraimHorizon";
-pub const VERSION: &str = "0.40.8";
+pub const VERSION: &str = "0.40.9";
 pub const DESCRIPTION: &str = "M: друзья, карта, чат. B: торги. J: карта, X: метка. /horizonmenu";
 pub fn description_in(language: Language) -> &'static str {
     language.text(
         DESCRIPTION,
         "M: friends, map, chat. B: trades. J: map, X: waypoint. /horizonmenu",
     )
+}
+/// The only server whose commands (/claims, /bal, /worth, /market ...) the mod may send.
+pub const HORIZON_SMP_HOST: &str = "playhorizon.dev";
+/// True for `playhorizon.dev` and its subdomains (`play.playhorizon.dev`), with or without a port.
+pub fn is_horizon_smp(address: &str) -> bool {
+    let address = address.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = match address.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) => host,
+        _ => address.as_str(),
+    }
+    .trim_end_matches('.');
+    host == HORIZON_SMP_HOST
+        || host
+            .strip_suffix(HORIZON_SMP_HOST)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 const MAX_CLAIMS: usize = 4096;
 const MAX_MESSAGE_BYTES: usize = 262_144;
@@ -254,6 +269,27 @@ pub fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn commands_are_sent_only_on_horizon_smp() {
+        for yes in [
+            "play.playhorizon.dev",
+            "PLAY.PlayHorizon.dev:25565",
+            "playhorizon.dev.",
+            "mc.playhorizon.dev",
+        ] {
+            assert!(is_horizon_smp(yes), "{yes}");
+        }
+        for no in [
+            "localhost",
+            "hypixel.net",
+            "evilplayhorizon.dev",
+            "playhorizon.dev.evil.com",
+            "playhorizon.devx",
+            "",
+        ] {
+            assert!(!is_horizon_smp(no), "{no}");
+        }
+    }
     #[test]
     fn english_description_is_not_cyrillic() {
         let text = description_in(Language::English);
