@@ -1,13 +1,10 @@
 # История версий
 
-## 0.42.0
+## 0.41.0
 
 - Sunrise port, source level. `tools/sunrise.py stage` exports the pinned Sunrise Nightly, pastes the build-script and local includes the mixin tool cannot read, applies the generated bundle with Sunrise's own horizon-mixins build (`e59da90` plus its patch) and `--check` compiles the modified `sunrise-client`; it now exits 0 (576 compile errors at the first run). 75 of the 79 hooks apply: moved targets are resolved automatically, `native_hud`, `native_key`, `native_tick`, `native_frame`, movement input, interaction, tooltip colours and hand pose are rebound to their Sunrise counterparts (`draw_extras` before `native_render_gui_post`, `native_input_key`, `native_client_tick_pre`, ...), `chat_line` is Sunrise's `add_chat_line`, and a platform shim maps the `Game::native_*` helpers to Sunrise's. Still dropped: command-name completion, the Options → Mods list entry and its two settings buttons. Not verified: a real Sunrise launcher/SDK build or a live server. New `platforms/sunrise/platform.toml`, `platforms/sunrise/overlay/`, `.github/workflows/sunrise-compatibility.yml` (separate from the Horizon release gate) and `tools/tests/test_sunrise.py`.
 - Added an experimental, separate Sunrise SMP adapter under `platforms/sunrise/smp-compat`. Two existing current-SDK replacements (`Session::poll` and `receive_brand`) coordinate a second `horizon` brand before the known-pack acknowledgement, only for the official SMP domain. No Sunrise/Horizon source or SDK changes are required by this route. SDK contracts and both native helpers type-check against the published SDK; synchronization and wire tests pass. A complete launcher build and live SMP login are still unverified. The earlier proposed upstream hook patch is removed.
 - Version checks now also synchronize the Sunrise compatibility project's package and manifest. Pinned the hash of the Sunrise network source used by the adapter.
-
-## 0.41.0
-
 - Sunrise groundwork (experimental, work in progress). `compatibility.json` now also pins the official Sunrise Nightly (`sunrise-org/sunrise`, tag `nightly`) and the horizon-mixins tool Sunrise itself uses, and `python tools/compatibility.py` reports a stale Sunrise pin (a warning by default, an error with `--strict-sunrise`; `--update-sunrise --sunrise PATH` refreshes it). New `tools/sunrise.py` derives a Sunrise mixin bundle from the shared Horizon sources instead of forking them: `resolve` lists where each of the 79 hook targets lives in Sunrise, `generate` writes the translated manifest and sources from `platforms/sunrise/platform.toml` and its overlay. Nothing about the Horizon build, the `.hnmod` bundle or runtime behavior changes in this version, and no claim is made yet that the mod runs on Sunrise.
 
 ## 0.40.9

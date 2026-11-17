@@ -16,6 +16,11 @@ on:
       - '.github/workflows/horizon-compatibility.yml'
   pull_request:
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Publish this branch's version as a GitHub pre-release (main publishes a normal release)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -77,7 +82,7 @@ jobs:
             target/draimhorizons-relay-*.tar.gz.sha256
           if-no-files-found: error
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.prerelease))
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -93,6 +98,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ github.ref != 'refs/heads/main' }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           tag="v${version}"
@@ -116,4 +122,8 @@ jobs:
             fi
             sleep 20
           done
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizon ${version} - Horizon Java 26.3" --notes-file docs/release-notes.md
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizon ${version} - Horizon Java 26.3" --notes-file docs/release-notes.md "${flags[@]}"

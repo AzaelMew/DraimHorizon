@@ -1,4 +1,4 @@
-**DraimHorizon 0.42.0 — Experimental Sunrise SMP adapter**
+**DraimHorizon 0.41.0 — Experimental Sunrise port (pre-release)**
 
 The Horizon target remains official Nightly `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`.
 
