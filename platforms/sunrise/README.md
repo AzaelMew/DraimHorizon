@@ -22,6 +22,13 @@ python tools/sunrise.py stage --sunrise PATH --check
 bundle with horizon-mixins `e59da90` plus Sunrise's patch, and compiles `sunrise-client --lib`.
 It needs Rust 1.99.1 and the Linux headers listed in `.github/workflows/sunrise-compatibility.yml`.
 
+## Packages
+
+`python tools/package_flat.py sunrise` writes the flat project the Sunrise launcher installs
+(`sunrise-mod.toml`, `Cargo.toml`, `src/`) and packs `draimhorizons-<version>.smod`. Targets come from
+`targets.toml` (`python tools/sunrise.py freeze --sunrise <staged tree>` refreshes it), so no Sunrise checkout is
+needed. The launcher's own package reader accepts it (`tools/package_check`); its native build is not verified.
+
 ## Status
 
 Compiles: 75 of 79 hooks and every module apply to Sunrise Nightly `234db8d` and the modified

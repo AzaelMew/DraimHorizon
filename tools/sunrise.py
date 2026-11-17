@@ -194,6 +194,8 @@ def command_generate(args):
     compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
     manifest = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))
     load_text_rules(platform)
+    frozen_path = PLATFORM / "targets.toml"
+    frozen = tomllib.loads(frozen_path.read_text(encoding="utf-8")).get("target", {}) if frozen_path.exists() else {}
     rules = platform.get("injection", {})
     relocate = platform.get("module_file", {})
     out = OUT / "mods" / manifest["mod"]["id"]
@@ -209,6 +211,10 @@ def command_generate(args):
         entry = {k: rename_deep(v) for k, v in injection.items()}
         if "target" in rule:
             entry["target"] = rule["target"]
+        elif args.sunrise is None:
+            if injection["id"] not in frozen:
+                raise SystemExit(f"injection {injection['id']}: not in platforms/sunrise/targets.toml; run `freeze`")
+            entry["target"] = frozen[injection["id"]]
         elif args.sunrise:
             crate, modules, owner, function, found = resolve(args.sunrise, injection["target"])
             if not [f for f in found if f[0] == crate and f[1] == modules]:
@@ -429,6 +435,32 @@ def ensure_mixins_tool(compat):
     return work
 
 
+def command_freeze(args):
+    """Write where each injection lives in the Sunrise tree, so a bundle can be generated without one."""
+    platform = tomllib.loads((PLATFORM / "platform.toml").read_text(encoding="utf-8"))
+    manifest = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))
+    load_text_rules(platform)
+    rules = platform.get("injection", {})
+    rows = {}
+    for injection in manifest["injection"]:
+        rule = rules.get(injection["id"], {})
+        if rule.get("drop") or "target" in rule:
+            continue
+        crate, modules, owner, function, found = resolve(args.sunrise, injection["target"])
+        if [f for f in found if f[0] == crate and f[1] == modules]:
+            rows[injection["id"]] = rename_deep(injection["target"])
+            continue
+        best = choose_candidate(found)
+        if best is None:
+            raise SystemExit(f"injection {injection['id']}: no unique Sunrise target; add it to platform.toml")
+        rows[injection["id"]] = "::".join([best[0], *best[1], *([best[2]] if best[2] else []), function])
+    lines = ["# Where each injection's target lives in the pinned Sunrise tree (python tools/sunrise.py freeze).",
+             "# Rules in platform.toml win over these.", "[target]"]
+    lines += [f"{key} = {json.dumps(value)}" for key, value in sorted(rows.items())]
+    (PLATFORM / "targets.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"froze {len(rows)} targets")
+
+
 def command_stage(args):
     compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
     revision = compat["revision"]
@@ -484,6 +516,9 @@ def prepare_build(modded):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    freeze_parser = sub.add_parser("freeze")
+    freeze_parser.add_argument("--sunrise", type=Path, required=True, help="the staged Sunrise tree (target/sunrise/indexed/<revision>)")
+    freeze_parser.set_defaults(run=command_freeze)
     stage_parser = sub.add_parser("stage")
     stage_parser.add_argument("--sunrise", type=Path, required=True, help="Sunrise Git checkout holding the pinned commit")
     stage_parser.add_argument("--generated", type=Path, help="OUT_DIR of a previous sunrise-client build (skips the baseline check)")

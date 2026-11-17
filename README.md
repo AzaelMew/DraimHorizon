@@ -4,7 +4,7 @@
 
 [Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md) · [Navigation](docs/navigation.md) · [Tunnels and bridges](docs/construction.md) · [Farming and schematics](docs/automation.md)
 
-**Install** — In Horizon Launcher, choose **Install from GitHub**, enter `https://github.com/DraimCiDo/DraimHorizon`, then rebuild native mods. Target client is the official Horizon Nightly `9f42064` for Java 26.3. Press **J** in game for the mod menu.
+**Install** — Current Horizon and Sunrise launchers only install flat packages: the release's `draimhorizons-<version>.hmod` (Horizon) or `.smod` (Sunrise). In the launcher choose **Install from GitHub** and paste the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.1`, then rebuild native mods. Do not paste the bare repository link: it falls back to the source tree, which still has the old layout, and the launcher refuses it ("unsupported package path horizon-mixin.toml"). Releases up to 0.40.9 only have the old `.hnmod` ("Old format (.hnmod): ask its author to republish it as .hmod"). Target client is the official Horizon Nightly `9f42064` for Java 26.3. Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -12,7 +12,7 @@
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported. Install the `.hnmod` from a release. | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
+| Horizon | Supported. Install the release's `.hmod`. The native build of the new package is not verified yet. | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
 | Sunrise | Experimental, not installable yet. | `234db8d` (`sunrise.revision`) | `python tools/sunrise.py stage --check` applies the generated bundle to that source and compiles `sunrise-client` (75 of 79 hooks, every module). It has not run in the Sunrise launcher or on a server. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes

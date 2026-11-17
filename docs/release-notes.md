@@ -1,20 +1,16 @@
-**DraimHorizon 0.41.0 — Experimental Sunrise port (pre-release)**
+**DraimHorizon 0.41.1 — flat packages for the current launchers (pre-release)**
 
-The Horizon target remains official Nightly `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`.
+Horizon and Sunrise launchers no longer install `.hnmod` / `horizon-mixin.toml` mods ("Old format (.hnmod): ask its
+author to republish it as .hmod"). This release ships the flat packages they read:
 
-A separate native Sunrise project in `platforms/sunrise/smp-compat` now uses two existing replacement
-points in official Sunrise SDK `234db8df6210165318b2b604dea50275357bfaeb`: `Session::poll` and
-`receive_brand`. It queues `minecraft:brand = horizon` before the known-pack acknowledgement only
-for `playhorizon.dev` and its subdomains, through the connection's existing writer.
+- `draimhorizons-0.41.1.hmod` for Horizon Launcher and `draimhorizons-0.41.1.smod` for Sunrise Launcher, with the
+  legacy `draimhorizons-0.41.1.hnmod` for old launchers. Install from the release link, not from the repository
+  link: the repository's own source tree still has the old layout and the launcher refuses it.
+- The packages pin Horizon Nightly `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0` and Sunrise Nightly
+  `234db8df6210165318b2b604dea50275357bfaeb`.
 
-This route needs no client source edits, new SDK hook or rebuilt game. The previously proposed
-upstream patch has been removed. SDK preflight and native helper type checks pass on the current SDK;
-synchronization and loopback checks are separate from runtime validation.
+Checked with the launchers' own package readers: the packages are read, selected and packed. **Not verified:** the
+launchers' native build (SDK of the pinned build, `native-lock` for the relay client's dependencies), a running
+client or a server. Sunrise support remains experimental; see the README.
 
-Still unverified: complete launcher build (the isolated installation lacks prepared Minecraft 26.3
-resources), live SMP entry, reconfiguration and Horizon extension interoperability. The launcher's
-source discovery also reports an existing relative-module-path error. Full DraimHorizon porting remains
-in progress; do not advertise Sunrise support yet. See the adapter README for staging and validation.
-
-- Experimental Sunrise port (source level): the generated bundle applies 75 of 79 hooks and 214 modules to the pinned Sunrise Nightly and the modified `sunrise-client` compiles. Not run in a Sunrise launcher or on a server; command completion and the Options → Mods entry are not ported.
-- Both the Horizon and the Sunrise Nightly pins are compared with the published Nightlies daily (`nightly-pins.yml`); the README lists the status and pin of each client.
+A separate experimental Horizon SMP brand adapter for Sunrise lives in `platforms/sunrise/smp-compat`; it is not part of these packages.

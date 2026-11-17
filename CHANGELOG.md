@@ -1,5 +1,11 @@
 # История версий
 
+## 0.41.1
+
+- **Flat native packages, as the current launchers require.** Horizon Launcher and Sunrise Launcher now refuse the old layout: an installed `draimhorizons-0.40.9.hnmod` showed "Old format (.hnmod): ask its author to republish it as .hmod", and installing the repository from GitHub stopped at "unsupported package path horizon-mixin.toml". New `tools/package_flat.py` writes the flat project they read (`horizon-mod.toml` / `sunrise-mod.toml`, `Cargo.toml`, `src/`, `[native]` pins, `[[native.mixin]]`, `[[native.module]]`, licence texts as root files) from the unchanged shared sources, and packs `draimhorizons-<version>.hmod` (Horizon) and `.smod` (Sunrise) next to the legacy `.hnmod`. The relay client is the package's crate root, so its paths stay valid. The release workflow builds and uploads both. Sunrise targets are frozen in `platforms/sunrise/targets.toml` (`python tools/sunrise.py freeze`), so a Sunrise bundle no longer needs a Sunrise checkout.
+- Checked with the launchers' own package readers (Horizon main `c70c5b96`, Sunrise Nightly `234db8d`; see `tools/package_check`): the old folder is refused with the players' error, the flat packages are read (79 hooks and 213 modules for Horizon, 75 and 214 for Sunrise), selected and packed, and the `.hmod` passes the check the launcher runs on a downloaded asset. **Not verified:** the launchers' native build. It needs the SDK of the pinned build, and the relay client's registry dependencies still have to be pinned with the launcher's `native-lock`. Five support modules and their hooks live in `horizon-client-render`, and the launchers' native modules are documented for the game crate only, so they may be refused at build time.
+- `v0.41.0` was published as a pre-release before this was found; it contains only the legacy `.hnmod` and cannot be installed by the current launchers. It is superseded by 0.41.1.
+
 ## 0.41.0
 
 - Release title is now "DraimHorizon <version> - Horizon & Sunrise". Re-running the release workflow on a branch with `prerelease=true` refreshes the title and notes of an existing pre-release and leaves its artifacts alone.
