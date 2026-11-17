@@ -102,8 +102,14 @@ jobs:
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           tag="v${version}"
+          title="DraimHorizon ${version} - Horizon & Sunrise"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; keeping published artifacts unchanged."
+            if [ "$PRERELEASE" = "true" ]; then
+              echo "Pre-release $tag already exists; refreshing its title and notes, keeping its artifacts."
+              gh release edit "$tag" --title "$title" --notes-file docs/release-notes.md
+            else
+              echo "Release $tag already exists; keeping published artifacts unchanged."
+            fi
             exit 0
           fi
           # Publish only the exact source that passed native client compilation.
@@ -126,4 +132,4 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then
             flags+=(--prerelease)
           fi
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizon ${version} - Horizon Java 26.3" --notes-file docs/release-notes.md "${flags[@]}"
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "$title" --notes-file docs/release-notes.md "${flags[@]}"
