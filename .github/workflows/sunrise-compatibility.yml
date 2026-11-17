@@ -1,0 +1,60 @@
+name: Validate Sunrise Nightly client (experimental)
+# The Sunrise port is experimental: this job stages the generated bundle on the pinned official Sunrise
+# Nightly and compiles the modified client. It never gates Horizon releases.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sunrise-compatibility.yml'
+      - 'platforms/sunrise/**'
+      - 'mixins/**'
+      - 'tools/sunrise.py'
+      - 'compatibility.json'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+permissions:
+  contents: read
+concurrency:
+  group: sunrise-native
+  cancel-in-progress: true
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust and the headers the Sunrise client links against
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      - name: Check the pins
+        run: python3 tools/compatibility.py
+      - name: Fetch the pinned Sunrise Nightly
+        run: |
+          revision="$(python3 -c 'import json; print(json.load(open("compatibility.json"))["sunrise"]["revision"])')"
+          git init .local/sunrise
+          git -C .local/sunrise remote add origin https://github.com/sunrise-org/sunrise
+          git -C .local/sunrise fetch --depth 1 origin "$revision"
+          git -C .local/sunrise checkout --detach "$revision"
+      - name: Stage the bundle and compile the modified Sunrise client
+        run: python3 tools/sunrise.py stage --sunrise .local/sunrise --check --jobs 3 2>&1 | tee sunrise-stage.log
+      - name: Preserve diagnostic outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunrise-nightly-check
+          path: |
+            compatibility.json
+            sunrise-stage.log
+            target/sunrise/plan.json

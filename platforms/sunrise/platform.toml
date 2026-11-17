@@ -24,10 +24,6 @@ reason = "no Sunrise equivalent mapped yet"
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-[injection.chat]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
 # Horizon's Native* records are Sunrise's mod_api records with the same fields (aliased in the shim).
 [[rewrite]]
 pattern = 'native_hooks::(Native(?:Zoom|Minimap|ScreenView|Mod))\b'
@@ -354,4 +350,8 @@ files = ["baritone/game/state_factory.rs"]
 pattern = '''None => 0,(\s*\};\s*Material \{ rgb, tint \})'''
 replace = '''_ => 0,\1'''
 files = ["terrain_colors.rs"]
+
+# Horizon's `chat_line` is Sunrise's `add_chat_line`: the same body and signature, in the remote module.
+[injection.chat]
+target = "sunrise_client::game::remote::Game<'_>::add_chat_line"
 

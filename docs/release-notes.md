@@ -13,3 +13,4 @@ must be repinned and built. The current pin is the patch baseline, not a claim o
 Policy tests and the SDK API entry-point type check are separate from launcher replacement and
 live SMP entry, which are not verified. Full DraimHorizon porting, Horizon extension channels and
 content matching remain separate work. See the adapter's README for exact prerequisites.
+- Experimental Sunrise port (source level): the generated bundle applies 75 of 79 hooks and 214 modules to the pinned Sunrise Nightly and the modified `sunrise-client` compiles. Not run in a Sunrise launcher or on a server; command completion and the Options → Mods entry are not ported.

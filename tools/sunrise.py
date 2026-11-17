@@ -464,6 +464,10 @@ def command_stage(args):
     result = run([str(cli), "apply", *base, "--out", str(OUT / "modded")], capture_output=True, text=True)
     print(result.stdout)
     prepare_build(OUT / "modded")
+    if args.check:
+        run(["cargo", "check", "-p", "sunrise-client", "--lib", "--locked", "-j", str(args.jobs),
+             "--target-dir", str(OUT / "check-modded")], cwd=OUT / "modded")
+        print("sunrise-client compiles with the bundle applied")
 
 
 def prepare_build(modded):
@@ -484,6 +488,7 @@ def main():
     stage_parser.add_argument("--sunrise", type=Path, required=True, help="Sunrise Git checkout holding the pinned commit")
     stage_parser.add_argument("--generated", type=Path, help="OUT_DIR of a previous sunrise-client build (skips the baseline check)")
     stage_parser.add_argument("--jobs", type=int, default=2)
+    stage_parser.add_argument("--check", action="store_true", help="cargo check the modified sunrise-client after applying")
     stage_parser.set_defaults(run=command_stage)
     generate_parser = sub.add_parser("generate")
     generate_parser.add_argument("--sunrise", type=Path, help="Sunrise checkout, to resolve moved targets")

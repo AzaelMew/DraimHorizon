@@ -8,6 +8,8 @@
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
+**Sunrise client (experimental, not installable yet)** — The same sources are being ported to the Sunrise client. `python tools/sunrise.py stage` derives a Sunrise bundle from them and applies it to the pinned official Sunrise Nightly, and the modified `sunrise-client` compiles (75 of 79 hooks and every module). It has not been run in the Sunrise launcher or on a server: native mods there are built from an SDK, which CI does not produce. Known gaps: command-name completion, the entry in Options → Mods, and `.smod` packaging. See [platforms/sunrise](platforms/sunrise/README.md).
+
 ## World
 
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
