@@ -21,6 +21,16 @@ concurrency:
   group: sunrise-native
   cancel-in-progress: true
 jobs:
+  pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Both pins must be the published Nightlies
+        run: python3 tools/compatibility.py --strict-sunrise
   stage:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -38,7 +48,7 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
-      - name: Check the pins
+      - name: Show the pins
         run: python3 tools/compatibility.py
       - name: Fetch the pinned Sunrise Nightly
         run: |

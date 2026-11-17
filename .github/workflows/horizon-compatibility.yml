@@ -62,7 +62,7 @@ jobs:
           assert compat["horizon_revision"] in Path("mixins/draimhorizon/horizon-mixin.toml").read_text()
           print("COMPATIBILITY_JSON "+json.dumps(compat,separators=(",",":")))
           PY
-      - name: Check latest official Horizon Nightly
+      - name: Check latest official Horizon Nightly (and report Sunrise)
         run: python3 tools/compatibility.py
       - name: Test mod runtime
         run: |

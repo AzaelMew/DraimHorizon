@@ -31,5 +31,38 @@ class NightlyRevisionTests(unittest.TestCase):
         self.assertEqual(query.call_args.args[0], ["git", "ls-remote", "https://example.test/horizon", "refs/tags/nightly", "refs/tags/nightly^{}"])
 
 
+class PinCheckTests(unittest.TestCase):
+    compat = {
+        "horizon_repository": "https://example.test/horizon", "horizon_revision": "a" * 40, "horizon_channel": "nightly",
+        "sunrise": {"repository": "https://example.test/sunrise", "revision": "b" * 40, "channel": "nightly"},
+    }
+
+    def check(self, horizon, sunrise, strict):
+        nightly = {"https://example.test/horizon": horizon, "https://example.test/sunrise": sunrise}
+        with patch.object(compatibility, "latest_nightly", side_effect=lambda repository: nightly[repository]):
+            return compatibility.check_pins(self.compat, strict)
+
+    def test_current_pins_pass_and_both_are_reported(self):
+        lines, errors = self.check("a" * 40, "b" * 40, True)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(lines), 2)
+
+    def test_stale_horizon_is_always_an_error(self):
+        _, errors = self.check("c" * 40, "b" * 40, False)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Horizon pin", errors[0])
+
+    def test_stale_sunrise_warns_unless_strict(self):
+        lines, errors = self.check("a" * 40, "c" * 40, False)
+        self.assertEqual(errors, [])
+        self.assertTrue(any(line.startswith("warning: Sunrise pin") for line in lines))
+        _, errors = self.check("a" * 40, "c" * 40, True)
+        self.assertEqual(len(errors), 1)
+
+    def test_both_stale_pins_are_reported_together(self):
+        _, errors = self.check("c" * 40, "d" * 40, True)
+        self.assertEqual(len(errors), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

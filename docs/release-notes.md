@@ -17,3 +17,4 @@ source discovery also reports an existing relative-module-path error. Full Draim
 in progress; do not advertise Sunrise support yet. See the adapter README for staging and validation.
 
 - Experimental Sunrise port (source level): the generated bundle applies 75 of 79 hooks and 214 modules to the pinned Sunrise Nightly and the modified `sunrise-client` compiles. Not run in a Sunrise launcher or on a server; command completion and the Options → Mods entry are not ported.
+- Both the Horizon and the Sunrise Nightly pins are compared with the published Nightlies daily (`nightly-pins.yml`); the README lists the status and pin of each client.

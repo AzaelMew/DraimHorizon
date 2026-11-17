@@ -8,7 +8,17 @@
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
-**Sunrise client (experimental, not installable yet)** — The same sources are being ported to the Sunrise client. `python tools/sunrise.py stage` derives a Sunrise bundle from them and applies it to the pinned official Sunrise Nightly, and the modified `sunrise-client` compiles (75 of 79 hooks and every module). It has not been run in the Sunrise launcher or on a server: native mods there are built from an SDK, which CI does not produce. Known gaps: command-name completion, the entry in Options → Mods, and `.smod` packaging. See [platforms/sunrise](platforms/sunrise/README.md).
+## Clients
+
+| Client | Status | Pinned official Nightly | How it is checked |
+| --- | --- | --- | --- |
+| Horizon | Supported. Install the `.hnmod` from a release. | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
+| Sunrise | Experimental, not installable yet. | `234db8d` (`sunrise.revision`) | `python tools/sunrise.py stage --check` applies the generated bundle to that source and compiles `sunrise-client` (75 of 79 hooks, every module). It has not run in the Sunrise launcher or on a server. |
+
+Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
+(`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
+and the client is compiled again. Known Sunrise gaps: command-name completion, the entry in Options → Mods, and
+`.smod` packaging. See [platforms/sunrise](platforms/sunrise/README.md).
 
 ## World
 
