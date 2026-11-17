@@ -216,7 +216,7 @@ def command_generate(args):
                 if best is None:
                     raise SystemExit(f"injection {injection['id']}: no unique Sunrise target; add it to platform.toml")
                 entry["target"] = "::".join([best[0], *best[1], *([best[2]] if best[2] else []), function])
-        for key in ("kind", "helper", "bindings", "cancellable"):
+        for key in ("kind", "helper", "bindings", "cancellable", "selector", "require", "ordinal", "priority"):
             if key in rule:
                 entry[key] = rule[key]
         for old, new in rule.get("params", {}).items():

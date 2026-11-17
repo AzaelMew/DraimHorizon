@@ -4,6 +4,21 @@
 // (`on`, `setting`, `mod_screen`, ...) or keeps the data elsewhere, so each helper is forwarded here.
 use super::Game;
 
+// Horizon's Native* records are Sunrise's mod_api records.
+pub type NativeZoom = mod_api::Zoom;
+pub type NativeMinimap = mod_api::Minimap;
+pub type NativeScreenView<'a> = mod_api::ScreenView<'a>;
+
+/// A native mod as the shared sources describe it: id, title, description and its keys
+/// (name, label, default key).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NativeMod {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub keys: Vec<[String; 3]>,
+}
+
 impl Game<'_> {
     /// Whether the player left the mod on; a mod turned off rests until the next build.
     pub(in crate::game) fn native_on(&self, mod_id: &str) -> bool {
@@ -11,10 +26,12 @@ impl Game<'_> {
     }
     /// The mod's own data files are one file per key in its data folder, in both games.
     pub(in crate::game) fn native_setting(&self, mod_id: &str, key: &str) -> Option<String> {
-        self.stored_setting(mod_id, key)
+        let path = self.native_data_dir(mod_id).join(key);
+        std::fs::read_to_string(path).ok().map(|v| v.trim().to_owned())
     }
     pub(in crate::game) fn native_set_setting(&self, mod_id: &str, key: &str, value: &str) {
-        let _ = self.store_setting(mod_id, key, value);
+        let dir = self.native_data_dir(mod_id);
+        let _ = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(dir.join(key), value));
     }
     pub(in crate::game) fn native_playing(&self) -> bool {
         self.playing()
@@ -23,7 +40,7 @@ impl Game<'_> {
         self.cursor()
     }
     pub(in crate::game) fn native_sneaking(&self) -> bool {
-        self.sneaking
+        self.keys.held(sunrise_client::actions::Action::Sneak)
     }
     pub(in crate::game) fn native_mod_screen(&self) -> Option<&str> {
         self.mod_screen()
@@ -62,4 +79,20 @@ impl Game<'_> {
     pub(in crate::game) fn sunrise_text_width(&self, text: &str) -> f32 {
         crate::hud::HudBatch::text_width(&self.gui.atlas, text)
     }
+}
+
+/// The plain characters of an API text: literals and translation fallbacks, children appended.
+pub fn api_plain(text: &mod_api::Text) -> String {
+    let mut out = String::new();
+    match &text.content {
+        mod_api::text::TextContent::Literal(literal) => out.push_str(literal),
+        mod_api::text::TextContent::Translatable { key, fallback, .. } => {
+            out.push_str(fallback.as_deref().unwrap_or(key));
+        }
+        _ => {}
+    }
+    for child in &text.children {
+        out.push_str(&api_plain(child));
+    }
+    out
 }

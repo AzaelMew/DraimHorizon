@@ -16,22 +16,6 @@ reason = "no Sunrise equivalent mapped yet"
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-[injection.social-tick]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.social-hud]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.menu-open]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.menu-frame]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
 [injection.menu-options]
 drop = true
 reason = "no Sunrise equivalent mapped yet"
@@ -40,54 +24,26 @@ reason = "no Sunrise equivalent mapped yet"
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-[injection.clickthrough-remote]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.shulker-peek-tooltip]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.shulker-peek-colors]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.pat-hand]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.bar-tick]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.bar-toast_draw]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.bar-click_key]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
 [injection.chat]
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-# Horizon's Native* records are Sunrise's mod_api records with the same fields.
+# Horizon's Native* records are Sunrise's mod_api records with the same fields (aliased in the shim).
 [[rewrite]]
-pattern = '(?:crate::game|super)::native_hooks::NativeZoom\b'
-replace = 'mod_api::Zoom'
-[[rewrite]]
-pattern = '(?:crate::game|super)::native_hooks::NativeMinimap\b'
-replace = 'mod_api::Minimap'
-[[rewrite]]
-pattern = '(?:crate::game|super)::native_hooks::NativeScreenView\b'
-replace = 'mod_api::ScreenView'
+pattern = 'native_hooks::(Native(?:Zoom|Minimap|ScreenView|Mod))\b'
+replace = 'claim_borders_platform::\1'
 
 [injection.navigation-input]
+target = "sunrise_client::game::native_hooks::movement_input::Game<'_>::mod_movement_keys"
+kind = "WRAP_OPERATION"
+selector = "self.native_movement_input"
+require = 1
+ordinal = 0
 helper = "sunrise/navigation_input_hook.rs"
 bindings = [
-  { name = "game", ty = "&crate::game::Game<'_>", value = "self" },
-  { name = "call", ty = "mod_api::__private::MovementInputCall<'_>", value = "call" },
+  { name = "game", ty = "&Game<'_>", value = "$receiver" },
+  { name = "call", ty = "mod_api::__private::MovementInputCall<'_>", value = "$arg0" },
+  { name = "operation", ty = "impl FnOnce(&Game<'_>, mod_api::__private::MovementInputCall<'_>) -> ()", value = "$operation" },
 ]
 
 [injection.menu-render]
@@ -142,3 +98,260 @@ replace = 'sunrise_core::nbt'
 [[rewrite]]
 pattern = '\.native_text_width\('
 replace = '.sunrise_text_width('
+
+# Names that moved or lost visibility in Sunrise.
+[[rewrite]]
+pattern = 'horizon_assets::'
+replace = 'sunrise_assets::'
+[[rewrite]]
+pattern = 'gfx::native_render::claim_borders_ghosts'
+replace = 'render_slots::claim_borders_ghosts'
+# `mobs::data::LAND` is private in Sunrise; its value is the flag 1.
+[[rewrite]]
+pattern = 'sunrise_client::mobs::data::LAND\b'
+replace = '1u16'
+[[rewrite]]
+pattern = '\bremote_text\('
+replace = 'crate::game::remote::remote_text('
+files = ["claim_actionbar_hook.rs"]
+
+# Engine API differences found by compiling against the pinned Sunrise Nightly.
+# crate renamed
+[[rewrite]]
+pattern = '''\bhorizon_threads\b'''
+replace = '''sunrise_threads'''
+
+# ClickQueue is a bounded queue now
+[[rewrite]]
+pattern = '''game\.use_clicks \+= 1'''
+replace = '''game.use_clicks.press()'''
+
+[[rewrite]]
+pattern = '''game\.attack_clicks \+= 1'''
+replace = '''game.attack_clicks.press()'''
+
+# HeldKeys::contains is HeldKeys::raw
+[[rewrite]]
+pattern = '''\.keys\.contains\(&'''
+replace = '''.keys.raw(&'''
+
+# Hit gained `inside`
+[[rewrite]]
+pattern = '''Some\(Hit \{\s*pos: support,\s*face,\s*point,?\s*\}\)'''
+replace = '''Some(Hit { pos: support, face, point, inside: false })'''
+
+# placement_state became placement_preview
+[[rewrite]]
+pattern = '''b\.placement_state\(level, ticks, &ctx\)'''
+replace = '''b.placement_preview(level, ticks, &ctx).map(|p| (p.pos, p.state))'''
+
+# block_drops takes a BlockLootRoll
+[[rewrite]]
+pattern = '''\.block_drops_by_player\(game\.pack\.assets\.registry, id, Some\(&pickaxe\), &\[\], &mut random\)'''
+replace = '''
+        .block_drops(
+            game.pack.assets.registry,
+            id,
+            crate::items::BlockLootRoll { held: Some(&pickaxe), breaker: true, ..Default::default() },
+            &mut random,
+            None,
+        )'''
+files = ["baritone/game/scanner.rs"]
+
+# SystemToast takes Text
+[[rewrite]]
+pattern = '''Some\(up\) => up\.reset\(title, Some\(message\)\)'''
+replace = '''Some(up) => up.reset(Text::literal(&title), Some(Text::literal(&message)))'''
+
+[[rewrite]]
+pattern = '''SystemToast::new\(title, Some\(message\)\)'''
+replace = '''SystemToast::new(Text::literal(&title), Some(Text::literal(&message)))'''
+
+# Game::translate(key, fallback) is translate_with_fallback
+[[rewrite]]
+pattern = '''(\bgame\s*)\.translate\('''
+replace = '''\1.translate_with_fallback('''
+
+# hover text is shared
+[[rewrite]]
+pattern = '''hover: Some\(Box::new\('''
+replace = '''hover: Some(std::sync::Arc::new('''
+
+[[rewrite]]
+pattern = '''fn hover\(text: String\) -> Option<Box<Text>> \{\s*Some\(Box::new\(Text::literal\(text\)\)\)'''
+replace = '''fn hover(text: String) -> Option<std::sync::Arc<Text>> {
+    Some(std::sync::Arc::new(Text::literal(text)))'''
+
+# io::Result in Sunrise
+[[rewrite]]
+pattern = '''Game::native_config_dir\(\)\.and_then\('''
+replace = '''Game::native_config_dir().map_err(|e| e.to_string()).and_then('''
+
+# Sunrise lists a native mod's keys from its registrations
+[[rewrite]]
+pattern = '''page\.keys = info\.keys;'''
+replace = '''let _ = info.keys;'''
+
+[[rewrite]]
+pattern = '''native\.keys\.iter\(\)\.any\(\|\[name, _, default\]\| \{'''
+replace = '''native.mappings.iter().any(|m| {
+                        let (name, default) = (&m.id, &m.key);'''
+
+# the screen title is an API text
+[[rewrite]]
+pattern = '''(screen\s*\.title\s*\.(?:map|is_some_and)\(\|t\|\s*[^;{]*?)\bt\.plain\(\)'''
+replace = '''\1crate::game::claim_borders_platform::api_plain(t)'''
+
+# ScreenView is non-exhaustive in Sunrise
+[[rewrite]]
+pattern = '''let local = crate::game::(?:native_hooks|claim_borders_platform)::NativeScreenView \{\s*id: screen\.id,\s*menu: screen\.menu,\s*title: screen\.title,\s*rect: \[0\.0, 0\.0, w, h\],\s*slots: screen\.slots,\s*mouse: panel\.local\(screen\.mouse\),\s*partial_tick: screen\.partial_tick,\s*\};'''
+replace = '''let mut local = *screen;
+    local.rect = [0.0, 0.0, w, h];
+    local.mouse = panel.local(screen.mouse);'''
+
+# Hooks Horizon calls `native_*` and Sunrise spells differently or hands different arguments.
+[injection.social-tick]
+target = "sunrise_client::game::native_hooks::client_tick_pre::Game<'_>::native_client_tick_pre"
+[injection.bar-tick]
+target = "sunrise_client::game::native_hooks::client_tick_pre::Game<'_>::native_client_tick_pre"
+[injection.menu-frame]
+target = "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native_render_frame_pre"
+
+# Sunrise draws the HUD from `&self` hooks; the mod needs `&mut Game`, so it runs just before the call.
+[injection.social-hud]
+target = "sunrise_client::game::extras::Game<'_>::draw_extras"
+kind = "BEFORE_CALL"
+selector = "self.native_render_gui_post"
+require = 1
+ordinal = 0
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "corners", ty = "&mut sunrise_client::extras_hud::Corners", value = "$local_mut:corners:0" },
+]
+[injection.bar-toast_draw]
+target = "sunrise_client::game::extras::Game<'_>::draw_extras"
+kind = "BEFORE_CALL"
+selector = "self.native_render_gui_post"
+require = 1
+ordinal = 0
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
+]
+
+[injection.menu-open]
+target = "sunrise_client::game::native_hooks::input_key::Game<'_>::native_input_key"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "&str", value = "key" },
+  { name = "action", ty = "mod_api::KeyAction", value = "action" },
+]
+[injection.bar-click_key]
+target = "sunrise_client::game::native_hooks::input_key::Game<'_>::native_input_key"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "&str", value = "key" },
+  { name = "action", ty = "mod_api::KeyAction", value = "action" },
+]
+
+[injection.clickthrough-remote]
+target = "sunrise_client::game::native_hooks::interaction::Game<'_>::native_interaction_key_mapping_triggered"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "mod_api::InteractionKey", value = "key" },
+  { name = "hand", ty = "sunrise_client::first_person::Hand", value = "hand" },
+  { name = "swing", ty = "&mut bool", value = "&mut *swing_hand" },
+  { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
+]
+
+[injection.shulker-peek-tooltip]
+target = "sunrise_client::game::stations::tooltip::Game<'_>::tooltip_pre"
+kind = "HEAD"
+cancellable = true
+helper = "sunrise/shulker_peek_tooltip_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "stack", ty = "Option<&sunrise_client::items::ItemStack>", value = "stack" },
+  { name = "at", ty = "(f32, f32)", value = "at" },
+]
+
+[injection.shulker-peek-colors]
+target = "sunrise_client::game::native_hooks::render_tooltip_texture::Game<'_>::native_render_tooltip_texture"
+
+[injection.pat-hand]
+target = "sunrise_client::game::native_hooks::render_hand::Game<'_>::native_render_hand"
+kind = "HEAD"
+helper = "sunrise/pat_hand_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "render", ty = "&mut mod_api::HandRender<'_>", value = "&mut *render" },
+]
+
+[[rewrite]]
+pattern = '''fn claim_borders_menu_open\(game: &mut crate::game::Game<'_>, key: &str, pressed: bool\) \{'''
+replace = '''fn claim_borders_menu_open(
+    game: &mut crate::game::Game<'_>,
+    key: &str,
+    action: mod_api::KeyAction,
+) {
+    if matches!(action, mod_api::KeyAction::Repeat) {
+        return;
+    }
+    let pressed = !matches!(action, mod_api::KeyAction::Release);'''
+files = ["menu_open_hook.rs"]
+
+[[rewrite]]
+pattern = '''fn baritone_click_key\(game: &mut crate::game::Game<'_>, key: &str, pressed: bool\) \{'''
+replace = '''fn baritone_click_key(
+    game: &mut crate::game::Game<'_>,
+    key: &str,
+    action: mod_api::KeyAction,
+) {
+    if matches!(action, mod_api::KeyAction::Repeat) {
+        return;
+    }
+    let pressed = !matches!(action, mod_api::KeyAction::Release);'''
+files = ["baritone/hooks/click_key.rs"]
+
+[[rewrite]]
+pattern = '''fn draimhorizons_clickthrough\(\s*game: &mut crate::game::Game<'_>,\s*button: i32,\s*hand: sunrise_client::first_person::Hand,\s*swing: &mut bool,\s*canceled: &mut bool,\s*\) \{'''
+replace = '''fn draimhorizons_clickthrough(
+    game: &mut crate::game::Game<'_>,
+    key: mod_api::InteractionKey,
+    hand: sunrise_client::first_person::Hand,
+    swing: &mut bool,
+    canceled: &mut bool,
+) {
+    let button = match key {
+        mod_api::InteractionKey::Attack => 0,
+        mod_api::InteractionKey::Use => 1,
+        _ => 2,
+    };'''
+files = ["clickthrough_hook.rs"]
+
+# StructureRegistry::new takes the mod structure types
+[[rewrite]]
+pattern = '''StructureRegistry::new\(&BTreeMap::new\(\), &raw, BTreeMap::new\(\), &\|_\| \{\s*Ok\(BTreeSet::new\(\)\)\s*\}\)'''
+replace = '''StructureRegistry::new(
+            &BTreeMap::new(),
+            &raw,
+            BTreeMap::new(),
+            &|_| Ok(BTreeSet::new()),
+            &BTreeMap::new(),
+        )'''
+files = ["seed_worker.rs"]
+
+# Sunrise has modded fluids; the Baritone port treats them as none
+[[rewrite]]
+pattern = '''(Fluid::Lava => FluidKind::FlowingLava,)'''
+replace = '''\1\n            Fluid::Modded => FluidKind::None,'''
+files = ["baritone/game/state_factory.rs"]
+
+# TintSource is non-exhaustive in Sunrise
+[[rewrite]]
+pattern = '''None => 0,(\s*\};\s*Material \{ rgb, tint \})'''
+replace = '''_ => 0,\1'''
+files = ["terrain_colors.rs"]
+

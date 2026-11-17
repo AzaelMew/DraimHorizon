@@ -1,12 +1,14 @@
 fn claim_borders_navigation_input(
-    game: &crate::game::Game<'_>,
-    call: mod_api::__private::MovementInputCall<'_>,
+    game: &Game<'_>,
+    mut call: mod_api::__private::MovementInputCall<'_>,
+    operation: impl FnOnce(&Game<'_>, mod_api::__private::MovementInputCall<'_>) -> (),
 ) {
     crate::game::claim_borders_navigation_view::movement(
         game,
-        call.forward,
-        call.strafe,
-        call.jump,
-        call.sneak,
+        &mut *call.forward,
+        &mut *call.strafe,
+        &mut *call.jump,
+        &mut *call.sneak,
     );
+    operation(game, call)
 }
