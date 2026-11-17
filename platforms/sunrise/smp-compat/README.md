@@ -34,6 +34,31 @@ sources into `.sunrise/sdk/api/` with `cargo sunrise-mod`, as described in the
 
 ## Scope and verification
 
+Check the actual SDK before attempting a native build:
+
+```sh
+python platforms/sunrise/smp-compat/verify_sdk.py --sdk /path/to/sdk.json --functions /path/to/functions.json --source /path/to/sunrise
+```
+
+The command checks both build pins, the mixin-tool revision, exact target ownership,
+source-file/function byte hashes and the required address parameter. It exits 2 with
+`SDK_TARGET_UNAVAILABLE` on the current official SDK. An `ok: true` result on a future
+SDK only clears these prerequisites: `runtime_verified` remains false.
+
+Run the standalone checks without game resources or account credentials:
+
+```sh
+python -m unittest discover -s platforms/sunrise/smp-compat/tests
+rustc --edition 2024 --test platforms/sunrise/smp-compat/tests/brand_gate.rs -o target/sunrise-brand-gate-tests
+target/sunrise-brand-gate-tests
+```
+
+The Rust test uses the real mixin helper and a loopback socket with a configuration brand
+gate. It supplies the framing itself, so it does not test Sunrise's network writer,
+authentication, native function replacement or live SMP login. Create `target/` first if
+the repository has not been built yet. See [protocol-audit.md](protocol-audit.md) for the
+channel and codec differences that remain after brand selection.
+
 - Address policy and concurrent connection isolation are covered by the repository's Rust tests.
 - The empty Hooks entry point type-checks against the published SDK metadata with Rust 1.99.1.
 - The upstream patch applies cleanly to the pinned official source.
