@@ -3,7 +3,7 @@
 /// Replace only the initial brand for the official Horizon SMP domain.
 /// Preserve the engine's bytes verbatim on every other connection.
 pub fn brand_for_address(address: &str, original: Vec<u8>) -> Vec<u8> {
-    if horizon_smp(address) {
+    if is_horizon_smp(address) {
         // A protocol String: VarInt byte length, followed by seven UTF-8 bytes.
         b"\x07horizon".to_vec()
     } else {
@@ -11,7 +11,7 @@ pub fn brand_for_address(address: &str, original: Vec<u8>) -> Vec<u8> {
     }
 }
 
-fn horizon_smp(address: &str) -> bool {
+pub fn is_horizon_smp(address: &str) -> bool {
     let address = address.trim();
     let host = match address.rsplit_once(':') {
         Some((host, port)) => {

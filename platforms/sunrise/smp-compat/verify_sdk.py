@@ -4,18 +4,23 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import re
 import tomllib
 
 PROJECT = Path(__file__).resolve().parent
-BRAND = "sunrise_client_lib::net::brand"
-SIGNATURE = re.compile(
-    r"\bfn\s+brand\s*\(\s*_address\s*:\s*&\s*str\s*,?\s*\)"
-    r"\s*->\s*Vec\s*<\s*u8\s*>\s*\{"
-)
+POLL = "sunrise_client_lib::net::Session::poll"
+RECEIVE = "sunrise_client_lib::net::receive_brand"
+CONTRACTS = {POLL: "c8e6d608e3f14914", RECEIVE: "828097a95b45da8f"}
+REQUIRED_INTERNALS = {
+    ("sunrise_client_lib::net::Session", "struct"),
+    ("sunrise_client_lib::net::ingress::Producer", "struct"),
+    ("sunrise_mod_runtime::byte_channel::Sender", "struct"),
+    ("sunrise_client_lib::net::queued_writer::QueuedWriter", "struct"),
+    ("sunrise_client_lib::net::queued_writer::Inner", "struct"),
+    ("sunrise_client_lib::net::queued_writer::WriteJob", "enum"),
+}
 
 
-def verify(manifest, sdk, functions, source):
+def verify(manifest, sdk, functions, source, internals):
     """Use SDK ownership and exact source bytes; never infer replaceability by a name search."""
     errors = []
 
@@ -27,7 +32,8 @@ def verify(manifest, sdk, functions, source):
 
     native = manifest["native"]
     expected = native["sunrise"]
-    for name, document in (("SDK manifest", sdk), ("function index", functions)):
+    for name, document in (("SDK manifest", sdk), ("function index", functions),
+                           ("internals catalog", internals)):
         if document.get("schema") != 1:
             reject("SDK_SCHEMA", f"{name}: expected schema 1")
         if document.get("build", {}).get("commit") != expected:
@@ -36,6 +42,16 @@ def verify(manifest, sdk, functions, source):
         reject("SDK_MIXINS", "SDK mixin tool differs from the native manifest pin")
     if errors:
         return result(errors, expected)
+
+    declared = {(row["path"], row.get("kind")): row for row in manifest.get("internals", [])}
+    catalog = {(row["path"], row["kind"]): row for row in internals.get("internals", [])}
+    for key in REQUIRED_INTERNALS:
+        declaration = declared.get(key)
+        actual = catalog.get(key)
+        if declaration is None or actual is None or declaration.get("hash") != actual.get("hash"):
+            reject("SDK_INTERNAL", "Required native internal is missing or has changed", key[0])
+    if {mixin["target"] for mixin in native.get("mixin", [])} != set(CONTRACTS):
+        reject("SDK_CONTRACT", "Both the session poll and server brand replacements are required")
 
     root = source.resolve()
     for mixin in native.get("mixin", []):
@@ -48,8 +64,11 @@ def verify(manifest, sdk, functions, source):
                 "function or an empty Hooks compile is not sufficient."
             ), target)
             continue
-        if target != BRAND or entry.get("module") != "sunrise_client_lib::net":
-            reject("SDK_CONTRACT", "This checker only validates the address-aware brand hook", target)
+        if target not in CONTRACTS or entry.get("module") != "sunrise_client_lib::net":
+            reject("SDK_CONTRACT", "Unexpected replacement contract or owning module", target)
+            continue
+        if entry.get("signature_hash") != CONTRACTS[target]:
+            reject("SDK_SIGNATURE", "Replacement signature differs from the tested SDK contract", target)
             continue
 
         # The source path is deliberately independent of the owning crate's name.
@@ -80,12 +99,10 @@ def verify(manifest, sdk, functions, source):
             reject("SDK_FUNCTION_HASH", "Function bytes differ from the SDK index", target)
             continue
         try:
-            text = body.decode("utf-8")
+            body.decode("utf-8")
         except UnicodeDecodeError:
             reject("SDK_SOURCE_SPAN", "Indexed span is not UTF-8 source", target)
             continue
-        if not SIGNATURE.search(text):
-            reject("SDK_SIGNATURE", "Mixin requires fn brand(_address: &str) -> Vec<u8>", target)
     if not native.get("mixin"):
         reject("SDK_CONTRACT", "No native mixin was declared")
     return result(errors, expected)
@@ -110,6 +127,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, required=True, help="published sdk.json")
     parser.add_argument("--functions", type=Path, required=True, help="SDK engine functions.json")
+    parser.add_argument("--internals", type=Path, required=True, help="SDK API internals.json")
     parser.add_argument("--source", type=Path, required=True, help="source of that exact SDK build")
     args = parser.parse_args()
     try:
@@ -119,6 +137,7 @@ def main():
             json.loads(args.sdk.read_text(encoding="utf-8")),
             json.loads(args.functions.read_text(encoding="utf-8")),
             args.source,
+            json.loads(args.internals.read_text(encoding="utf-8")),
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         report = result([{"code": "SDK_INPUT", "message": str(error)}], None)

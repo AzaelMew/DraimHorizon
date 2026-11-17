@@ -1,0 +1,8 @@
+fn server_brand(payload: &cfg::CustomPayload, send: &ingress::Producer<Event>) {
+    if payload.channel != "minecraft:brand" || payload.data != b"\x07horizon" {
+        return;
+    }
+    let channel = std::sync::Arc::as_ptr(&send.sender.0) as usize;
+    let _ = mod_draimhorizon_smp_compat::rendezvous()
+        .announce(channel, std::time::Duration::from_secs(2));
+}

@@ -1,74 +1,80 @@
-# Horizon SMP brand adapter for Sunrise — prototype
+# Horizon SMP brand adapter for Sunrise — experimental
 
-This separate client mod selects the protocol-encoded `horizon` brand for `playhorizon.dev`
-and its subdomains. Other destinations retain the engine's original packet. The policy has no
-shared state, and does not change account authentication, UUIDs or chat signatures.
+This separate native mod uses **two replacement points already published in the official Sunrise
+SDK**: `sunrise_client_lib::net::Session::poll` and `sunrise_client_lib::net::receive_brand`.
+It requires no client source changes, new SDK hook, executable patch or replacement of authentication.
+It has not yet been verified in a running client or against the live SMP.
 
-**The current official Sunrise SDK cannot load this adapter.** The native entry point type-checks,
-but the SDK does not expose a replaceable brand function. This directory is a reviewable prototype,
-not a supported install or a completed DraimHorizon port.
+## How it works
 
-## Required Sunrise change
+Sunrise sends its ordinary initial `vanilla` brand. When the server announces `horizon`, this mod
+queues a subsequent `minecraft:brand = horizon` **before the network thread continues to known-pack
+acknowledgement**. Horizon's configuration gate uses the last brand received before that acknowledgement.
+The existing writer performs framing, compression and encryption as usual.
 
-`upstream-brand-hook.patch` is a minimal proposal against official Nightly
-`234db8df6210165318b2b604dea50275357bfaeb`. It passes the connection address to the existing private
-`brand` function and annotates that function with Sunrise's `replaceable` marker. Without a mod,
-the function still returns the same `vanilla` packet. The actual module belongs to
-`sunrise_client_lib`, despite its source living under `crates/sunrise-client/src/`.
+- The poll replacement registers a callback for this session's shared event-channel identity.
+- The receiving replacement waits up to two seconds for that registration, on the network thread only.
+- Only addresses under `playhorizon.dev` select the sender. Other connections retain engine behavior.
+- The callback holds weak references, rechecks configuration under the writer lock and uses the existing
+  bounded writer queue. It is attempted once per registration. A missing, closed, full or wrong-phase
+  writer is not reported as a successful send.
+- The registry holds at most 64 entries, expires them after 30 seconds and distinguishes session serials.
+  No game-thread network wait, disk scan, unsafe memory operation or custom authentication is introduced.
 
-Sunrise documents that a native mixin may replace a function below the game crate only when it
-has that marker: [native mixins](https://github.com/sunrise-org/sunrise/blob/234db8df6210165318b2b604dea50275357bfaeb/docs/modding/src/concepts/native-route/2-mixins.md).
-This uses the documented native route; the public trait API has no client brand setter.
+The SDK exposes the native layouts used by these helpers; their fingerprints are declared in the manifest.
+This is Sunrise's documented trusted **native route**, not the public trait-only payload API. Both the
+build pin and internal fingerprints must match. See [native replacement mechanics](https://github.com/sunrise-org/sunrise/blob/234db8df6210165318b2b604dea50275357bfaeb/docs/modding/src/concepts/native-route/7-how-it-works.md).
 
-The patch must be reviewed and built into a new Sunrise SDK. Then update `compatibility.json`
-and this project's `[native]` pins to that official build, verify the function is in its
-`functions.json`, and build through the launcher:
+The earlier direct replacement of `net::brand` was unavailable. Its upstream hook proposal has been removed:
+this implementation uses the existing SDK instead.
+
+## Build
+
+The development directory also contains research tools and tests, which Sunrise's package fence does not
+accept as package assets. Stage a fresh, clean package first, then use a prepared instance of the pinned
+Nightly with its normal launcher:
 
 ```sh
-sunrise-launcher native-build platforms/sunrise/smp-compat --instance "My Instance" --trust-native-code
+python platforms/sunrise/smp-compat/stage_project.py target/sunrise-smp-compat
+sunrise-launcher native-build target/sunrise-smp-compat --instance "My Instance" --trust-native-code
 ```
 
-This command is for the future SDK with the hook, not the current pin. For IDE use, fetch the API
-sources into `.sunrise/sdk/api/` with `cargo sunrise-mod`, as described in the
-[native mod guide](https://github.com/sunrise-org/sunrise/blob/234db8df6210165318b2b604dea50275357bfaeb/docs/modding/src/start/first-mod.md).
+Run from the repository root. Choose a new output directory for subsequent stages; the stager deliberately
+refuses to overwrite an existing directory. It copies only Cargo.toml, sunrise-mod.toml and src/. The native
+project uses the launcher's SDK/Rust, not a rebuilt game. Its required manifest capability is `registries`,
+as in Sunrise's native template; this adapter declares no content registries.
 
-## Scope and verification
-
-Check the actual SDK before attempting a native build:
-
-```sh
-python platforms/sunrise/smp-compat/verify_sdk.py --sdk /path/to/sdk.json --functions /path/to/functions.json --source /path/to/sunrise
-```
-
-The command checks both build pins, the mixin-tool revision, exact target ownership,
-source-file/function byte hashes and the required address parameter. It exits 2 with
-`SDK_TARGET_UNAVAILABLE` on the current official SDK. An `ok: true` result on a future
-SDK only clears these prerequisites: `runtime_verified` remains false.
-
-Run the standalone checks without game resources or account credentials:
+## Verify
 
 ```sh
+python platforms/sunrise/smp-compat/verify_sdk.py --sdk /path/to/sdk.json --functions /path/to/functions.json --internals /path/to/internals.json --source /path/to/sunrise
+python platforms/sunrise/smp-compat/check_helpers.py --sdk /path/to/sdk.json --api /path/to/sdk/api --engine /path/to/sdk/engine --source /path/to/sunrise --rustc /path/to/rustc
 python -m unittest discover -s platforms/sunrise/smp-compat/tests
+rustc --edition 2024 --test platforms/sunrise/smp-compat/tests/handshake.rs -o target/sunrise-handshake-tests
 rustc --edition 2024 --test platforms/sunrise/smp-compat/tests/brand_gate.rs -o target/sunrise-brand-gate-tests
+target/sunrise-handshake-tests
 target/sunrise-brand-gate-tests
 ```
 
-The Rust test uses the real mixin helper and a loopback socket with a configuration brand
-gate. It supplies the framing itself, so it does not test Sunrise's network writer,
-authentication, native function replacement or live SMP login. Create `target/` first if
-the repository has not been built yet. See [protocol-audit.md](protocol-audit.md) for the
-channel and codec differences that remain after brand selection.
+Create target/ first if needed. SDK preflight checks both build IDs, mixin pin, exact replacement signatures,
+internal fingerprints, source file hashes and function byte spans. It **passes on the current official SDK**;
+`runtime_verified` deliberately remains false.
 
-- Address policy and concurrent connection isolation are covered by the repository's Rust tests.
-- The empty Hooks entry point type-checks against the published SDK metadata with Rust 1.99.1.
-- The upstream patch applies cleanly to the pinned official source.
-- The official SDK index confirms the missing replacement point; no working launcher replacement
-  or live SMP login is claimed. The cloud launcher also encounters a TLS trust failure downloading
-  its releases; standalone SDK downloads succeed and their published hashes were verified.
+Verification completed here: SDK preflight, the native entry point and both helpers type-checked against the
+published engine/API metadata with Rust 1.99.1; nine Python tests, six handshake synchronization tests and
+four brand-policy/loopback tests. The loopback test supplies its own framing and does not run either client.
 
-This addresses the `horizon-clients-only` brand gate only. It does not translate `horizon:*`
-extension channels or prove matching content registries. Those must be tested separately against
-the actual SMP. Do not echo a server's content hash without verifying local content.
+Full launcher build needs a prepared Minecraft 26.3 installation; the isolated cloud install has none and
+stopped at that prerequisite. Source discovery (`--sync-internals`) additionally hit an existing
+`E_INVALID_PATH` for `../../creatures/biome_facts.rs`; no client source was edited to work around it.
+Runtime replacement, live SMP entry, in-connection reconfiguration and extension
+interoperability remain unverified. The two-second rendezvous also requires the connection to be polled during
+configuration; confirm that with the running client.
 
-After the required SDK release, test SMP login, an unrelated server, parallel clients, reconnects,
-custom content, menus and commands. Check the received brand in the SMP server log.
+## Remaining protocol work
+
+This addresses the initial `horizon-clients-only` brand gate, not the full DraimHorizon port. The nonempty
+mod-list codecs differ and custom-content registry matching must remain real. See
+[protocol-audit.md](protocol-audit.md). Do not alias every channel prefix or echo an unverified registry hash.
+After a launcher build, check the received server-side brand, SMP login, an unrelated server, reconnects,
+menus, signed chat, commands and each extension the actual server announces.
