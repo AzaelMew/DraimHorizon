@@ -5,7 +5,9 @@ fn claim_borders_shulker_peek_tooltip(
     at: (f32, f32),
 ) -> ::core::ops::ControlFlow<Option<(f32, f32)>> {
     if let Some(stack) = stack
-        && crate::game::claim_borders_shulker_peek_view::draw_tooltip(game, stack, batch, at.0, at.1)
+        && crate::game::claim_borders_shulker_peek_view::draw_tooltip(
+            game, stack, batch, at.0, at.1,
+        )
     {
         return ::core::ops::ControlFlow::Break(None);
     }

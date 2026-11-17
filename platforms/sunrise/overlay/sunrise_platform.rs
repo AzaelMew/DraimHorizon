@@ -27,7 +27,9 @@ impl Game<'_> {
     /// The mod's own data files are one file per key in its data folder, in both games.
     pub(in crate::game) fn native_setting(&self, mod_id: &str, key: &str) -> Option<String> {
         let path = self.native_data_dir(mod_id).join(key);
-        std::fs::read_to_string(path).ok().map(|v| v.trim().to_owned())
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|v| v.trim().to_owned())
     }
     pub(in crate::game) fn native_set_setting(&self, mod_id: &str, key: &str, value: &str) {
         let dir = self.native_data_dir(mod_id);
@@ -52,10 +54,20 @@ impl Game<'_> {
         self.mod_screen_close(mod_id)
     }
     /// The key the player chose for the mod's key `name`, else `default`. Modifiers are not used.
-    pub(in crate::game) fn native_mod_key(&self, mod_id: &str, name: &str, default: &str) -> String {
+    pub(in crate::game) fn native_mod_key(
+        &self,
+        mod_id: &str,
+        name: &str,
+        default: &str,
+    ) -> String {
         self.settings.mods.binding(mod_id, name, (default, 0)).0
     }
-    pub(in crate::game) fn native_set_mod_key(&mut self, mod_id: &str, name: &str, key: Option<&str>) {
+    pub(in crate::game) fn native_set_mod_key(
+        &mut self,
+        mod_id: &str,
+        name: &str,
+        key: Option<&str>,
+    ) {
         match key {
             Some(key) => self.settings.mods.set_binding(mod_id, name, key, 0),
             None => self.settings.mods.reset_binding(mod_id, name),
@@ -66,11 +78,25 @@ impl Game<'_> {
         let state = self.world.block(pos[0], pos[1], pos[2]);
         self.res.facts().get(state).name.to_string()
     }
-    pub(in crate::game) fn native_block_property(&self, pos: [i32; 3], key: &str) -> Option<String> {
+    pub(in crate::game) fn native_block_property(
+        &self,
+        pos: [i32; 3],
+        key: &str,
+    ) -> Option<String> {
         let state = self.world.block(pos[0], pos[1], pos[2]);
-        self.pack.assets.registry.state(state)?.properties.get(key).cloned()
+        self.pack
+            .assets
+            .registry
+            .state(state)?
+            .properties
+            .get(key)
+            .cloned()
     }
-    pub(in crate::game) fn native_client_action_bar(&mut self, text: crate::text::Text, tint: bool) {
+    pub(in crate::game) fn native_client_action_bar(
+        &mut self,
+        text: crate::text::Text,
+        tint: bool,
+    ) {
         self.titles.set_overlay(text, tint);
     }
     pub(in crate::game) fn native_send_chat(&mut self, message: &str) -> Result<(), String> {
