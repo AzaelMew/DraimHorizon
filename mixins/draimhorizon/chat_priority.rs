@@ -2,6 +2,66 @@
 use claim_borders_relay_client::translation::Language;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+/// Colours the Important player picker offers, in menu order. The first one is the
+/// default a new rule starts with.
+pub const COLORS: [u32; 8] = [
+    0xffcc66, 0x77d9b0, 0xa6c9e5, 0xbcb8e3, 0xdfa8b5, 0xa2d0b7, 0xffffff, 0xff8866,
+];
+/// `hue` in degrees, `sat` and `val` in 0..=1 to `0xRRGGBB`.
+pub fn hsv(hue: f32, sat: f32, val: f32) -> u32 {
+    let hue = if hue.is_finite() {
+        hue.rem_euclid(360.0)
+    } else {
+        0.0
+    };
+    let sat = if sat.is_finite() {
+        sat.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let val = if val.is_finite() {
+        val.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let c = val * sat;
+    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let m = val - c;
+    let (r, g, b) = match (hue / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let channel = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u32;
+    channel(r) << 16 | channel(g) << 8 | channel(b)
+}
+/// `0xRRGGBB` to `(hue degrees, saturation, value)`, the inverse of [`hsv`].
+pub fn rgb_hsv(rgb: u32) -> (f32, f32, f32) {
+    let r = ((rgb >> 16) & 0xff) as f32 / 255.0;
+    let g = ((rgb >> 8) & 0xff) as f32 / 255.0;
+    let b = (rgb & 0xff) as f32 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let hue = if delta <= f32::EPSILON {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    let sat = if max <= f32::EPSILON {
+        0.0
+    } else {
+        delta / max
+    };
+    (hue.rem_euclid(360.0), sat, max)
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rule {
     pub color: u32,
@@ -113,6 +173,24 @@ impl Preferences {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hsv_turns_the_primaries_and_back() {
+        assert_eq!(hsv(0.0, 1.0, 1.0), 0xff0000);
+        assert_eq!(hsv(60.0, 1.0, 1.0), 0xffff00);
+        assert_eq!(hsv(120.0, 1.0, 1.0), 0x00ff00);
+        assert_eq!(hsv(180.0, 1.0, 1.0), 0x00ffff);
+        assert_eq!(hsv(240.0, 1.0, 1.0), 0x0000ff);
+        assert_eq!(hsv(300.0, 1.0, 1.0), 0xff00ff);
+        assert_eq!(hsv(0.0, 0.0, 1.0), 0xffffff);
+        assert_eq!(hsv(0.0, 1.0, 0.0), 0x000000);
+        for color in [0xff2e8c, 0x77d9b0, 0xbcb8e3, 0xffcc66, 0x102030, 0xffffff] {
+            let (h, s, v) = rgb_hsv(color);
+            assert_eq!(hsv(h, s, v), color, "{color:06X}");
+        }
+        assert_eq!(hsv(f32::NAN, f32::NAN, f32::NAN), 0x000000);
+        assert_eq!(hsv(-120.0, 1.0, 1.0), 0x0000ff);
+        assert_eq!(rgb_hsv(0x808080).1, 0.0);
+    }
     #[test]
     fn english_errors_are_not_cyrillic() {
         let mut p = Preferences::default();

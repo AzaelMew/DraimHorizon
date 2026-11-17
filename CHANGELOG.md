@@ -1,5 +1,9 @@
 # История версий
 
+## 0.40.10
+
+- Friends → Important has a colour picker: the colour chip beside the Colour field opens a dialog with a saturation/value square, a hue bar, a live `#RRGGBB` readout, a preview of the chosen colour and the eight presets, plus Done and Cancel [Esc]. Dragging the square or the bar previews the colour live; Done keeps it and stores it for a saved player, while Cancel or Esc restores the colour the dialog opened with. The eight quick swatches stay on the page next to the paging arrows, and the hex field still takes a typed value. A name without a rule keeps the picked colour until Save. No saved rule, pin, colour value or chat behaviour changes: the picker writes the same `priority` settings the hex field does.
+
 ## 0.40.9
 
 - Server commands are now sent only on Horizon SMP (`play.playhorizon.dev` and its subdomains). In single player and on other servers the mod no longer runs /claims, /bal, /worth or /market by itself, and its manual refresh buttons and `/claimborders refresh` say they work only on Horizon SMP.
