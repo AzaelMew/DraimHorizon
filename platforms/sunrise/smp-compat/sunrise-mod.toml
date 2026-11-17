@@ -1,5 +1,3 @@
-# Prototype: requires upstream-brand-hook.patch and a new official SDK.
-# The currently pinned official SDK cannot apply this mixin.
 id = "draimhorizon_smp_compat"
 name = "DraimHorizon SMP compatibility"
 version = "0.42.0"
@@ -7,7 +5,16 @@ description = "Experimental Horizon SMP client brand compatibility for Sunrise"
 authors = ["DraimCiDo"]
 api = "0.2"
 side = "client"
-capabilities = []
+capabilities = ["registries"]
+
+internals = [
+  { path = "sunrise_client_lib::net::Session", kind = "struct", hash = "25ded87d96243406" },
+  { path = "sunrise_client_lib::net::ingress::Producer", kind = "struct", hash = "2534c6dbec91d88e" },
+  { path = "sunrise_mod_runtime::byte_channel::Sender", kind = "struct", hash = "839653ad58df8853" },
+  { path = "sunrise_client_lib::net::queued_writer::QueuedWriter", kind = "struct", hash = "451c9a4757521538" },
+  { path = "sunrise_client_lib::net::queued_writer::Inner", kind = "struct", hash = "f81f03c663425482" },
+  { path = "sunrise_client_lib::net::queued_writer::WriteJob", kind = "enum", hash = "1d6cee17d444f63b" },
+]
 
 [native]
 game = "26.3"
@@ -15,11 +22,18 @@ sunrise = "234db8df6210165318b2b604dea50275357bfaeb"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
 
 [[native.mixin]]
-id = "horizon-smp-brand"
-target = "sunrise_client_lib::net::brand"
-kind = "RETURN"
-helper = "src/mixins/brand.rs"
+id = "register-smp-session"
+target = "sunrise_client_lib::net::Session::poll"
+kind = "HEAD"
+helper = "src/mixins/session.rs"
+bindings = [{ name = "session", ty = "&Session", value = "&*self" }]
+
+[[native.mixin]]
+id = "announce-horizon-brand"
+target = "sunrise_client_lib::net::receive_brand"
+kind = "HEAD"
+helper = "src/mixins/server_brand.rs"
 bindings = [
-  { name = "address", ty = "&str", value = "_address" },
-  { name = "original", ty = "Vec<u8>", value = "$value" },
+  { name = "payload", ty = "&cfg::CustomPayload", value = "payload" },
+  { name = "send", ty = "&ingress::Producer<Event>", value = "send" },
 ]

@@ -1,10 +1,8 @@
-//! Loopback check of the actual mixin helper's bytes, not a running Sunrise client.
-extern crate self as mod_draimhorizon_smp_compat;
+//! Loopback check of the brand policy's bytes, not a running Sunrise client.
 
 #[path = "../src/policy.rs"]
 mod policy;
-pub use policy::brand_for_address;
-include!("../src/mixins/brand.rs");
+use policy::brand_for_address;
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -46,7 +44,7 @@ fn read_string(input: &mut impl Read) -> String {
 }
 
 #[test]
-fn helper_bytes_pass_a_loopback_horizon_brand_gate_only_for_the_smp_address() {
+fn policy_bytes_pass_a_loopback_horizon_brand_gate_only_for_the_smp_address() {
     // This test owns the framing. Sunrise's real writer, SDK replacement,
     // authentication, encryption and extension negotiation are not exercised.
     for (address, expected) in [
@@ -80,7 +78,7 @@ fn helper_bytes_pass_a_loopback_horizon_brand_gate_only_for_the_smp_address() {
             connection
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
-            let payload = brand(address, b"\x07vanilla".to_vec());
+            let payload = brand_for_address(address, b"\x07vanilla".to_vec());
             let mut body = vec![2];
             varint("minecraft:brand".len(), &mut body);
             body.extend_from_slice(b"minecraft:brand");

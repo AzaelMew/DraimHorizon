@@ -11,15 +11,17 @@ reply. With `horizon-clients-only`, any value other than `horizon` is disconnect
 Sunrise `net.rs::run` first sends `vanilla`; its configuration loop announces `sunrise` only
 after the server says `sunrise`. Therefore it retains `vanilla` against a Horizon server.
 
-The proposed brand replacement runs before the first configuration packet is sent. Replacing
-a later play-phase packet is too late. The public `client_packet` / `client_packet_send` hooks
+The adapter queues a second brand while handling the server's `horizon` brand, before the network
+thread can acknowledge known packs. A later play-phase replacement would be too late. The public `client_packet` / `client_packet_send` hooks
 exclude configuration and the engine's brand handling. Application raw payload registration
 cannot claim the engine-owned `minecraft:` namespace.
 
 The SDK currently indexes two functions in `sunrise_client_lib::net`: `Session::poll` and
-`receive_brand`. It does not expose the proposed `brand` target. The source path under
-`crates/sunrise-client/` does not make it part of the game crate. Run `verify_sdk.py` against
-the actual index to reproduce this prerequisite failure.
+`receive_brand`. It does not expose `brand` directly. The source path under
+`crates/sunrise-client/` does not make it part of the game crate. The adapter now uses both existing
+replacement points and the SDK-exported session/queue layouts. `verify_sdk.py` checks those actual
+contracts and passes on this pin. The network callback waits for registration and queues the brand
+through the existing writer before returning; this ordering still needs runtime verification.
 
 ## Extension compatibility
 
@@ -47,10 +49,10 @@ For a server requiring both-side content mods, retain real missing-mod / registr
 refusals until local content and the wire codec are verified. An empty mod list is not a valid
 substitute for required mods.
 
-Next runtime validation after the SDK hook exists: use the launcher replacement pipeline, inspect
+Next runtime validation with the existing replacement points: use the launcher replacement pipeline, inspect
 the server's received brand, complete configuration with the actual SMP, then test vanilla menus,
 signed chat, commands, reconnects and any extensions the server actually announces. The loopback
-brand test only proves the helper's packet bytes satisfy a brand gate; it runs neither client.
+brand test only proves the policy's packet bytes satisfy a brand gate; it runs neither client.
 
 ## Source references
 
