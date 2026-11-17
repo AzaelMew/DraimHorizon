@@ -1,5 +1,9 @@
 # История версий
 
+## 0.41.0
+
+- Sunrise groundwork (experimental, work in progress). `compatibility.json` now also pins the official Sunrise Nightly (`sunrise-org/sunrise`, tag `nightly`) and the horizon-mixins tool Sunrise itself uses, and `python tools/compatibility.py` reports a stale Sunrise pin (a warning by default, an error with `--strict-sunrise`; `--update-sunrise --sunrise PATH` refreshes it). New `tools/sunrise.py` derives a Sunrise mixin bundle from the shared Horizon sources instead of forking them: `resolve` lists where each of the 79 hook targets lives in Sunrise, `generate` writes the translated manifest and sources from `platforms/sunrise/platform.toml` and its overlay. Nothing about the Horizon build, the `.hnmod` bundle or runtime behavior changes in this version, and no claim is made yet that the mod runs on Sunrise.
+
 ## 0.40.9
 
 - Server commands are now sent only on Horizon SMP (`play.playhorizon.dev` and its subdomains). In single player and on other servers the mod no longer runs /claims, /bal, /worth or /market by itself, and its manual refresh buttons and `/claimborders refresh` say they work only on Horizon SMP.

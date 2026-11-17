@@ -1,0 +1,101 @@
+# Differences between the Horizon source the mod is written against and Sunrise.
+# Every injection not listed resolves automatically (tools/sunrise.py resolve).
+
+[module_file]
+"crates/horizon-client/src/game/extras.rs" = "crates/sunrise-client/src/game.rs"
+"crates/horizon-client/src/game/scoreboard.rs" = "crates/sunrise-client/src/game.rs"
+"crates/horizon-client/src/game/remote.rs" = "crates/sunrise-client/src/game.rs"
+"crates/horizon-client/src/game/agent.rs" = "crates/sunrise-client/src/game.rs"
+"crates/horizon-client-render/src/gfx/native_render.rs" = "crates/sunrise-client-render/src/gfx.rs"
+
+[injection.commands]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.list]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.social-tick]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.social-hud]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.menu-open]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.menu-frame]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.menu-options]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.menu-options-click]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.clickthrough-remote]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.shulker-peek-tooltip]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.shulker-peek-colors]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.ghost-world-drawn]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.ghost-render-needs]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.pat-hand]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.bar-tick]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.bar-toast_draw]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.bar-click_key]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.pat-arm]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.server-tps-packets]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.claim-actionbar-observation]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.shulker-peek-draw]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.bar-unload]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
+
+[injection.chat]
+drop = true
+reason = "no Sunrise equivalent mapped yet"
