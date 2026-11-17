@@ -31,7 +31,7 @@ CRATES = [
     ("horizon_client_render", "sunrise_client_render"),
     ("horizon_client_core", "sunrise_client_core"),
     ("horizon_client_input", "sunrise_client_input"),
-    ("horizon_client_lib", "sunrise_client_lib"),
+    ("horizon_client_lib", "sunrise_client"),
     ("horizon_client", "sunrise_client"),
     ("horizon_protocol", "sunrise_protocol"),
     ("horizon_world", "sunrise_world"),
@@ -58,6 +58,32 @@ def rename_crates(text):
     for old, new in CRATES:
         text = re.sub(rf"(?<![A-Za-z0-9_-]){re.escape(old)}(?![A-Za-z0-9_-])", new, text)
     return text
+
+
+TEXT_RULES = []
+
+
+def load_text_rules(platform):
+    """Regex rewrites (pattern -> replacement) for names Sunrise spells differently."""
+    TEXT_RULES[:] = [(re.compile(rule["pattern"]), rule["replace"], rule.get("files")) for rule in platform.get("rewrite", [])]
+
+
+def rename_text(text, name=None):
+    text = rename_crates(text)
+    for pattern, replacement, files in TEXT_RULES:
+        if files is None or name in files:
+            text = pattern.sub(replacement, text)
+    return text
+
+
+def rename_deep(value):
+    if isinstance(value, str):
+        return rename_text(value)
+    if isinstance(value, list):
+        return [rename_deep(v) for v in value]
+    if isinstance(value, dict):
+        return {k: rename_deep(v) for k, v in value.items()}
+    return value
 
 
 def module_path(crate_dir, file):
@@ -167,6 +193,7 @@ def command_generate(args):
     platform = tomllib.loads((PLATFORM / "platform.toml").read_text(encoding="utf-8"))
     compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
     manifest = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))
+    load_text_rules(platform)
     rules = platform.get("injection", {})
     relocate = platform.get("module_file", {})
     out = OUT / "mods" / manifest["mod"]["id"]
@@ -179,7 +206,7 @@ def command_generate(args):
         if rule.get("drop"):
             report.append((injection["id"], "dropped", rule.get("reason", "")))
             continue
-        entry = {k: (rename_crates(v) if isinstance(v, str) else v) for k, v in injection.items()}
+        entry = {k: rename_deep(v) for k, v in injection.items()}
         if "target" in rule:
             entry["target"] = rule["target"]
         elif args.sunrise:
@@ -192,12 +219,17 @@ def command_generate(args):
         for key in ("kind", "helper", "bindings", "cancellable"):
             if key in rule:
                 entry[key] = rule[key]
+        for old, new in rule.get("params", {}).items():
+            for binding in entry.get("bindings", []):
+                binding["value"] = re.sub(rf"\b{re.escape(old)}\b", new, binding["value"])
         injections.append(entry)
     modules = []
     for module in manifest["module"]:
-        entry = {k: (rename_crates(v) if isinstance(v, str) else v) for k, v in module.items()}
+        entry = {k: rename_deep(v) for k, v in module.items()}
         entry["file"] = relocate.get(module["file"], entry["file"])
         modules.append(entry)
+    for module in platform.get("module", []):
+        modules.append(dict(module))
     manifest_out = dict(
         mod=manifest["mod"],
         compatibility=dict(horizon_revision=compat["revision"]),
@@ -211,7 +243,7 @@ def command_generate(args):
             target = out / path.relative_to(BUNDLE)
             target.parent.mkdir(parents=True, exist_ok=True)
             if path.suffix == ".rs":
-                target.write_text(rename_crates(path.read_text(encoding="utf-8")), encoding="utf-8")
+                target.write_text(rename_text(path.read_text(encoding="utf-8"), path.relative_to(BUNDLE).as_posix()), encoding="utf-8")
             else:
                 shutil.copyfile(path, target)
     overlay = PLATFORM / "overlay"
@@ -284,7 +316,7 @@ def inline_generated(root, generated):
             body = (generated / match["name"]).read_text(encoding="utf-8")
             body = re.sub(
                 r'#\[path = "([^"]+)"\]',
-                lambda m: '#[path = "%s"]' % os.path.relpath(m[1], path.parent),
+                lambda m: '#[path = "%s"]' % os.path.relpath(root / "crates" / m[1].split("/crates/", 1)[1], path.parent),
                 body,
             )
             count += 1
@@ -294,6 +326,92 @@ def inline_generated(root, generated):
         if updated != text:
             path.write_text(updated, encoding="utf-8")
     return count
+
+
+PATH_MOD = re.compile(
+    r'(?P<attrs>(?:[ \t]*#\[[^\]\n]*\][ \t]*\n)*)'
+    r'[ \t]*#\[path = "(?P<path>[^"]+)"\][ \t]*\n'
+    r'(?P<more>(?:[ \t]*#\[[^\]\n]*\][ \t]*\n)*)'
+    r'[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+;[ \t]*\n'
+)
+
+
+def flatten_paths(root):
+    """The mixin tool refuses `#[path]` with `..`. Sunrise uses it to pull sibling folders into a module:
+    copy those files next to the includer; modules reaching outside the crate (test fixtures) are dropped."""
+    src = (root / "crates/sunrise-client/src").resolve()
+    copied = dropped = 0
+    for path in sorted(src.rglob("*.rs")):
+        text = path.read_text(encoding="utf-8")
+        if '#[path = "' not in text:
+            continue
+
+        def replace(match):
+            nonlocal copied, dropped
+            target = match["path"]
+            if ".." not in Path(target).parts:
+                return match[0]
+            base = path.parent if path.name == "mod.rs" or path.parent == src else path.parent / path.stem
+            resolved = (base / target).resolve()
+            if not resolved.is_relative_to(src) or not resolved.is_file():
+                dropped += 1
+                return ""
+            local = path.parent / "__linked" / resolved.name
+            local.parent.mkdir(exist_ok=True)
+            shutil.copyfile(resolved, local)
+            copied += 1
+            return match[0].replace(f'"{target}"', f'"__linked/{resolved.name}"')
+
+        updated = PATH_MOD.sub(replace, text)
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+    return copied, dropped
+
+
+LOCAL_INCLUDE = re.compile(r'^[ \t]*include!\("(?P<file>[^"]+\.rs)"\);[ \t]*$', re.M)
+
+
+def inline_local_includes(root):
+    """`include!("file.rs")` is invisible to the mixin tool; paste the file where it is included."""
+    src = root / "crates/sunrise-client/src"
+    pasted = 0
+    for path in sorted(src.rglob("*.rs")):
+        if path.name.endswith("_tests.rs") or not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+
+        def replace(match):
+            nonlocal pasted
+            target = path.parent / match["file"]
+            if not target.is_file():
+                return match[0]
+            pasted += 1
+            body = target.read_text(encoding="utf-8")
+            target.unlink()
+            return body
+
+        updated = LOCAL_INCLUDE.sub(replace, text)
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+    return pasted
+
+
+MARKER = re.compile(r"^[ \t]*#\[sunrise_mod_api_macros::replaceable\][ \t]*\n", re.M)
+
+
+def strip_markers(root):
+    """`#[replaceable]` only reserves a function-replacement slot for the launcher's build; the
+    mixin tool refuses unexpanded attribute macros, and a source-level check does not need the slot."""
+    removed = 0
+    for path in sorted((root / "crates").rglob("*.rs")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "replaceable" not in text:
+            continue
+        updated, count = MARKER.subn("", text)
+        if count:
+            path.write_text(updated, encoding="utf-8")
+            removed += count
+    return removed
 
 
 def ensure_mixins_tool(compat):
@@ -311,9 +429,62 @@ def ensure_mixins_tool(compat):
     return work
 
 
+def command_stage(args):
+    compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+    revision = compat["revision"]
+    original = OUT / "original" / revision
+    indexed = OUT / "indexed" / revision
+    if not original.exists():
+        export_sunrise(args.sunrise, revision, original)
+    check_target = OUT / "check-original"
+    if args.generated is None:
+        run(["cargo", "check", "-p", "sunrise-client", "--lib", "--locked", "-j", str(args.jobs),
+             "--target-dir", str(check_target)], cwd=original)
+        generated = generated_directory(check_target / "debug" if (check_target / "debug").exists() else check_target)
+    else:
+        generated = args.generated
+    if indexed.exists():
+        shutil.rmtree(indexed)
+    shutil.copytree(original, indexed, symlinks=True, ignore=shutil.ignore_patterns("target"))
+    print(f"inlined {inline_generated(indexed, generated)} generated includes", file=sys.stderr)
+    print(f"pasted {inline_local_includes(indexed)} local includes", file=sys.stderr)
+    print(f"stripped {strip_markers(indexed)} replaceable markers", file=sys.stderr)
+    print("linked/dropped #[path] modules: %d/%d" % flatten_paths(indexed), file=sys.stderr)
+    command_generate(argparse.Namespace(sunrise=indexed))
+    tool = ensure_mixins_tool(compat)
+    cli_target = OUT / "mixins-cli"
+    patch = ROOT / compat["mixins_patch"]
+    if patch.exists() and not (tool / ".patched").exists():
+        run(["git", "-C", str(tool), "apply", str(patch)])
+        (tool / ".patched").write_text(compat["mixins_revision"])
+    run(["cargo", "build", "--locked", "-p", "horizon-mixins-cli", "--target-dir", str(cli_target)], cwd=tool, stdout=sys.stderr)
+    cli = cli_target / "debug" / "horizon-mixins"
+    base = ["--workspace", str(indexed), "--mods", str(OUT / "mods")]
+    run([str(cli), "plan", *base, "--out", str(OUT / "plan.json")])
+    result = run([str(cli), "apply", *base, "--out", str(OUT / "modded")], capture_output=True, text=True)
+    print(result.stdout)
+    prepare_build(OUT / "modded")
+
+
+def prepare_build(modded):
+    """The build script of sunrise-client regenerates the includes that were pasted into the
+    source for the mixin tool; the pasted copies are the source of truth for this check."""
+    script = modded / "crates/sunrise-client/build.rs"
+    text = script.read_text(encoding="utf-8")
+    call = re.search(r"    sunrise_mod_api_gen::generate\([^;]*\)\s*\.expect\(\"generating native mod API\"\);\n", text)
+    if call is None:
+        raise SystemExit("sunrise-client/build.rs changed: update prepare_build")
+    script.write_text(text.replace(call[0], ""), encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    stage_parser = sub.add_parser("stage")
+    stage_parser.add_argument("--sunrise", type=Path, required=True, help="Sunrise Git checkout holding the pinned commit")
+    stage_parser.add_argument("--generated", type=Path, help="OUT_DIR of a previous sunrise-client build (skips the baseline check)")
+    stage_parser.add_argument("--jobs", type=int, default=2)
+    stage_parser.set_defaults(run=command_stage)
     generate_parser = sub.add_parser("generate")
     generate_parser.add_argument("--sunrise", type=Path, help="Sunrise checkout, to resolve moved targets")
     generate_parser.set_defaults(run=command_generate)

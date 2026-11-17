@@ -2,11 +2,11 @@
 # Every injection not listed resolves automatically (tools/sunrise.py resolve).
 
 [module_file]
-"crates/horizon-client/src/game/extras.rs" = "crates/sunrise-client/src/game.rs"
-"crates/horizon-client/src/game/scoreboard.rs" = "crates/sunrise-client/src/game.rs"
-"crates/horizon-client/src/game/remote.rs" = "crates/sunrise-client/src/game.rs"
-"crates/horizon-client/src/game/agent.rs" = "crates/sunrise-client/src/game.rs"
-"crates/horizon-client-render/src/gfx/native_render.rs" = "crates/sunrise-client-render/src/gfx.rs"
+"crates/horizon-client/src/game/extras.rs" = "crates/sunrise-client/src/game/interface/extras.rs"
+"crates/horizon-client/src/game/scoreboard.rs" = "crates/sunrise-client/src/game/interface/scoreboard/mod.rs"
+"crates/horizon-client/src/game/remote.rs" = "crates/sunrise-client/src/game/network/remote/mod.rs"
+"crates/horizon-client/src/game/agent.rs" = "crates/sunrise-client/src/game/runtime/agent/mod.rs"
+"crates/horizon-client-render/src/gfx/native_render.rs" = "crates/sunrise-client-render/src/render_slots.rs"
 
 [injection.commands]
 drop = true
@@ -52,14 +52,6 @@ reason = "no Sunrise equivalent mapped yet"
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-[injection.ghost-world-drawn]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.ghost-render-needs]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
 [injection.pat-hand]
 drop = true
 reason = "no Sunrise equivalent mapped yet"
@@ -76,26 +68,77 @@ reason = "no Sunrise equivalent mapped yet"
 drop = true
 reason = "no Sunrise equivalent mapped yet"
 
-[injection.pat-arm]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.server-tps-packets]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.claim-actionbar-observation]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.shulker-peek-draw]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.bar-unload]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
 [injection.chat]
 drop = true
 reason = "no Sunrise equivalent mapped yet"
+
+# Horizon's Native* records are Sunrise's mod_api records with the same fields.
+[[rewrite]]
+pattern = '(?:crate::game|super)::native_hooks::NativeZoom\b'
+replace = 'mod_api::Zoom'
+[[rewrite]]
+pattern = '(?:crate::game|super)::native_hooks::NativeMinimap\b'
+replace = 'mod_api::Minimap'
+[[rewrite]]
+pattern = '(?:crate::game|super)::native_hooks::NativeScreenView\b'
+replace = 'mod_api::ScreenView'
+
+[injection.navigation-input]
+helper = "sunrise/navigation_input_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "self" },
+  { name = "call", ty = "mod_api::__private::MovementInputCall<'_>", value = "call" },
+]
+
+[injection.menu-render]
+params = { batch = "draw" }
+[injection.inventory-search-highlight]
+params = { batch = "draw" }
+[injection.shulker-peek-draw]
+target = "sunrise_client::game::native_hooks::base::Game<'_>::native_tooltip_component_draw"
+params = { batch = "draw" }
+
+# Sunrise moved the render hook points into render_slots (WorldDrawn, RenderNeeds).
+[[rewrite]]
+pattern = 'crate::mesher::Vertex'
+replace = 'crate::render_geometry::Vertex'
+files = ["ghost_render.rs"]
+
+[injection.ghost-world-drawn]
+target = "sunrise_client_render::render_slots::world_drawn"
+helper = "sunrise/ghost_drawn_hook.rs"
+bindings = [
+  { name = "world", ty = "&mut crate::render_slots::WorldDrawn<'_>", value = "world" },
+]
+
+[injection.ghost-render-needs]
+target = "sunrise_client_render::render_slots::needs"
+kind = "RETURN"
+helper = "sunrise/ghost_needs_hook.rs"
+bindings = [
+  { name = "needs", ty = "RenderNeeds", value = "$value" },
+]
+
+
+# Sunrise's render_visible takes the body paint, hidden parts and a posed-parts sink instead of a flag.
+[[rewrite]]
+pattern = '&\[\],\s*true,\s*out,\s*None,'
+replace = '&[],\n        Some(super::body_color(mob, alpha)),\n        Default::default(),\n        None,\n        out,\n        None,'
+files = ["visibility_model.rs"]
+
+# Horizon's Game::native_* host helpers, spelled the Sunrise way.
+[[module]]
+id = "sunrise-platform"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_platform"
+source = "sunrise_platform.rs"
+
+
+[[rewrite]]
+pattern = 'sunrise_world::nbt\b'
+replace = 'sunrise_core::nbt'
+
+# Sunrise's text-width helper takes an unused batch; the shim measures without one.
+[[rewrite]]
+pattern = '\.native_text_width\('
+replace = '.sunrise_text_width('
