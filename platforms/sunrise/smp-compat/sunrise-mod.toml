@@ -1,0 +1,25 @@
+# Prototype: requires upstream-brand-hook.patch and a new official SDK.
+# The currently pinned official SDK cannot apply this mixin.
+id = "draimhorizon_smp_compat"
+name = "DraimHorizon SMP compatibility"
+version = "0.42.0"
+description = "Experimental Horizon SMP client brand compatibility for Sunrise"
+authors = ["DraimCiDo"]
+api = "0.2"
+side = "client"
+capabilities = []
+
+[native]
+game = "26.3"
+sunrise = "234db8df6210165318b2b604dea50275357bfaeb"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
+
+[[native.mixin]]
+id = "horizon-smp-brand"
+target = "sunrise_client_lib::net::brand"
+kind = "RETURN"
+helper = "src/mixins/brand.rs"
+bindings = [
+  { name = "address", ty = "&str", value = "_address" },
+  { name = "original", ty = "Vec<u8>", value = "$value" },
+]

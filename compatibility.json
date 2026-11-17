@@ -24,6 +24,8 @@
     "mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
     "mixins_revision": "e59da9094f0c2fdda6c627fe9eff22dec6a906f0",
     "mixins_patch": "tools/mixins/narrow-reference-rule.patch",
-    "source_sha256": {}
+    "source_sha256": {
+      "crates/sunrise-client/src/net.rs": "5819bab70454cfe4aa9b486845abb38acafb3d3a54f9a165f3f8bb98cb34741a"
+    }
   }
 }

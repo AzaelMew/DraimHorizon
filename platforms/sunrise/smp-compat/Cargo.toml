@@ -1,0 +1,10 @@
+[package]
+name = "mod-draimhorizon-smp-compat"
+version = "0.42.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+sunrise-mod-api = { path = ".sunrise/sdk/api/crates/sunrise-mod-api" }
+
+[workspace]

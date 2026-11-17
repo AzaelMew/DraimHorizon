@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../platforms/sunrise/smp-compat/src/policy.rs"]
+mod sunrise_smp_compat_policy;
+
 #[path = "../mixins/draimhorizon/block_protection.rs"]
 pub mod block_protection;
 #[path = "../mixins/draimhorizon/runtime.rs"]

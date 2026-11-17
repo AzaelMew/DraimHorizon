@@ -1,5 +1,10 @@
 # История версий
 
+## 0.42.0
+
+- Added an experimental, separate Sunrise native client project under `platforms/sunrise/smp-compat`. Its native mixin prototype selects the initial client brand to `horizon` only for the official Horizon SMP domain and its subdomains. Other connections retain Sunrise's original packet. This addresses the brand gate only, not the full Sunrise port or Horizon extension/content compatibility; the current Sunrise SDK lacks the required replaceable function. Includes a minimal upstream hook patch; a new official SDK is required before this prototype can run.
+- Version checks now also synchronize the Sunrise compatibility project's package and manifest. Pinned the hash of the Sunrise network source used by the adapter.
+
 ## 0.41.0
 
 - Sunrise groundwork (experimental, work in progress). `compatibility.json` now also pins the official Sunrise Nightly (`sunrise-org/sunrise`, tag `nightly`) and the horizon-mixins tool Sunrise itself uses, and `python tools/compatibility.py` reports a stale Sunrise pin (a warning by default, an error with `--strict-sunrise`; `--update-sunrise --sunrise PATH` refreshes it). New `tools/sunrise.py` derives a Sunrise mixin bundle from the shared Horizon sources instead of forking them: `resolve` lists where each of the 79 hook targets lives in Sunrise, `generate` writes the translated manifest and sources from `platforms/sunrise/platform.toml` and its overlay. Nothing about the Horizon build, the `.hnmod` bundle or runtime behavior changes in this version, and no claim is made yet that the mod runs on Sunrise.

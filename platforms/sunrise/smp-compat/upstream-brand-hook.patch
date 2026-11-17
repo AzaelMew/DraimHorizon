@@ -1,0 +1,21 @@
+--- a/crates/sunrise-client/src/net.rs
++++ b/crates/sunrise-client/src/net.rs
+@@ -1084,7 +1084,7 @@
+     c.send(
+         &cfg::Serverbound::CustomPayload(cfg::CustomPayload {
+             channel: "minecraft:brand".into(),
+-            data: brand(),
++            data: brand(address),
+         })
+         .try_encode()
+         .map_err(e)?,
+@@ -1539,7 +1539,8 @@
+ }
+ 
+ /// `ClientBrandRetriever.getClientModName`: vanilla's default client brand.
+-fn brand() -> Vec<u8> {
++#[sunrise_mod_api_macros::replaceable]
++fn brand(_address: &str) -> Vec<u8> {
+     let mut w = sunrise_protocol::buf::Writer::new();
+     w.string("vanilla");
+     w.data
