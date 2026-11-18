@@ -5,6 +5,9 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -290,6 +293,137 @@ class PlatformMergeTests(unittest.TestCase):
         platform = sunrise.load_platform()
         self.assertTrue(list((sunrise.PLATFORM / "platform.d").glob("*.toml")))
         self.assertIn("map-images", [m["id"] for m in platform.get("module", [])])
+
+
+class PlatformOnlyInjectionTests(unittest.TestCase):
+    RULE = dict(target="sunrise_client::game::native_hooks::base::Game<'_>::native_mouse_button_post",
+                helper="h.rs", bindings=[dict(name="key", ty="&str", value="key")])
+
+    def test_rules_missing_from_the_shared_manifest_become_complete_rows(self):
+        rows = sunrise.platform_only_injections(
+            {"shared": dict(drop=True), "only": dict(self.RULE, reason="r"), "gone": dict(drop=True)}, {"shared"})
+        self.assertEqual(rows, [dict(id="only", kind="HEAD", **self.RULE)])
+        row = sunrise.platform_only_injections({"x": dict(self.RULE, kind="BEFORE_CALL", require=1)}, set())[0]
+        self.assertEqual((row["kind"], row["require"]), ("BEFORE_CALL", 1))
+
+    def test_overrides_of_shared_injections_are_not_duplicated(self):
+        self.assertEqual(sunrise.platform_only_injections({"shared": dict(target="t")}, {"shared"}), [])
+
+    def test_an_incomplete_platform_only_rule_stops_the_build(self):
+        for missing in ("target", "helper"):
+            rule = {k: v for k, v in self.RULE.items() if k != missing}
+            with self.assertRaisesRegex(SystemExit, missing):
+                sunrise.platform_only_injections({"broken": rule}, set())
+
+    def test_generated_project_hooks_mouse_buttons_for_the_key_helpers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = sunrise.OUT
+            sunrise.OUT = Path(tmp)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    sunrise.command_generate(argparse.Namespace(sunrise=None))
+                project = Path(tmp) / "mods" / "draimhorizon"
+                bundle = tomllib.loads((project / "horizon-mixin.toml").read_text(encoding="utf-8"))
+                helpers = {i["id"]: (project / i["helper"]).read_text(encoding="utf-8") for i in bundle["injection"]
+                           if i["id"] in ("menu-mouse", "bar-click-mouse")}
+            finally:
+                sunrise.OUT = old
+        rows = {i["id"]: i for i in bundle["injection"]}
+        for id, fn in (("menu-mouse", "claim_borders_menu_open_mouse"), ("bar-click-mouse", "baritone_click_key_mouse")):
+            self.assertTrue(rows[id]["target"].endswith("::native_mouse_button_post"), id)
+            # Bindings may only be target parameters, so the helper turns the GLFW index into the key name.
+            self.assertEqual([(b["name"], b["value"]) for b in rows[id]["bindings"]],
+                             [("game", "&mut *self"), ("button", "button"), ("pressed", "pressed")])
+            text = helpers[id]
+            self.assertIn(f"fn {fn}(game: &mut crate::game::Game<'_>, button: i32, pressed: bool)", text)
+            self.assertIn("native_playing()", text)
+            self.assertIn('3 => "key.mouse.4"', text)
+            self.assertIn('4 => "key.mouse.5"', text)
+            self.assertIn("key.mouse.none", text)
+            self.assertEqual(text.count("fn "), 1)
+
+    def test_a_helper_without_the_key_signature_cannot_be_derived(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "h.rs", "fn other(game: &mut Game) {}\n")
+            with self.assertRaisesRegex(SystemExit, "no \\(game, key, action\\) helper"):
+                sunrise.derive_mouse_helpers(Path(tmp), {"x": dict(helper="m.rs", helper_from="h.rs")})
+
+
+def usage_accepts(usage, line):
+    """Whether Sunrise's client chat tree takes `line` for `usage` (the rules of native_server::usage_nodes)."""
+    name, *arguments = usage.split()
+    words = line.split(" ", 1)[0], (line.split(" ", 1) + [""])[1]
+    if words[0] != name:
+        return False
+    rest = words[1].split() if arguments and arguments[-1].endswith(":word]") else words[1]
+    for index, argument in enumerate(arguments):
+        optional = argument.startswith("[")
+        kind = argument.strip("<>[]").split(":", 1)[1]
+        if kind == "text":
+            return bool(rest.strip()) or optional
+        if not rest:
+            return optional
+        rest = rest[1:]
+    return not rest
+
+
+class ClientCommandUsageTests(unittest.TestCase):
+    ENTRY = (sunrise.PLATFORM / "overlay" / "crate" / "mod_entry.rs").read_text(encoding="utf-8")
+    SHARED = (sunrise.BUNDLE / "commands.rs").read_text(encoding="utf-8")
+
+    def usages(self):
+        block = re.search(r"pub const USAGES: \[&str; (\d+)\] = \[(.*?)\];", self.ENTRY, re.S)
+        rows = re.findall(r'"([^"]+)"', block[2])
+        self.assertEqual(len(rows), int(block[1]))
+        return rows
+
+    def test_every_shared_command_has_exactly_one_usage(self):
+        shared = re.findall(r'"([a-z]+)"', self.SHARED.split("]")[0])
+        self.assertEqual(sorted(u.split()[0] for u in self.usages()), sorted(shared))
+
+    def test_usages_follow_the_grammar_of_the_client_command_tree(self):
+        for usage in self.usages():
+            name, *arguments = usage.split()
+            self.assertRegex(name, r"^[a-z0-9_-]+$", usage)
+            self.assertTrue(all(re.fullmatch(r"[<\[]\w+:(word|text)[>\]]", a) for a in arguments), usage)
+            self.assertLessEqual(len(arguments), 1, usage)
+
+    def test_every_form_the_handlers_take_is_valid_and_not_red(self):
+        usages = {u.split()[0]: u for u in self.usages()}
+        # The forms mixins/draimhorizon/{command,client}.rs read: the words after the name go to the handler.
+        lines = ["r", "r hello", "r hello there  world", "reply hi", "reply", "party", "party invite Name",
+                 "party accept Name", "friend", "friend add Name", "wp", "wp add #ff0000 Home", "waypoint list",
+                 "dfarm", "dfarm pos1", "dfarm save wheat", "horizonmenu", "claimborders", "claimborders refresh",
+                 "claimborders menu"]
+        for line in lines:
+            self.assertTrue(usage_accepts(usages[line.split()[0]], line), line)
+
+    def test_a_bare_name_would_have_turned_arguments_red(self):
+        self.assertFalse(usage_accepts("r", "r hello"))
+        self.assertTrue(usage_accepts("r [message:text]", "r hello"))
+        self.assertFalse(usage_accepts("horizonmenu", "horizonmenu now"))
+
+
+class SunriseSuggestTests(unittest.TestCase):
+    SOURCE = sunrise.PLATFORM / "overlay" / "crate" / "suggest.rs"
+
+    def test_nickname_snapshot_logic_in_the_mod_crate(self):
+        rustc = shutil.which("rustc")
+        if rustc is None:
+            self.skipTest("no rustc")
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "suggest_tests"
+            build = subprocess.run([rustc, "--edition", "2024", "--test", str(self.SOURCE), "-o", str(binary)],
+                                   capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary), "--test-threads=1"], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_the_hook_applies_only_a_list_built_for_the_text_it_holds(self):
+        hook = (sunrise.PLATFORM / "overlay" / "baritone" / "hooks" / "suggest_hook.rs").read_text(encoding="utf-8")
+        self.assertIn("suggest::nicknames(&input.value)", hook)
+        self.assertNotIn("take_nicknames", hook)
+        self.assertNotIn("request_nicknames", self.SOURCE.read_text(encoding="utf-8"))
 
 
 class SmodSkipTests(unittest.TestCase):

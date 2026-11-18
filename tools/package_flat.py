@@ -102,9 +102,16 @@ def manifest_text(platform, bundle_manifest, compat, helpers, modules):
         f'version = "{project_version()}"',
         'description = "Client tools for Horizon SMP: claims, map and navigation, trading, chat translation, Baritone and schematics."',
         'authors = ["DraimCiDo"]',
-        'license = "MIT"',
-        'homepage = "https://github.com/DraimCiDo/DraimHorizon"',
-        'issues = "https://github.com/DraimCiDo/DraimHorizon/issues"',
+    ]
+    # Horizon's `horizon-mod.toml` refuses every key it does not define (license, homepage, issues),
+    # so those live in the bundled LICENSE/NOTICE files there; Sunrise's manifest accepts them.
+    if spec["extension"] == "smod":
+        head += [
+            'license = "MIT"',
+            'homepage = "https://github.com/DraimCiDo/DraimHorizon"',
+            'issues = "https://github.com/DraimCiDo/DraimHorizon/issues"',
+        ]
+    head += [
         'api = "0.2"',
         'side = "client"',
         '# A native package must name a capability; registries is the only one the manifest defines.',

@@ -223,6 +223,65 @@ def choose_candidate(found):
     return real[0] if len(real) == 1 else None
 
 
+def platform_only_injections(rules, shared_ids):
+    """Rules whose id the shared manifest lacks: Sunrise-only hooks, emitted as complete mixin rows."""
+    rows = []
+    for key, rule in rules.items():
+        if key in shared_ids or rule.get("drop"):
+            continue
+        missing = [name for name in ("target", "helper") if name not in rule]
+        if missing:
+            raise SystemExit(f"platform injection {key}: not in the shared manifest, so it needs {' and '.join(missing)}")
+        entry = dict(id=key, kind=rule.get("kind", "HEAD"))
+        for name, value in rule.items():
+            if name not in ("drop", "reason", "kind", "params", "helper_from"):
+                entry[name] = value
+        rows.append(entry)
+    return rows
+
+
+# GLFW button index (glfw_button) -> key.mouse.* as keybinds::mouse_name spells it; Other(n) is n + 1.
+MOUSE_KEY_PRELUDE = """
+    let key = if !game.native_playing() {
+        "key.mouse.none"
+    } else {
+        match button {
+            0 => "key.mouse.left",
+            1 => "key.mouse.right",
+            2 => "key.mouse.middle",
+            3 => "key.mouse.4",
+            4 => "key.mouse.5",
+            5 => "key.mouse.6",
+            6 => "key.mouse.7",
+            7 => "key.mouse.8",
+            _ => "key.mouse.none",
+        }
+    };
+    let action = if pressed {
+        mod_api::KeyAction::Press
+    } else {
+        mod_api::KeyAction::Release
+    };"""
+KEY_HELPER_SIGNATURE = re.compile(
+    r"fn (\w+)\(\s*game: &mut crate::game::Game<'_>,\s*key: &str,\s*action: mod_api::KeyAction,\s*\) \{")
+
+
+def derive_mouse_helpers(out, rules):
+    """Write each `helper_from` rule's helper: the shared key helper fed from a GLFW button index."""
+    for key, rule in rules.items():
+        if "helper_from" not in rule or rule.get("drop"):
+            continue
+        source = (out / rule["helper_from"]).read_text(encoding="utf-8")
+        text, count = KEY_HELPER_SIGNATURE.subn(
+            lambda m: f"fn {m[1]}_mouse(game: &mut crate::game::Game<'_>, button: i32, pressed: bool) {{{MOUSE_KEY_PRELUDE}",
+            source)
+        if count != 1:
+            raise SystemExit(f"platform injection {key}: {rule['helper_from']} has no (game, key, action) helper to derive from")
+        target = out / rule["helper"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+
 def command_generate(args):
     platform = load_platform()
     compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
@@ -263,6 +322,7 @@ def command_generate(args):
             for binding in entry.get("bindings", []):
                 binding["value"] = re.sub(rf"\b{re.escape(old)}\b", new, binding["value"])
         injections.append(entry)
+    injections += platform_only_injections(rules, {i["id"] for i in manifest["injection"]})
     modules = []
     overrides = platform.get("module_override", {})
     for module in manifest["module"]:
@@ -301,6 +361,7 @@ def command_generate(args):
                 target = out / path.relative_to(overlay)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, target)
+    derive_mouse_helpers(out, rules)
     traits = traitify_game_impls(out, modules, args.sunrise)
     import_traits(out, modules, injections, traits)
     print(json.dumps(dict(out=str(out), injections=len(injections), modules=len(modules), dropped=report,

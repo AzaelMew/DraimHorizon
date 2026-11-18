@@ -1,6 +1,6 @@
 id = "draimhorizon_smp_compat"
 name = "DraimHorizon SMP compatibility"
-version = "0.41.6"
+version = "0.41.7"
 description = "Experimental Horizon SMP client brand compatibility for Sunrise"
 authors = ["DraimCiDo"]
 api = "0.2"
