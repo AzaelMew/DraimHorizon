@@ -1,6 +1,6 @@
 [package]
 name = "mod-draimhorizon-smp-compat"
-version = "0.41.2"
+version = "0.41.3"
 edition = "2024"
 license = "MIT"
 

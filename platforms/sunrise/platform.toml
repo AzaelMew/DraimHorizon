@@ -57,6 +57,9 @@ reason = "completion provider moved to the mod crate (suggest.rs); the helper ru
 [module_override.chat-nickname-list]
 drop = true
 reason = "needs ChatScreen's private fields: the request goes through the mod crate (suggest.rs) and the bar-suggest helper applies it"
+[module_override.brand-policy]
+drop = true
+reason = "only the two Horizon login-brand hooks use it; Sunrise drops both (see injection.brand-gate)"
 
 # Callers of the relocated modules.
 [[rewrite]]
@@ -139,6 +142,18 @@ bindings = [
 [injection.world-map-atlas]
 drop = true
 reason = "HudAtlas::slots is private in a lower crate without #[replaceable]; no replaceable caller can add atlas images"
+
+# The Horizon login brand is a free function of the network thread in the reusable client library,
+# and `brand()` has no host context. Sunrise's engine owns that exchange from a lower crate, so
+# neither hook ports; the brand coordination for Sunrise lives in the separate smp-compat mod
+# (platforms/sunrise/smp-compat/src/policy.rs).
+[injection.brand-gate]
+drop = true
+reason = "Sunrise sends the login brand from a lower crate; platforms/sunrise/smp-compat coordinates it instead"
+
+[injection.brand-announce]
+drop = true
+reason = "Sunrise sends the login brand from a lower crate; platforms/sunrise/smp-compat coordinates it instead"
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
 # chunks out of the world, so the hook goes before that call in the game-crate caller instead.
