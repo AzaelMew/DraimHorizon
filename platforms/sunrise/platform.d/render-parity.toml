@@ -1,0 +1,16 @@
+# Render parity with Horizon: patting arm pose in third person, opaque "show invisible entities".
+
+# The `mobs` module of sunrise_client_lib cannot be patched by the launcher (E0252/E0432 in the
+# generated copy), so the pose is blended in the game crate's humanoid observer instead: it runs
+# once per humanoid setupAnim, before the arm pose, with the mob and its Poses. Sunrise builds
+# that observer only while a mod listens to `humanoid_setup_anim`, so smod/lib.rs must
+# register a no-op listener for it (see the note in the report).
+[injection.pat-arm]
+target = "sunrise_client::game::humanoid_setup_anim::<Game<'_> as HumanoidSetup>::before_arm_pose"
+kind = "RETURN"
+helper = "pat_pose_hook.rs"
+bindings = [
+  { name = "_value", ty = "()", value = "$value" },
+  { name = "m", ty = "&sunrise_client::mobs::Mob", value = "mob" },
+  { name = "p", ty = "&mut sunrise_client::mobs::anim::Poses", value = "&mut *poses" },
+]

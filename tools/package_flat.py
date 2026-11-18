@@ -12,7 +12,8 @@ author to republish it as .hmod". They read one flat Cargo project instead:
 The mod is still written once, in mixins/draimhorizon. This tool only re-lays it out:
 
     python tools/package_flat.py horizon    -> target/flat/horizon/ and target/draimhorizons-<v>.hmod
-    python tools/package_flat.py sunrise    -> target/flat/sunrise/ and target/draimhorizons-<v>.smod
+    python tools/package_flat.py sunrise    -> target/sunrise/smod/draimhorizon/ (tools/sunrise.py smod)
+                                               and target/draimhorizons-<v>.smod
 """
 import argparse
 import json
@@ -240,20 +241,26 @@ def pack(platform, project):
     return out
 
 
+def sunrise_project():
+    """The Sunrise package is `tools/sunrise.py smod`'s project, the one built and run by the Sunrise
+    launcher: it inlines the relay client as game-side code (the launcher refuses ring, rustls and ureq
+    as registry dependencies of a mod crate) and carries the Sunrise hook and listener adaptations."""
+    subprocess.run([sys.executable, str(ROOT / "tools" / "sunrise.py"), "smod"], check=True, stdout=subprocess.DEVNULL)
+    project = ROOT / "target" / "sunrise" / "smod" / "draimhorizon"
+    shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
+    for original, target in LICENSES.items():
+        shutil.copyfile(BUNDLE / original, project / target)
+    return project
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=sorted(PLATFORMS))
-    parser.add_argument("--sunrise-bundle", type=Path, help="a generated Sunrise bundle; by default tools/sunrise.py generate makes one")
     args = parser.parse_args()
-    bundle = BUNDLE
     if args.platform == "sunrise":
-        bundle = args.sunrise_bundle
-        if bundle is None:
-            # The frozen targets in platforms/sunrise/targets.toml make a Sunrise checkout unnecessary.
-            subprocess.run([sys.executable, str(ROOT / "tools" / "sunrise.py"), "generate"], check=True, stdout=subprocess.DEVNULL)
-            bundle = ROOT / "target" / "sunrise" / "mods" / "draimhorizon"
-        bundle = bundle.resolve()
-    project = build(args.platform, bundle, OUT / args.platform)
+        project = sunrise_project()
+    else:
+        project = build(args.platform, BUNDLE, OUT / args.platform)
     artifact = pack(args.platform, project)
     print(json.dumps(dict(project=str(project), artifact=str(artifact), size=artifact.stat().st_size), indent=2))
 

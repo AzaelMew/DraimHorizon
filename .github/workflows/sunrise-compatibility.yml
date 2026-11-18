@@ -1,6 +1,8 @@
 name: Validate Sunrise Nightly client (experimental)
-# The Sunrise port is experimental: this job stages the generated bundle on the pinned official Sunrise
-# Nightly and compiles the modified client. It never gates Horizon releases.
+# The Sunrise port is experimental and never gates Horizon releases. Two routes are checked:
+#  - smod:  the shipping route. Generate the flat native project, pack the .smod and validate it offline
+#           with the SDK's cargo-sunrise-mod plus the SDK function index (what the launcher validates).
+#  - stage: the source route. Apply the bundle to the pinned Sunrise source and compile sunrise-client.
 on:
   push:
     branches: [main]
@@ -9,6 +11,8 @@ on:
       - 'platforms/sunrise/**'
       - 'mixins/**'
       - 'tools/sunrise.py'
+      - 'tools/package_flat.py'
+      - 'tools/tests/**'
       - 'compatibility.json'
   workflow_dispatch:
 
@@ -31,6 +35,30 @@ jobs:
           python-version: '3.12'
       - name: Both pins must be the published Nightlies
         run: python3 tools/compatibility.py --strict-sunrise
+  smod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tool tests
+        run: python3 -m unittest discover -s tools/tests
+      - name: Generate the flat Sunrise project and pack the .smod
+        run: python3 tools/package_flat.py sunrise
+      - name: Validate the .smod offline against the pinned SDK (SHA256SUMS verified)
+        run: python3 tools/sunrise.py smod-check --fetch 2>&1 | tee sunrise-smod-check.log
+      - name: Preserve diagnostic outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunrise-smod-check
+          path: |
+            compatibility.json
+            sunrise-smod-check.log
+            target/draimhorizons-*.smod
+            target/draimhorizons-*.smod.sha256
   stage:
     runs-on: ubuntu-latest
     timeout-minutes: 90

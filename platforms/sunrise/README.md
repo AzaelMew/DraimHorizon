@@ -1,4 +1,4 @@
-# Sunrise platform (experimental)
+# Sunrise platform
 
 DraimHorizon is written once against Horizon's source (`mixins/draimhorizon`). Sunrise is a fork with
 renamed crates, a different module layout and its own native hook model, so the Sunrise variant is
@@ -8,36 +8,47 @@ derived by `tools/sunrise.py` from the shared sources plus the files here:
   engine API differences found by compiling against the pinned Sunrise Nightly.
 - `overlay/` - Sunrise-specific source: hook helpers whose arguments differ, and `sunrise_platform.rs`,
   a shim giving `Game` the `native_*` helpers the shared sources call (`on`, `setting`, `mod_screen`, ...).
-- `smp-compat/` - the separate Horizon SMP brand adapter prototype (see its README).
+- `platform.d/` - further rows for `platform.toml`, one file per feature (tables merge, arrays append).
+- `overlay/crate/` - code that lives in the `.smod`'s own crate: the Options → Mods entry, key mappings and
+  client commands (`mod_entry.rs`), and state that helpers below the game crate need.
+- `smod/` - the mod crate entry (`lib.rs`) and the `Cargo.lock` its registry dependencies are pinned with.
+- `targets.toml` - frozen hook targets, so a package can be generated without a Sunrise checkout.
 
 ## Commands
 
 ```sh
 python tools/compatibility.py                      # Horizon and Sunrise pins
-python tools/sunrise.py resolve --sunrise PATH     # where each Horizon hook target lives in Sunrise
-python tools/sunrise.py stage --sunrise PATH --check
+python tools/package_flat.py sunrise               # target/sunrise/smod/draimhorizon and target/draimhorizons-<v>.smod
+python tools/sunrise.py smod-check --fetch         # validate the .smod against the pinned SDK (downloads it)
+python tools/sunrise.py freeze --sunrise TREE      # refresh targets.toml after a pin bump
+python tools/sunrise.py stage --sunrise PATH --check   # source-level: apply the bundle and compile sunrise-client
 ```
 
-`stage` exports the pinned commit, pastes the include files the mixin tool cannot read, applies the
-bundle with horizon-mixins `e59da90` plus Sunrise's patch, and compiles `sunrise-client --lib`.
-It needs Rust 1.99.1 and the Linux headers listed in `.github/workflows/sunrise-compatibility.yml`.
+`package_flat.py sunrise` runs `tools/sunrise.py smod`: it generates the Sunrise bundle from the shared sources and
+turns it into the flat native project the Sunrise launcher builds (`sunrise-mod.toml` with `[[native.mixin]]` and
+`[[native.module]]` rows, `Cargo.toml`, `src/`). Sunrise compiles native mods against a prebuilt game, so the
+generator also:
 
-## Packages
+- inlines the relay client as one game-side module (the launcher refuses `ring`, `rustls` and `ureq` as registry
+  dependencies of a mod crate, while game-side code can use the game's own copies); the TLS roots come from the
+  mod crate's `webpki-roots` dependency;
+- turns every `impl Game` block of a module into an extension trait and imports it where needed (modules are
+  compiled outside the game crate, where inherent impls are refused);
+- registers no-op listeners for the hooks whose callers Sunrise only runs while some mod listens
+  (`screen_render_post`, `screen_char_typed_pre`, `render_hand`, `humanoid_setup_anim`).
 
-`python tools/package_flat.py sunrise` writes the flat project the Sunrise launcher installs
-(`sunrise-mod.toml`, `Cargo.toml`, `src/`) and packs `draimhorizons-<version>.smod`. Targets come from
-`targets.toml` (`python tools/sunrise.py freeze --sunrise <staged tree>` refreshes it), so no Sunrise checkout is
-needed. The launcher's own package reader accepts it (`tools/package_check`); its native build is not verified.
+To test a build locally: `sunrise-launcher native-build target/sunrise/smod/draimhorizon --instance <test instance>
+--trust-native-code`.
 
 ## Status
 
-Compiles: 75 of 79 hooks and every module apply to Sunrise Nightly `234db8d` and the modified
-`sunrise-client` builds. **Not verified:** a Sunrise launcher/SDK build (native mods there replace
-functions in a prebuilt game, which this repository cannot produce), a running client, or a server.
-Do not describe the mod as supported on Sunrise until that is done.
+The `.smod` builds in Sunrise Launcher 1.0.1 against Nightly `2d81263` and runs: HUD, minimap, J menu, the world
+and seed map images (also after a resource reload), waypoints, chat badges and translation, ores, inventory tools,
+schematics, Baritone commands, the Options → Mods entry with key bindings and command completion were checked in
+game. Differences from Horizon:
 
-Dropped hooks: `commands` (command-name completion), `list` (Options -> Mods entry) and
-`menu-options` / `menu-options-click` (its settings buttons). Sunrise registers these through its
-`Hooks` trait and `sunrise-mod.toml`, which the shared sources do not yet provide. Behaviour
-differences: `native_on` follows Sunrise's mod toggle, `native_mod_key` ignores modifier keys, and
-the Baritone port treats modded fluids as none.
+- the mod keeps its own data folder under the Sunrise game folder, so settings, waypoints and the explored map
+  start empty;
+- key labels, the Options → Mods description and its settings switch are English;
+- the settings entry is a switch that opens the menu and turns itself off again;
+- `native_mod_key` ignores modifier keys, and the Baritone port treats modded fluids as none.

@@ -6,23 +6,6 @@
 "crates/horizon-client/src/game/scoreboard.rs" = "crates/sunrise-client/src/game/interface/scoreboard/mod.rs"
 "crates/horizon-client/src/game/remote.rs" = "crates/sunrise-client/src/game/network/remote/mod.rs"
 "crates/horizon-client/src/game/agent.rs" = "crates/sunrise-client/src/game/runtime/agent/mod.rs"
-"crates/horizon-client-render/src/gfx/native_render.rs" = "crates/sunrise-client-render/src/render_slots.rs"
-
-[injection.commands]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.list]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.menu-options]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
-
-[injection.menu-options-click]
-drop = true
-reason = "no Sunrise equivalent mapped yet"
 
 # Horizon's Native* records are Sunrise's mod_api records with the same fields (aliased in the shim).
 [[rewrite]]
@@ -30,16 +13,14 @@ pattern = 'native_hooks::(Native(?:Zoom|Minimap|ScreenView|Mod))\b'
 replace = 'claim_borders_platform::\1'
 
 [injection.navigation-input]
+# Not a MovementInput listener: that would set `sprint_suppressed` for everybody. Run at the head
+# of the function (before its "no listener" return) with the same logic as Horizon's remote.rs.
 target = "sunrise_client::game::native_hooks::movement_input::Game<'_>::mod_movement_keys"
-kind = "WRAP_OPERATION"
-selector = "self.native_movement_input"
-require = 1
-ordinal = 0
-helper = "sunrise/navigation_input_hook.rs"
+kind = "HEAD"
+helper = "sunrise/navigation_keys_hook.rs"
 bindings = [
-  { name = "game", ty = "&Game<'_>", value = "$receiver" },
-  { name = "call", ty = "mod_api::__private::MovementInputCall<'_>", value = "$arg0" },
-  { name = "operation", ty = "impl FnOnce(&Game<'_>, mod_api::__private::MovementInputCall<'_>) -> ()", value = "$operation" },
+  { name = "game", ty = "&Game<'_>", value = "&*self" },
+  { name = "keys", ty = "&mut sunrise_client::sprint::Keys", value = "&mut keys" },
 ]
 
 [injection.menu-render]
@@ -50,33 +31,134 @@ params = { batch = "draw" }
 target = "sunrise_client::game::native_hooks::base::Game<'_>::native_tooltip_component_draw"
 params = { batch = "draw" }
 
-# Sunrise moved the render hook points into render_slots (WorldDrawn, RenderNeeds).
+# Modules whose Horizon file lives in a lower Sunrise crate must sit in the game crate
+# (E_MIXIN_MODULE_DESTINATION). Per-module overrides: `drop` removes the row (its code moved to
+# the mod crate: overlay/crate/*.rs), `file` relocates it into game.rs.
+[module_override.visibility-model]
+file = "crates/sunrise-client/src/game.rs"
+[module_override.ghost-render]
+file = "crates/sunrise-client/src/game.rs"
+[module_override.terrain-bridge]
+file = "crates/sunrise-client/src/game.rs"
+[module_override.bar-mod_unload_stash]
+file = "crates/sunrise-client/src/game.rs"
+[module_override.pat-pose]
+drop = true
+reason = "state and arm selection live in the mod crate (pat.rs); the pose maths is inlined in the pat-arm helper"
+[module_override.pat-arms]
+drop = true
+reason = "moved to the mod crate (pat.rs)"
+[module_override.bar-mod_lines_store]
+drop = true
+reason = "line store moved to the mod crate (lines.rs); the helper runs in sunrise_client_lib"
+[module_override.bar-mod_suggest_bridge]
+drop = true
+reason = "completion provider moved to the mod crate (suggest.rs); the helper runs in sunrise_client_render"
+[module_override.chat-nickname-list]
+drop = true
+reason = "needs ChatScreen's private fields: the request goes through the mod crate (suggest.rs) and the bar-suggest helper applies it"
+
+# Callers of the relocated modules.
 [[rewrite]]
-pattern = 'crate::mesher::Vertex'
-replace = 'crate::render_geometry::Vertex'
+pattern = 'sunrise_client::mobs::render::claim_borders_visibility_model::'
+replace = 'crate::game::claim_borders_visibility_model::'
+[[rewrite]]
+pattern = 'sunrise_client::mobs::anim::claim_borders_pat_pose as pose'
+replace = 'mod_draimhorizon::pat as pose'
+[[rewrite]]
+pattern = 'sunrise_client::streaming::baritone_unload::'
+replace = 'crate::game::baritone_unload::'
+[[rewrite]]
+pattern = 'sunrise_client::gizmos::baritone_lines::set\(Vec::new\(\), Vec::new\(\)\)'
+replace = 'mod_draimhorizon::lines::set(Vec::new(), Vec::new())'
+[[rewrite]]
+pattern = 'sunrise_client::gizmos::baritone_lines::set\(out\.depth, out\.top\)'
+replace = 'mod_draimhorizon::lines::set(\n        out.depth.iter().map(|l| mod_draimhorizon::lines::Line { start: l.start, end: l.end, color: l.color, width: l.width }).collect(),\n        out.top.iter().map(|l| mod_draimhorizon::lines::Line { start: l.start, end: l.end, color: l.color, width: l.width }).collect(),\n    )'
+[[rewrite]]
+pattern = 'sunrise_client::chat::baritone_suggest::set'
+replace = 'mod_draimhorizon::suggest::set'
+[[rewrite]]
+pattern = 'screen\.draimhorizons_nickname_list\(&Measure\(&game\.gui\.atlas\.font\), start, names, force\);'
+replace = 'mod_draimhorizon::suggest::request_nicknames(start, names, force);'
+files = ["chat_view.rs"]
+[[rewrite]]
+pattern = 'slice\.scanner\.claim_borders_tiles\(before\)'
+replace = 'crate::game::claim_borders_terrain_bridge::tiles(&slice.scanner, before)'
+[[rewrite]]
+pattern = 'game\s*\.extras\s*\.minimap\s*\.claim_borders_tiles\(cache\.captured_at\)'
+replace = 'crate::game::claim_borders_terrain_bridge::tiles(&game.extras.minimap, cache.captured_at)'
+
+# Ghost renderer: the module sits in game.rs; the mod crate (ghosts.rs) forwards the two render
+# functions' hooks to it through registered function pointers (a lower-crate helper cannot call it).
+[[rewrite]]
+pattern = 'sunrise_client_render::gfx::native_render::claim_borders_ghosts'
+replace = 'crate::game::claim_borders_ghosts'
+[[rewrite]]
+pattern = 'use crate::mesher::Vertex;'
+replace = 'use sunrise_client::mesher::Vertex;'
+files = ["ghost_render.rs"]
+[[rewrite]]
+pattern = 'pub fn draw\(world: &mut super::WorldDrawn<[^>]*>\) \{'
+replace = '''pub fn register() {
+    mod_draimhorizon::ghosts::register(draw_erased, wanted);
+}
+
+fn draw_erased(world: *mut ()) {
+    // SAFETY: the pointer is the live `&mut WorldDrawn` the helper in `world_drawn` got.
+    draw(unsafe { &mut *world.cast::<sunrise_client_render::render_slots::WorldDrawn<'_>>() });
+}
+
+pub fn draw(world: &mut sunrise_client_render::render_slots::WorldDrawn<'_>) {'''
+files = ["ghost_render.rs"]
+[[rewrite]]
+pattern = 'pub fn set_anchor\(anchor: \[i32; 3\]\) \{'
+replace = 'pub fn set_anchor(anchor: [i32; 3]) {\n    register();'
+files = ["ghost_render.rs"]
+[[rewrite]]
+pattern = 'pub fn put_section\(key: \[i32; 3\], quads: Vec<Vertex>\) \{'
+replace = 'pub fn put_section(key: [i32; 3], quads: Vec<Vertex>) {\n    register();'
 files = ["ghost_render.rs"]
 
 [injection.ghost-world-drawn]
-target = "sunrise_client_render::render_slots::world_drawn"
+target = "sunrise_mod_render::render::world_drawn"
+kind = "HEAD"
 helper = "sunrise/ghost_drawn_hook.rs"
 bindings = [
-  { name = "world", ty = "&mut crate::render_slots::WorldDrawn<'_>", value = "world" },
+  { name = "world", ty = "&mut crate::render::WorldDrawn<'_>", value = "&mut *world" },
 ]
 
 [injection.ghost-render-needs]
-target = "sunrise_client_render::render_slots::needs"
-kind = "RETURN"
+target = "sunrise_mod_render::render::render_needs"
+kind = "HEAD"
 helper = "sunrise/ghost_needs_hook.rs"
 bindings = [
-  { name = "needs", ty = "RenderNeeds", value = "$value" },
+  { name = "needs", ty = "&mut crate::render::RenderNeeds", value = "&mut *needs" },
 ]
 
+# Not replaceable (private fn in sunrise_client_render, no marker) and no caller in the game crate.
+[injection.world-map-atlas]
+drop = true
+reason = "HudAtlas::slots is private in a lower crate without #[replaceable]; no replaceable caller can add atlas images"
 
-# Sunrise's render_visible takes the body paint, hidden parts and a posed-parts sink instead of a flag.
-[[rewrite]]
-pattern = '&\[\],\s*true,\s*out,\s*None,'
-replace = '&[],\n        Some(super::body_color(mob, alpha)),\n        Default::default(),\n        None,\n        out,\n        None,'
-files = ["visibility_model.rs"]
+# forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
+# chunks out of the world, so the hook goes before that call in the game-crate caller instead.
+[injection.bar-unload]
+target = "sunrise_client::game::remote::Game<'_>::forget_remote_columns"
+kind = "BEFORE_CALL"
+selector = "sunrise_client::streaming::Streaming::take_remote_columns"
+require = 1
+ordinal = 0
+helper = "baritone/hooks/unload.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "gone", ty = "&sunrise_client::fast_hash::FxHashSet<(i32, i32)>", value = "&*gone" },
+]
+
+# Replaceable functions live in sunrise_client_lib (files under crates/sunrise-client/src that are not game/).
+[injection.chat-local]
+target = "sunrise_client::game::native_hooks::Game<'_>::native_chat"
+[injection.bar-lines]
+target = "sunrise_client_lib::gizmos::camera_relative"
 
 # Horizon's Game::native_* host helpers, spelled the Sunrise way.
 [[module]]
@@ -94,6 +176,11 @@ replace = 'sunrise_core::nbt'
 [[rewrite]]
 pattern = '\.native_text_width\('
 replace = '.sunrise_text_width('
+
+# Sunrise's native_text takes ARGB and draws nothing at alpha 0; the shared helper passes RGB.
+[[rewrite]]
+pattern = 'game\.native_text\(batch, value, at, ink\(rgb\), false\)'
+replace = 'game.native_text(batch, value, at, 0xff00_0000 | ink(rgb), false)'
 
 # Names that moved or lost visibility in Sunrise.
 [[rewrite]]
@@ -251,6 +338,24 @@ bindings = [
   { name = "action", ty = "mod_api::KeyAction", value = "action" },
 ]
 
+# Mouse buttons reach the key hooks as key.mouse.* (Horizon's native_key), only while playing.
+[injection.menu-mouse]
+target = "sunrise_client::game::native_hooks::base::Game<'_>::native_mouse_button_post"
+helper = "menu_open_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "&str", value = "if !self.native_playing() { \"key.mouse.none\" } else { match button { 0 => \"key.mouse.left\", 1 => \"key.mouse.right\", 2 => \"key.mouse.middle\", 3 => \"key.mouse.4\", 4 => \"key.mouse.5\", _ => \"key.mouse.none\" } }" },
+  { name = "action", ty = "mod_api::KeyAction", value = "if pressed { mod_api::KeyAction::Press } else { mod_api::KeyAction::Release }" },
+]
+[injection.bar-click-mouse]
+target = "sunrise_client::game::native_hooks::base::Game<'_>::native_mouse_button_post"
+helper = "baritone/hooks/click_key.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "key", ty = "&str", value = "if !self.native_playing() { \"key.mouse.none\" } else { match button { 0 => \"key.mouse.left\", 1 => \"key.mouse.right\", 2 => \"key.mouse.middle\", 3 => \"key.mouse.4\", 4 => \"key.mouse.5\", _ => \"key.mouse.none\" } }" },
+  { name = "action", ty = "mod_api::KeyAction", value = "if pressed { mod_api::KeyAction::Press } else { mod_api::KeyAction::Release }" },
+]
+
 [injection.clickthrough-remote]
 target = "sunrise_client::game::native_hooks::interaction::Game<'_>::native_interaction_key_mapping_triggered"
 bindings = [
@@ -262,7 +367,7 @@ bindings = [
 ]
 
 [injection.shulker-peek-tooltip]
-target = "sunrise_client::game::stations::tooltip::Game<'_>::tooltip_pre"
+target = "sunrise_client::game::stations::tooltip::Game<'_>::tooltip_pre_elements"
 kind = "HEAD"
 cancellable = true
 helper = "sunrise/shulker_peek_tooltip_hook.rs"
@@ -295,7 +400,10 @@ replace = '''fn claim_borders_menu_open(
     if matches!(action, mod_api::KeyAction::Repeat) {
         return;
     }
-    let pressed = !matches!(action, mod_api::KeyAction::Release);'''
+    let pressed = !matches!(action, mod_api::KeyAction::Release);
+    if key == "key.keyboard.unknown" || key == "key.mouse.none" {
+        return;
+    }'''
 files = ["menu_open_hook.rs"]
 
 [[rewrite]]
@@ -308,7 +416,10 @@ replace = '''fn baritone_click_key(
     if matches!(action, mod_api::KeyAction::Repeat) {
         return;
     }
-    let pressed = !matches!(action, mod_api::KeyAction::Release);'''
+    let pressed = !matches!(action, mod_api::KeyAction::Release);
+    if key == "key.keyboard.unknown" || key == "key.mouse.none" {
+        return;
+    }'''
 files = ["baritone/hooks/click_key.rs"]
 
 [[rewrite]]
@@ -351,7 +462,38 @@ pattern = '''None => 0,(\s*\};\s*Material \{ rgb, tint \})'''
 replace = '''_ => 0,\1'''
 files = ["terrain_colors.rs"]
 
+# Sunrise's `canon_stack` encodes against the game's item registry, which the caller passes in.
+[[rewrite]]
+pattern = '''fn remember_stacks\(lots: &\[\(u64, ItemStack\)\]\)'''
+replace = '''fn remember_stacks(lots: &[(u64, ItemStack)], game: &Game<'_>)'''
+files = ["economy_client.rs"]
+[[rewrite]]
+pattern = '''canon_stack\(Some\(stack\)\)'''
+replace = '''canon_stack(Some(stack), game.res.items())'''
+files = ["economy_client.rs"]
+[[rewrite]]
+pattern = '''data::remember_stacks\(&lots\)'''
+replace = '''data::remember_stacks(&lots, game)'''
+files = ["commerce_view.rs"]
+
 # Horizon's `chat_line` is Sunrise's `add_chat_line`: the same body and signature, in the remote module.
 [injection.chat]
 target = "sunrise_client::game::remote::Game<'_>::add_chat_line"
 
+
+# Horizon ran the mod tick only in an unpaused world (Game::tick); Sunrise fires it every tick.
+[[rewrite]]
+pattern = '''fn claim_borders_tick\(game: &mut crate::game::Game<'_>\) \{'''
+replace = '''fn claim_borders_tick(game: &mut crate::game::Game<'_>) {
+    if game.title.is_some() || game.pause {
+        return;
+    }'''
+files = ["tick.rs"]
+
+[[rewrite]]
+pattern = '''fn baritone_tick\(game: &mut crate::game::Game<'_>\) \{'''
+replace = '''fn baritone_tick(game: &mut crate::game::Game<'_>) {
+    if game.title.is_some() || game.pause {
+        return;
+    }'''
+files = ["baritone/hooks/tick.rs"]

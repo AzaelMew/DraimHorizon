@@ -4,7 +4,12 @@
 
 [Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md) · [Navigation](docs/navigation.md) · [Tunnels and bridges](docs/construction.md) · [Farming and schematics](docs/automation.md)
 
-**Install** — Current Horizon and Sunrise launchers only install flat packages: the release's `draimhorizons-<version>.hmod` (Horizon) or `.smod` (Sunrise). In the launcher choose **Install from GitHub** and paste the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.1`, then rebuild native mods. Do not paste the bare repository link: it falls back to the source tree, which still has the old layout, and the launcher refuses it ("unsupported package path horizon-mixin.toml"). Releases up to 0.40.9 only have the old `.hnmod` ("Old format (.hnmod): ask its author to republish it as .hmod"). Target client is the official Horizon Nightly `9f42064` for Java 26.3. Press **J** in game for the mod menu.
+**Install** — Take the files from a release, not from the repository source tree.
+
+- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.1` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
+- **Horizon**: install the release's `draimhorizons-<version>.hnmod` with a launcher that still builds `.hnmod` mods (0.2.69 or older), then rebuild native mods. Horizon Launcher 0.2.70 and newer refuse `.hnmod` and build the new `.hmod` packages only from a published Horizon mod SDK; the official Nightly `9f42064` has none yet, so no native mod can be built there until Horizon publishes one.
+
+Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -12,13 +17,14 @@
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported. Install the release's `.hmod`. The native build of the new package is not verified yet. | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
-| Sunrise | Experimental, not installable yet. | `234db8d` (`sunrise.revision`) | `python tools/sunrise.py stage --check` applies the generated bundle to that source and compiles `sunrise-client` (75 of 79 hooks, every module). It has not run in the Sunrise launcher or on a server. |
+| Horizon | Supported through the `.hnmod` (launcher 0.2.69 or older). | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
+| Sunrise | Supported (new). Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`); before release it is built by the Sunrise launcher and checked in game. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
 (`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
-and the client is compiled again. Known Sunrise gaps: command-name completion, the entry in Options → Mods, and
-`.smod` packaging. See [platforms/sunrise](platforms/sunrise/README.md).
+and the client is compiled again. On Sunrise the mod keeps its own data folder (settings, waypoints and explored
+map start empty), its key labels and Options text are English, and the settings entry in Options → Mods is a
+switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
 
 ## World
 

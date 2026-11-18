@@ -72,18 +72,18 @@ jobs:
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
-      - name: Package the flat native packages (.hmod for Horizon, .smod for Sunrise)
+      - name: Package and validate the Sunrise package (.smod)
+        # The Horizon .hmod is not attached: Horizon has published no mod SDK for its Nightly yet,
+        # so no launcher can build it (tools/package_flat.py horizon still writes it locally).
         run: |
-          python3 tools/package_flat.py horizon
           python3 tools/package_flat.py sunrise
+          python3 tools/sunrise.py smod-check --fetch
       - uses: actions/upload-artifact@v4
         with:
           name: claim-borders-native
           path: |
             target/draimhorizons-*.hnmod
             target/draimhorizons-*.hnmod.sha256
-            target/draimhorizons-*.hmod
-            target/draimhorizons-*.hmod.sha256
             target/draimhorizons-*.smod
             target/draimhorizons-*.smod.sha256
             target/draimhorizons-relay-*.tar.gz

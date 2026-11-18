@@ -19,7 +19,7 @@
   "horizon_channel": "nightly",
   "sunrise": {
     "repository": "https://github.com/sunrise-org/sunrise",
-    "revision": "234db8df6210165318b2b604dea50275357bfaeb",
+    "revision": "2d8126336e579777eabf9b2fd8b3d476236a04f2",
     "channel": "nightly",
     "mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
     "mixins_revision": "e59da9094f0c2fdda6c627fe9eff22dec6a906f0",
