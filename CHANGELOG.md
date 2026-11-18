@@ -1,5 +1,11 @@
 # История версий
 
+## 0.41.2
+
+- **The published release now carries the build that was tested.** The `v0.41.1` pre-release was published at 22:13Z from an earlier commit (`325334c`), before the Sunrise `.smod` work landed; re-running the release workflow on `57e25c4` found the tag already present and only refreshed its title and notes, so `draimhorizons-0.41.1.smod` on that release is the previous flat bundle, not the one `tools/sunrise.py smod` produces from this tree. 0.41.2 re-packs the same sources under a new tag: `draimhorizons-0.41.2.smod`, `draimhorizons-0.41.2.hnmod` and `draimhorizons-relay-0.41.2.tar.gz`, each with a `.sha256` beside it, rebuilt by the release workflow from this commit. `v0.41.1` is left in place and is superseded.
+- No runtime behavior changed relative to 0.41.1's sources. The `.hmod` is still not attached: Horizon Launcher 0.2.70+ needs a published Horizon mod SDK, which Nightly `9f42064` does not have yet (`tools/package_flat.py horizon` still writes it locally). Note that `v0.41.1` does carry a `.hmod`, because its assets predate that change.
+- Verification for this release: the Horizon client check against Nightly `9f42064`, `python tools/sunrise.py smod-check --fetch` against Sunrise Nightly `2d81263`, and the release workflow's format, lint, test and relay jobs, all on the published commit. The attached checksums were re-downloaded and verified after publication.
+
 ## 0.41.1
 
 - **Sunrise: installable and working.** The release now carries `draimhorizons-0.41.1.smod`, built from the shared sources by `tools/sunrise.py smod` and packed by `tools/package_flat.py sunrise`. It was built by Sunrise Launcher 1.0.1 against Sunrise Nightly `2d81263` and checked in game: HUD and minimap, J menu, world and seed map images (also after a resource reload), waypoints, chat badges and translation, ores, inventory tools, schematics, Baritone commands, the Options → Mods entry with key bindings, and command completion. Install it with **Mods → Add from GitHub** and the release link.
