@@ -472,7 +472,39 @@ def smod_counts(modules, sources):
     )
 
 
-def smod_manifest(bundle, compat, injections, modules):
+SMP_BRAND = PLATFORM / "smp-compat"
+SMP_BRAND_CRATE = "mod_draimhorizon_smp_compat"
+SMP_BRAND_MODULE = "smp_brand"
+SMP_BRAND_ROOT = f"""// Horizon SMP login brand for Sunrise, folded into this mod from platforms/sunrise/smp-compat.
+// Its two mixins (src/mixins/smp/) call it from the network and game threads.
+mod handshake;
+mod policy;
+pub use handshake::{{Outcome, Rendezvous, SendBrand, rendezvous}};
+pub use policy::{{brand_for_address, is_horizon_smp}};
+"""
+
+
+def smp_brand_parts():
+    """The brand adapter's mixins (helpers under src/mixins/smp/, calling this crate) and the SDK
+    internals they read, from the adapter's declaration in platforms/sunrise/smp-compat."""
+    declared = tomllib.loads((SMP_BRAND / "sunrise-mod.toml").read_text(encoding="utf-8"))
+    pinned = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]["revision"]
+    if declared["native"]["sunrise"] != pinned:
+        # Its internals fingerprints were checked against one build: recheck them before moving the pin.
+        raise SystemExit(f"{SMP_BRAND / 'sunrise-mod.toml'} pins Sunrise {declared['native']['sunrise']}, "
+                         f"compatibility.json {pinned}: rerun smp-compat/verify_sdk.py and move the pin")
+    mixins, helpers = [], {}
+    for row in declared["native"]["mixin"]:
+        row = dict(row)
+        name = f"src/mixins/smp/{Path(row['helper']).name}"
+        text = (SMP_BRAND / row["helper"]).read_text(encoding="utf-8")
+        helpers[name] = text.replace(f"{SMP_BRAND_CRATE}::", f"{SMOD_CRATE.replace('-', '_')}::{SMP_BRAND_MODULE}::")
+        row["helper"] = name
+        mixins.append(row)
+    return mixins, helpers, declared.get("internals", [])
+
+
+def smod_manifest(bundle, compat, injections, modules, internals=()):
     mod = bundle["mod"]
     lines = [
         f"id = {toml_value(mod['id'])}",
@@ -485,6 +517,10 @@ def smod_manifest(bundle, compat, injections, modules):
         'side = "client"',
         'capabilities = ["registries"]',
         "",
+    ]
+    if internals:
+        lines += ["internals = [", *(f"  {toml_value(row)}," for row in internals), "]", ""]
+    lines += [
         "[native]",
         f"game = {toml_value(compat.get('game', SMOD_GAME))}",
         f"sunrise = {toml_value(compat['revision'])}",
@@ -550,7 +586,19 @@ def command_smod(args):
         id=RELAY, file="crates/sunrise-client/src/game.rs", name=RELAY,
         source=f"src/modules/{RELAY}.rs", visibility="pub(crate)",
     ))
-    (out / "sunrise-mod.toml").write_text(smod_manifest(bundle, compat, injections, modules), encoding="utf-8")
+    # The Horizon SMP login brand: two more mixins on the Sunrise network code, and their shared state
+    # as a module of this crate, so no companion mod is needed.
+    brand_mixins, brand_helpers, internals = smp_brand_parts()
+    for name, text in brand_helpers.items():
+        (out / name).parent.mkdir(parents=True, exist_ok=True)
+        (out / name).write_text(text, encoding="utf-8")
+        sources[name] = text
+    injections += brand_mixins
+    (out / "src" / SMP_BRAND_MODULE).mkdir()
+    (out / "src" / f"{SMP_BRAND_MODULE}.rs").write_text(SMP_BRAND_ROOT, encoding="utf-8")
+    for part in ("handshake.rs", "policy.rs"):
+        shutil.copyfile(SMP_BRAND / "src" / part, out / "src" / SMP_BRAND_MODULE / part)
+    (out / "sunrise-mod.toml").write_text(smod_manifest(bundle, compat, injections, modules, internals), encoding="utf-8")
     (out / "Cargo.toml").write_text(SMOD_CARGO.replace("{version}", bundle["mod"]["version"]), encoding="utf-8")
     lock = (PLATFORM / "smod" / "Cargo.lock").read_text(encoding="utf-8")
     lock = re.sub(r'name = "mod-draim-probe"\nversion = "[^"]*"', f'name = "{SMOD_CRATE}"\nversion = "{bundle["mod"]["version"]}"', lock)
@@ -558,6 +606,7 @@ def command_smod(args):
     crate_files = sorted((generated / "crate").glob("*.rs"))
     lib = (PLATFORM / "smod" / "lib.rs").read_text(encoding="utf-8")
     lib += "".join(f"pub mod {path.stem};\n" for path in crate_files)
+    lib += f"pub mod {SMP_BRAND_MODULE};\n"
     (out / "src" / "lib.rs").write_text(lib, encoding="utf-8")
     # State and hooks that only need public items (and that lower-crate helpers call) live in the mod crate.
     for path in crate_files:

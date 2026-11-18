@@ -145,15 +145,15 @@ reason = "HudAtlas::slots is private in a lower crate without #[replaceable]; no
 
 # The Horizon login brand is a free function of the network thread in the reusable client library,
 # and `brand()` has no host context. Sunrise's engine owns that exchange from a lower crate, so
-# neither hook ports; the brand coordination for Sunrise lives in the separate smp-compat mod
-# (platforms/sunrise/smp-compat/src/policy.rs).
+# neither hook ports; the Sunrise brand coordination is the smp-compat adapter, which `smod` folds into
+# this package (platforms/sunrise/smp-compat, mixins under src/mixins/smp/).
 [injection.brand-gate]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; platforms/sunrise/smp-compat coordinates it instead"
+reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
 
 [injection.brand-announce]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; platforms/sunrise/smp-compat coordinates it instead"
+reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
 # chunks out of the world, so the hook goes before that call in the game-crate caller instead.

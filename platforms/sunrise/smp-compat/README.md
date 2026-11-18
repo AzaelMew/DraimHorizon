@@ -1,6 +1,12 @@
 # Horizon SMP brand adapter for Sunrise — experimental
 
-This separate native mod uses **two replacement points already published in the official Sunrise
+This adapter is **part of the main DraimHorizon `.smod`**: `tools/sunrise.py smod` copies its two mixins
+(`register-smp-session`, `announce-horizon-brand`) into the package under `src/mixins/smp/`, its shared state
+into the mod crate as `mod_draimhorizon::smp_brand`, and the `internals` fingerprints into `sunrise-mod.toml`.
+Players install nothing extra. This directory is the adapter's source, its declaration (`sunrise-mod.toml`,
+read by the generator and the checkers) and its tests.
+
+It uses **two replacement points already published in the official Sunrise
 SDK**: `sunrise_client_lib::net::Session::poll` and `sunrise_client_lib::net::receive_brand`.
 It requires no client source changes, new SDK hook, executable patch or replacement of authentication.
 It has not yet been verified in a running client or against the live SMP.
@@ -23,26 +29,25 @@ The existing writer performs framing, compression and encryption as usual.
 
 The SDK exposes the native layouts used by these helpers; their fingerprints are declared in the manifest.
 This is Sunrise's documented trusted **native route**, not the public trait-only payload API. Both the
-build pin and internal fingerprints must match. See [native replacement mechanics](https://github.com/sunrise-org/sunrise/blob/234db8df6210165318b2b604dea50275357bfaeb/docs/modding/src/concepts/native-route/7-how-it-works.md).
+build pin and internal fingerprints must match. See [native replacement mechanics](https://github.com/sunrise-org/sunrise/blob/2d8126336e579777eabf9b2fd8b3d476236a04f2/docs/modding/src/concepts/native-route/7-how-it-works.md).
 
 The earlier direct replacement of `net::brand` was unavailable. Its upstream hook proposal has been removed:
 this implementation uses the existing SDK instead.
 
 ## Build
 
-The development directory also contains research tools and tests, which Sunrise's package fence does not
-accept as package assets. Stage a fresh, clean package first, then use a prepared instance of the pinned
-Nightly with its normal launcher:
+There is no separate package any more. Build the main one, which carries the adapter:
 
 ```sh
-python platforms/sunrise/smp-compat/stage_project.py target/sunrise-smp-compat
-sunrise-launcher native-build target/sunrise-smp-compat --instance "My Instance" --trust-native-code
+python tools/package_flat.py sunrise          # target/draimhorizons-<version>.smod
+python tools/sunrise.py smod-check --fetch    # the SDK's own package check
 ```
 
-Run from the repository root. Choose a new output directory for subsequent stages; the stager deliberately
-refuses to overwrite an existing directory. It copies only Cargo.toml, sunrise-mod.toml and src/. The native
-project uses the launcher's SDK/Rust, not a rebuilt game. Its required manifest capability is `registries`,
-as in Sunrise's native template; this adapter declares no content registries.
+Keep the `[native] sunrise` pin of this directory's `sunrise-mod.toml` equal to `compatibility.json`, so the
+checkers below look at the same build as the package.
+
+`Cargo.toml` and `src/lib.rs` here only give `check_helpers.py` a crate to type-check the helpers against;
+they are not shipped.
 
 ## Verify
 

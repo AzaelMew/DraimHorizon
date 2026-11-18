@@ -113,6 +113,31 @@ class SmodTests(unittest.TestCase):
         self.assertEqual(data["native"]["mixin"], [mixin])
         self.assertEqual(data["native"]["module"], [module])
 
+    def test_manifest_declares_internals_before_the_native_table(self):
+        bundle = {"mod": {"id": "draimhorizon", "version": "1.2.3"}}
+        compat = {"revision": "a" * 40, "mixins_revision": "b" * 40}
+        internals = [{"path": "sunrise_client_lib::net::Session", "kind": "struct", "hash": "0123"}]
+        data = tomllib.loads(sunrise.smod_manifest(bundle, compat, [], [], internals))
+        self.assertEqual(data["internals"], internals)
+        self.assertNotIn("internals", tomllib.loads(sunrise.smod_manifest(bundle, compat, [], []))["native"])
+
+    def test_the_smp_brand_adapter_is_folded_into_the_main_package(self):
+        mixins, helpers, internals = sunrise.smp_brand_parts()
+        self.assertEqual({m["target"] for m in mixins},
+                         {"sunrise_client_lib::net::Session::poll", "sunrise_client_lib::net::receive_brand"})
+        self.assertEqual(set(helpers), {m["helper"] for m in mixins})
+        self.assertTrue(all(name.startswith("src/mixins/smp/") for name in helpers))
+        text = "\n".join(helpers.values())
+        self.assertNotIn(sunrise.SMP_BRAND_CRATE, text)
+        self.assertIn("mod_draimhorizon::smp_brand::rendezvous()", text)
+        self.assertIn(("sunrise_client_lib::net::Session", "struct"), {(i["path"], i["kind"]) for i in internals})
+
+    def test_the_smp_brand_pin_follows_compatibility_json(self):
+        compat = json.loads((sunrise.ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+        declared = tomllib.loads((sunrise.SMP_BRAND / "sunrise-mod.toml").read_text(encoding="utf-8"))
+        self.assertEqual(declared["native"]["sunrise"], compat["revision"])
+        self.assertEqual(declared["native"]["mixins"], compat["mixins_revision"])
+
     def test_relay_files_become_nested_modules_with_rewritten_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp)
@@ -328,6 +353,14 @@ class SmodCheckTests(unittest.TestCase):
             manifest = tomllib.loads((project / "sunrise-mod.toml").read_text(encoding="utf-8"))
             names = {p.relative_to(project).as_posix() for p in project.rglob("*") if p.is_file()}
         self.assertEqual(sunrise.check_smod_manifest(manifest, build["functions"], build["refused"], names), [])
+        ids = {m["id"] for m in manifest["native"]["mixin"]}
+        self.assertLessEqual({"register-smp-session", "announce-horizon-brand"}, ids)
+        self.assertIn("src/smp_brand/handshake.rs", names)
+        catalog = data.parent / "internals.json"
+        if catalog.is_file():
+            known = {(i["path"], i["kind"]): i["hash"] for i in json.loads(catalog.read_text(encoding="utf-8"))["internals"]}
+            for row in manifest["internals"]:
+                self.assertEqual(known.get((row["path"], row["kind"])), row["hash"], row["path"])
 
 
 class StageAdaptationTests(unittest.TestCase):

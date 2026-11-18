@@ -1,6 +1,6 @@
 id = "draimhorizon_smp_compat"
 name = "DraimHorizon SMP compatibility"
-version = "0.41.3"
+version = "0.41.4"
 description = "Experimental Horizon SMP client brand compatibility for Sunrise"
 authors = ["DraimCiDo"]
 api = "0.2"
@@ -18,7 +18,7 @@ internals = [
 
 [native]
 game = "26.3"
-sunrise = "234db8df6210165318b2b604dea50275357bfaeb"
+sunrise = "2d8126336e579777eabf9b2fd8b3d476236a04f2"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
 
 [[native.mixin]]

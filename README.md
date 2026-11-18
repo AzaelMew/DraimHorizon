@@ -6,7 +6,7 @@
 
 **Install** — Take the files from a release, not from the repository source tree.
 
-- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.2` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
+- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.4` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
 - **Horizon**: install the release's `draimhorizons-<version>.hnmod` with a launcher that still builds `.hnmod` mods (0.2.69 or older), then rebuild native mods. Horizon Launcher 0.2.70 and newer refuse `.hnmod` and build the new `.hmod` packages only from a published Horizon mod SDK; the official Nightly `9f42064` has none yet, so no native mod can be built there until Horizon publishes one.
 
 Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
@@ -25,6 +25,13 @@ Both pins live in `compatibility.json`. CI compares them every day with the Nigh
 and the client is compiled again. On Sunrise the mod keeps its own data folder (settings, waypoints and explored
 map start empty), its key labels and Options text are English, and the settings entry in Options → Mods is a
 switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
+
+On Sunrise the `.smod` also lets the client through playhorizon.dev's client check, which currently admits only
+Horizon (the server reads the `minecraft:brand` sent during login). When the server announces itself as Horizon,
+the mod sends a second brand, `horizon`, before the login continues; every other server sees Sunrise unchanged.
+This is experimental: it compiles against the Sunrise SDK but has not yet been confirmed on the live server, and
+Horizon-specific server channels (block registry check, mod list) may still differ. See
+[platforms/sunrise/smp-compat](platforms/sunrise/smp-compat/README.md).
 
 ## World
 
