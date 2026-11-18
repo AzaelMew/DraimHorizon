@@ -1,5 +1,11 @@
 # История версий
 
+## 0.41.5
+
+- **Sunrise: a test login on playhorizon.dev now explains itself.** Each official-SMP join writes `DraimHorizon: Horizon SMP brand <outcome>` to `latest.log` (`Queued`, `TimedOut`, `Unavailable` or `AlreadyAttempted`; other servers write nothing). The line goes through the game's own `log`, as the already replaced `connect_server_with_options` does; `smp-compat/check_helpers.py` now type-checks the helpers with that crate and passes on the SDK of Sunrise Nightly `2d81263`.
+- `platforms/sunrise/smp-compat/README.md` documents what Horizon's server checks after the brand, from its public code at Nightly `9f42064`: the brand gate (handled), a shared mod list and a content registry hash (both only on servers that run such mods, and never faked), and the `horizon:*` announcements Sunrise ignores safely. A table maps each log outcome and server message to its cause and next step.
+- Version follows the 0.41 line of this pull request.
+
 ## 0.41.4
 
 - **Sunrise: the Horizon SMP brand adapter is now part of the main `.smod`.** No companion mod is needed. `tools/sunrise.py smod` copies the two mixins of `platforms/sunrise/smp-compat` (`register-smp-session` on `sunrise_client_lib::net::Session::poll`, `announce-horizon-brand` on `sunrise_client_lib::net::receive_brand`) into the package under `src/mixins/smp/`, their shared rendezvous and address policy into the mod crate as `mod_draimhorizon::smp_brand`, and the six `internals` fingerprints they read into `sunrise-mod.toml`. When playhorizon.dev announces `horizon`, the client queues a second `minecraft:brand = horizon` before the known-pack reply; every other server keeps Sunrise's own brand.

@@ -58,7 +58,7 @@ def main():
             wrapper = out / "helpers.rs"
             wrapper.write_text(
                 "#![allow(dead_code)]\n"
-                "extern crate sunrise_client_lib;\nextern crate sunrise_protocol;\n"
+                "extern crate sunrise_client_lib;\nextern crate sunrise_protocol;\nextern crate log;\n"
                 "extern crate mod_draimhorizon_smp_compat;\n"
                 "use sunrise_client_lib::net::{Session, Event, ingress, queued_writer};\n"
                 "use sunrise_protocol::packets::configuration as cfg;\n"
@@ -70,6 +70,8 @@ def main():
                 "-Dwarnings", "--extern", f"mod_draimhorizon_smp_compat={own}",
                 "--extern", f"sunrise_client_lib={one(args.engine / 'deps', 'libsunrise_client_lib-*.rmeta').resolve()}",
                 "--extern", f"sunrise_protocol={one(args.engine / 'deps', 'libsunrise_protocol-*.rmeta').resolve()}",
+                # The copies compile with the game crate's dependencies; the helpers log through its `log`.
+                "--extern", f"log={one(args.api / 'deps', 'liblog-*.rmeta').resolve()}",
                 str(wrapper), "-o", str(out / "libhelpers.rmeta"),
             ], check=True)
             report.update(ok=True, helpers_typechecked=True)

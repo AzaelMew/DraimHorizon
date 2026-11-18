@@ -6,7 +6,7 @@
 
 **Install** — Take the files from a release, not from the repository source tree.
 
-- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.4` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
+- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.5` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
 - **Horizon**: install the release's `draimhorizons-<version>.hnmod` with a launcher that still builds `.hnmod` mods (0.2.69 or older), then rebuild native mods. Horizon Launcher 0.2.70 and newer refuse `.hnmod` and build the new `.hmod` packages only from a published Horizon mod SDK; the official Nightly `9f42064` has none yet, so no native mod can be built there until Horizon publishes one.
 
 Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.

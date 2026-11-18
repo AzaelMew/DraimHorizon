@@ -76,6 +76,40 @@ Runtime replacement, live SMP entry, in-connection reconfiguration and extension
 interoperability remain unverified. The two-second rendezvous also requires the connection to be polled during
 configuration; confirm that with the running client.
 
+## What the server checks after the brand
+
+From Horizon's own server code at the pinned Nightly `9f42064` (`crates/horizon-client/src/lan/conn.rs`, the
+configuration phase). The live SMP runs its own server build, so treat this as the public reference, not a
+guarantee:
+
+1. **Brand.** The server keeps the last `minecraft:brand` received before the client's known-pack reply. Not
+   `horizon` while `horizon-clients-only` is on: disconnect. This adapter covers that step.
+2. **Mod list**, only when the server runs native mods with `side = "both"`: it sends `horizon:mod_list` and a ping,
+   and disconnects unless the client's list matches. Sunrise does not answer that channel, so such a server would
+   name the missing mods. That cannot be passed honestly: the client would need the same mods.
+3. **Content registry**, only when the server runs content mods: it sends `horizon:block_registry` and a ping, and
+   disconnects unless the client returns the same hash. Echoing the server's hash would only move the failure
+   into the game (unknown blocks and items), so the adapter never does it.
+4. Announcements Sunrise ignores safely: `horizon:quiet_commands`, `horizon:mod_net`, the far-terrain offer, and in
+   play `horizon:recipe_content`, `horizon:recipe_transfer`, attachment sync. Unknown channels from a server that
+   did not negotiate Sunrise payloads are passed by, not refused; quiet mod commands fall back to normal commands.
+
+Protocol versions and the core known pack (`minecraft:core`, 26.3) are the same on both clients.
+
+## Reading a test login
+
+Each official-SMP join writes one line to `latest.log`: `DraimHorizon: Horizon SMP brand <outcome>`.
+
+| Outcome or server message | Meaning | Next step |
+| --- | --- | --- |
+| `Queued`, then you are in | The brand passed and the server needs nothing else | Done |
+| `Queued`, then a list of mods (`Missing: …`) | The server requires shared native mods (step 2) | Only the server can relax this |
+| `Queued`, then `Content registry mismatch: …` | The server runs content mods (step 3) | Only the server can relax this |
+| `Queued`, then `This server is for the Horizon client` or the Sunrise message | The server identifies clients by more than the brand | Send the log; the live server differs from the public code |
+| `TimedOut` | `Session::poll` did not run during configuration within 2 s | Send the log; the rendezvous needs another trigger |
+| `Unavailable` | The connection had already left configuration or closed | Send the log |
+| No line at all | The server did not announce `horizon`, or the address is not under `playhorizon.dev` | Check the address you typed |
+
 ## Remaining protocol work
 
 This addresses the initial `horizon-clients-only` brand gate, not the full DraimHorizon port. The nonempty
