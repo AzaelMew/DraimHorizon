@@ -14,6 +14,7 @@ bundle instead of keeping a second copy of the 88k lines:
 Source of truth for differences: platforms/sunrise/platform.toml and platforms/sunrise/overlay/.
 """
 import argparse
+import importlib.util
 import hashlib
 import json
 import os
@@ -664,9 +665,18 @@ def function_key(target):
     return re.sub(r"<'[^>]*>", "", target)
 
 
-def check_smod_manifest(manifest, functions, refused, names):
+def check_smod_manifest(manifest, functions, refused, names, internal_catalog=None):
     """Problems of one sunrise-mod.toml against the SDK's function index and the package's files."""
     problems = []
+    if manifest.get("internals"):
+        if internal_catalog is None:
+            problems.append("internals declarations require the SDK internals.json catalog")
+        else:
+            # Share the adapter preflight's resolver semantics; raw catalog presence is not access.
+            spec = importlib.util.spec_from_file_location("smp_sdk_contract", SMP_BRAND / "verify_sdk.py")
+            checker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(checker)
+            problems.extend(row["message"] for row in checker.check_declared_internals(manifest, internal_catalog))
     native = manifest.get("native", {})
     for row in native.get("mixin", []):
         key = function_key(row["target"])
@@ -707,7 +717,11 @@ def command_smod_check(args):
     with zipfile.ZipFile(smod) as archive:
         manifest = tomllib.loads(archive.read("sunrise-mod.toml").decode("utf-8"))
         names = set(archive.namelist())
-    problems = check_smod_manifest(manifest, build["functions"], build["refused"], names)
+    internal_path = data.parent / "internals.json"
+    internal_catalog = json.loads(internal_path.read_text(encoding="utf-8")) if internal_path.is_file() else None
+    problems = check_smod_manifest(manifest, build["functions"], build["refused"], names, internal_catalog)
+    if internal_catalog is not None and internal_catalog.get("build", {}).get("commit") != compat["revision"]:
+        problems.append("the internals catalog belongs to another SDK build")
     if manifest["native"]["sunrise"] != compat["revision"] or manifest["native"]["mixins"] != compat["mixins_revision"]:
         problems.append("the package pins differ from compatibility.json")
     if problems:

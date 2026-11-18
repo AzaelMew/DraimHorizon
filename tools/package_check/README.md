@@ -21,3 +21,11 @@ cargo run -p pkgcheck -- /path/to/DraimHorizon/target/draimhorizons-<version>.hm
 Checked on Horizon main `c70c5b96` and Sunrise Nightly `234db8d`: the old `mixins/draimhorizon` folder is refused with
 "unsupported package path horizon-mixin.toml" (the error players saw), and the flat packages are read, selected and packed.
 This checks the package format only. It does not run the launcher's native build.
+
+
+`internals.rs` is a second, Sunrise-specific probe. Compile it as the `main.rs` of an isolated Cargo
+project with `sunrise-mod-package = { path = "/path/to/pinned/sunrise/crates/sunrise-mod-package", default-features = false }`.
+Run its binary with the generated native project folder and SDK `internals.json` as two arguments.
+It calls the same public `internals::read` / `internals::check` implementation the launcher uses.
+This catches `shape_only` declarations that a package-format check or a Rust metadata type-check alone
+cannot catch. It does not build the native replacement library or connect to a server.

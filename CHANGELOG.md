@@ -1,5 +1,10 @@
 # История версий
 
+## 0.41.6
+
+- Fixed Sunrise Launcher `E_INTERNAL_MISSING` for `sunrise_client_lib::net::ingress::Producer`. Removed five `shape_only` layout records from the SMP adapter's declared-internals table; only the exposed `Session` declaration is emitted into the main `.smod`. The native helpers and brand policy are unchanged.
+- SDK preflight and packaged `smod-check` now reject shape-only, cfg-gated, ambiguous and changed declarations using the launcher's resolution rules, rather than accepting a matching catalog hash alone. Added regression coverage and an optional checker using the actual Sunrise resolver. No client, SDK or player-cache edits are required.
+
 ## 0.41.5
 
 - **Sunrise: a test login on playhorizon.dev now explains itself.** Each official-SMP join writes `DraimHorizon: Horizon SMP brand <outcome>` to `latest.log` (`Queued`, `TimedOut`, `Unavailable` or `AlreadyAttempted`; other servers write nothing). The line goes through the game's own `log`, as the already replaced `connect_server_with_options` does; `smp-compat/check_helpers.py` now type-checks the helpers with that crate and passes on the SDK of Sunrise Nightly `2d81263`.

@@ -1,19 +1,12 @@
-**DraimHorizon 0.41.5 — Horizon & Sunrise (pre-release)**
+**DraimHorizon 0.41.6 — Fix Sunrise declared-internals validation**
 
-- **Sunrise: joining playhorizon.dev without a second mod.** The official SMP currently admits only Horizon clients:
-  it checks the `minecraft:brand` sent during login. The `.smod` now carries the brand adapter that was a separate
-  mod: when the server announces itself as Horizon, the client sends `horizon` before the login continues. Every
-  other server still sees Sunrise unchanged. **Experimental:** it compiles against the Sunrise SDK of Nightly
-  `2d81263`, but it has not yet been confirmed on the live server, and Horizon-specific server channels (block
-  registry check, mod list) are not bridged yet.
-- **New in 0.41.5: the log tells what happened.** Each join to playhorizon.dev writes
-  `DraimHorizon: Horizon SMP brand <outcome>` to `logs/latest.log`. If the server turns you away, send that line
-  and the server's message; [platforms/sunrise/smp-compat](https://github.com/DraimCiDo/DraimHorizon/tree/v0.41.5/platforms/sunrise/smp-compat#reading-a-test-login)
-  explains each case.
-- **Sunrise:** `draimhorizons-0.41.5.smod`. In Sunrise Launcher 1.0.1 or newer choose **Mods → Add from GitHub**
-  and paste `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.5`, then rebuild native mods. If you
-  installed the separate SMP compatibility mod, remove it.
-- **Horizon:** `draimhorizons-0.41.5.hnmod` for Horizon Nightly `9f42064`, with a launcher that still builds `.hnmod`
-  mods (0.2.69 or older). Horizon Launcher 0.2.70+ needs a published Horizon mod SDK, which the current Nightly
-  does not have yet, so no `.hmod` is attached. Horizon behavior is unchanged from 0.41.3.
-- Every asset has a `.sha256` next to it. The relay archive `draimhorizons-relay-0.41.5.tar.gz` carries no secrets.
+Fixes the Sunrise Launcher failure `E_INTERNAL_MISSING` naming
+`sunrise_client_lib::net::ingress::Producer` in 0.41.4/0.41.5.
+
+The SMP adapter incorrectly declared five SDK `shape_only` layout entries as accessible internals.
+The package now declares only the exposed `Session` type. The native helpers and brand behavior are
+unchanged; SDK and package preflight now enforce the launcher's declaration eligibility rules.
+
+No game-client, SDK or player-cache changes are needed. The separate cache-cleanup warning in the
+reported log is not the declared-internal failure. Validation of this fix is separate from a complete
+launcher build and live SMP login; neither is claimed by the package checks alone.

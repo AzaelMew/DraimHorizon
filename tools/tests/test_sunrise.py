@@ -316,6 +316,19 @@ class SmodCheckTests(unittest.TestCase):
     def problems(self, targets, files=(GAME,), names=("src/mixins/h.rs", "src/modules/x.rs")):
         return sunrise.check_smod_manifest(self.manifest(targets, files), self.FUNCTIONS, self.REFUSED, set(names))
 
+    def test_declared_internals_use_access_rules_not_just_catalog_presence(self):
+        manifest = self.manifest([])
+        declaration = {"path": "sunrise_client_lib::net::ingress::Producer",
+                       "kind": "struct", "hash": "same"}
+        manifest["internals"] = [declaration]
+        names = {"src/modules/x.rs"}
+        catalog = {"internals": [dict(declaration, shape_only=True)]}
+        problems = sunrise.check_smod_manifest(manifest, {}, {}, names, catalog)
+        self.assertTrue(any("E_INTERNAL_MISSING" in problem for problem in problems))
+        self.assertTrue(sunrise.check_smod_manifest(manifest, {}, {}, names))
+        catalog["internals"][0]["shape_only"] = False
+        self.assertEqual(sunrise.check_smod_manifest(manifest, {}, {}, names, catalog), [])
+
     def test_lifetimes_are_dropped_to_match_the_function_index(self):
         self.assertEqual(sunrise.function_key("sunrise_client::game::Game<'_>::tick"), "sunrise_client::game::Game::tick")
         self.assertEqual(sunrise.function_key("a::<Game<'_> as T>::f"), "a::<Game as T>::f")
@@ -352,13 +365,16 @@ class SmodCheckTests(unittest.TestCase):
             project = Path(tmp) / "smod" / "draimhorizon"
             manifest = tomllib.loads((project / "sunrise-mod.toml").read_text(encoding="utf-8"))
             names = {p.relative_to(project).as_posix() for p in project.rglob("*") if p.is_file()}
-        self.assertEqual(sunrise.check_smod_manifest(manifest, build["functions"], build["refused"], names), [])
+        catalog = data.parent / "internals.json"
+        catalog_data = json.loads(catalog.read_text(encoding="utf-8")) if catalog.is_file() else None
+        self.assertEqual(sunrise.check_smod_manifest(manifest, build["functions"], build["refused"], names, catalog_data), [])
         ids = {m["id"] for m in manifest["native"]["mixin"]}
         self.assertLessEqual({"register-smp-session", "announce-horizon-brand"}, ids)
         self.assertIn("src/smp_brand/handshake.rs", names)
         catalog = data.parent / "internals.json"
         if catalog.is_file():
-            known = {(i["path"], i["kind"]): i["hash"] for i in json.loads(catalog.read_text(encoding="utf-8"))["internals"]}
+            known = {(i["path"], i["kind"]): i["hash"] for i in catalog_data["internals"]
+                     if not i.get("shape_only", False) and not i.get("cfg", "")}
             for row in manifest["internals"]:
                 self.assertEqual(known.get((row["path"], row["kind"])), row["hash"], row["path"])
 

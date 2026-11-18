@@ -27,7 +27,10 @@ The existing writer performs framing, compression and encryption as usual.
 - The registry holds at most 64 entries, expires them after 30 seconds and distinguishes session serials.
   No game-thread network wait, disk scan, unsafe memory operation or custom authentication is introduced.
 
-The SDK exposes the native layouts used by these helpers; their fingerprints are declared in the manifest.
+The manifest declares only `Session`, which is an exposed internal. `Producer`, `Sender`, `QueuedWriter`,
+`Inner` and `WriteJob` are `shape_only` SDK layout records: the launcher deliberately rejects them in
+the mod crate's `internals` facade table, even with matching hashes. The native helpers still compile
+in the copied functions' SDK context; those layout records are not facade access declarations.
 This is Sunrise's documented trusted **native route**, not the public trait-only payload API. Both the
 build pin and internal fingerprints must match. See [native replacement mechanics](https://github.com/sunrise-org/sunrise/blob/2d8126336e579777eabf9b2fd8b3d476236a04f2/docs/modding/src/concepts/native-route/7-how-it-works.md).
 
@@ -62,12 +65,17 @@ target/sunrise-brand-gate-tests
 ```
 
 Create target/ first if needed. SDK preflight checks both build IDs, mixin pin, exact replacement signatures,
-internal fingerprints, source file hashes and function byte spans. It **passes on the current official SDK**;
+declarable-internal eligibility (including `shape_only` and cfg exclusions), fingerprints, source file
+hashes and function byte spans. It **passes on the current official SDK**;
 `runtime_verified` deliberately remains false.
 
 Verification completed here: SDK preflight, the native entry point and both helpers type-checked against the
-published engine/API metadata with Rust 1.99.1; nine Python tests, six handshake synchronization tests and
+published engine/API metadata with Rust 1.99.1; twelve Python tests, six handshake synchronization tests and
 four brand-policy/loopback tests. The loopback test supplies its own framing and does not run either client.
+
+For 0.41.6, the pinned launcher's actual `sunrise-mod-package::internals::check` also rejects the
+published 0.41.5 manifest with the reported `Producer` error and accepts the corrected manifest.
+This checks declaration resolution, not native helper linking or runtime execution.
 
 Full launcher build needs a prepared Minecraft 26.3 installation; the isolated cloud install has none and
 stopped at that prerequisite. Source discovery (`--sync-internals`) additionally hit an existing
@@ -101,6 +109,7 @@ Protocol versions and the core known pack (`minecraft:core`, 26.3) are the same 
 Each official-SMP join writes one line to `latest.log`: `DraimHorizon: Horizon SMP brand <outcome>`.
 
 | Outcome or server message | Meaning | Next step |
+| `E_INTERNAL_MISSING` naming `ingress::Producer` in 0.41.4/0.41.5 | The package incorrectly declares a shape-only layout as an accessible internal | Use 0.41.6 or newer; this failure does not require clearing the game cache or rebuilding the SDK |
 | --- | --- | --- |
 | `Queued`, then you are in | The brand passed and the server needs nothing else | Done |
 | `Queued`, then a list of mods (`Missing: …`) | The server requires shared native mods (step 2) | Only the server can relax this |

@@ -1,6 +1,6 @@
 id = "draimhorizon_smp_compat"
 name = "DraimHorizon SMP compatibility"
-version = "0.41.5"
+version = "0.41.6"
 description = "Experimental Horizon SMP client brand compatibility for Sunrise"
 authors = ["DraimCiDo"]
 api = "0.2"
@@ -9,11 +9,6 @@ capabilities = ["registries"]
 
 internals = [
   { path = "sunrise_client_lib::net::Session", kind = "struct", hash = "25ded87d96243406" },
-  { path = "sunrise_client_lib::net::ingress::Producer", kind = "struct", hash = "2534c6dbec91d88e" },
-  { path = "sunrise_mod_runtime::byte_channel::Sender", kind = "struct", hash = "839653ad58df8853" },
-  { path = "sunrise_client_lib::net::queued_writer::QueuedWriter", kind = "struct", hash = "451c9a4757521538" },
-  { path = "sunrise_client_lib::net::queued_writer::Inner", kind = "struct", hash = "f81f03c663425482" },
-  { path = "sunrise_client_lib::net::queued_writer::WriteJob", kind = "enum", hash = "1d6cee17d444f63b" },
 ]
 
 [native]

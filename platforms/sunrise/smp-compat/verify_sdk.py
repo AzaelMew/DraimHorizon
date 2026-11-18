@@ -12,12 +12,34 @@ RECEIVE = "sunrise_client_lib::net::receive_brand"
 CONTRACTS = {POLL: "c8e6d608e3f14914", RECEIVE: "828097a95b45da8f"}
 REQUIRED_INTERNALS = {
     ("sunrise_client_lib::net::Session", "struct"),
-    ("sunrise_client_lib::net::ingress::Producer", "struct"),
-    ("sunrise_mod_runtime::byte_channel::Sender", "struct"),
-    ("sunrise_client_lib::net::queued_writer::QueuedWriter", "struct"),
-    ("sunrise_client_lib::net::queued_writer::Inner", "struct"),
-    ("sunrise_client_lib::net::queued_writer::WriteJob", "enum"),
 }
+
+
+def check_declared_internals(manifest, internals):
+    """Mirror sunrise-mod-package::internals::resolve/check, including shape-only exclusion.
+
+    The declaration table is for the mod crate's facade. A source/metadata layout used inside
+    a replacement function is not necessarily an internal that may be declared there.
+    """
+    errors = []
+    for declaration in manifest.get("internals", []):
+        path, kind = declaration["path"], declaration.get("kind")
+        candidates = [row for row in internals.get("internals", [])
+                      if row["path"] == path and not row.get("shape_only", False)]
+        if kind is None and len({row["kind"] for row in candidates}) > 1:
+            code = "E_INTERNAL_AMBIGUOUS"
+        else:
+            candidates = [row for row in candidates if kind is None or row["kind"] == kind]
+            eligible = [row for row in candidates if not row.get("cfg", "")]
+            if not eligible:
+                code = "E_INTERNAL_GATED" if candidates else "E_INTERNAL_MISSING"
+            elif declaration.get("hash") is not None and declaration["hash"] != eligible[0]["hash"]:
+                code = "E_INTERNAL_CHANGED"
+            else:
+                continue
+        errors.append({"code": code, "target": path,
+                       "message": f"{code}: {path} is not an eligible declared internal for this SDK"})
+    return errors
 
 
 def verify(manifest, sdk, functions, source, internals):
@@ -43,13 +65,12 @@ def verify(manifest, sdk, functions, source, internals):
     if errors:
         return result(errors, expected)
 
+    errors.extend(check_declared_internals(manifest, internals))
     declared = {(row["path"], row.get("kind")): row for row in manifest.get("internals", [])}
-    catalog = {(row["path"], row["kind"]): row for row in internals.get("internals", [])}
     for key in REQUIRED_INTERNALS:
         declaration = declared.get(key)
-        actual = catalog.get(key)
-        if declaration is None or actual is None or declaration.get("hash") != actual.get("hash"):
-            reject("SDK_INTERNAL", "Required native internal is missing or has changed", key[0])
+        if declaration is None:
+            reject("SDK_INTERNAL", "Required native internal declaration is missing", key[0])
     if {mixin["target"] for mixin in native.get("mixin", [])} != set(CONTRACTS):
         reject("SDK_CONTRACT", "Both the session poll and server brand replacements are required")
 

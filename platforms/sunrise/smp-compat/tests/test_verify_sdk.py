@@ -109,7 +109,28 @@ class SdkContractTests(unittest.TestCase):
 
     def test_native_internal_fingerprints_are_required(self):
         self.manifest["internals"][0]["hash"] = "changed"
-        self.assertIn("SDK_INTERNAL", self.codes())
+        self.assertIn("E_INTERNAL_CHANGED", self.codes())
+
+    def test_shape_only_is_rejected_even_when_the_path_kind_and_hash_match(self):
+        entry = {"path": "sunrise_client_lib::net::ingress::Producer",
+                 "kind": "struct", "hash": "2534c6dbec91d88e", "shape_only": True}
+        self.internals["internals"].append(entry)
+        self.manifest["internals"].append({k: entry[k] for k in ("path", "kind", "hash")})
+        self.assertIn("E_INTERNAL_MISSING", self.codes())
+
+    def test_cfg_gated_and_ambiguous_declarations_follow_launcher_resolution(self):
+        entry = self.internals["internals"][0]
+        entry["cfg"] = "target_os = windows"
+        self.assertIn("E_INTERNAL_GATED", self.codes())
+        entry["cfg"] = ""
+        self.internals["internals"].append(dict(entry, kind="method"))
+        del self.manifest["internals"][0]["kind"]
+        self.assertIn("E_INTERNAL_AMBIGUOUS", self.codes())
+
+    def test_an_exposed_entry_resolves_even_if_a_shape_only_alternative_comes_later(self):
+        self.internals["internals"].append(dict(self.internals["internals"][0],
+                                               shape_only=True, hash="shape"))
+        self.assertTrue(self.report()["ok"])
 
 
 if __name__ == "__main__":
