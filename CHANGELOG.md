@@ -1,5 +1,15 @@
 # История версий
 
+## 0.41.7
+
+- **Sunrise: key bindings set to a mouse button now work.** Horizon's `native_key` receives mouse buttons as `key.mouse.*`; Sunrise's `native_input_key` is keyboard-only. `platforms/sunrise/platform.toml` already declared the two mouse hooks `menu-mouse` and `bar-click-mouse` on `native_mouse_button_post`, but `tools/sunrise.py generate` only emitted rows present in the shared manifest and silently ignored them, so no released `.smod` carried them (a binding like `key.draimhorizon.pat:key.mouse.4` did nothing). Platform-only injection rules are now emitted as complete rows (`kind` defaults to `HEAD`); one that is not `drop` and lacks `target` or `helper` stops the build.
+- Mouse buttons are only forwarded while playing, so a menu or screen click never fires a mod key. The GLFW index to name map now also covers buttons 6-8 (`key.mouse.6`-`key.mouse.8`), matching Sunrise's `keybinds::mouse_name`.
+- Tests: `PlatformOnlyInjectionTests` covers the emitted rows, the loud failure and the generated project's `menu-mouse`/`bar-click-mouse` rows.
+- **Sunrise: nickname completion no longer fails on every second letter.** `/tpa m` listed names, `/tpa ma` nothing, `/tpa mar` names again. The list was queued by the game for the text of one keystroke and taken by the chat screen's `update_command_info` hook on the next edit, where the stale queue made the hook skip the vanilla update without applying anything. The game now only publishes the online names and its filter (`suggest::publish_nicknames`), and the hook builds the list from the text the screen holds at that moment (`suggest::nicknames`). Input that lists no names, or has no match, takes the vanilla update and the server's suggestions; Tab uses the native pending list immediately. Horizon's shared behaviour is unchanged.
+- **Sunrise: `/r hello` is no longer red.** Client commands were registered as bare literals, so the chat tree rejected every argument (`Incorrect argument for command at position 2`). Each command now has a usage (`r [message:text]`, `reply [message:text]`, `party|friend|wp|waypoint|dfarm [args:text]`, `claimborders [action:word]`, bare `horizonmenu`) matching what its handler accepts; the line still reaches the mod's command hook as typed and never goes to the server.
+- Tests: `ClientCommandUsageTests`, `SunriseSuggestTests` and the mod crate's `suggest` unit tests (run through `rustc --test`).
+- Not verified in game: pressing a mouse-bound key, typing `/tpa m`, `ma`, `mar` and Tab, and `/r hello` in a running Sunrise client.
+
 ## 0.41.6
 
 - Fixed Sunrise Launcher `E_INTERNAL_MISSING` for `sunrise_client_lib::net::ingress::Producer`. Removed five `shape_only` layout records from the SMP adapter's declared-internals table; only the exposed `Session` declaration is emitted into the main `.smod`. The native helpers and brand policy are unchanged.
