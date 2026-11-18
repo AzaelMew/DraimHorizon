@@ -1,0 +1,36 @@
+name: Check official Nightly pins
+# Horizon and Sunrise both publish a Nightly. This fails when either pin in compatibility.json no longer
+# points at the published Nightly tag, so a refresh and a native re-validation are not forgotten.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compare both pins with the published Nightlies
+        run: |
+          set -o pipefail
+          python3 tools/compatibility.py --strict-sunrise 2>&1 | tee pins.log
+      - name: Explain a stale pin
+        if: failure()
+        run: |
+          {
+            echo "### A Nightly pin is stale"
+            echo
+            echo '```'
+            cat pins.log
+            echo '```'
+            echo "Refresh with \`python tools/compatibility.py --update --horizon PATH\` (Horizon) or"
+            echo "\`python tools/compatibility.py --update-sunrise --sunrise PATH\` (Sunrise), then adapt the hooks and"
+            echo "compile the real client (\`tools/stage.py\`, \`tools/sunrise.py stage --check\`)."
+          } >> "$GITHUB_STEP_SUMMARY"

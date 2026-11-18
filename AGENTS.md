@@ -8,7 +8,7 @@ Use skills and subagents only when explicitly requested by the user.
 
 - Check Git status, DraimHorizon remote main and release tags. Preserve local changes before updating.
 - Read relevant symbols and bounded ranges with rg. Source and compatibility.json take precedence over old prose.
-- This is a native Rust mod for Horizon. Bundle ID is draimhorizon. Distribution name is DraimHorizon. Settings/data namespace remains claim_borders through runtime::SETTINGS_ID; do not change it when changing the launcher identity. Artifacts use .hnmod.
+- This is a native Rust mod for Horizon. Bundle ID is draimhorizon. Distribution name is DraimHorizon. Settings/data namespace remains claim_borders through runtime::SETTINGS_ID; do not change it when changing the launcher identity. Release artifacts: `.hnmod` (Horizon, launchers up to 0.2.69) and the flat `.smod` (Sunrise) from `tools/package_flat.py sunrise`, which is `tools/sunrise.py smod`'s project. `tools/package_flat.py horizon` writes a flat `.hmod`, but it is not released until Horizon publishes a mod SDK for its Nightly.
 - Always use the latest **official Horizon Nightly release**: https://github.com/horizon-rust/horizon/releases/tag/nightly. Never select Horizon main, a nightly/build branch or the stable releases/latest endpoint as the target. A Nightly can include selected PRs, so its source may differ from main.
 - Resolve the official nightly tag to its full source commit SHA (peel annotated tags); keep that exact tested SHA and source hashes in compatibility.json with horizon_channel = nightly. Do not put a mutable tag or branch in horizon_revision.
 - Before every task and release run python tools/compatibility.py. If the published Nightly differs, run python tools/compatibility.py --update --horizon PATH, adapt the hooks and compile the real client. Never publish with a stale Nightly pin or silently fall back to main. Keep the independent horizon-mixins pin verified too.
@@ -90,7 +90,7 @@ The format is major.minor.patch.
 
 - Rust changes require python tools/version.py check, cargo fmt --all --check, rustfmt --edition 2024 --check mixins/draimhorizon/*.rs, cargo clippy --workspace --all-targets --locked -- -D warnings and cargo test --workspace --locked.
 - Add regression tests for meaningful behavior, not implementation duplication.
-- Native adapters require applying official pinned mixins and checking the real Horizon client. Validate the final bundle with cargo horizon-mod check <artifact> --json.
+- Native adapters require applying official pinned mixins and checking the real Horizon client. Validate the legacy bundle with cargo horizon-mod check <artifact> --json, and the flat packages with the launchers' own package reader (tools/package_check).
 - Relay changes require its Python tests and relevant integration checks. Exclude real .env files from deployment archives and use portable archive paths.
 - README describes implemented behavior. Inspect rendered artwork for readable text and clipping. Identify diagrams and screenshots accurately.
 - Check original command exit codes. Fix failures before publication. Repeat a passed check only after new changes or unresolved evidence.

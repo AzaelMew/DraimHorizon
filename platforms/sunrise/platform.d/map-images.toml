@@ -1,0 +1,33 @@
+# DRAFT replacement for platforms/sunrise/platform.d/map-images.toml.
+# World map / Seed Map images: GUI-atlas dynamic textures (overlay/map_images/images.rs).
+# Rule order matters: the block rewrite must run before the literal-name rewrites.
+
+[[module]]
+id = "map-images"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_map_images"
+source = "map_images/images.rs"
+
+# World map: deliver the worker image with update() instead of a map_patches Patch at the atlas rect.
+[[rewrite]]
+pattern = '''if let Some\(rect\) = game\s*\.gui\s*\.atlas\s*\.sprites\s*\.get\("claim_borders/world_map"\)\s*\.copied\(\)\s*\{\s*let \(w, h\) = [^;]*;\s*game\.map_patches\.push\(sunrise_client::font::Patch \{[^}]*rgba: pixels,\s*\}\);'''
+replace = '''if crate::game::claim_borders_map_images::upload(game, crate::game::claim_borders_map_images::WORLD_MAP, &pixels) {'''
+files = ["map_backend.rs"]
+
+# Seed Map: the queued Patch is only a carrier for the pixels.
+[[rewrite]]
+pattern = '''pub\(in crate::game\) fn update\(game: &mut Game<'_>\) -> bool \{\s*if let Some\(patch\) = view::take_seed_patch\(\) \{\s*game\.map_patches\.push\(patch\);\s*\}'''
+replace = '''pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
+    crate::game::claim_borders_map_images::ensure(game);
+    if let Some(patch) = view::take_seed_patch() {
+        crate::game::claim_borders_map_images::upload(game, crate::game::claim_borders_map_images::SEED_MAP, &patch.rgba);
+    }'''
+files = ["map_backend.rs"]
+
+# Sprite names looked up by map_backend.rs / map_view.rs / seed_view.rs.
+[[rewrite]]
+pattern = '"claim_borders/world_map"'
+replace = '"draimhorizon:dynamic/world_map"'
+[[rewrite]]
+pattern = '"claim_borders/seed_map"'
+replace = '"draimhorizon:dynamic/seed_map"'

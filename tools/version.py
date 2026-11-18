@@ -7,6 +7,8 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {
+    "platforms/sunrise/smp-compat/Cargo.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
+    "platforms/sunrise/smp-compat/sunrise-mod.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
     "Cargo.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
     "Cargo.lock": r'(?m)(?<=name = "claim-borders"\n)version = "(\d+\.\d+\.\d+)"$',
     "mixins/draimhorizon/horizon-mixin.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
@@ -20,6 +22,8 @@ def main():
     sub.add_parser("check")
     bump = sub.add_parser("bump")
     bump.add_argument("part", choices=("patch", "minor", "major"))
+    setter = sub.add_parser("set", help="write an exact version, for a version that was never published")
+    setter.add_argument("version")
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     sources = []
@@ -32,6 +36,15 @@ def main():
         sources.append((path, data, matches[0]))
     if args.command == "check":
         print(f"Version {version} is consistent across {len(FILES)} files.")
+        return
+    if args.command == "set":
+        if re.fullmatch(r"\d+\.\d+\.\d+", args.version) is None:
+            parser.error("version must be major.minor.patch")
+        updated = args.version
+        for path, data, match in sources:
+            start, end = match.span(1)
+            path.write_text(data[:start] + updated + data[end:], encoding="utf-8")
+        print(f"{version} -> {updated}. Update CHANGELOG.md and docs/release-notes.md for this task.")
         return
     major, minor, patch = map(int, version.split("."))
     if args.part == "major":

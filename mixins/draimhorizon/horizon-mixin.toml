@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.40.9"
+version = "0.41.6"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -364,6 +364,33 @@ id = "connect"
 kind = "HEAD"
 target = "horizon_client::game::remote::Game<'_>::connect_server_with_options"
 helper = "reset.rs"
+
+# The official SMP judges the client brand sent in the configuration phase, before it answers, so
+# the very first `minecraft:brand` must already say `horizon` there. The network thread decides it
+# from the address the player typed; every other server keeps the client's own `vanilla` bytes.
+[[module]]
+id = "brand-policy"
+file = "crates/horizon-client/src/net.rs"
+name = "claim_borders_brand"
+source = "brand_policy.rs"
+
+[[injection]]
+id = "brand-gate"
+kind = "HEAD"
+target = "horizon_client_lib::net::run"
+helper = "brand_gate.rs"
+bindings = [
+  { name = "address", ty = "&str", value = "address" },
+]
+
+[[injection]]
+id = "brand-announce"
+kind = "RETURN"
+target = "horizon_client_lib::net::brand"
+helper = "brand_announce.rs"
+bindings = [
+  { name = "value", ty = "Vec<u8>", value = "$value" },
+]
 
 [[module]]
 id = "waypoints"

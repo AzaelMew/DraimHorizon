@@ -16,5 +16,16 @@
     "crates/horizon-client/src/game/scoreboard.rs": "d11ea9e11285a07290cc18a3e6fdfe288bb3c1fe005ec8b2d96e182e974e4cb5",
     "crates/horizon-client-render/src/chat.rs": "e0d854b7fcf786a313b0c19f9458d1e12a5513dc989e7989a639ca8a98d9034f"
   },
-  "horizon_channel": "nightly"
+  "horizon_channel": "nightly",
+  "sunrise": {
+    "repository": "https://github.com/sunrise-org/sunrise",
+    "revision": "2d8126336e579777eabf9b2fd8b3d476236a04f2",
+    "channel": "nightly",
+    "mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
+    "mixins_revision": "e59da9094f0c2fdda6c627fe9eff22dec6a906f0",
+    "mixins_patch": "tools/mixins/narrow-reference-rule.patch",
+    "source_sha256": {
+      "crates/sunrise-client/src/net.rs": "5819bab70454cfe4aa9b486845abb38acafb3d3a54f9a165f3f8bb98cb34741a"
+    }
+  }
 }

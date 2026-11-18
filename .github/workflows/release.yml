@@ -16,6 +16,11 @@ on:
       - '.github/workflows/horizon-compatibility.yml'
   pull_request:
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Publish this branch's version as a GitHub pre-release (main publishes a normal release)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -67,17 +72,25 @@ jobs:
           python3 tools/package.py
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
+      - name: Package and validate the Sunrise package (.smod)
+        # The Horizon .hmod is not attached: Horizon has published no mod SDK for its Nightly yet,
+        # so no launcher can build it (tools/package_flat.py horizon still writes it locally).
+        run: |
+          python3 tools/package_flat.py sunrise
+          python3 tools/sunrise.py smod-check --fetch
       - uses: actions/upload-artifact@v4
         with:
           name: claim-borders-native
           path: |
             target/draimhorizons-*.hnmod
             target/draimhorizons-*.hnmod.sha256
+            target/draimhorizons-*.smod
+            target/draimhorizons-*.smod.sha256
             target/draimhorizons-relay-*.tar.gz
             target/draimhorizons-relay-*.tar.gz.sha256
           if-no-files-found: error
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.prerelease))
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -93,11 +106,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ github.ref != 'refs/heads/main' }}
         run: |
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           tag="v${version}"
+          title="DraimHorizon ${version} - Horizon & Sunrise"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; keeping published artifacts unchanged."
+            if [ "$PRERELEASE" = "true" ]; then
+              echo "Pre-release $tag already exists; refreshing its title and notes, keeping its artifacts."
+              gh release edit "$tag" --title "$title" --notes-file docs/release-notes.md
+            else
+              echo "Release $tag already exists; keeping published artifacts unchanged."
+            fi
             exit 0
           fi
           # Publish only the exact source that passed native client compilation.
@@ -116,4 +136,8 @@ jobs:
             fi
             sleep 20
           done
-          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "DraimHorizon ${version} - Horizon Java 26.3" --notes-file docs/release-notes.md
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "$title" --notes-file docs/release-notes.md "${flags[@]}"
