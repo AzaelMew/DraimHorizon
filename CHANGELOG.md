@@ -1,5 +1,9 @@
 # История версий
 
+## 0.42.2
+
+- CI: the Horizon native check restored a build cache made for the previous Nightly pin and failed in `horizon-client-lib`'s build script (`discovering ingredient tests: No such file or directory`), so 0.42.1 was not published. The cache key now carries `hashFiles('compatibility.json')` and no longer falls back to another pin's cache. No mod changes.
+
 ## 0.42.1
 
 - **Horizon: the `.hmod` now builds in Horizon Launcher.** 0.42.0 was published with a `.hmod` that stopped at `E0603` in the launcher's native build: the launcher copies a hooked function with its module's imports into its own crate, and the game's `pub(crate)` re-exports (`TryIntoApi`, `TryIntoEngine`, `CartKind`, `ExecutionRole`, `EntityCullDecision`, `cull_box`) are out of reach there. Four launcher-only shim modules (`platforms/horizon/overlay/shims`) shadow the game's `api_values`, `minecarts`, `execution_role` and `entity_culling` with the same items, the types taken from the crates that define them. They are skipped in the source stage, where the real modules exist.
