@@ -4,12 +4,18 @@
 
 [Download the latest release](https://github.com/DraimCiDo/DraimHorizon/releases/latest) · [Changelog](CHANGELOG.md) · [Relay setup](relay/README.md) · [Navigation](docs/navigation.md) · [Tunnels and bridges](docs/construction.md) · [Farming and schematics](docs/automation.md)
 
-**Install** — Take the files from a release, not from the repository source tree.
+**Install** — Take the files from a release, not from the repository source tree. Each release carries one package per client, built from the same source: `draimhorizons-<version>.hmod` for Horizon and `draimhorizons-<version>.smod` for Sunrise.
 
-- **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.5` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
-- **Horizon** (Horizon Launcher 0.2.70 or newer): install the release's `draimhorizons-<version>.hmod`, then rebuild native mods. The launcher builds it against the Mod SDK that Horizon publishes with each Nightly. The old `.hnmod` is no longer produced: those launchers refuse it.
+| Client | Launcher | Install |
+| --- | --- | --- |
+| **Horizon** | Horizon Launcher 0.2.70 or newer | **Mods → Add from GitHub** with the release link, or `horizon-launcher mods add-github <release link> --trust-native-code`. Then rebuild native mods (`horizon-launcher native-build`): the launcher builds the mod against the Mod SDK that Horizon publishes with each Nightly. |
+| **Sunrise** | Sunrise Launcher 1.0.1 or newer | `sunrise-launcher mods add-github <release link> --trust-native-code`, or **Mods → Add from GitHub** where your launcher has it, or the **Discover** tab if the mod is listed there. Then rebuild native mods. |
 
-Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
+A release link looks like `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.42.2`. The old `.hnmod` is no longer produced: current launchers refuse it.
+
+**Sunrise, a file you copied in by hand.** Put `draimhorizons-<version>.smod` in the game folder's `sunrise-native-mods/` and add the line `mod.draimhorizon:true` to `sunrise-mods.txt`, beside `options.txt`, then restart. Until then the game's Options → Mods says "Not loaded: turn it on in the launcher". The launcher's own toggle stays locked for hand-copied files because it cannot check where they came from; a mod installed with `mods add-github` or from Discover has a working toggle. To turn a hand-copied mod off, remove that line or the file.
+
+Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2d81263`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -17,23 +23,38 @@ Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported. Install the release's `.hmod` (0.42.1 or newer; 0.42.0 does not build). | `dd67b76` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. |
-| Sunrise | Supported (new). Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`); before release it is built by the Sunrise launcher and checked in game. |
+| Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `dd67b76` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. The launcher's own native compile is run by hand (`horizon-launcher native-build --version <Nightly> --server-output <new folder> <project>`); it passed on Nightly `6d765e0`. Not yet confirmed in a game client. |
+| Sunrise | Supported. Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`), the bundle is applied to that source and the client compiles; the package builds and loads in the Sunrise launcher. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
 (`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
-and the client is compiled again. On Sunrise the mod keeps its own data folder (settings, waypoints and explored
-map start empty), its key labels and Options text are English, and the settings entry in Options → Mods is a
-switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
+and the client is compiled again. Nightlies come often, so a release can be one Nightly behind for a short time.
 
-On Sunrise the `.smod` also lets the client through playhorizon.dev's client check, which currently admits only
+**Not available on Horizon yet.**
+- The third-person patting arm (see Patting below): other players do not see your arm move. Your own view and the
+  rest of patting work as described. Horizon's own `BodyPose` hook is the intended route.
+- The World map and Seed Map images are not drawn: the Horizon HUD atlas no longer has a slot for mod images and
+  runtime sprites stop at 256 px. The rest of the map code (explored area, minimap, claims, waypoints) runs.
+
+Both are listed in [platforms/horizon](platforms/horizon/README.md) with the reason and the route to fix them.
+
+**On Sunrise** the mod keeps its own data folder (settings, waypoints and explored map start empty), its key labels and
+Options text are English, and the settings entry in Options → Mods is a switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
+
+The Sunrise `.smod` also lets the client through playhorizon.dev's client check, which currently admits only
 Horizon (the server reads the `minecraft:brand` sent during login). When the server announces itself as Horizon,
 the mod sends a second brand, `horizon`, before the login continues; every other server sees Sunrise unchanged.
 This is experimental: it compiles against the Sunrise SDK but has not yet been confirmed on the live server, and
 Horizon-specific server channels (block registry check, mod list) may still differ. See
 [platforms/sunrise/smp-compat](platforms/sunrise/smp-compat/README.md).
 
+**Building from source.** The mod is written once in `mixins/draimhorizon`; `tools/sunrise.py` derives each client's
+project from it and `platforms/<client>` (`python tools/package_flat.py horizon|sunrise`). See
+[docs/development.md](docs/development.md) for the checks.
+
 ## World
+
+The World map and Seed Map images are not drawn on Horizon yet (see Clients above).
 
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
 ![Seed Map instructions](docs/showcase/seed-map.svg)
@@ -50,7 +71,7 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 ![Translation directions and DeepL setup](docs/showcase/translation.svg)
 ![Friends, Important players and waypoints](docs/showcase/friends.svg)
 
-**Patting** — Aim at a player within 3 blocks and press **K** (rebindable under Options → Mods → Settings) for two gentle pats. Your own arm moves at once. A player running DraimHorizon on the same relay sees your arm move too, plus an optional "*name* patted you" line. **J → Settings → General** sets who may pat you (friends only by default, everyone or nobody) and turns that line on or off. Patting is cosmetic only: it sends no attack, item use or chat. Players without the mod see nothing.
+**Patting** — Aim at a player within 3 blocks and press **K** (rebindable under Options → Mods → Settings) for two gentle pats. Your own arm moves at once. A player running DraimHorizon on the same relay sees your arm move too (Sunrise; not yet on Horizon), plus an optional "*name* patted you" line. **J → Settings → General** sets who may pat you (friends only by default, everyone or nobody) and turns that line on or off. Patting is cosmetic only: it sends no attack, item use or chat. Players without the mod see nothing.
 
 **Friends keep their place** — If a friend's relay key changes (reinstall, new PC, reset data folder) the mod re-pins the new key automatically when the relay shows a single identity for that account, the old key is gone and the same nickname is on the game server's player list. You get a chat notice; remove the friend if it was unexpected. A friend who lost the friendship is invited once and only has to accept. Ambiguous cases are left untouched and shown as "Key changed".
 
