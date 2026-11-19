@@ -574,7 +574,7 @@ def smod_counts(modules, sources):
     )
 
 
-def smod_manifest(bundle, compat, injections, modules, internals=()):
+def smod_manifest(bundle, compat, injections, modules):
     mod = bundle["mod"]
     lines = [
         f"id = {toml_value(mod['id'])}",
@@ -590,8 +590,6 @@ def smod_manifest(bundle, compat, injections, modules, internals=()):
         'capabilities = ["registries"]',
         "",
     ]
-    if internals:
-        lines += ["internals = [", *(f"  {toml_value(row)}," for row in internals), "]", ""]
     lines += [
         "[native]",
         f"game = {toml_value(compat.get('game', SMOD_GAME))}",

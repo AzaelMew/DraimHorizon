@@ -116,13 +116,13 @@ class SmodTests(unittest.TestCase):
         self.assertEqual(data["native"]["mixin"], [mixin])
         self.assertEqual(data["native"]["module"], [module])
 
-    def test_manifest_declares_internals_before_the_native_table(self):
+    def test_manifest_declares_no_internals(self):
+        # The brand adapter was the only writer of `internals`, and `check_smod_manifest` refuses
+        # manifests that declare any: the generator can no longer emit the table at all.
         bundle = {"mod": {"id": "draimhorizon", "version": "1.2.3"}}
         compat = {"revision": "a" * 40, "mixins_revision": "b" * 40}
-        internals = [{"path": "sunrise_client_lib::net::Session", "kind": "struct", "hash": "0123"}]
-        data = tomllib.loads(sunrise.smod_manifest(bundle, compat, [], [], internals))
-        self.assertEqual(data["internals"], internals)
-        self.assertNotIn("internals", tomllib.loads(sunrise.smod_manifest(bundle, compat, [], []))["native"])
+        data = tomllib.loads(sunrise.smod_manifest(bundle, compat, [], []))
+        self.assertNotIn("internals", data)
 
     def test_the_package_carries_no_brand_adapter(self):
         # Since Nightly ed3ac19 sunrise-official announces the Horizon identity itself.

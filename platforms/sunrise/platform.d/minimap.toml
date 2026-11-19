@@ -67,9 +67,12 @@ replace = '''            live_refresh: Instant::now(),
 files = ["map_backend.rs"]
 
 # The live image: no atlas rect to patch any more, so deliver the composed pixels as a texture.
+# The engine's `image.is_empty()` term goes with the image: the first frame composes because
+# `live_displayed` is `None`, and re-composing is on the timer (see below), not on "never uploaded".
 [[rewrite]]
-pattern = '''        \|\| game\.extras\.minimap\.image\.is_empty\(\)'''
-replace = '''        || !crate::game::claim_borders_map_images::has_minimap()'''
+pattern = '''        \|\| scanned != 0
+        \|\| game\.extras\.minimap\.image\.is_empty\(\)'''
+replace = '''        || scanned != 0'''
 files = ["map_backend.rs"]
 
 [[rewrite]]
@@ -97,11 +100,24 @@ pattern = '''        let \(w, h\) = \(game\.gui\.atlas\.width as f32, game\.gui\
         if game\.extras\.minimap\.image\.is_empty\(\) \{
             game\.extras\.minimap\.image = vec!\[0; size \* size \* 4\];
         \}'''
-replace = '''        crate::game::claim_borders_map_images::upload(
+replace = '''        let uploaded = crate::game::claim_borders_map_images::upload(
             game,
             crate::game::claim_borders_map_images::MINIMAP,
             &pixels,
         );'''
+files = ["map_backend.rs"]
+
+# ...and a refused upload (no free 256-class slot) must not turn into a recompose per frame: the
+# frame is throttled like a published one, only the view is not told the image is behind its marks.
+[[rewrite]]
+pattern = '''        cache\.live_displayed = Some\(\(layer, request\.view, p\.shading\)\);
+        cache\.live_refresh = Instant::now\(\);
+        view::mini_published\(request\.dimension\.clone\(\), request\.view\);'''
+replace = '''        cache.live_displayed = Some((layer, request.view, p.shading));
+        cache.live_refresh = Instant::now();
+        if uploaded {
+            view::mini_published(request.dimension.clone(), request.view);
+        }'''
 files = ["map_backend.rs"]
 
 [[rewrite]]

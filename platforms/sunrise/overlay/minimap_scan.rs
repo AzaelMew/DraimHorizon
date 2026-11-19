@@ -50,7 +50,7 @@ impl Palette {
     pub fn new(facts: &BlockFacts) -> Self {
         let mut color = Vec::with_capacity(facts.states.len());
         let mut flags = Vec::with_capacity(facts.states.len());
-        for f in &facts.states {
+        for (i, f) in facts.states.iter().enumerate() {
             color.push(f.map_color);
             let mut b = match f.fluid {
                 // A mod's fluid shows its block's map colour, as any block does.
@@ -58,11 +58,9 @@ impl Palette {
                 Fluid::Water => 1,
                 Fluid::Lava => 2,
             };
-            // `BlockFacts::is_air` by name: the scanner holds no registry id of its own.
-            if matches!(
-                &*f.name,
-                "minecraft:air" | "minecraft:cave_air" | "minecraft:void_air"
-            ) {
+            // A state's id is its index here; `is_air` keeps the engine's own air list, so a new
+            // air name upstream does not leave those columns as unknown terrain.
+            if facts.is_air(sunrise_world::registry::BlockStateId(i as u32)) {
                 b |= AIR;
             }
             // isFaceSturdy(UP, FULL): Direction.UP's ordinal is 1.
@@ -72,6 +70,14 @@ impl Palette {
             flags.push(b);
         }
         Self { color, flags }
+    }
+    /// A palette from (colour, flags) per state id (tests).
+    #[cfg(test)]
+    fn from_parts(parts: &[(u8, u8)]) -> Self {
+        Self {
+            color: parts.iter().map(|p| p.0).collect(),
+            flags: parts.iter().map(|p| p.1).collect(),
+        }
     }
     #[inline]
     fn get(&self, id: u32) -> (u8, u8) {
@@ -251,5 +257,97 @@ impl Scanner {
             .iter()
             .filter(move |(_, tile)| tile.scanned >= since)
             .map(|(key, tile)| (*key, &tile.color, &tile.height, &tile.depth))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // One state per id: air, grass (colour 1), stone (11), water, glass (no colour),
+    // waterlogged slab (not sturdy on top), lava.
+    fn palette() -> Palette {
+        Palette::from_parts(&[
+            (0, AIR),
+            (1, STURDY_TOP),
+            (11, STURDY_TOP),
+            (WATER, 1),
+            (0, 0),
+            (11, 1),
+            (LAVA, 2),
+        ])
+    }
+    fn chunk(columns: &[(i32, i32, &[(i32, u32)])]) -> Chunk {
+        let mut c = Chunk::empty(0, 0);
+        for &(x, z, blocks) in columns {
+            for &(y, id) in blocks {
+                c.set(x, y, z, id);
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn columns_take_the_first_coloured_block_and_fluids_over_it() {
+        let p = palette();
+        let c = chunk(&[
+            (0, 0, &[(60, 2), (61, 1)]),
+            // Glass has no map colour: the grass under it shows.
+            (1, 0, &[(61, 1), (62, 4)]),
+            // Three water over stone.
+            (2, 0, &[(60, 2), (61, 3), (62, 3), (63, 3)]),
+            (3, 0, &[(70, 6)]),
+        ]);
+        let top = top_of(&c, 0, Layer::Surface);
+        assert_eq!(top, 79);
+        assert_eq!(scan_column(&c, &p, 0, 0, top, Layer::Surface), (1, 61, 0));
+        assert_eq!(scan_column(&c, &p, 1, 0, top, Layer::Surface), (1, 61, 0));
+        assert_eq!(
+            scan_column(&c, &p, 2, 0, top, Layer::Surface),
+            (WATER, 63, 3)
+        );
+        assert_eq!(
+            scan_column(&c, &p, 3, 0, top, Layer::Surface),
+            (LAVA, 70, 1)
+        );
+        assert_eq!(scan_column(&c, &p, 4, 0, top, Layer::Surface).0, 0);
+    }
+
+    #[test]
+    fn a_waterlogged_block_not_sturdy_on_top_shows_water() {
+        let p = palette();
+        let c = chunk(&[(0, 0, &[(60, 2), (61, 5)])]);
+        assert_eq!(
+            scan_column(&c, &p, 0, 0, 70, Layer::Surface),
+            (WATER, 61, 1)
+        );
+    }
+
+    #[test]
+    fn below_a_height_shows_the_floor_and_cuts_walls() {
+        let p = palette();
+        // A cave: stone everywhere from 0 to 20, air at 10 and 11 in column 0.
+        let mut blocks: Vec<(i32, u32)> = (0..=20).map(|y| (y, 2)).collect();
+        let solid = blocks.clone();
+        blocks.retain(|&(y, _)| y != 10 && y != 11);
+        let c = chunk(&[(0, 0, &blocks), (1, 0, &solid)]);
+        let layer = Layer::Below(11);
+        let top = top_of(&c, 0, layer);
+        assert_eq!(top, 11);
+        assert_eq!(scan_column(&c, &p, 0, 0, top, layer), (11, 9, 0));
+        assert_eq!(scan_column(&c, &p, 1, 0, top, layer), (11 | WALL, 11, 0));
+        // The surface view sees the roof.
+        assert_eq!(scan_column(&c, &p, 0, 0, 31, Layer::Surface), (11, 20, 0));
+    }
+
+    #[test]
+    fn rings_cover_each_offset_once() {
+        let mut seen = std::collections::HashSet::new();
+        for r in 0..=3 {
+            for o in ring_offsets(r) {
+                assert!(seen.insert(o));
+            }
+        }
+        assert_eq!(seen.len(), 49);
     }
 }

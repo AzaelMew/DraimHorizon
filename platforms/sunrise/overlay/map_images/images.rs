@@ -116,6 +116,8 @@ pub fn draw_minimap(
     if !has_minimap() {
         return;
     }
-    let side = crate::game::claim_borders_minimap_scan::SIZE as f32;
-    batch.sprite_region(&game.gui.atlas, MINIMAP, [x, y, size, size], side, side);
+    // The `sprite_region` source size is the rect's, not the texture's: it crops the sprite by
+    // `(w, h)` out of `(tw, th)`, so passing the image's 128 texels there drew only the top-left
+    // `128 / size` of the picture once the minimap was made larger than 128.
+    batch.sprite_region(&game.gui.atlas, MINIMAP, [x, y, size, size], size, size);
 }
