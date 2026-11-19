@@ -268,6 +268,46 @@ pub(super) fn ink(rgb: u32) -> u32 {
         _ => rgb & 0xffffff,
     }
 }
+/// A flat rectangle in exact ARGB. Unlike `fill`, the theme never remaps its colour, so
+/// colours the player picked are drawn as picked.
+pub(super) fn rect(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], argb: u32) {
+    if !rect.iter().all(|n| n.is_finite()) || rect[2] <= 0.0 || rect[3] <= 0.0 {
+        return;
+    }
+    let [a, r, g, b] = argb.to_be_bytes();
+    batch.fill_quad(
+        &game.gui.atlas,
+        [
+            [rect[0], rect[1]],
+            [rect[0] + rect[2], rect[1]],
+            [rect[0] + rect[2], rect[1] + rect[3]],
+            [rect[0], rect[1] + rect[3]],
+        ],
+        rgba(r, g, b, a),
+    );
+}
+/// A vertical gradient in exact ARGB, top to bottom, with the same no-remap rule as `rect`.
+pub(super) fn gradient(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    top: u32,
+    bottom: u32,
+) {
+    if !rect.iter().all(|n| n.is_finite()) || rect[2] <= 0.0 || rect[3] <= 0.0 {
+        return;
+    }
+    let argb = |value: u32| {
+        let [a, r, g, b] = value.to_be_bytes();
+        rgba(r, g, b, a)
+    };
+    batch.fill_gradient(
+        &game.gui.atlas,
+        (rect[0], rect[1], rect[2], rect[3]),
+        argb(top),
+        argb(bottom),
+    );
+}
 pub(super) fn fill(game: &Game<'_>, batch: &mut HudBatch, rect: [f32; 4], argb: u32) {
     let p = preferences(game);
     let rgb = argb & 0xffffff;

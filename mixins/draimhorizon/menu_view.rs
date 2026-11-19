@@ -1,7 +1,10 @@
 use crate::game::claim_borders_ui_view as ui;
 // Horizon drawing/input adapter. Mutating Game operations are drained on the client tick.
 use crate::game::native_hooks::NativeScreenView;
-use crate::game::{Game, claim_borders as claims, claim_borders_menu as model};
+use crate::game::{
+    Game, claim_borders as claims, claim_borders_chat_priority as priority,
+    claim_borders_menu as model,
+};
 use horizon_client::{hud::HudBatch, items::ItemStack};
 use model::Language;
 use std::collections::VecDeque;
@@ -153,59 +156,65 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
     let render_start = batch.vertices.len();
     let mut request_tip = None;
     ui::fill(game, batch, screen.rect, 0x9c080b12);
+    let picking = state(|s| s.menu.priority_picker.is_some());
     let pw = (screen.rect[2] - 16.0).clamp(220.0, 720.0);
     let ph = (screen.rect[3] - 16.0).clamp(200.0, 400.0);
     let px = (screen.rect[2] - pw) * 0.5;
     let py = (screen.rect[3] - ph) * 0.5;
-    // The window: a soft shadow, a thin border, rounded corners; the tab rail is a plate inset
-    // in the window and the content area is the rest.
-    ui::rounded(
-        game,
-        batch,
-        [px - 3.0, py - 3.0, pw + 6.0, ph + 6.0],
-        10.0,
-        0x38000000,
-    );
-    ui::rounded(
-        game,
-        batch,
-        [px, py, pw, ph],
-        8.0,
-        0xff000000 | crate::game::claim_borders_ui_style::BORDER,
-    );
-    ui::rounded(
-        game,
-        batch,
-        [px + 1.0, py + 1.0, pw - 2.0, ph - 2.0],
-        7.0,
-        0xf0000000 | crate::game::claim_borders_ui_style::BACKGROUND,
-    );
-    if model::rail_width(pw, ph) > 0.0 {
-        let rail = model::RAIL_WIDTH;
+    if picking {
+        // The colour dialog stands alone: the page keeps its dimmed backdrop, not its window.
+        ui::fill(game, batch, screen.rect, 0x66000000);
+    } else {
+        // The window: a soft shadow, a thin border, rounded corners; the tab rail is a plate inset
+        // in the window and the content area is the rest.
         ui::rounded(
             game,
             batch,
-            [px + 4.0, py + 4.0, rail - 4.0, ph - 8.0],
-            6.0,
-            0xff000000 | crate::game::claim_borders_ui_style::SURFACE,
+            [px - 3.0, py - 3.0, pw + 6.0, ph + 6.0],
+            10.0,
+            0x38000000,
         );
-        ui::text(
+        ui::rounded(
             game,
             batch,
-            "DraimHorizon",
-            [px + 10.0, py + 17.0],
-            crate::game::claim_borders_ui_style::TEXT,
-            false,
+            [px, py, pw, ph],
+            8.0,
+            0xff000000 | crate::game::claim_borders_ui_style::BORDER,
         );
-        let caption = state(|s| s.menu.language.text("Инструменты клиента", "Client tools"));
-        ui::text(
+        ui::rounded(
             game,
             batch,
-            caption,
-            [px + 10.0, py + 30.0],
-            crate::game::claim_borders_ui_style::MUTED,
-            false,
+            [px + 1.0, py + 1.0, pw - 2.0, ph - 2.0],
+            7.0,
+            0xf0000000 | crate::game::claim_borders_ui_style::BACKGROUND,
         );
+        if model::rail_width(pw, ph) > 0.0 {
+            let rail = model::RAIL_WIDTH;
+            ui::rounded(
+                game,
+                batch,
+                [px + 4.0, py + 4.0, rail - 4.0, ph - 8.0],
+                6.0,
+                0xff000000 | crate::game::claim_borders_ui_style::SURFACE,
+            );
+            ui::text(
+                game,
+                batch,
+                "DraimHorizon",
+                [px + 10.0, py + 17.0],
+                crate::game::claim_borders_ui_style::TEXT,
+                false,
+            );
+            let caption = state(|s| s.menu.language.text("Инструменты клиента", "Client tools"));
+            ui::text(
+                game,
+                batch,
+                caption,
+                [px + 10.0, py + 30.0],
+                crate::game::claim_borders_ui_style::MUTED,
+                false,
+            );
+        }
     }
     let variant = state(|s| {
         format!(
@@ -242,7 +251,71 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 0xe7a1aa,
             );
         }
+        // While a part of the colour dialog is held, follow the cursor before this frame is laid
+        // out, so the preview, the readout and the marker all show the held colour.
+        if let Some(picker) = s.menu.priority_picker
+            && picker.drag.is_some()
+        {
+            let g = model::picker_layout(screen.rect[2], screen.rect[3]);
+            s.menu.picker_drag(g.square, g.hue, screen.mouse);
+        }
         let widgets = s.menu.layout(&s.model, screen.rect[2], screen.rect[3]);
+        if let Some(picker) = s.menu.priority_picker {
+            let g = model::picker_layout(screen.rect[2], screen.rect[3]);
+            ui::rounded(
+                game,
+                batch,
+                [
+                    g.panel[0] - 3.0,
+                    g.panel[1] - 3.0,
+                    g.panel[2] + 6.0,
+                    g.panel[3] + 6.0,
+                ],
+                10.0,
+                0x50000000,
+            );
+            ui::rounded(
+                game,
+                batch,
+                g.panel,
+                8.0,
+                0xff000000 | crate::game::claim_borders_ui_style::BORDER,
+            );
+            ui::rounded(
+                game,
+                batch,
+                [
+                    g.panel[0] + 1.0,
+                    g.panel[1] + 1.0,
+                    g.panel[2] - 2.0,
+                    g.panel[3] - 2.0,
+                ],
+                7.0,
+                0xf0000000 | crate::game::claim_borders_ui_style::BACKGROUND,
+            );
+            let color = picker.color();
+            ui::rounded(game, batch, g.preview, 3.0, 0xffe3ebf3);
+            ui::rounded(
+                game,
+                batch,
+                [
+                    g.preview[0] + 1.0,
+                    g.preview[1] + 1.0,
+                    g.preview[2] - 2.0,
+                    g.preview[3] - 2.0,
+                ],
+                2.0,
+                0xff000000 | color,
+            );
+            ui::text(
+                game,
+                batch,
+                &format!("#{color:06X}"),
+                [g.readout[0], g.readout[1]],
+                0xe6edf5,
+                false,
+            );
+        }
         // The rows of the Mining picker, worked out once a frame, for the icons of its tiles.
         let mine_rows = (s.menu.tab == model::Tab::Baritone
             && s.menu.baritone_section == model::BaritoneSection::Mining)
@@ -467,6 +540,92 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 );
                 if hover && text != widget.text {
                     request_tip = Some(widget.text.clone());
+                }
+                continue;
+            }
+            // The colour dialog's saturation/value square and its hue bar.
+            if let Some(model::Control::PriorityPickerSquare) = widget.control {
+                let hue = s.menu.priority_picker.map_or(0.0, |p| p.hue);
+                ui::rounded(game, batch, widget.rect, 3.0, 0x40e3ebf3);
+                let inner = [x + 1.0, y + 1.0, w - 2.0, h - 2.0];
+                let columns = 64;
+                let step = inner[2] / columns as f32;
+                for i in 0..columns {
+                    let sat = (i as f32 + 0.5) / columns as f32;
+                    ui::gradient(
+                        game,
+                        batch,
+                        [inner[0] + i as f32 * step, inner[1], step + 0.5, inner[3]],
+                        0xff000000 | priority::hsv(hue, sat, 1.0),
+                        0xff000000,
+                    );
+                }
+                if let Some(picker) = s.menu.priority_picker {
+                    let mx = x + picker.sat * w;
+                    let my = y + (1.0 - picker.val) * h;
+                    ui::rounded(game, batch, [mx - 4.0, my - 4.0, 8.0, 8.0], 4.0, 0xff101820);
+                    ui::rounded(game, batch, [mx - 3.0, my - 3.0, 6.0, 6.0], 3.0, 0xffffffff);
+                }
+                continue;
+            }
+            if let Some(model::Control::PriorityPickerHue) = widget.control {
+                let segments = 96;
+                let step = w / segments as f32;
+                for i in 0..segments {
+                    let hue = i as f32 * 360.0 / segments as f32;
+                    ui::rect(
+                        game,
+                        batch,
+                        [x + i as f32 * step, y, step + 0.5, h],
+                        0xff000000 | priority::hsv(hue, 1.0, 1.0),
+                    );
+                }
+                if let Some(picker) = s.menu.priority_picker {
+                    let mx = x + picker.hue / 360.0 * w;
+                    ui::rect(game, batch, [mx - 2.0, y - 1.0, 4.0, h + 2.0], 0xff101820);
+                    ui::rect(game, batch, [mx - 1.0, y, 2.0, h], 0xffffffff);
+                }
+                continue;
+            }
+            // The page's colour chip: shows the colour the dialog or the field holds.
+            if let Some(model::Control::PriorityPicker) = widget.control {
+                let color = s.menu.picked_color();
+                ui::rounded(game, batch, widget.rect, 3.0, 0xffe3ebf3);
+                ui::rounded(
+                    game,
+                    batch,
+                    [x + 1.5, y + 1.5, w - 3.0, h - 3.0],
+                    2.0,
+                    0xff000000 | color,
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
+                }
+                continue;
+            }
+            // The Important player colour picker: flat colour squares, the chosen one ringed.
+            if let Some(
+                model::Control::PrioritySwatch(color) | model::Control::PriorityPickerPreset(color),
+            ) = widget.control
+            {
+                if widget.selected {
+                    ui::rounded(game, batch, widget.rect, 5.0, 0xffe3ebf3);
+                }
+                let inset = if widget.selected { 2.0 } else { 1.0 };
+                ui::rounded(
+                    game,
+                    batch,
+                    [
+                        x + inset,
+                        y + inset,
+                        (w - inset * 2.0).max(1.0),
+                        (h - inset * 2.0).max(1.0),
+                    ],
+                    3.0,
+                    0xff000000 | color,
+                );
+                if hover {
+                    ui::tooltip(game, batch, &widget.text, screen.mouse);
                 }
                 continue;
             }
@@ -1015,6 +1174,10 @@ pub(super) fn mouse(
         } else if let Some(index) = s.pressed.iter().position(|b| *b == button) {
             s.pressed.swap_remove(index);
             *canceled = true;
+            // The colour dialog commits on Done, so letting go of a drag only ends the preview.
+            if button == 0 {
+                s.menu.picker_release();
+            }
         }
     });
 }

@@ -13,3 +13,5 @@ every Horizon check on `main` was red. This release moves Horizon to the route S
 - Sunrise: key bindings set to a mouse button (for example `key.mouse.4` for pat) now work; nickname completion for
   `/tp`, `/msg`, `/tpa`, `/pay` and the other name commands no longer disappears on every second letter; `/r hello`
   and `/reply hello` are no longer shown red. Not verified in a running Sunrise client.
+- Friends → Important: the colour chip beside the Colour field opens a colour picker (saturation/value square, hue
+  bar, live `#RRGGBB` readout, preview, the eight presets, Done / Cancel), in English and Russian.

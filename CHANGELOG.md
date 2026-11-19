@@ -14,6 +14,7 @@
 - **Sunrise: `/r hello` is no longer red.** Client commands were registered as bare literals, so the chat tree rejected every argument (`Incorrect argument for command at position 2`). Each command now has a usage (`r [message:text]`, `reply [message:text]`, `party|friend|wp|waypoint|dfarm [args:text]`, `claimborders [action:word]`, bare `horizonmenu`) matching what its handler accepts; the line still reaches the mod's command hook as typed and never goes to the server.
 - Tests: `ClientCommandUsageTests`, `SunriseSuggestTests` and the mod crate's `suggest` unit tests (run through `rustc --test`).
 - Not verified in game: pressing a mouse-bound key, typing `/tpa m`, `ma`, `mar` and Tab, and `/r hello` in a running Sunrise client.
+- Friends → Important has a colour picker: the colour chip beside the Colour field opens a dialog with a saturation/value square, a hue bar, a live `#RRGGBB` readout, a preview of the chosen colour and the eight presets, plus Done and Cancel [Esc]. Dragging the square or the bar previews the colour live; Done keeps it and stores it for a saved player, while Cancel or Esc restores the colour the dialog opened with. The eight quick swatches stay on the page next to the paging arrows, and the hex field still takes a typed value. A name without a rule keeps the picked colour until Save. No saved rule, pin, colour value or chat behaviour changes: the picker writes the same `priority` settings the hex field does.
 
 ## 0.41.6
 
