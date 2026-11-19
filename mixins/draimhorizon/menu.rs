@@ -36,6 +36,89 @@ pub struct PartyRow {
     pub detail: String,
     pub pending: bool,
 }
+/// The colour dialog for an Important player: an HSV square, a hue bar and the
+/// 0xRRGGBB value that the page's colour field shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Picker {
+    pub hue: f32,
+    pub sat: f32,
+    pub val: f32,
+    /// The part the mouse is dragging, so a held button keeps colouring as the cursor moves.
+    pub drag: Option<PickerDrag>,
+    /// The colour to restore when the dialog is cancelled.
+    pub original: u32,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PickerDrag {
+    Square,
+    Hue,
+}
+impl Picker {
+    pub fn new(color: u32) -> Self {
+        let (hue, sat, val) = priority::rgb_hsv(color);
+        Self {
+            hue,
+            sat,
+            val,
+            drag: None,
+            original: color & 0xffffff,
+        }
+    }
+    pub fn color(&self) -> u32 {
+        priority::hsv(self.hue, self.sat, self.val)
+    }
+    /// Saturation and value from a point in the square: left grey, right saturated,
+    /// top bright, bottom black.
+    pub fn square_at(&mut self, rect: [f32; 4], cursor: [f32; 2]) {
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return;
+        }
+        self.sat = ((cursor[0] - rect[0]) / rect[2]).clamp(0.0, 1.0);
+        self.val = 1.0 - ((cursor[1] - rect[1]) / rect[3]).clamp(0.0, 1.0);
+    }
+    /// The hue from a point on the bar, in degrees.
+    pub fn hue_at(&mut self, rect: [f32; 4], cursor: [f32; 2]) {
+        if rect[2] <= 0.0 {
+            return;
+        }
+        self.hue = ((cursor[0] - rect[0]) / rect[2]).clamp(0.0, 1.0) * 360.0;
+    }
+    pub fn set(&mut self, color: u32) {
+        let (hue, sat, val) = priority::rgb_hsv(color);
+        self.hue = hue;
+        self.sat = sat;
+        self.val = val;
+    }
+}
+/// Where the colour dialog puts its parts; the page's layout and its drawing share it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PickerLayout {
+    pub panel: [f32; 4],
+    pub square: [f32; 4],
+    pub hue: [f32; 4],
+    pub preview: [f32; 4],
+    pub readout: [f32; 4],
+    /// The row the presets sit on, and the side of one preset.
+    pub presets: [f32; 4],
+    pub swatch: f32,
+}
+pub fn picker_layout(width: f32, height: f32) -> PickerLayout {
+    let w = (width - 32.0).clamp(240.0, 420.0);
+    let s = ((w - 36.0) * 0.55).min(140.0);
+    let h = s + 116.0;
+    let x = (width - w) * 0.5;
+    let y = ((height - h) * 0.5).max(8.0);
+    let swatch = ((w - 24.0 - 3.0 * 7.0) / 8.0).clamp(14.0, 22.0);
+    PickerLayout {
+        panel: [x, y, w, h],
+        square: [x + 12.0, y + 26.0, s, s],
+        hue: [x + 12.0, y + 26.0 + s + 8.0, s, 12.0],
+        preview: [x + 20.0 + s, y + 44.0, 32.0, 32.0],
+        readout: [x + 20.0 + s, y + 26.0, w - 32.0 - s, 14.0],
+        presets: [x + 12.0, y + 26.0 + s + 28.0, w - 24.0, 22.0],
+        swatch,
+    }
+}
 /// Include manual chat priorities even when the player does not use the relay.
 pub fn append_important_rows(
     rows: &mut Vec<PartyRow>,
@@ -1093,6 +1176,15 @@ pub enum Control {
     PlayerRequest(PlayerRequest),
     PriorityNext,
     PriorityRow(usize),
+    /// One colour of the Important player picker; the value is the swatch's `0xRRGGBB`.
+    PrioritySwatch(u32),
+    /// Opens the colour dialog for the colour in the field.
+    PriorityPicker,
+    PriorityPickerSquare,
+    PriorityPickerHue,
+    PriorityPickerPreset(u32),
+    PriorityPickerOk,
+    PriorityPickerCancel,
     PrioritySave,
     PriorityRemove,
     PriorityPin,
@@ -1270,6 +1362,8 @@ pub struct Menu {
     pub priority_name: String,
     pub priority_color: String,
     pub priority_pinned: bool,
+    /// The open colour dialog for the colour in `priority_color`; `None` shows the page.
+    pub priority_picker: Option<Picker>,
     pub peer_code: String,
     pub relay_setup: bool,
     pub relay_url: String,
@@ -1350,6 +1444,7 @@ impl Default for Menu {
             priority_name: String::new(),
             priority_color: "#FFCC66".into(),
             priority_pinned: true,
+            priority_picker: None,
             peer_code: String::new(),
             relay_setup: false,
             relay_url: String::new(),
@@ -1366,6 +1461,12 @@ const SCHEMATIC_BOTTOM: f32 = 48.0;
 /// The files the Schematics tab's list shows at once, below its header row.
 fn schematic_list_rows(top: f32, limit: f32) -> usize {
     ((limit - (top + 18.0)) / 16.0).floor().max(0.0) as usize
+}
+/// A `#RRGGBB` (or `RRGGBB`) field value, as the colour settings store it.
+pub fn parse_color(text: &str) -> Option<u32> {
+    u32::from_str_radix(text.trim().trim_start_matches('#'), 16)
+        .ok()
+        .filter(|color| *color <= 0xffffff)
 }
 fn widget(
     rect: [f32; 4],
@@ -2034,6 +2135,9 @@ impl Menu {
     fn layout_widgets(&self, model: &ViewModel, width: f32, height: f32) -> Vec<Widget> {
         if self.experiments_prompt {
             return self.experiments_dialog(width, height);
+        }
+        if let Some(picker) = &self.priority_picker {
+            return self.picker_dialog(width, height, picker);
         }
         let panel_w = (width - 16.0).clamp(220.0, 720.0);
         let panel_h = (height - 16.0).clamp(200.0, 400.0);
@@ -2752,6 +2856,64 @@ impl Menu {
                 false,
             ));
         }
+    }
+    /// The colour dialog: an HSV square, a hue bar, the value it would store, the presets
+    /// and Done/Cancel. It replaces the page while open, so the page controls cannot take
+    /// a click behind it.
+    fn picker_dialog(&self, width: f32, height: f32, picker: &Picker) -> Vec<Widget> {
+        let g = picker_layout(width, height);
+        let color = picker.color();
+        let [px, py, pw, ph] = g.panel;
+        let mut out = vec![
+            widget(
+                [px + 12.0, py + 8.0, pw - 24.0, 14.0],
+                self.language.text("Цвет игрока", "Player colour"),
+                None,
+                false,
+            ),
+            widget(
+                g.square,
+                format!("#{color:06X}"),
+                Some(Control::PriorityPickerSquare),
+                false,
+            ),
+            widget(
+                g.hue,
+                self.language.text("Оттенок", "Hue"),
+                Some(Control::PriorityPickerHue),
+                false,
+            ),
+            widget(g.preview, "", None, false),
+        ];
+        let mut presets = Vec::with_capacity(priority::COLORS.len());
+        for (i, preset) in priority::COLORS.into_iter().enumerate() {
+            presets.push(widget(
+                [
+                    g.presets[0] + i as f32 * (g.swatch + 3.0),
+                    g.presets[1],
+                    g.swatch,
+                    g.presets[3],
+                ],
+                format!("#{preset:06X}"),
+                Some(Control::PriorityPickerPreset(preset)),
+                color == preset,
+            ));
+        }
+        out.extend(presets);
+        let button = (pw - 36.0) * 0.5;
+        out.push(widget(
+            [px + 12.0, py + ph - 34.0, button, 24.0],
+            self.language.text("Отмена [Esc]", "Cancel [Esc]"),
+            Some(Control::PriorityPickerCancel),
+            false,
+        ));
+        out.push(widget(
+            [px + 24.0 + button, py + ph - 34.0, button, 24.0],
+            self.language.text("Готово", "Done"),
+            Some(Control::PriorityPickerOk),
+            false,
+        ));
+        out
     }
     fn experiments_dialog(&self, width: f32, height: f32) -> Vec<Widget> {
         let w = (width - 32.0).clamp(200.0, 460.0);
@@ -6123,44 +6285,132 @@ impl Menu {
         }
         let y = height - 94.0;
         out.extend([
-            widget([x, y, 24.0, 18.0], "←", Some(Control::Previous), false),
             widget(
-                [x + 28.0, y, w - 56.0, 18.0],
-                format!("{} / {}", page + 1, pages),
-                None,
-                false,
-            ),
-            widget(
-                [x + w - 24.0, y, 24.0, 18.0],
-                "→",
-                Some(Control::Next),
-                false,
-            ),
-            widget(
-                [x, y + 20.0, w * 0.6 - 3.0, 20.0],
+                [x, y, w * 0.6 - 3.0, 20.0],
                 localized!(self.language, "Ник: {}", "Name: {}", self.priority_name),
                 Some(Control::Field(Field::PriorityName)),
                 self.focus == Some(Field::PriorityName),
             ),
             widget(
-                [x + w * 0.6, y + 20.0, w * 0.4, 20.0],
+                [x + w * 0.6, y, w * 0.4, 20.0],
                 self.language.text("Сохранить", "Save"),
                 Some(Control::PrioritySave),
                 false,
             ),
             widget(
-                [x, y + 42.0, w * 0.6 - 3.0, 20.0],
+                [x, y + 22.0, w * 0.6 - 28.0, 20.0],
                 localized!(self.language, "Цвет: {}", "Color: {}", self.priority_color),
                 Some(Control::Field(Field::PriorityColor)),
                 self.focus == Some(Field::PriorityColor),
             ),
             widget(
-                [x + w * 0.6, y + 42.0, w * 0.4, 20.0],
+                [x + w * 0.6 - 25.0, y + 22.0, 22.0, 20.0],
+                self.language.text("Подобрать цвет…", "Pick a colour…"),
+                Some(Control::PriorityPicker),
+                false,
+            ),
+            widget(
+                [x + w * 0.6, y + 22.0, w * 0.4, 20.0],
                 self.language.text("Убрать правило", "Remove rule"),
                 Some(Control::PriorityRemove),
                 false,
             ),
+            widget(
+                [x + w - 78.0, y + 44.0, 22.0, 18.0],
+                "←",
+                Some(Control::Previous),
+                false,
+            ),
+            widget(
+                [x + w - 52.0, y + 44.0, 26.0, 18.0],
+                format!("{}/{}", page + 1, pages),
+                None,
+                false,
+            ),
+            widget(
+                [x + w - 22.0, y + 44.0, 22.0, 18.0],
+                "→",
+                Some(Control::Next),
+                false,
+            ),
         ]);
+        // The picker shares the last row with the paging arrows: one square per colour,
+        // the current one ringed. Picking fills the hex field and applies at once to a rule
+        // that is already saved under the typed name.
+        let gap = 3.0;
+        let swatch = ((w - 84.0 - gap * 7.0) / 8.0).clamp(12.0, 26.0);
+        for (i, color) in priority::COLORS.into_iter().enumerate() {
+            out.push(widget(
+                [x + i as f32 * (swatch + gap), y + 44.0, swatch, 18.0],
+                format!("#{color:06X}"),
+                Some(Control::PrioritySwatch(color)),
+                self.priority_color
+                    .trim()
+                    .trim_start_matches('#')
+                    .eq_ignore_ascii_case(&format!("{color:06X}")),
+            ));
+        }
+    }
+    /// Opens the colour dialog seeded from the colour in the field.
+    pub fn open_picker(&mut self) {
+        let color = parse_color(&self.priority_color).unwrap_or(0xffcc66);
+        self.priority_picker = Some(Picker::new(color));
+        self.focus = None;
+    }
+    /// The colour the dialog is showing, or the field's colour when it is closed.
+    pub fn picked_color(&self) -> u32 {
+        self.priority_picker
+            .map(|p| p.color())
+            .or_else(|| parse_color(&self.priority_color))
+            .unwrap_or(0xffcc66)
+    }
+    /// While a part of the dialog is held, follow the cursor: the square takes saturation
+    /// and value, the bar takes hue.
+    pub fn picker_drag(&mut self, square: [f32; 4], hue: [f32; 4], cursor: [f32; 2]) {
+        let Some(picker) = self.priority_picker.as_mut() else {
+            return;
+        };
+        match picker.drag {
+            Some(PickerDrag::Square) => picker.square_at(square, cursor),
+            Some(PickerDrag::Hue) => picker.hue_at(hue, cursor),
+            None => return,
+        }
+        self.priority_color = format!("#{:06X}", picker.color());
+    }
+    /// Ends a drag. Nothing is stored yet: the dialog commits on Done, so Cancel and Esc
+    /// really undo the preview.
+    pub fn picker_release(&mut self) {
+        if let Some(picker) = self.priority_picker.as_mut() {
+            picker.drag = None;
+        }
+    }
+    /// Keeps the colour in the field and, for a player who already has a rule, stores it now.
+    fn store_color(&mut self, model: &ViewModel, color: u32) -> Option<Action> {
+        self.priority_color = format!("#{color:06X}");
+        self.notice.clear();
+        let name = self.priority_name.trim().to_owned();
+        if name.is_empty()
+            || !model
+                .priority
+                .rules
+                .contains_key(&name.to_ascii_lowercase())
+        {
+            return None;
+        }
+        let mut p = model.priority.clone();
+        match p.set_in(&name, color, self.priority_pinned, self.language) {
+            Ok(()) => Some(Action::SetPriority(p)),
+            Err(e) => {
+                self.notice = e;
+                None
+            }
+        }
+    }
+    /// Closes the dialog without keeping the picked colour.
+    pub fn close_picker(&mut self) {
+        if let Some(picker) = self.priority_picker.take() {
+            self.priority_color = format!("#{:06X}", picker.original);
+        }
     }
     pub fn click(&mut self, model: &ViewModel, size: [f32; 2], mouse: [f32; 2]) -> Option<Action> {
         let hit = self
@@ -6168,6 +6418,27 @@ impl Menu {
             .into_iter()
             .rev()
             .find(|w| w.control.is_some() && contains(w.rect, mouse));
+        // The colour dialog's square and hue bar take the cursor position, not just the click,
+        // so the drag can continue while the button stays down.
+        if let Some(rect) = hit.as_ref().map(|w| w.rect)
+            && let Some(control) = hit.as_ref().and_then(|w| w.control)
+            && matches!(
+                control,
+                Control::PriorityPickerSquare | Control::PriorityPickerHue
+            )
+        {
+            if let Some(picker) = self.priority_picker.as_mut() {
+                if control == Control::PriorityPickerSquare {
+                    picker.drag = Some(PickerDrag::Square);
+                    picker.square_at(rect, mouse);
+                } else {
+                    picker.drag = Some(PickerDrag::Hue);
+                    picker.hue_at(rect, mouse);
+                }
+                self.priority_color = format!("#{:06X}", picker.color());
+            }
+            return None;
+        }
         let Some(control) = hit.and_then(|w| w.control) else {
             self.focus = None;
             self.navigation_choices = None;
@@ -6977,6 +7248,30 @@ impl Menu {
                 }
                 Some(Action::SetExperimental(p.normalized()))
             }
+            Control::PrioritySwatch(color) => {
+                // A swatch on the page already picked a colour: keep it, and apply at once
+                // when the name has a rule. For a new name it only fills the field Save reads.
+                self.store_color(model, color)
+            }
+            Control::PriorityPicker => {
+                self.open_picker();
+                None
+            }
+            Control::PriorityPickerPreset(color) => {
+                if let Some(picker) = self.priority_picker.as_mut() {
+                    picker.set(color);
+                }
+                self.store_color(model, color)
+            }
+            Control::PriorityPickerOk => {
+                let color = self.picked_color();
+                self.priority_picker = None;
+                self.store_color(model, color)
+            }
+            Control::PriorityPickerCancel => {
+                self.close_picker();
+                None
+            }
             Control::PriorityRow(i) => {
                 if let Some(name) = self.important_names(model).get(i) {
                     self.priority_name = name.clone();
@@ -7023,12 +7318,7 @@ impl Menu {
                 let mut p = model.priority.clone();
                 match control {
                     Control::PrioritySave => {
-                        let color = u32::from_str_radix(
-                            self.priority_color.trim().trim_start_matches('#'),
-                            16,
-                        )
-                        .ok()
-                        .filter(|c| *c <= 0xffffff);
+                        let color = parse_color(&self.priority_color);
                         let Some(color) = color else {
                             self.notice = self
                                 .language
@@ -7558,6 +7848,13 @@ impl Menu {
     }
     /// False only for Escape when the native screen should close itself.
     pub fn key(&mut self, key: &str, modifiers: u32) -> bool {
+        if self.priority_picker.is_some() {
+            if key == "key.keyboard.escape" {
+                self.close_picker();
+            }
+            // The colour dialog owns the keyboard while it is open.
+            return true;
+        }
         if self.experiments_prompt {
             if key == "key.keyboard.escape" {
                 self.experiments_prompt = false;
@@ -8687,6 +8984,254 @@ mod tests {
             panic!("removing an offline priority should update settings");
         };
         assert!(prefs.rules.is_empty());
+    }
+    fn click_control(
+        menu: &mut Menu,
+        model: &ViewModel,
+        control: Control,
+        size: [f32; 2],
+    ) -> Option<Action> {
+        let [x, y, w, h] = menu
+            .layout(model, size[0], size[1])
+            .into_iter()
+            .find(|widget| widget.control == Some(control))
+            .unwrap_or_else(|| panic!("no widget for {control:?}"))
+            .rect;
+        menu.click(model, size, [x + w / 2.0, y + h / 2.0])
+    }
+    #[test]
+    fn important_colour_picker_recolours_a_saved_rule_at_once() {
+        let mut model = ViewModel::default();
+        model.priority.set("Alex", 0xffcc66, true).unwrap();
+        model.priority.set("Berta", 0xffffff, false).unwrap();
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Important,
+            priority_name: "Alex".into(),
+            ..Menu::default()
+        };
+        let swatch = priority::COLORS[4];
+        let Some(Action::SetPriority(prefs)) = click_control(
+            &mut menu,
+            &model,
+            Control::PrioritySwatch(swatch),
+            [400.0, 300.0],
+        ) else {
+            panic!("picking a colour for a saved rule should update settings");
+        };
+        assert_eq!(prefs.rules["alex"].color, swatch);
+        assert!(prefs.rules["alex"].pinned);
+        assert_eq!(prefs.rules["berta"], model.priority.rules["berta"]);
+        assert_eq!(menu.priority_color, format!("#{swatch:06X}"));
+        // The picker rings the colour the field now holds.
+        let widgets = menu.layout(&model, 400.0, 300.0);
+        for widget in &widgets {
+            if let Some(Control::PrioritySwatch(color)) = widget.control {
+                assert_eq!(widget.selected, color == swatch, "{color:06X}");
+            }
+        }
+    }
+    #[test]
+    fn important_colour_picker_prefills_the_colour_of_a_new_player() {
+        let model = ViewModel::default();
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Important,
+            priority_name: "Newbie".into(),
+            ..Menu::default()
+        };
+        let size = [400.0, 300.0];
+        let swatch = priority::COLORS[1];
+        assert!(
+            click_control(&mut menu, &model, Control::PrioritySwatch(swatch), size).is_none(),
+            "a name without a rule only takes the colour into the field"
+        );
+        assert_eq!(menu.priority_color, format!("#{swatch:06X}"));
+        assert!(model.priority.rules.is_empty());
+        let Some(Action::SetPriority(prefs)) =
+            click_control(&mut menu, &model, Control::PrioritySave, size)
+        else {
+            panic!("saving should keep the picked colour");
+        };
+        assert_eq!(prefs.rules["newbie"].color, swatch);
+    }
+    #[test]
+    fn important_colour_dialog_maps_the_square_and_the_hue_bar() {
+        let mut picker = Picker::new(0xff2e8c);
+        let (hue, sat, val) = (picker.hue, picker.sat, picker.val);
+        assert!(hue > 320.0 && hue < 345.0, "{hue}");
+        assert!(sat > 0.8 && val > 0.9);
+        let square = [100.0, 50.0, 120.0, 80.0];
+        picker.square_at(square, [100.0, 50.0]);
+        assert_eq!((picker.sat, picker.val), (0.0, 1.0));
+        picker.square_at(square, [220.0, 130.0]);
+        assert_eq!((picker.sat, picker.val), (1.0, 0.0));
+        // A cursor outside the square is clamped, not wrapped.
+        picker.square_at(square, [-40.0, 400.0]);
+        assert_eq!((picker.sat, picker.val), (0.0, 0.0));
+        assert_eq!(picker.color(), 0x000000);
+        picker.hue_at([100.0, 200.0, 120.0, 12.0], [160.0, 206.0]);
+        assert!((picker.hue - 180.0).abs() < 0.001);
+        picker.hue_at([100.0, 200.0, 120.0, 12.0], [999.0, 206.0]);
+        assert_eq!(picker.hue, 360.0);
+        // An unseeded dialog keeps the colour it was opened with.
+        assert_eq!(Picker::new(0x336699).color(), 0x336699);
+    }
+    #[test]
+    fn important_colour_dialog_opens_from_the_page_and_fits_the_screen() {
+        let mut model = ViewModel::default();
+        model.priority.set("Alex", 0xffcc66, true).unwrap();
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Important,
+            priority_name: "Alex".into(),
+            ..Menu::default()
+        };
+        let size = [400.0, 300.0];
+        assert!(click_control(&mut menu, &model, Control::PriorityPicker, size).is_none());
+        let picker = menu.priority_picker.expect("the chip opens the dialog");
+        assert_eq!(picker.color(), 0xffcc66);
+        let widgets = menu.layout(&model, size[0], size[1]);
+        // The page is replaced: no list rows, no Save button behind the dialog.
+        assert!(!widgets.iter().any(|w| matches!(
+            w.control,
+            Some(Control::PriorityRow(_) | Control::PrioritySave)
+        )));
+        for control in [
+            Control::PriorityPickerSquare,
+            Control::PriorityPickerHue,
+            Control::PriorityPickerOk,
+            Control::PriorityPickerCancel,
+        ] {
+            let widget = widgets
+                .iter()
+                .find(|w| w.control == Some(control))
+                .unwrap_or_else(|| panic!("no {control:?}"));
+            assert!(widget.rect[0] >= 0.0 && widget.rect[1] >= 0.0);
+            assert!(widget.rect[0] + widget.rect[2] <= size[0]);
+            assert!(widget.rect[1] + widget.rect[3] <= size[1]);
+        }
+        // Escape closes without keeping the picked colour.
+        menu.priority_color = "#123456".into();
+        menu.open_picker();
+        assert!(menu.key("key.keyboard.escape", 0));
+        assert!(menu.priority_picker.is_none());
+        assert_eq!(menu.priority_color, "#123456");
+    }
+    #[test]
+    fn important_colour_dialog_previews_until_done() {
+        let mut model = ViewModel::default();
+        model.priority.set("Alex", 0xffcc66, true).unwrap();
+        let mut menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Important,
+            priority_name: "Alex".into(),
+            ..Menu::default()
+        };
+        let size = [400.0, 300.0];
+        menu.open_picker();
+        // Red hue, so the square's corner is a predictable colour.
+        menu.priority_picker.as_mut().unwrap().hue = 0.0;
+        let square = menu
+            .layout(&model, size[0], size[1])
+            .into_iter()
+            .find(|w| w.control == Some(Control::PriorityPickerSquare))
+            .unwrap()
+            .rect;
+        // Pressing the top-right corner previews a red at nearly full saturation and value.
+        let action = menu.click(&model, size, [square[0] + square[2] - 1.0, square[1] + 1.0]);
+        assert!(action.is_none(), "a press only previews");
+        let picked = menu.picked_color();
+        let (r, g, b) = ((picked >> 16) & 0xff, (picked >> 8) & 0xff, picked & 0xff);
+        assert!(r > 240 && g < 16 && b < 16, "{picked:06X}");
+        assert_eq!(menu.priority_color, format!("#{picked:06X}"));
+        menu.picker_release();
+        // Nothing was saved while only previewing: the rule still holds its old colour.
+        assert_eq!(model.priority.rules["alex"].color, 0xffcc66);
+        // Done stores the previewed colour and closes the dialog.
+        let prefs = match menu.activate(&model, 300.0, Control::PriorityPickerOk) {
+            Some(Action::SetPriority(prefs)) => prefs,
+            _ => panic!("Done stores the colour"),
+        };
+        assert_eq!(prefs.rules["alex"].color, picked);
+        assert!(menu.priority_picker.is_none());
+        assert_eq!(menu.priority_color, format!("#{picked:06X}"));
+        // Cancel after a preview restores the field and stores nothing.
+        menu.open_picker();
+        menu.priority_picker.as_mut().unwrap().set(0x0000ff);
+        menu.priority_color = "#0000FF".into();
+        assert!(
+            menu.activate(&model, 300.0, Control::PriorityPickerCancel)
+                .is_none()
+        );
+        assert_eq!(menu.priority_color, format!("#{picked:06X}"));
+        assert_eq!(model.priority.rules["alex"].color, 0xffcc66);
+    }
+    #[test]
+    fn important_colour_picker_fits_the_panel_at_every_size() {
+        let mut model = ViewModel::default();
+        model.priority.set("Offline", 0xffcc66, true).unwrap();
+        let menu = Menu {
+            tab: Tab::Party,
+            party_filter: PartyFilter::Important,
+            ..Menu::default()
+        };
+        for (w, h) in [
+            (240.0, 216.0),
+            (320.0, 240.0),
+            (800.0, 500.0),
+            (1280.0, 720.0),
+        ] {
+            let widgets = menu.layout(&model, w, h);
+            let swatches: Vec<&Widget> = widgets
+                .iter()
+                .filter(|x| matches!(x.control, Some(Control::PrioritySwatch(_))))
+                .collect();
+            assert_eq!(swatches.len(), priority::COLORS.len(), "{w}x{h}");
+            let previous = widgets
+                .iter()
+                .find(|x| x.control == Some(Control::Previous))
+                .unwrap();
+            let next = widgets
+                .iter()
+                .find(|x| x.control == Some(Control::Next))
+                .unwrap();
+            let row = swatches[0].rect[1];
+            for swatch in &swatches {
+                assert_eq!(swatch.rect[1], row, "{w}x{h} swatches share one row");
+                assert!(
+                    (12.0..=26.0).contains(&swatch.rect[2]),
+                    "{w}x{h} swatch width {}",
+                    swatch.rect[2]
+                );
+                assert!(
+                    swatch.rect[0] + swatch.rect[2] <= previous.rect[0],
+                    "{w}x{h} picker runs into the paging arrows"
+                );
+            }
+            for pair in swatches.windows(2) {
+                assert!(pair[0].rect[0] + pair[0].rect[2] <= pair[1].rect[0]);
+            }
+            for other in widgets.iter().filter(|x| {
+                matches!(
+                    x.control,
+                    Some(
+                        Control::PriorityRow(_)
+                            | Control::Field(Field::PriorityName)
+                            | Control::Field(Field::PriorityColor)
+                            | Control::PrioritySave
+                            | Control::PriorityRemove
+                    )
+                )
+            }) {
+                assert!(
+                    other.rect[1] + other.rect[3] <= row,
+                    "{w}x{h} picker covers {:?}",
+                    other.control
+                );
+            }
+            assert!(next.rect[0] + next.rect[2] <= w, "{w}x{h} paging runs off");
+        }
     }
     #[test]
     fn manual_priorities_show_without_relay_and_never_offer_friendship_actions() {

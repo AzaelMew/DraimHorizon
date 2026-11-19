@@ -1,12 +1,17 @@
-**DraimHorizon 0.41.6 — Fix Sunrise declared-internals validation**
+**DraimHorizon 0.42.0 — Horizon Nightly `6d765e0` and the `.hmod` package**
 
-Fixes the Sunrise Launcher failure `E_INTERNAL_MISSING` naming
-`sunrise_client_lib::net::ingress::Producer` in 0.41.4/0.41.5.
+Horizon's official Nightly changed how native mods are built, so the previous Horizon route stopped working and
+every Horizon check on `main` was red. This release moves Horizon to the route Sunrise already uses.
 
-The SMP adapter incorrectly declared five SDK `shape_only` layout entries as accessible internals.
-The package now declares only the exposed `Session` type. The native helpers and brand behavior are
-unchanged; SDK and package preflight now enforce the launcher's declaration eligibility rules.
-
-No game-client, SDK or player-cache changes are needed. The separate cache-cleanup warning in the
-reported log is not the declared-internal failure. Validation of this fix is separate from a complete
-launcher build and live SMP login; neither is claimed by the package checks alone.
+- Install `draimhorizons-0.42.0.hmod` with Horizon Launcher 0.2.70 or newer, then rebuild native mods. The old
+  `.hnmod` is not produced any more (current launchers refuse it). Sunrise keeps `draimhorizons-0.42.0.smod`.
+- Target: official Horizon Nightly `6d765e0` (Mod SDK `sdk-6d765e0…`), horizon-mixins `e59da90`.
+- Checked against that exact Nightly: the package passes the launcher's reader and a native build against the SDK,
+  and the modified client compiles. It has not been run in game.
+- Not available on Horizon yet: the third-person patting arm, and the World map / Seed Map images (the rest of the
+  map features work). Both are listed in `platforms/horizon/README.md`.
+- Sunrise: key bindings set to a mouse button (for example `key.mouse.4` for pat) now work; nickname completion for
+  `/tp`, `/msg`, `/tpa`, `/pay` and the other name commands no longer disappears on every second letter; `/r hello`
+  and `/reply hello` are no longer shown red. Not verified in a running Sunrise client.
+- Friends → Important: the colour chip beside the Colour field opens a colour picker (saturation/value square, hue
+  bar, live `#RRGGBB` readout, preview, the eight presets, Done / Cancel), in English and Russian.

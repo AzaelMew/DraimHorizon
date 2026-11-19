@@ -10,23 +10,21 @@
 
 ## Проверки
 
-Нужны Git, Python 3.12+, Rust 1.99.1 (rustfmt, clippy). Стадирование использует Linux file locks. `tools/stage.py` скачивает закреплённые исходники в gitignored `.local/`, экспортирует их без изменения исходного checkout и вызывает официальный horizon-mixins:
+Нужны Git, Python 3.12+, Rust 1.99.1 (rustfmt, clippy). Исходный маршрут (`tools/sunrise.py stage`) экспортирует закреплённый коммит без изменения исходного checkout, вставляет сгенерированные сборкой модули, применяет bundle официальным horizon-mixins (с патчем `tools/mixins/narrow-reference-rule.patch`, как в лаунчере) и компилирует изменённый клиент. Для Horizon выберите платформу `DRAIM_TARGET=horizon`:
 
 ```bash
 cargo fmt --all --check
 rustfmt --edition 2024 --check mixins/draimhorizon/*.rs
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
-python3 tools/stage.py
+python3 tools/package_flat.py horizon
+DRAIM_TARGET=horizon python3 tools/sunrise.py smod-check --fetch
+DRAIM_TARGET=horizon python3 tools/sunrise.py stage --sunrise /path/to/horizon --check
 ```
 
-Можно использовать существующие checkouts:
+Horizon checkout должен содержать точный commit; текущая ветка не меняется. Цели хуков берутся из `platforms/horizon/targets.toml` (обновляется командой `freeze`), отличия Horizon Nightly от исходника, под который написан bundle, — в `platforms/horizon/platform.toml` и `platform.d/`.
 
-```bash
-python3 tools/stage.py --horizon /path/to/horizon --mixins /path/to/horizon-mixins
-```
-
-Horizon checkout должен содержать точный commit; текущая ветка не меняется. Mixins checkout должен быть чистым и находиться на точном закреплённом SHA.
+Офлайн-проверка `.hmod` сверяет каждый хук с индексом функций SDK (`sdk-<revision>`, `build-data`). Нативную сборку проверяют так же, как её делает лаунчер: `cargo-horizon-mod build` в сгенерированном проекте `target/horizon/smod/draimhorizon` (инструмент собирается из `crates/cargo-horizon-mod` исходника Horizon).
 
 Проверка компиляции настоящего клиента без ресурсов Minecraft:
 

@@ -7,9 +7,9 @@
 **Install** — Take the files from a release, not from the repository source tree.
 
 - **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.5` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
-- **Horizon**: install the release's `draimhorizons-<version>.hnmod` with a launcher that still builds `.hnmod` mods (0.2.69 or older), then rebuild native mods. Horizon Launcher 0.2.70 and newer refuse `.hnmod` and build the new `.hmod` packages only from a published Horizon mod SDK; the official Nightly `9f42064` has none yet, so no native mod can be built there until Horizon publishes one.
+- **Horizon** (Horizon Launcher 0.2.70 or newer): install the release's `draimhorizons-<version>.hmod`, then rebuild native mods. The launcher builds it against the Mod SDK that Horizon publishes with each Nightly. The old `.hnmod` is no longer produced: those launchers refuse it.
 
-Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `6d765e0` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -17,7 +17,7 @@ Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported through the `.hnmod` (launcher 0.2.69 or older). | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
+| Horizon | Supported. Install the release's `.hmod`. | `6d765e0` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. |
 | Sunrise | Supported (new). Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`); before release it is built by the Sunrise launcher and checked in game. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
@@ -53,6 +53,8 @@ Real in-game chat examples, with normal and compact spacing. Sample player text 
 **Patting** — Aim at a player within 3 blocks and press **K** (rebindable under Options → Mods → Settings) for two gentle pats. Your own arm moves at once. A player running DraimHorizon on the same relay sees your arm move too, plus an optional "*name* patted you" line. **J → Settings → General** sets who may pat you (friends only by default, everyone or nobody) and turns that line on or off. Patting is cosmetic only: it sends no attack, item use or chat. Players without the mod see nothing.
 
 **Friends keep their place** — If a friend's relay key changes (reinstall, new PC, reset data folder) the mod re-pins the new key automatically when the relay shows a single identity for that account, the old key is gone and the same nickname is on the game server's player list. You get a chat notice; remove the friend if it was unexpected. A friend who lost the friendship is invited once and only has to accept. Ambiguous cases are left untouched and shown as "Key changed".
+
+**Important players** — **J → Friends → Important** adds a player by exact name, offline included, and gives them a colour. Press the colour chip beside the **Colour** field for a full picker: a saturation/brightness square, a hue bar, a live `#RRGGBB` readout and a preview, plus eight presets and Done / Cancel [Esc]. Dragging previews the colour and **Done** stores it; a saved player is recoloured then, while a new name keeps the colour until **Save**. You can also click one of the eight swatches or type a `#RRGGBB` value, and the colour paints that player's name in chat while their messages stay visible with global chat off. Friends are always important and need no rule.
 
 **Show invisible entities** — After accepting experimental features, enable **J → QOL → Survival → Show invisible entities** to see invisible players and mobs locally. Off by default. This can violate server rules and lead to a ban; experimental consent does not grant server permission. Models use normal depth testing and view range, not a through-wall overlay. Potion timers, server gameplay and other players' views do not change; the client cannot reveal entities the server does not send. Invisible armour stands and item frames are left alone.
 

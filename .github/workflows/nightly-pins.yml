@@ -32,5 +32,5 @@ jobs:
             echo '```'
             echo "Refresh with \`python tools/compatibility.py --update --horizon PATH\` (Horizon) or"
             echo "\`python tools/compatibility.py --update-sunrise --sunrise PATH\` (Sunrise), then adapt the hooks and"
-            echo "compile the real client (\`tools/stage.py\`, \`tools/sunrise.py stage --check\`)."
+            echo "compile the real client (\`DRAIM_TARGET=horizon python tools/sunrise.py stage --check\`, \`python tools/sunrise.py stage --check\`)."
           } >> "$GITHUB_STEP_SUMMARY"

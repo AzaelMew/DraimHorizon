@@ -59,22 +59,14 @@ jobs:
           python3 tools/test_relay_e2e.py
           python3 tools/test_relay_container.py
           python3 tools/package_relay.py
-      - name: Apply official mixins to exact Horizon source
-        timeout-minutes: 8
-        run: python3 tools/stage.py
-      # Native compilation is checked separately by horizon-compatibility.yml.
-      #- name: Check real Horizon client
-      #  timeout-minutes: 10
-      #  run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features
-      - name: Package and validate native mod
-        timeout-minutes: 5
+      # Native compilation of the modified Horizon client is checked separately by horizon-compatibility.yml.
+      - name: Package and validate the Horizon package (.hmod)
+        # Horizon builds a native mod from this flat project against the Mod SDK published with its Nightly;
+        # the SDK's function index is the offline check of every hook target.
         run: |
-          python3 tools/package.py
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
+          python3 tools/package_flat.py horizon
+          DRAIM_TARGET=horizon python3 tools/sunrise.py smod-check --fetch
       - name: Package and validate the Sunrise package (.smod)
-        # The Horizon .hmod is not attached: Horizon has published no mod SDK for its Nightly yet,
-        # so no launcher can build it (tools/package_flat.py horizon still writes it locally).
         run: |
           python3 tools/package_flat.py sunrise
           python3 tools/sunrise.py smod-check --fetch
@@ -82,8 +74,8 @@ jobs:
         with:
           name: claim-borders-native
           path: |
-            target/draimhorizons-*.hnmod
-            target/draimhorizons-*.hnmod.sha256
+            target/draimhorizons-*.hmod
+            target/draimhorizons-*.hmod.sha256
             target/draimhorizons-*.smod
             target/draimhorizons-*.smod.sha256
             target/draimhorizons-relay-*.tar.gz
