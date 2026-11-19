@@ -7,9 +7,9 @@
 **Install** — Take the files from a release, not from the repository source tree.
 
 - **Sunrise** (Sunrise Launcher 1.0.1 or newer): **Mods → Add from GitHub** with the release link, for example `https://github.com/DraimCiDo/DraimHorizon/releases/tag/v0.41.5` (or `sunrise-launcher mods add-github <release link> --trust-native-code`), then rebuild native mods. The launcher installs the release's `draimhorizons-<version>.smod`.
-- **Horizon**: install the release's `draimhorizons-<version>.hnmod` with a launcher that still builds `.hnmod` mods (0.2.69 or older), then rebuild native mods. Horizon Launcher 0.2.70 and newer refuse `.hnmod` and build the new `.hmod` packages only from a published Horizon mod SDK; the official Nightly `9f42064` has none yet, so no native mod can be built there until Horizon publishes one.
+- **Horizon** (Horizon Launcher 0.2.70 or newer): install the release's `draimhorizons-<version>.hmod`, then rebuild native mods. The launcher builds it against the Mod SDK that Horizon publishes with each Nightly. The old `.hnmod` is no longer produced: those launchers refuse it.
 
-Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `6d765e0` and Sunrise Nightly `2d81263`, both Java 26.3. Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -17,7 +17,7 @@ Target clients are the official Horizon Nightly `9f42064` and Sunrise Nightly `2
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported through the `.hnmod` (launcher 0.2.69 or older). | `9f42064` (`horizon_revision`) | On every push to `main` and before each release: the hooks are applied to that exact source and the real client compiles. |
+| Horizon | Supported. Install the release's `.hmod`. | `6d765e0` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. |
 | Sunrise | Supported (new). Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`); before release it is built by the Sunrise launcher and checked in game. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes

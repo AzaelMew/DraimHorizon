@@ -30,12 +30,33 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "mixins" / "draimhorizon"
-PLATFORM = ROOT / "platforms" / "sunrise"
-# SUNRISE_OUT lets parallel work trees stage into their own folders.
-OUT = Path(os.environ["SUNRISE_OUT"]).resolve() if os.environ.get("SUNRISE_OUT") else ROOT / "target" / "sunrise"
+# The product the bundle is generated for: Sunrise (a fork) or the official Horizon Nightly, whose source
+# has the same layout (areas, generated module lists, typed hook events). DRAIM_TARGET picks it.
+TARGET = os.environ.get("DRAIM_TARGET", "sunrise")
+if TARGET not in ("sunrise", "horizon"):
+    raise SystemExit(f"DRAIM_TARGET must be sunrise or horizon, not {TARGET}")
+S = TARGET
+CLIENT = f"{S}-client"
+CLIENT_SRC = f"crates/{CLIENT}/src"
+GAME_ROOTS = (f"crates/{CLIENT}/src/game.rs", f"crates/{CLIENT}/src/game/")
+MANIFEST = f"{S}-mod.toml"
+PLATFORM = ROOT / "platforms" / S
+# DRAIM_OUT (or the older SUNRISE_OUT) lets parallel work trees stage into their own folders.
+_out = os.environ.get("DRAIM_OUT") or os.environ.get("SUNRISE_OUT")
+OUT = Path(_out).resolve() if _out else ROOT / "target" / S
+
+
+def target_compat():
+    """The pin block of the selected product, in the shape compatibility.json gives Sunrise."""
+    data = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))
+    if S == "sunrise":
+        return data["sunrise"]
+    return dict(repository=data["horizon_repository"], revision=data["horizon_revision"], channel=data["horizon_channel"],
+                mixins_repository=data["horizon_mixins_repository"], mixins_revision=data["horizon_mixins_revision"],
+                mixins_patch=data.get("mixins_patch", "tools/mixins/narrow-reference-rule.patch"))
 
 # Horizon crate -> Sunrise crate. Longest names first so a prefix never wins.
-CRATES = [
+CRATES = [] if S == "horizon" else [
     ("horizon_client_render", "sunrise_client_render"),
     ("horizon_client_core", "sunrise_client_core"),
     ("horizon_client_input", "sunrise_client_input"),
@@ -54,12 +75,12 @@ CRATES = [
     ("horizon-core", "sunrise-core"),
 ]
 CRATE_DIRS = {
-    "sunrise_client": "sunrise-client",
-    "sunrise_client_render": "sunrise-client-render",
-    "sunrise_client_lib": "sunrise-client-lib",
-    "sunrise_client_core": "sunrise-client-core",
-    "sunrise_client_input": "sunrise-client-input",
-    "sunrise_mod_render": "sunrise-mod-render",
+    f"{S}_client": f"{S}-client",
+    f"{S}_client_render": f"{S}-client-render",
+    f"{S}_client_lib": f"{S}-client-lib",
+    f"{S}_client_core": f"{S}-client-core",
+    f"{S}_client_input": f"{S}-client-input",
+    "mod_render" if S == "horizon" else "sunrise_mod_render": f"{S}-mod-render",
 }
 
 
@@ -225,7 +246,7 @@ def choose_candidate(found):
 
 def command_generate(args):
     platform = load_platform()
-    compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+    compat = target_compat()
     manifest = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))
     load_text_rules(platform)
     frozen_path = PLATFORM / "targets.toml"
@@ -310,8 +331,8 @@ def command_generate(args):
 # Rust module paths of the non-`game.rs` files modules are mirrored into (`network/` and `runtime/`
 # are areas, not modules), so a bundle can be generated without a Sunrise checkout.
 PLATFORM_MODULE_PATHS = {
-    "crates/sunrise-client/src/game/network/remote/mod.rs": "game::remote",
-    "crates/sunrise-client/src/game/runtime/agent/mod.rs": "game::agent",
+    f"{CLIENT_SRC}/game/network/remote/mod.rs": "game::remote",
+    f"{CLIENT_SRC}/game/runtime/agent/mod.rs": "game::agent",
 }
 GAME_IMPL = re.compile(r"^impl (?P<path>(?:super::)?Game)<'_> \{\n", re.M)
 METHOD = re.compile(r"^(?P<doc>(?:    ///[^\n]*\n)*)    (?:pub(?:\([^)]*\))? )?(?P<sig>fn [^{]*?)\s*\{", re.M | re.S)
@@ -362,12 +383,12 @@ def traitify_game_impls(out, modules, sunrise):
         path.write_text(traitify(text, trait), encoding="utf-8")
         file = module["file"]
         known = PLATFORM_MODULE_PATHS.get(file)
-        if file == "crates/sunrise-client/src/game.rs":
+        if file == f"{CLIENT_SRC}/game.rs":
             owner = ["game"]
         elif known:
             owner = known.split("::")
         elif sunrise is not None:
-            owner = module_path(Path(sunrise) / "crates" / "sunrise-client", Path(sunrise) / file)
+            owner = module_path(Path(sunrise) / "crates" / CLIENT, Path(sunrise) / file)
         else:
             raise SystemExit(f"{module['id']}: pass --sunrise to place its Game trait")
         traits.append("::".join(["crate", *owner, module["name"], trait]))
@@ -388,7 +409,7 @@ def import_traits(out, modules, injections, traits):
         path.write_text(uses + path.read_text(encoding="utf-8"), encoding="utf-8")
     for injection in injections:
         # Helpers below the game crate cannot name `crate::game`.
-        if not injection["target"].startswith("sunrise_client::"):
+        if not injection["target"].startswith(f"{S}_client::"):
             continue
         path = out / injection["helper"]
         text = path.read_text(encoding="utf-8")
@@ -407,7 +428,6 @@ SMOD_GAME = "26.3"  # compatibility.json has no game field; override with sunris
 SMOD_CRATE = "mod-draimhorizon"
 RELAY = "claim_borders_relay_client"
 RELAY_PATH = f"crate::game::{RELAY}"
-GAME_ROOTS = ("crates/sunrise-client/src/game.rs", "crates/sunrise-client/src/game/")
 ROOTS_OLD = "rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned())"
 ROOTS_NEW = (
     "rustls::RootCertStore {\n"
@@ -428,7 +448,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-sunrise-mod-api = {{ path = ".sunrise/sdk/api/crates/sunrise-mod-api" }}
+{S}-mod-api = {{ path = ".{S}/sdk/api/crates/{S}-mod-api" }}
 webpki-roots = "=1.0.10"
 rustls-pki-types = {{ version = "=1.15.1", features = ["web"] }}
 zeroize = "=1.9.1"
@@ -489,7 +509,7 @@ def smp_brand_parts():
     """The brand adapter's mixins (helpers under src/mixins/smp/, calling this crate) and the SDK
     internals they read, from the adapter's declaration in platforms/sunrise/smp-compat."""
     declared = tomllib.loads((SMP_BRAND / "sunrise-mod.toml").read_text(encoding="utf-8"))
-    pinned = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]["revision"]
+    pinned = target_compat()["revision"]
     if declared["native"]["sunrise"] != pinned:
         # Its internals fingerprints were checked against one build: recheck them before moving the pin.
         raise SystemExit(f"{SMP_BRAND / 'sunrise-mod.toml'} pins Sunrise {declared['native']['sunrise']}, "
@@ -524,7 +544,7 @@ def smod_manifest(bundle, compat, injections, modules, internals=()):
     lines += [
         "[native]",
         f"game = {toml_value(compat.get('game', SMOD_GAME))}",
-        f"sunrise = {toml_value(compat['revision'])}",
+        f"{S} = {toml_value(compat['revision'])}",
         f"mixins = {toml_value(compat['mixins_revision'])}",
         "",
     ]
@@ -542,7 +562,7 @@ def smod_manifest(bundle, compat, injections, modules, internals=()):
 
 def command_smod(args):
     command_generate(args)
-    compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+    compat = target_compat()
     generated = OUT / "mods" / "draimhorizon"
     bundle = tomllib.loads((generated / "horizon-mixin.toml").read_text(encoding="utf-8"))
     out = OUT / "smod" / "draimhorizon"
@@ -584,22 +604,23 @@ def command_smod(args):
     (out / "src" / "modules" / f"{RELAY}.rs").write_text(relay, encoding="utf-8")
     sources[f"src/modules/{RELAY}.rs"] = relay
     modules.append(dict(
-        id=RELAY, file="crates/sunrise-client/src/game.rs", name=RELAY,
+        id=RELAY, file=f"{CLIENT_SRC}/game.rs", name=RELAY,
         source=f"src/modules/{RELAY}.rs", visibility="pub(crate)",
     ))
     # The Horizon SMP login brand: two more mixins on the Sunrise network code, and their shared state
     # as a module of this crate, so no companion mod is needed.
-    brand_mixins, brand_helpers, internals = smp_brand_parts()
+    brand_mixins, brand_helpers, internals = smp_brand_parts() if S == "sunrise" else ([], {}, [])
     for name, text in brand_helpers.items():
         (out / name).parent.mkdir(parents=True, exist_ok=True)
         (out / name).write_text(text, encoding="utf-8")
         sources[name] = text
     injections += brand_mixins
-    (out / "src" / SMP_BRAND_MODULE).mkdir()
-    (out / "src" / f"{SMP_BRAND_MODULE}.rs").write_text(SMP_BRAND_ROOT, encoding="utf-8")
-    for part in ("handshake.rs", "policy.rs"):
-        shutil.copyfile(SMP_BRAND / "src" / part, out / "src" / SMP_BRAND_MODULE / part)
-    (out / "sunrise-mod.toml").write_text(smod_manifest(bundle, compat, injections, modules, internals), encoding="utf-8")
+    if S == "sunrise":
+        (out / "src" / SMP_BRAND_MODULE).mkdir()
+        (out / "src" / f"{SMP_BRAND_MODULE}.rs").write_text(SMP_BRAND_ROOT, encoding="utf-8")
+        for part in ("handshake.rs", "policy.rs"):
+            shutil.copyfile(SMP_BRAND / "src" / part, out / "src" / SMP_BRAND_MODULE / part)
+    (out / MANIFEST).write_text(smod_manifest(bundle, compat, injections, modules, internals), encoding="utf-8")
     (out / "Cargo.toml").write_text(SMOD_CARGO.replace("{version}", bundle["mod"]["version"]), encoding="utf-8")
     lock = (PLATFORM / "smod" / "Cargo.lock").read_text(encoding="utf-8")
     lock = re.sub(r'name = "mod-draim-probe"\nversion = "[^"]*"', f'name = "{SMOD_CRATE}"\nversion = "{bundle["mod"]["version"]}"', lock)
@@ -607,7 +628,8 @@ def command_smod(args):
     crate_files = sorted((generated / "crate").glob("*.rs"))
     lib = (PLATFORM / "smod" / "lib.rs").read_text(encoding="utf-8")
     lib += "".join(f"pub mod {path.stem};\n" for path in crate_files)
-    lib += f"pub mod {SMP_BRAND_MODULE};\n"
+    if S == "sunrise":
+        lib += f"pub mod {SMP_BRAND_MODULE};\n"
     (out / "src" / "lib.rs").write_text(lib, encoding="utf-8")
     # State and hooks that only need public items (and that lower-crate helpers call) live in the mod crate.
     for path in crate_files:
@@ -615,7 +637,7 @@ def command_smod(args):
     print(json.dumps(dict(smod=str(out), mixins=len(injections), modules=len(modules), **smod_counts(modules, sources)), indent=2))
 
 
-SDK_REPOSITORY = "https://github.com/sunrise-org/sunrise"
+SDK_REPOSITORY = "https://github.com/sunrise-org/sunrise" if S == "sunrise" else "https://github.com/horizon-rust/horizon"
 SDK_TARGET = "x86_64-unknown-linux-gnu"
 
 
@@ -643,7 +665,11 @@ def fetch_sdk(compat, directory):
         if line.strip():
             digest, name = line.split(None, 1)
             sums[name.strip().lstrip("*")] = digest
-    for name, unpack in (("sdk.json", None), ("build-data.tar.xz", "build-data"), (f"tool-{SDK_TARGET}.tar.xz", "tool")):
+    # Horizon's SDK release carries no prebuilt cargo-horizon-mod: its manifest rules are checked here instead.
+    assets = [("sdk.json", None), ("build-data.tar.xz", "build-data")]
+    if S == "sunrise":
+        assets.append((f"tool-{SDK_TARGET}.tar.xz", "tool"))
+    for name, unpack in assets:
         if name not in sums:
             raise SystemExit(f"SHA256SUMS of sdk-{compat['revision']} does not list {name}")
         path = directory / name
@@ -656,8 +682,9 @@ def fetch_sdk(compat, directory):
             target.mkdir(exist_ok=True)
             with tarfile.open(path) as archive:
                 archive.extractall(target, filter="data")
-    tool = directory / "tool" / "cargo-sunrise-mod"
-    tool.chmod(tool.stat().st_mode | 0o111)
+    if S == "sunrise":
+        tool = directory / "tool" / f"cargo-{S}-mod"
+        tool.chmod(tool.stat().st_mode | 0o111)
 
 
 def function_key(target):
@@ -666,7 +693,7 @@ def function_key(target):
 
 
 def check_smod_manifest(manifest, functions, refused, names, internal_catalog=None):
-    """Problems of one sunrise-mod.toml against the SDK's function index and the package's files."""
+    """Problems of one package manifest against the SDK's function index and the package's files."""
     problems = []
     if manifest.get("internals"):
         if internal_catalog is None:
@@ -688,7 +715,7 @@ def check_smod_manifest(manifest, functions, refused, names, internal_catalog=No
             problems.append(f"mixin {row['id']}: helper {row['helper']} is not in the package")
     for row in native.get("module", []):
         if not row["file"].startswith(GAME_ROOTS):
-            problems.append(f"module {row['id']}: {row['file']} is outside the sunrise_client game crate")
+            problems.append(f"module {row['id']}: {row['file']} is outside the {S}_client game crate")
         if row["source"] not in names:
             problems.append(f"module {row['id']}: source {row['source']} is not in the package")
     return problems
@@ -696,33 +723,34 @@ def check_smod_manifest(manifest, functions, refused, names, internal_catalog=No
 
 def command_smod_check(args):
     """Offline proxy for the launcher's validation of the packed .smod."""
-    compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+    compat = target_compat()
     version = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))["mod"]["version"]
-    smod = args.smod or ROOT / "target" / f"draimhorizons-{version}.smod"
+    smod = args.smod or ROOT / "target" / f"draimhorizons-{version}.{'smod' if S == 'sunrise' else 'hmod'}"
     if not smod.is_file():
-        raise SystemExit(f"{smod} not found: run `python tools/package_flat.py sunrise` first")
+        raise SystemExit(f"{smod} not found: run `python tools/package_flat.py {S}` first")
     sdk = args.sdk or sdk_directory(compat)
     if args.fetch:
         fetch_sdk(compat, sdk)
-    tool, data = sdk / "tool" / "cargo-sunrise-mod", sdk / "build-data" / "functions.json"
-    if not tool.is_file() or not data.is_file():
+    tool, data = sdk / "tool" / f"cargo-{S}-mod", sdk / "build-data" / "functions.json"
+    if not data.is_file() or (S == "sunrise" and not tool.is_file()):
         raise SystemExit(f"no SDK at {sdk}: pass --fetch to download sdk-{compat['revision']}")
     build = json.loads(data.read_text(encoding="utf-8"))
     if build["build"]["commit"] != compat["revision"]:
         raise SystemExit(f"{data} is for {build['build']['commit']}, not the pinned {compat['revision']}")
-    result = subprocess.run([str(tool), "check", str(smod), "--json"], capture_output=True, text=True)
-    print(result.stdout.strip())
-    if result.returncode != 0 or not json.loads(result.stdout or "{}").get("ok"):
-        raise SystemExit(f"cargo-sunrise-mod check refused {smod.name}:\n{result.stderr.strip()}")
+    if tool.is_file():
+        result = subprocess.run([str(tool), "check", str(smod), "--json"], capture_output=True, text=True)
+        print(result.stdout.strip())
+        if result.returncode != 0 or not json.loads(result.stdout or "{}").get("ok"):
+            raise SystemExit(f"cargo-{S}-mod check refused {smod.name}:\n{result.stderr.strip()}")
     with zipfile.ZipFile(smod) as archive:
-        manifest = tomllib.loads(archive.read("sunrise-mod.toml").decode("utf-8"))
+        manifest = tomllib.loads(archive.read(MANIFEST).decode("utf-8"))
         names = set(archive.namelist())
     internal_path = data.parent / "internals.json"
     internal_catalog = json.loads(internal_path.read_text(encoding="utf-8")) if internal_path.is_file() else None
     problems = check_smod_manifest(manifest, build["functions"], build["refused"], names, internal_catalog)
     if internal_catalog is not None and internal_catalog.get("build", {}).get("commit") != compat["revision"]:
         problems.append("the internals catalog belongs to another SDK build")
-    if manifest["native"]["sunrise"] != compat["revision"] or manifest["native"]["mixins"] != compat["mixins_revision"]:
+    if manifest["native"][S] != compat["revision"] or manifest["native"]["mixins"] != compat["mixins_revision"]:
         problems.append("the package pins differ from compatibility.json")
     if problems:
         raise SystemExit("\n".join(problems))
@@ -769,16 +797,16 @@ def export_sunrise(sunrise, revision, destination):
 
 
 def generated_directory(target):
-    found = sorted(target.glob("*/build/sunrise-client-*/out/game_modules.rs"))
+    found = sorted(target.glob(f"*/build/{CLIENT}-*/out/game_modules.rs"))
     if not found:
-        raise SystemExit("no generated game_modules.rs: build sunrise-client once so its build script runs")
+        raise SystemExit("no generated game_modules.rs: build {CLIENT} once so its build script runs")
     return found[-1].parent
 
 
 def inline_generated(root, generated):
     """Replace the build-script includes with their content, paths made relative to the includer."""
     count = 0
-    for path in sorted((root / "crates/sunrise-client/src").rglob("*.rs")):
+    for path in sorted((root / CLIENT_SRC).rglob("*.rs")):
         text = path.read_text(encoding="utf-8")
         if "OUT_DIR" not in text:
             continue
@@ -813,7 +841,7 @@ PATH_MOD = re.compile(
 def flatten_paths(root):
     """The mixin tool refuses `#[path]` with `..`. Sunrise uses it to pull sibling folders into a module:
     copy those files next to the includer; modules reaching outside the crate (test fixtures) are dropped."""
-    src = (root / "crates/sunrise-client/src").resolve()
+    src = (root / CLIENT_SRC).resolve()
     copied = dropped = 0
     for path in sorted(src.rglob("*.rs")):
         text = path.read_text(encoding="utf-8")
@@ -847,7 +875,7 @@ LOCAL_INCLUDE = re.compile(r'^[ \t]*include!\("(?P<file>[^"]+\.rs)"\);[ \t]*$', 
 
 def inline_local_includes(root):
     """`include!("file.rs")` is invisible to the mixin tool; paste the file where it is included."""
-    src = root / "crates/sunrise-client/src"
+    src = root / CLIENT_SRC
     pasted = 0
     for path in sorted(src.rglob("*.rs")):
         if path.name.endswith("_tests.rs") or not path.exists():
@@ -870,7 +898,7 @@ def inline_local_includes(root):
     return pasted
 
 
-MARKER = re.compile(r"^[ \t]*#\[sunrise_mod_api_macros::replaceable\][ \t]*\n", re.M)
+MARKER = re.compile(rf"^[ \t]*#\[{S}_mod_api_macros::replaceable\][ \t]*\n", re.M)
 
 
 def strip_markers(root):
@@ -890,7 +918,7 @@ def strip_markers(root):
 
 def ensure_mixins_tool(compat):
     """The mixin tool Sunrise runs: the pinned horizon-mixins revision plus Sunrise's one patch."""
-    work = ROOT / ".local" / "horizon-mixins-sunrise"
+    work = ROOT / ".local" / f"horizon-mixins-{S}"
     revision = compat["mixins_revision"]
     if not (work / ".git").exists():
         work.parent.mkdir(parents=True, exist_ok=True)
@@ -930,7 +958,7 @@ def command_freeze(args):
 
 
 def command_stage(args):
-    compat = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
+    compat = target_compat()
     revision = compat["revision"]
     original = OUT / "original" / revision
     indexed = OUT / "indexed" / revision
@@ -938,7 +966,7 @@ def command_stage(args):
         export_sunrise(args.sunrise, revision, original)
     check_target = OUT / "check-original"
     if args.generated is None:
-        run(["cargo", "check", "-p", "sunrise-client", "--lib", "--locked", "-j", str(args.jobs),
+        run(["cargo", "check", "-p", CLIENT, "--lib", "--locked", "-j", str(args.jobs),
              "--target-dir", str(check_target)], cwd=original)
         generated = generated_directory(check_target)
     else:
@@ -955,8 +983,8 @@ def command_stage(args):
     for path in (OUT / "mods").rglob("*"):
         if path.is_file() and path.suffix in (".rs", ".toml"):
             text = path.read_text(encoding="utf-8")
-            if "sunrise_mod_render::" in text:
-                path.write_text(text.replace("sunrise_mod_render::", "mod_render::"), encoding="utf-8")
+            if f"{S}_mod_render::" in text:
+                path.write_text(text.replace(f"{S}_mod_render::", "mod_render::"), encoding="utf-8")
     retarget_for_stage(OUT / "mods")
     tool = ensure_mixins_tool(compat)
     cli_target = OUT / "mixins-cli"
@@ -975,9 +1003,9 @@ def command_stage(args):
     relax_for_launcher_access(OUT / "modded")
     if args.check:
         # Not --locked: the staged workspace gains the mod crate, so its lock file changes.
-        run(["cargo", "check", "-p", "sunrise-client", "--lib", "-j", str(args.jobs),
+        run(["cargo", "check", "-p", CLIENT, "--lib", "-j", str(args.jobs),
              "--target-dir", str(OUT / "check-modded")], cwd=OUT / "modded")
-        print("sunrise-client compiles with the bundle applied")
+        print(f"{CLIENT} compiles with the bundle applied")
 
 
 # The launcher (smod) and the source stage name a few targets differently. The launcher's function
@@ -1002,12 +1030,12 @@ def retarget_for_stage(mods):
 # What the launcher grants a native mod and the source stage must grant by patching the Sunrise source
 # (file, pattern, replacement, reason). Without them the check fails on access, not on a bad target.
 LAUNCHER_ACCESS = [
-    ("crates/sunrise-client/src/lib.rs", r"^#!\[forbid\(unsafe_code\)\]\n", "",
+    (f"crates/{CLIENT}/src/lib.rs", r"^#!\[forbid\(unsafe_code\)\]\n", "",
      "the launcher compiles mod modules without this lint; ghost_render.rs erases a pointer with `unsafe`"),
-    ("crates/sunrise-client-render/src/minimap.rs", r"^    tiles: FxHashMap", "    pub tiles: FxHashMap",
+    (f"crates/{CLIENT}-render/src/minimap.rs", r"^    tiles: FxHashMap", "    pub tiles: FxHashMap",
      "the launcher's internals expose Minimap::tiles to terrain_bridge.rs"),
-    ("crates/sunrise-client-render/src/minimap.rs", r"^struct Tile \{", "pub struct Tile {", "...and its Tile type"),
-    ("crates/sunrise-client-render/src/minimap.rs", r"^    (color|height|depth|scanned): ", r"    pub \1: ", "...and the Tile fields it reads"),
+    (f"crates/{CLIENT}-render/src/minimap.rs", r"^struct Tile \{", "pub struct Tile {", "...and its Tile type"),
+    (f"crates/{CLIENT}-render/src/minimap.rs", r"^    (color|height|depth|scanned): ", r"    pub \1: ", "...and the Tile fields it reads"),
 ]
 
 
@@ -1030,7 +1058,7 @@ def add_mod_crate(modded, bundle, compat):
     version = tomllib.loads((bundle / "horizon-mixin.toml").read_text(encoding="utf-8"))["mod"]["version"]
     (crate / "Cargo.toml").write_text(
         f'[package]\nname = "mod-draimhorizon"\nversion = "{version}"\nedition = "2024"\npublish = false\n\n'
-        '[dependencies]\nmod_api = { package = "sunrise-mod-api", path = "../sunrise-mod-api" }\n'
+        '[dependencies]\nmod_api = { package = "' + f'{S}-mod-api", path = "../{S}-mod-api" }}\n'
         'webpki-roots = "1"\nrustls-pki-types = { version = "1", features = ["web"] }\nzeroize = "1"\n',
         encoding="utf-8")
     files = sorted((bundle / "crate").glob("*.rs"))
@@ -1040,8 +1068,8 @@ def add_mod_crate(modded, bundle, compat):
         shutil.copyfile(path, crate / "src" / path.name)
     users = {p.relative_to(modded / "crates").parts[0] for p in (modded / "crates").glob("*/src/**/*.rs")
              if "mod_draimhorizon" in p.read_text(encoding="utf-8", errors="ignore")} - {"mod-draimhorizon"}
-    # sunrise-client-lib compiles sunrise-client's files through `#[path]`, so it needs the dependency too.
-    users |= {"sunrise-client-lib"} if "sunrise-client" in users else set()
+    # <product>-client-lib compiles <product>-client's files through `#[path]`, so it needs the dependency too.
+    users |= {f"{CLIENT}-lib"} if CLIENT in users else set()
     for name in sorted(users):
         manifest = modded / "crates" / name / "Cargo.toml"
         text = manifest.read_text(encoding="utf-8")
@@ -1054,11 +1082,11 @@ def add_mod_crate(modded, bundle, compat):
 def prepare_build(modded):
     """The build script of sunrise-client regenerates the includes that were pasted into the
     source for the mixin tool; the pasted copies are the source of truth for this check."""
-    script = modded / "crates/sunrise-client/build.rs"
+    script = modded / "crates" / CLIENT / "build.rs"
     text = script.read_text(encoding="utf-8")
-    call = re.search(r"    sunrise_mod_api_gen::generate\([^;]*\)\s*\.expect\(\"generating native mod API\"\);\n", text)
+    call = re.search(rf"    {S}_mod_api_gen::generate\([^;]*\)\s*\.expect\(\"generating native mod API\"\);\n", text)
     if call is None:
-        raise SystemExit("sunrise-client/build.rs changed: update prepare_build")
+        raise SystemExit(f"{CLIENT}/build.rs changed: update prepare_build")
     script.write_text(text.replace(call[0], ""), encoding="utf-8")
 
 

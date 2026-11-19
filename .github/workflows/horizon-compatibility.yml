@@ -1,9 +1,15 @@
 name: Validate official Horizon Nightly client
+# Horizon builds native mods from a flat project against its prebuilt game (the Mod SDK it publishes with
+# each Nightly), so two routes are checked:
+#  - hmod:  the shipping route. Generate the flat native project, pack the .hmod and validate it offline
+#           against the SDK's function index (what the launcher validates).
+#  - stage: the source route. Apply the bundle to the pinned Horizon source and compile horizon-client.
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/horizon-compatibility.yml'
+      - 'platforms/horizon/**'
       - 'mixins/**'
       - 'src/**'
       - 'relay/**'
@@ -40,16 +46,6 @@ jobs:
           python-version: '3.12'
       - name: Install Rust
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
-      - name: Restore build cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/mixins-cli
-            target/horizon-check
-          key: horizon-nightly-current-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: horizon-nightly-current-${{ runner.os }}-
       - name: Check requested source pin
         run: |
           python3 - <<'PY'
@@ -58,7 +54,7 @@ jobs:
           compat=json.loads(Path("compatibility.json").read_text())
           assert len(compat["horizon_revision"]) == 40
           assert compat["horizon_channel"] == "nightly"
-          assert compat["horizon_mixins_revision"]=="e8cd0aa38cffef49cb2e088ef716baa107148c02"
+          assert compat["horizon_mixins_revision"]=="e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
           assert compat["horizon_revision"] in Path("mixins/draimhorizon/horizon-mixin.toml").read_text()
           print("COMPATIBILITY_JSON "+json.dumps(compat,separators=(",",":")))
           PY
@@ -73,20 +69,36 @@ jobs:
       - name: Smoke test public translation provider
         continue-on-error: true
         run: cargo test --locked -p claim-borders-relay-client public_provider_translates_fixed_greeting -- --ignored --nocapture
-      - name: Stage official mixins
-        run: python3 tools/stage.py 2>&1 | tee compatibility-stage.log
-      - name: Test the pinned indexer correction
+      - name: Tool tests
+        run: python3 -m unittest discover -s tools/tests
+      - name: Generate the flat Horizon project and pack the .hmod
+        run: python3 tools/package_flat.py horizon
+      - name: Validate the .hmod offline against the pinned SDK (SHA256SUMS verified)
+        run: DRAIM_TARGET=horizon python3 tools/sunrise.py smod-check --fetch 2>&1 | tee horizon-hmod-check.log
+      - name: Install the headers the Horizon client links against
         run: |
-          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-core
-          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-cli --test integration crate_level_built_in_attributes_do_not_make_the_root_a_macro_module
-          cargo test --manifest-path .local/horizon-mixins/Cargo.toml --target-dir target/mixins-cli --locked -p horizon-mixins-cli --test integration known_tool_attributes_pass_and_other_two_segment_attributes_still_fail
-      - name: Compile real Horizon client
-        run: cargo check --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p horizon-client --bin horizon-client --no-default-features 2>&1 | tee compatibility-client.log
-      - name: Validate package
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/horizon/check-original
+            target/horizon/check-modded
+            target/horizon/mixins-cli
+          key: horizon-nightly-current-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: horizon-nightly-current-${{ runner.os }}-
+      - name: Fetch the pinned Horizon Nightly
         run: |
-          python3 tools/package.py
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')"
-          cargo run --manifest-path target/mixins/modded/Cargo.toml --target-dir target/horizon-check --locked -p cargo-horizon-mod -- check "target/draimhorizons-${version}.hnmod" --json
+          revision="$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_revision"])')"
+          git init .local/horizon
+          git -C .local/horizon remote add origin https://github.com/horizon-rust/horizon
+          git -C .local/horizon fetch --depth 1 origin "$revision"
+          git -C .local/horizon checkout --detach "$revision"
+      - name: Stage the bundle and compile the modified Horizon client
+        run: DRAIM_TARGET=horizon python3 tools/sunrise.py stage --sunrise .local/horizon --check --jobs 3 2>&1 | tee compatibility-client.log
       - name: Save build cache
         if: always()
         uses: actions/cache/save@v4
@@ -94,8 +106,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target/mixins-cli
-            target/horizon-check
+            target/horizon/check-original
+            target/horizon/check-modded
+            target/horizon/mixins-cli
           key: horizon-nightly-current-${{ runner.os }}-${{ github.run_id }}
       - name: Preserve diagnostic outputs
         if: always()
@@ -104,7 +117,8 @@ jobs:
           name: horizon-nightly-current-check
           path: |
             compatibility.json
+            horizon-hmod-check.log
             compatibility-*.log
-            target/mixins/plan-output.json
-            target/draimhorizons-*.hnmod
-            target/draimhorizons-*.hnmod.sha256
+            target/horizon/plan.json
+            target/draimhorizons-*.hmod
+            target/draimhorizons-*.hmod.sha256

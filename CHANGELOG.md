@@ -1,5 +1,13 @@
 # История версий
 
+## 0.42.0
+
+- **Horizon: the mod follows the official Nightly `6d765e0` again, and ships as a `.hmod`.** The Nightly moved its game code into areas, replaced the hand-written native hooks with typed events and builds native mods from a flat project against a prebuilt game (it publishes the Mod SDK `sdk-6d765e0…` with each Nightly). The old stage-and-`.hnmod` route could not follow, and every Horizon check on `main` failed on the stale `9f42064` pin. The `.hnmod` is no longer produced; current launchers refuse it.
+- Horizon now uses the route Sunrise already had. `tools/sunrise.py` selects its product with `DRAIM_TARGET=horizon|sunrise`; `platforms/horizon` holds the retargeted hooks, overlays and mod crate entry, derived from the shared bundle. `python tools/package_flat.py horizon` writes `draimhorizons-<version>.hmod`, `DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch` checks every hook against the SDK's function index, and `... stage --check` compiles the modified `horizon-client`. CI (`horizon-compatibility.yml`, `release.yml`) runs those and attaches the `.hmod` and `.smod` to a release. `tools/stage.py` and `tools/package.py` are removed.
+- horizon-mixins moves to `e59da90` with the launcher's `narrow-reference-rule` patch (`tools/mixins/`), the pin this Nightly's SDK records.
+- Checked locally on the exact Nightly: the package passes the launcher's own reader (`cargo-horizon-mod check`) and a native `cargo-horizon-mod build` against the SDK, and the modified client compiles. It has not been run in game.
+- **Not ported yet on Horizon:** the third-person patting arm (`pat-arm`; Horizon's `BodyPose` hook is the route) and the two map images of the World map and Seed Map (the HUD atlas has no mod slot any more and runtime sprites stop at 256 px). See `platforms/horizon/README.md`.
+
 ## 0.41.6
 
 - Fixed Sunrise Launcher `E_INTERNAL_MISSING` for `sunrise_client_lib::net::ingress::Producer`. Removed five `shape_only` layout records from the SMP adapter's declared-internals table; only the exposed `Session` declaration is emitted into the main `.smod`. The native helpers and brand policy are unchanged.

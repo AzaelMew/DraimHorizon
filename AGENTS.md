@@ -8,10 +8,10 @@ Use skills and subagents only when explicitly requested by the user.
 
 - Check Git status, DraimHorizon remote main and release tags. Preserve local changes before updating.
 - Read relevant symbols and bounded ranges with rg. Source and compatibility.json take precedence over old prose.
-- This is a native Rust mod for Horizon. Bundle ID is draimhorizon. Distribution name is DraimHorizon. Settings/data namespace remains claim_borders through runtime::SETTINGS_ID; do not change it when changing the launcher identity. Release artifacts: `.hnmod` (Horizon, launchers up to 0.2.69) and the flat `.smod` (Sunrise) from `tools/package_flat.py sunrise`, which is `tools/sunrise.py smod`'s project. `tools/package_flat.py horizon` writes a flat `.hmod`, but it is not released until Horizon publishes a mod SDK for its Nightly.
+- This is a native Rust mod for Horizon. Bundle ID is draimhorizon. Distribution name is DraimHorizon. Settings/data namespace remains claim_borders through runtime::SETTINGS_ID; do not change it when changing the launcher identity. Release artifacts: the flat `.hmod` (Horizon) and `.smod` (Sunrise) from `tools/package_flat.py horizon|sunrise`, each `tools/sunrise.py smod`'s project for that platform (`DRAIM_TARGET=horizon|sunrise`; the shared bundle is written against the older Horizon source and `platforms/<platform>` translates it). The `.hnmod` route was removed: current launchers refuse it.
 - Always use the latest **official Horizon Nightly release**: https://github.com/horizon-rust/horizon/releases/tag/nightly. Never select Horizon main, a nightly/build branch or the stable releases/latest endpoint as the target. A Nightly can include selected PRs, so its source may differ from main.
 - Resolve the official nightly tag to its full source commit SHA (peel annotated tags); keep that exact tested SHA and source hashes in compatibility.json with horizon_channel = nightly. Do not put a mutable tag or branch in horizon_revision.
-- Before every task and release run python tools/compatibility.py. If the published Nightly differs, run python tools/compatibility.py --update --horizon PATH, adapt the hooks and compile the real client. Never publish with a stale Nightly pin or silently fall back to main. Keep the independent horizon-mixins pin verified too.
+- Before every task and release run python tools/compatibility.py. If the published Nightly differs, run python tools/compatibility.py --update --horizon PATH, refresh `platforms/horizon/targets.toml` (`DRAIM_TARGET=horizon python tools/sunrise.py freeze --sunrise TREE`), adapt the hooks, check the `.hmod` with `smod-check --fetch` and compile the real client with `DRAIM_TARGET=horizon python tools/sunrise.py stage --sunrise PATH --check`. Never publish with a stale Nightly pin or silently fall back to main. Keep the independent horizon-mixins pin verified too.
 - Use the existing toolchain. Keep Windows file operations within checked paths, use -LiteralPath and UTF-8, and preserve system configuration.
 
 ## Navigation
@@ -30,7 +30,8 @@ Use skills and subagents only when explicitly requested by the user.
 | economy*.rs / inventory*.rs / waypoint*.rs | Trading, item tools and waypoints |
 | relay/ | Independently deployed Python WebSocket service |
 | tools/version.py | Synchronized mod version manager |
-| tools/stage.py / tools/package.py | Pinned mixin application and bundle packaging |
+| tools/sunrise.py / tools/package_flat.py | Per-platform bundle generation (`DRAIM_TARGET`), source stage, SDK check and `.hmod`/`.smod` packaging |
+| platforms/horizon, platforms/sunrise | Hook retargets, overlays and mod-crate entry per platform |
 | tools/package_relay.py | Portable relay archive without secrets |
 | .github/workflows/ | Runtime, native-client and publication checks |
 

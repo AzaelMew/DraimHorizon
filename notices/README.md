@@ -1,6 +1,6 @@
 # Third-party tooling
 
-`tools/package.py` and `tools/stage.py` are adapted from the MIT-licensed
+The source-export and staging code in `tools/sunrise.py` (originally `tools/package.py` and `tools/stage.py`, now removed) descends from the MIT-licensed
 [horizon-native-mod-template](https://github.com/horizon-rust/horizon-native-mod-template),
 revision `cc8ce2d896782099abfa9f0abf26fa80c9e4bddb` (`tools/package.py` and
 `tools/horizon.py`). The original packaging approach credits levzzz5154's

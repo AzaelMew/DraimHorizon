@@ -1,0 +1,27 @@
+# Client command completion, Options > Mods key rows and the settings button.
+# `commands` and the key rows live in the mod crate (Hooks::register_client_commands / register);
+# the settings button is a registered toggle whose change opens the mod menu.
+
+[injection.commands]
+drop = true
+reason = "client commands are registered by Hooks::register_client_commands (overlay/crate/mod_entry.rs)"
+
+[injection.list]
+drop = true
+reason = "the Options > Mods row comes from horizon-mod.toml; key rows from Hooks::register (overlay/crate/mod_entry.rs)"
+
+[injection.menu-options]
+drop = true
+reason = "the settings button is the open_menu toggle registered in overlay/crate/mod_entry.rs"
+
+[injection.menu-options-click]
+drop = false
+target = "horizon_client::game::native_hooks::base::Game<'_>::native_setting_changed"
+kind = "HEAD"
+cancellable = true
+helper = "mod_entry/settings_toggle_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "mod_id", ty = "&str", value = "mod_id" },
+  { name = "key", ty = "&str", value = "key" },
+]
