@@ -79,6 +79,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      # The cache key carries the pins: build scripts record the paths of the exported source, so a cache
+      # from another Nightly must never be restored (it failed with `discovering ingredient tests`).
       - name: Restore build cache
         uses: actions/cache/restore@v4
         with:
@@ -88,8 +90,8 @@ jobs:
             target/horizon/check-original
             target/horizon/check-modded
             target/horizon/mixins-cli
-          key: horizon-nightly-current-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: horizon-nightly-current-${{ runner.os }}-
+          key: horizon-nightly-${{ runner.os }}-${{ hashFiles('compatibility.json') }}-${{ github.run_id }}
+          restore-keys: horizon-nightly-${{ runner.os }}-${{ hashFiles('compatibility.json') }}-
       - name: Fetch the pinned Horizon Nightly
         run: |
           revision="$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_revision"])')"
@@ -109,7 +111,7 @@ jobs:
             target/horizon/check-original
             target/horizon/check-modded
             target/horizon/mixins-cli
-          key: horizon-nightly-current-${{ runner.os }}-${{ github.run_id }}
+          key: horizon-nightly-${{ runner.os }}-${{ hashFiles('compatibility.json') }}-${{ github.run_id }}
       - name: Preserve diagnostic outputs
         if: always()
         uses: actions/upload-artifact@v4
