@@ -16,6 +16,15 @@ DRAIM_TARGET=horizon python tools/sunrise.py freeze --sunrise TREE          # re
 - `smod/` - the mod crate entry (`lib.rs`) and the lock file its registry dependencies are pinned with.
 - `targets.toml` - frozen hook targets, so a package can be generated without a Horizon checkout.
 
+## Launcher build
+
+The launcher compiles each hooked function with its module's imports in a separate crate. Items the game keeps
+`pub(crate)` are out of reach there, so `overlay/shims/` re-exports them under the game's module names
+(`launcher_only`: the source stage uses the real modules). The relay's key-exchange crates live in the mod crate
+(`HORIZON_CRYPTO` in `tools/sunrise.py`). `smod/Cargo.lock` is the game's `Cargo.lock` pruned to the mod crate:
+copy the game's lock next to a copy of the project without its `horizon-mod-api` dependency and run
+`cargo metadata`. Check with `horizon-launcher native-build --version <Nightly> --server-output <new folder> <project>`.
+
 ## Not ported yet
 
 - `pat-arm`: the third-person patting arm. `mobs::anim::setup` is a lower-crate function the SDK does not make
