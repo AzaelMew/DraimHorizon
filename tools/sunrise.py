@@ -574,38 +574,6 @@ def smod_counts(modules, sources):
     )
 
 
-SMP_BRAND = PLATFORM / "smp-compat"
-SMP_BRAND_CRATE = "mod_draimhorizon_smp_compat"
-SMP_BRAND_MODULE = "smp_brand"
-SMP_BRAND_ROOT = f"""// Horizon SMP login brand for Sunrise, folded into this mod from platforms/sunrise/smp-compat.
-// Its two mixins (src/mixins/smp/) call it from the network and game threads.
-mod handshake;
-mod policy;
-pub use handshake::{{Outcome, Rendezvous, SendBrand, rendezvous}};
-pub use policy::{{brand_for_address, is_horizon_smp}};
-"""
-
-
-def smp_brand_parts():
-    """The brand adapter's mixins (helpers under src/mixins/smp/, calling this crate) and the SDK
-    internals they read, from the adapter's declaration in platforms/sunrise/smp-compat."""
-    declared = tomllib.loads((SMP_BRAND / "sunrise-mod.toml").read_text(encoding="utf-8"))
-    pinned = target_compat()["revision"]
-    if declared["native"]["sunrise"] != pinned:
-        # Its internals fingerprints were checked against one build: recheck them before moving the pin.
-        raise SystemExit(f"{SMP_BRAND / 'sunrise-mod.toml'} pins Sunrise {declared['native']['sunrise']}, "
-                         f"compatibility.json {pinned}: rerun smp-compat/verify_sdk.py and move the pin")
-    mixins, helpers = [], {}
-    for row in declared["native"]["mixin"]:
-        row = dict(row)
-        name = f"src/mixins/smp/{Path(row['helper']).name}"
-        text = (SMP_BRAND / row["helper"]).read_text(encoding="utf-8")
-        helpers[name] = text.replace(f"{SMP_BRAND_CRATE}::", f"{SMOD_CRATE.replace('-', '_')}::{SMP_BRAND_MODULE}::")
-        row["helper"] = name
-        mixins.append(row)
-    return mixins, helpers, declared.get("internals", [])
-
-
 def smod_manifest(bundle, compat, injections, modules, internals=()):
     mod = bundle["mod"]
     lines = [
@@ -690,20 +658,7 @@ def command_smod(args):
         id=RELAY, file=f"{CLIENT_SRC}/game.rs", name=RELAY,
         source=f"src/modules/{RELAY}.rs", visibility="pub(crate)",
     ))
-    # The Horizon SMP login brand: two more mixins on the Sunrise network code, and their shared state
-    # as a module of this crate, so no companion mod is needed.
-    brand_mixins, brand_helpers, internals = smp_brand_parts() if S == "sunrise" else ([], {}, [])
-    for name, text in brand_helpers.items():
-        (out / name).parent.mkdir(parents=True, exist_ok=True)
-        (out / name).write_text(text, encoding="utf-8")
-        sources[name] = text
-    injections += brand_mixins
-    if S == "sunrise":
-        (out / "src" / SMP_BRAND_MODULE).mkdir()
-        (out / "src" / f"{SMP_BRAND_MODULE}.rs").write_text(SMP_BRAND_ROOT, encoding="utf-8")
-        for part in ("handshake.rs", "policy.rs"):
-            shutil.copyfile(SMP_BRAND / "src" / part, out / "src" / SMP_BRAND_MODULE / part)
-    (out / MANIFEST).write_text(smod_manifest(bundle, compat, injections, modules, internals), encoding="utf-8")
+    (out / MANIFEST).write_text(smod_manifest(bundle, compat, injections, modules), encoding="utf-8")
     cargo = SMOD_CARGO.replace("{version}", bundle["mod"]["version"])
     if S == "horizon":
         cargo += "".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO)
@@ -714,8 +669,6 @@ def command_smod(args):
     crate_files = sorted((generated / "crate").glob("*.rs"))
     lib = (PLATFORM / "smod" / "lib.rs").read_text(encoding="utf-8")
     lib += "".join(f"pub mod {path.stem};\n" for path in crate_files)
-    if S == "sunrise":
-        lib += f"pub mod {SMP_BRAND_MODULE};\n"
     (out / "src" / "lib.rs").write_text(lib, encoding="utf-8")
     # State and hooks that only need public items (and that lower-crate helpers call) live in the mod crate.
     for path in crate_files:
@@ -782,14 +735,8 @@ def check_smod_manifest(manifest, functions, refused, names, internal_catalog=No
     """Problems of one package manifest against the SDK's function index and the package's files."""
     problems = []
     if manifest.get("internals"):
-        if internal_catalog is None:
-            problems.append("internals declarations require the SDK internals.json catalog")
-        else:
-            # Share the adapter preflight's resolver semantics; raw catalog presence is not access.
-            spec = importlib.util.spec_from_file_location("smp_sdk_contract", SMP_BRAND / "verify_sdk.py")
-            checker = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(checker)
-            problems.extend(row["message"] for row in checker.check_declared_internals(manifest, internal_catalog))
+        problems.append("internals declarations need a preflight for them (the brand adapter's is gone); "
+                        "see platforms/sunrise/smp-compat/README.md")
     native = manifest.get("native", {})
     for row in native.get("mixin", []):
         key = function_key(row["target"])
@@ -883,7 +830,12 @@ def export_sunrise(sunrise, revision, destination):
 
 
 def generated_directory(target):
-    found = sorted(target.glob(f"*/build/{CLIENT}-*/out/game_modules.rs"))
+    """The build script's output for the client just checked.
+
+    A shared target dir keeps one `out/` per build-script hash, and this checkout's hashes can sort
+    before older pins' (`sunrise-client-e5368…` from another revision beat this one's `d7e7…`), so
+    pick the most recently written file: a new revision always re-runs the script."""
+    found = sorted(target.glob(f"*/build/{CLIENT}-*/out/game_modules.rs"), key=lambda p: p.stat().st_mtime)
     if not found:
         raise SystemExit("no generated game_modules.rs: build {CLIENT} once so its build script runs")
     return found[-1].parent
@@ -1118,10 +1070,6 @@ def retarget_for_stage(mods):
 LAUNCHER_ACCESS = [
     (f"crates/{CLIENT}/src/lib.rs", r"^#!\[forbid\(unsafe_code\)\]\n", "",
      "the launcher compiles mod modules without this lint; ghost_render.rs erases a pointer with `unsafe`"),
-    (f"crates/{CLIENT}-render/src/minimap.rs", r"^    tiles: FxHashMap", "    pub tiles: FxHashMap",
-     "the launcher's internals expose Minimap::tiles to terrain_bridge.rs"),
-    (f"crates/{CLIENT}-render/src/minimap.rs", r"^struct Tile \{", "pub struct Tile {", "...and its Tile type"),
-    (f"crates/{CLIENT}-render/src/minimap.rs", r"^    (color|height|depth|scanned): ", r"    pub \1: ", "...and the Tile fields it reads"),
 ]
 
 

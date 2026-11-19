@@ -39,7 +39,8 @@ file = "crates/sunrise-client/src/game.rs"
 [module_override.ghost-render]
 file = "crates/sunrise-client/src/game.rs"
 [module_override.terrain-bridge]
-file = "crates/sunrise-client/src/game.rs"
+drop = true
+reason = "the engine's Minimap is gone: the mod's own scanner (claim_borders_minimap_scan) owns its tiles"
 [module_override.bar-mod_unload_stash]
 file = "crates/sunrise-client/src/game.rs"
 [module_override.pat-pose]
@@ -95,10 +96,7 @@ replace = 'let _ = (&Measure(&game.gui.atlas.font), screen, start, names, force)
 files = ["chat_view.rs"]
 [[rewrite]]
 pattern = 'slice\.scanner\.claim_borders_tiles\(before\)'
-replace = 'crate::game::claim_borders_terrain_bridge::tiles(&slice.scanner, before)'
-[[rewrite]]
-pattern = 'game\s*\.extras\s*\.minimap\s*\.claim_borders_tiles\(cache\.captured_at\)'
-replace = 'crate::game::claim_borders_terrain_bridge::tiles(&game.extras.minimap, cache.captured_at)'
+replace = 'slice.scanner.tiles_since(before)'
 
 # Ghost renderer: the module sits in game.rs; the mod crate (ghosts.rs) forwards the two render
 # functions' hooks to it through registered function pointers (a lower-crate helper cannot call it).
@@ -154,15 +152,15 @@ reason = "HudAtlas::slots is private in a lower crate without #[replaceable]; no
 
 # The Horizon login brand is a free function of the network thread in the reusable client library,
 # and `brand()` has no host context. Sunrise's engine owns that exchange from a lower crate, so
-# neither hook ports; the Sunrise brand coordination is the smp-compat adapter, which `smod` folds into
-# this package (platforms/sunrise/smp-compat, mixins under src/mixins/smp/).
+# neither hook ports; Sunrise's engine owns that exchange and, since Nightly `ed3ac19`, sends the
+# Horizon identity itself (`sunrise-official`), so the mod carries no brand adapter any more.
 [injection.brand-gate]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
+reason = "Sunrise sends the login brand from a lower crate; since Nightly ed3ac19 sunrise-official announces the Horizon identity itself"
 
 [injection.brand-announce]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
+reason = "Sunrise sends the login brand from a lower crate; since Nightly ed3ac19 sunrise-official announces the Horizon identity itself"
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
 # chunks out of the world, so the hook goes before that call in the game-crate caller instead.

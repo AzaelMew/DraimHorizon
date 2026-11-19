@@ -154,8 +154,8 @@ reason = "the HUD atlas has no slot for mod images in this Horizon build (HudAtl
 
 # The Horizon login brand is a free function of the network thread in the reusable client library,
 # and `brand()` has no host context. Sunrise's engine owns that exchange from a lower crate, so
-# neither hook ports; the Sunrise brand coordination is the smp-compat adapter, which `smod` folds into
-# this package (platforms/sunrise/smp-compat, mixins under src/mixins/smp/).
+# neither hook ports; Sunrise's engine owns that exchange and sends the Horizon identity itself
+# since Nightly `ed3ac19` (`sunrise-official`).
 [injection.brand-gate]
 drop = true
 reason = "net::run and net::brand are lower-crate functions the Horizon SDK does not make replaceable; Horizon is the client the SMP admits, so the brand needs no change"

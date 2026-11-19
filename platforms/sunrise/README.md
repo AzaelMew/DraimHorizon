@@ -42,11 +42,17 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 
 ## Status
 
-The `.smod` builds in Sunrise Launcher 1.0.1 against Nightly `2d81263` and runs: HUD, minimap, J menu, the world
-and seed map images (also after a resource reload), waypoints, chat badges and translation, ores, inventory tools,
-schematics, Baritone commands, the Options → Mods entry with key bindings and command completion were checked in
-game. Differences from Horizon:
+The `.smod` builds in Sunrise Launcher 1.1.0 against the official Nightly `ed3ac19` (2026-11-19) and runs in a
+client: the minimap (the mod's own picture since that Nightly removed the engine's), the J menu, the world map
+image, waypoints, chat, ores, inventory tools, schematics and the Options → Mods entry were checked in game;
+the source stage compiles the modified `sunrise-client` and the SDK check accepts every hook. HUD, seed map
+images after a resource reload, chat translation, Baritone commands and command completion were checked on
+earlier Nightlies (`2d81263` and before) and are unchanged. Differences from Horizon:
 
+- the minimap is drawn by the mod through `DynamicTextures` and the GUI pass, because the Nightly deleted the
+  engine minimap (`minimap` hook, `Minimap` type, terrain scanner and its drawing);
+- the Horizon SMP brand comes from the engine's `sunrise-official`; on the prebuilt route it is missing until
+  [sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119) ships;
 - the mod keeps its own data folder under the Sunrise game folder, so settings, waypoints and the explored map
   start empty;
 - key labels, the Options → Mods description and its settings switch are English;

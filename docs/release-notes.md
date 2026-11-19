@@ -1,11 +1,16 @@
-**DraimHorizon 0.42.2 — Horizon `.hmod` that builds in Horizon Launcher (0.42.1 fixes, CI repair)**
+**DraimHorizon 0.42.3 — Sunrise Nightly `ed3ac19`: the mod's own minimap, engine-provided Horizon identity**
 
-This release carries everything 0.42.1 intended: the Horizon `.hmod` builds in Horizon Launcher (launcher compile
-checked on Nightly `6d765e0`, 66 functions patched by 76 mixins), the relay's key-exchange crates live in the mod
-crate, and the Horizon pin is the official Nightly `dd67b76`. 0.42.1 was not published because its CI run restored a
-stale build cache; 0.42.2 fixes the cache key only.
+Sunrise Nightly `ed3ac19` (2026-11-19) removed the engine minimap and changed several native hook points.
+This release moves the Sunrise `.smod` to it. The Horizon `.hmod` is unchanged and stays on its 0.42.2 pin.
 
-- Install `draimhorizons-0.42.2.hmod` (Horizon Launcher 0.2.70 or newer) or `draimhorizons-0.42.2.smod` (Sunrise).
-  On Sunrise a hand-copied `.smod` is turned on with the line `mod.draimhorizon:true` in `sunrise-mods.txt`.
-- Not run in a game client on Horizon. Not available there yet: the third-person patting arm and the World map /
-  Seed Map images (`platforms/horizon/README.md`).
+- Install `draimhorizons-0.42.3.smod` for Sunrise (the `.hmod` for Horizon is the same as 0.42.2's). On Sunrise a
+  hand-copied `.smod` is turned on with the line `mod.draimhorizon:true` in `sunrise-mods.txt`.
+- The minimap on Sunrise is the mod's own picture now: the Nightly deleted the engine's minimap (hook, terrain
+  scanner, drawing, atlas slot) and a mod keeps its own. Tiles, marks, frame, zoom, size and corner behave as
+  before; shading and resource-pack terrain colours are the same code as the World map.
+- Joining the official Horizon SMP from Sunrise no longer depends on this mod: the Nightly's own
+  `sunrise-official` part sends the `horizon` brand and the `horizon:payloads` offer. The mod's brand adapter is
+  out of the package. On the launcher's prebuilt native route that layer is not linked yet
+  (sunrise-org/sunrise#3119), so a `.smod` client still announces `vanilla` there.
+- World map / Seed Map images, Baritone's world tracking, chat, menus and the rest of the port were retargeted to
+  the Nightly's new hook points and compiled against the real client source.

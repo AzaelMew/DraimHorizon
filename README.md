@@ -41,11 +41,12 @@ Both are listed in [platforms/horizon](platforms/horizon/README.md) with the rea
 **On Sunrise** the mod keeps its own data folder (settings, waypoints and explored map start empty), its key labels and
 Options text are English, and the settings entry in Options → Mods is a switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
 
-The Sunrise `.smod` also lets the client through playhorizon.dev's client check, which currently admits only
-Horizon (the server reads the `minecraft:brand` sent during login). When the server announces itself as Horizon,
-the mod sends a second brand, `horizon`, before the login continues; every other server sees Sunrise unchanged.
-This is experimental: it compiles against the Sunrise SDK but has not yet been confirmed on the live server, and
-Horizon-specific server channels (block registry check, mod list) may still differ. See
+Since Sunrise Nightly `ed3ac19` the client itself sends the brand `horizon` and the empty `horizon:payloads`
+offer to playhorizon.dev (`sunrise-official`'s identity hook), so the mod no longer carries its own brand
+adapter; Horizon's later login checks (block registry, mod list) are still not bridged. One upstream gap is
+open for that nightly: the launcher's *prebuilt* native route does not link `sunrise-official`, so a `.smod`
+client still announces `vanilla` until [sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119)
+ships. Notes and the server-side audit stay in
 [platforms/sunrise/smp-compat](platforms/sunrise/smp-compat/README.md).
 
 **Building from source.** The mod is written once in `mixins/draimhorizon`; `tools/sunrise.py` derives each client's
