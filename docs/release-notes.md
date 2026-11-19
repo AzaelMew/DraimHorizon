@@ -10,3 +10,6 @@ every Horizon check on `main` was red. This release moves Horizon to the route S
   and the modified client compiles. It has not been run in game.
 - Not available on Horizon yet: the third-person patting arm, and the World map / Seed Map images (the rest of the
   map features work). Both are listed in `platforms/horizon/README.md`.
+- Sunrise: key bindings set to a mouse button (for example `key.mouse.4` for pat) now work; nickname completion for
+  `/tp`, `/msg`, `/tpa`, `/pay` and the other name commands no longer disappears on every second letter; `/r hello`
+  and `/reply hello` are no longer shown red. Not verified in a running Sunrise client.

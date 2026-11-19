@@ -1,12 +1,19 @@
 fn baritone_suggest(screen: &mut ChatScreen, m: &Measure) -> std::ops::ControlFlow<()> {
-    // A nickname list the game asked for (the mod crate holds the request).
-    if let Some((start, names, force)) = mod_draimhorizon::suggest::take_nicknames() {
-        let end = screen.input.value.len();
-        if screen.suggestions.is_none() && start <= end {
+    // Player names for the commands that take one, filtered by the text the screen holds right now. The
+    // list is built and shown in this update; any other input, or no match, takes the vanilla update.
+    let input = &screen.input;
+    if input.cursor == input.value.chars().count()
+        && input.highlight == input.cursor
+        && !(screen.keep_suggestions && screen.suggestions.is_some())
+    {
+        if let Some((start, names)) = mod_draimhorizon::suggest::nicknames(&input.value) {
+            let end = input.value.len();
+            screen.parse = None;
+            screen.suggestions = None;
+            screen.input.suggestion = None;
+            screen.usage.clear();
             screen.awaiting = None;
             screen.request = None;
-            screen.usage.clear();
-            screen.input.suggestion = None;
             let list = names
                 .into_iter()
                 .map(|text| Suggestion {
@@ -17,12 +24,13 @@ fn baritone_suggest(screen: &mut ChatScreen, m: &Measure) -> std::ops::ControlFl
                 })
                 .collect();
             screen.pending = Some((start, list));
-            screen.allow_suggestions = true;
-            if screen.auto_suggestions || force {
-                screen.show_suggestions(m, force);
+            screen.usage_width = 0;
+            screen.usage_position = 0;
+            if screen.allow_suggestions && screen.auto_suggestions {
+                screen.show_suggestions(m, false);
             }
+            return std::ops::ControlFlow::Break(());
         }
-        return std::ops::ControlFlow::Break(());
     }
     let text = screen.input.value.clone();
     if text.starts_with('/') || text.chars().all(char::is_whitespace) {

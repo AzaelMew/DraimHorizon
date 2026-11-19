@@ -59,7 +59,7 @@ drop = true
 reason = "needs ChatScreen's private fields: the request goes through the mod crate (suggest.rs) and the bar-suggest helper applies it"
 [module_override.brand-policy]
 drop = true
-reason = "only the two Horizon login-brand hooks use it; Sunrise drops both (see injection.brand-gate)"
+reason = "only the two login-brand hooks use it; they are dropped on Horizon (see injection.brand-gate)"
 
 # Callers of the relocated modules.
 [[rewrite]]
@@ -81,8 +81,17 @@ replace = 'mod_draimhorizon::lines::set(\n        out.depth.iter().map(|l| mod_d
 pattern = 'horizon_client::chat::baritone_suggest::set'
 replace = 'mod_draimhorizon::suggest::set'
 [[rewrite]]
+# Sunrise applies the list inside the chat screen's own update (the bar-suggest hook), computed from the
+# text it holds then: the game only publishes the online names and its filter while the chat may list them.
+pattern = 'let Some\(names\) = game\.remote_online_names\(\) else \{\s*return;\s*\};'
+replace = '''let Some(names) = game.remote_online_names() else {
+        return;
+    };
+    mod_draimhorizon::suggest::publish_nicknames(model::nickname_suggestions, &names);'''
+files = ["chat_view.rs"]
+[[rewrite]]
 pattern = 'screen\.draimhorizons_nickname_list\(&Measure\(&game\.gui\.atlas\.font\), start, names, force\);'
-replace = 'mod_draimhorizon::suggest::request_nicknames(start, names, force);'
+replace = 'let _ = (&Measure(&game.gui.atlas.font), screen, start, names, force);'
 files = ["chat_view.rs"]
 [[rewrite]]
 pattern = 'slice\.scanner\.claim_borders_tiles\(before\)'
@@ -149,11 +158,11 @@ reason = "the HUD atlas has no slot for mod images in this Horizon build (HudAtl
 # this package (platforms/sunrise/smp-compat, mixins under src/mixins/smp/).
 [injection.brand-gate]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
+reason = "net::run and net::brand are lower-crate functions the Horizon SDK does not make replaceable; Horizon is the client the SMP admits, so the brand needs no change"
 
 [injection.brand-announce]
 drop = true
-reason = "Sunrise sends the login brand from a lower crate; the smp-compat adapter folded into the .smod coordinates it instead"
+reason = "net::run and net::brand are lower-crate functions the Horizon SDK does not make replaceable; Horizon is the client the SMP admits, so the brand needs no change"
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
 # chunks out of the world, so the hook goes before that call in the game-crate caller instead.
@@ -354,21 +363,26 @@ bindings = [
 ]
 
 # Mouse buttons reach the key hooks as key.mouse.* (Horizon's native_key), only while playing.
+# Platform-only rows (the shared manifest has none): tools/sunrise.py appends them and derives each
+# `helper` from `helper_from`, a shared key helper, taking the GLFW `button` index and `pressed`
+# (bindings accept only target parameters, so the key name is computed inside the helper).
 [injection.menu-mouse]
 target = "horizon_client::game::native_hooks::base::Game<'_>::native_mouse_button_post"
-helper = "menu_open_hook.rs"
+helper = "horizon/mouse_menu_open_hook.rs"
+helper_from = "menu_open_hook.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "key", ty = "&str", value = "if !self.native_playing() { \"key.mouse.none\" } else { match button { 0 => \"key.mouse.left\", 1 => \"key.mouse.right\", 2 => \"key.mouse.middle\", 3 => \"key.mouse.4\", 4 => \"key.mouse.5\", _ => \"key.mouse.none\" } }" },
-  { name = "action", ty = "mod_api::KeyAction", value = "if pressed { mod_api::KeyAction::Press } else { mod_api::KeyAction::Release }" },
+  { name = "button", ty = "i32", value = "button" },
+  { name = "pressed", ty = "bool", value = "pressed" },
 ]
 [injection.bar-click-mouse]
 target = "horizon_client::game::native_hooks::base::Game<'_>::native_mouse_button_post"
-helper = "baritone/hooks/click_key.rs"
+helper = "horizon/mouse_click_key_hook.rs"
+helper_from = "baritone/hooks/click_key.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "key", ty = "&str", value = "if !self.native_playing() { \"key.mouse.none\" } else { match button { 0 => \"key.mouse.left\", 1 => \"key.mouse.right\", 2 => \"key.mouse.middle\", 3 => \"key.mouse.4\", 4 => \"key.mouse.5\", _ => \"key.mouse.none\" } }" },
-  { name = "action", ty = "mod_api::KeyAction", value = "if pressed { mod_api::KeyAction::Press } else { mod_api::KeyAction::Release }" },
+  { name = "button", ty = "i32", value = "button" },
+  { name = "pressed", ty = "bool", value = "pressed" },
 ]
 
 [injection.clickthrough-remote]

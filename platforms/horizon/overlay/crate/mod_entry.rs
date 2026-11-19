@@ -1,16 +1,19 @@
 //! Client command names, Controls rows and the settings button of Options > Mods.
 use mod_api::{Command, KeyRegistration, Registrar, SettingSpec};
 
-pub const COMMANDS: [&str; 9] = [
-    "claimborders",
+/// One usage per client command, as `mod_api::Command` spells it. Every handler takes the words after
+/// the name itself, so each ends in optional text (`r` and `reply` take the whole line as the message);
+/// the game's chat tree rejects an argument a usage does not declare.
+pub const USAGES: [&str; 9] = [
+    "claimborders [action:word]",
     "horizonmenu",
-    "party",
-    "friend",
-    "wp",
-    "waypoint",
-    "r",
-    "reply",
-    "dfarm",
+    "party [args:text]",
+    "friend [args:text]",
+    "wp [args:text]",
+    "waypoint [args:text]",
+    "r [message:text]",
+    "reply [message:text]",
+    "dfarm [args:text]",
 ];
 
 /// (id, default key, label).
@@ -116,5 +119,5 @@ pub fn register(registrar: &mut dyn Registrar) {
 }
 
 pub fn commands(out: &mut Vec<Command>) {
-    out.extend(COMMANDS.iter().map(|name| Command::new(name)));
+    out.extend(USAGES.iter().map(|usage| Command::new(usage)));
 }
