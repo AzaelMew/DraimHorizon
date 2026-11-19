@@ -13,13 +13,13 @@
   "horizon_channel": "nightly",
   "sunrise": {
     "repository": "https://github.com/sunrise-org/sunrise",
-    "revision": "ed3ac19558d8dc1092c431312848cbb58fb01e41",
+    "revision": "520fc4882de3abb8ecd8b98293f4d7263bc88181",
     "channel": "nightly",
     "mixins_repository": "https://github.com/horizon-rust/horizon-mixins",
     "mixins_revision": "e59da9094f0c2fdda6c627fe9eff22dec6a906f0",
     "mixins_patch": "tools/mixins/narrow-reference-rule.patch",
     "source_sha256": {
-      "crates/sunrise-client/src/net.rs": "427911c524a00fa18350fd5d4cb83bbd2827c7218fd6b5f3546dbdcb6728ebeb"
+      "crates/sunrise-client/src/net.rs": "b9829b891503c1ac82fbc9ead8decfe99da66a1fe72b4c132a0307542cdd7680"
     }
   }
 }

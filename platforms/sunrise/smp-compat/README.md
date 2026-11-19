@@ -20,11 +20,12 @@ Two differences from the retired adapter, both in the engine's favour:
 - the engine matches the exact host `play.playhorizon.dev` (one trailing dot ignored, no port or 24454 /
   25565 only), where the adapter matched any `*.playhorizon.dev` name.
 
-**Known gap (upstream, not this mod):** on Nightly `ed3ac19` the launcher's *prebuilt* native route builds only
-`sunrise-mod-host`, so `sunrise-official` is never linked and a `.smod` client still announces `vanilla` on
-`play.playhorizon.dev`. Tracked upstream as
-[sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119); no mod-side hook or replaceable
-SDK target covers it.
+**The gap is closed in Nightly `520fc48`.** Upstream
+[sunrise-org/sunrise#3133](https://github.com/sunrise-org/sunrise/pull/3133) builds `sunrise-official` into the
+launcher's *prebuilt* native route too and registers it before the game runs; a build of this package through
+Sunrise Launcher 1.1.1 on that Nightly ships `libsunrise_official.so` beside `libsunrise_mod_host.so`. A `.smod`
+client therefore announces `horizon` on `play.playhorizon.dev` on both routes, and the mod still has no part in
+it.
 
 [protocol-audit.md](protocol-audit.md) keeps the server-side notes: what the SMP checks after the brand
 (block registry hash, mod list), which `horizon:*` channels Sunrise ignores safely, and the older

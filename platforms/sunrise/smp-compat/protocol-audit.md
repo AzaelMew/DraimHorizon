@@ -22,10 +22,11 @@ main `.smod` as two mixins on the SDK's `sunrise_client_lib::net` replacement po
 the game crate), with a rendezvous and an address policy in the mod crate and a session/queue layout table
 checked by `verify_sdk.py`. `ed3ac19` adds `Hooks::client_identity` and ships `sunrise-official`, whose
 `HORIZON_IDENTITY` part sends the brand (and the `horizon:payloads` offer) itself, so the adapter, its
-mixins and the checker left with 0.42.3. One gap remains, and it is upstream: on that Nightly the
-launcher's *prebuilt* native route links only `sunrise-mod-host`, so a `.smod` client still announces
+mixins and the checker left with 0.42.3. The one gap that remained was upstream and route-specific: the
+launcher's *prebuilt* native route linked only `sunrise-mod-host`, so a `.smod` client still announced
 `vanilla` there ([sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119), fixed by
-[#3133](https://github.com/sunrise-org/sunrise/pull/3133)). Nothing in the mod sends the brand twice now.
+[#3133](https://github.com/sunrise-org/sunrise/pull/3133), which Nightly `520fc48` carries). Nothing in the
+mod sends the brand twice now.
 
 ## Extension compatibility
 

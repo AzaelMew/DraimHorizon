@@ -42,17 +42,22 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 
 ## Status
 
-The `.smod` builds in Sunrise Launcher 1.1.0 against the official Nightly `ed3ac19` (2026-11-19) and runs in a
-client: the minimap (the mod's own picture since that Nightly removed the engine's), the J menu, the world map
-image, waypoints, chat, ores, inventory tools, schematics and the Options → Mods entry were checked in game;
-the source stage compiles the modified `sunrise-client` and the SDK check accepts every hook. HUD, seed map
-images after a resource reload, chat translation, Baritone commands and command completion were checked on
-earlier Nightlies (`2d81263` and before) and are unchanged. Differences from Horizon:
+The `.smod` builds in Sunrise Launcher 1.1.1 against the official Nightly `520fc48` (2026-11-19): its prebuilt
+build compiles the package for that Nightly (`left_out: []`, 137 s), the source stage compiles the modified
+`sunrise-client`, and the SDK check accepts every hook. The last in-game run was on `ed3ac19`, where the minimap
+(the mod's own picture since that Nightly removed the engine's), the J menu, the world map image, waypoints,
+chat, ores, inventory tools, schematics and the Options → Mods entry were checked; the code is the same here
+apart from the two engine moves noted below. HUD, seed map images after a resource reload, chat translation,
+Baritone commands and command completion were checked on earlier Nightlies (`2d81263` and before) and are
+unchanged. Differences from Horizon:
 
 - the minimap is drawn by the mod through `DynamicTextures` and the GUI pass, because the Nightly deleted the
   engine minimap (`minimap` hook, `Minimap` type, terrain scanner and its drawing);
-- the Horizon SMP brand comes from the engine's `sunrise-official`; on the prebuilt route it is missing until
-  [sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119) ships;
+- auto-reconnect is the engine's: Nightly `520fc48` moved it into `sunrise-reconnect`, a platform layer
+  `sunrise-official` registers, with the same refusal policy the mod carried. Its switch is the engine's
+  Options → Extras row, so the mod's own Auto-reconnect row is Horizon-only;
+- the Horizon SMP brand comes from the engine's `sunrise-official` on both routes since Nightly `520fc48`
+  ([sunrise-org/sunrise#3133](https://github.com/sunrise-org/sunrise/pull/3133));
 - the mod keeps its own data folder under the Sunrise game folder, so settings, waypoints and the explored map
   start empty;
 - key labels, the Options → Mods description and its settings switch are English;

@@ -15,7 +15,7 @@ A release link looks like `https://github.com/DraimCiDo/DraimHorizon/releases/ta
 
 **Sunrise, a file you copied in by hand.** Put `draimhorizons-<version>.smod` in the game folder's `sunrise-native-mods/` and add the line `mod.draimhorizon:true` to `sunrise-mods.txt`, beside `options.txt`, then restart. Until then the game's Options → Mods says "Not loaded: turn it on in the launcher". The launcher's own toggle stays locked for hand-copied files because it cannot check where they came from; a mod installed with `mods add-github` or from Discover has a working toggle. To turn a hand-copied mod off, remove that line or the file.
 
-Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2d81263`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `520fc48`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -24,7 +24,7 @@ Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
 | Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `dd67b76` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. The launcher's own native compile is run by hand (`horizon-launcher native-build --version <Nightly> --server-output <new folder> <project>`); it passed on Nightly `6d765e0`. Not yet confirmed in a game client. |
-| Sunrise | Supported. Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`), the bundle is applied to that source and the client compiles; the package builds and loads in the Sunrise launcher. |
+| Sunrise | Supported. Install the release's `.smod`. | `520fc48` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`), the bundle is applied to that source and the client compiles; the package builds and loads in the Sunrise launcher. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
 (`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
@@ -43,10 +43,10 @@ Options text are English, and the settings entry in Options → Mods is a switch
 
 Since Sunrise Nightly `ed3ac19` the client itself sends the brand `horizon` and the empty `horizon:payloads`
 offer to playhorizon.dev (`sunrise-official`'s identity hook), so the mod no longer carries its own brand
-adapter; Horizon's later login checks (block registry, mod list) are still not bridged. One upstream gap is
-open for that nightly: the launcher's *prebuilt* native route does not link `sunrise-official`, so a `.smod`
-client still announces `vanilla` until [sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119)
-ships. Notes and the server-side audit stay in
+adapter; Horizon's later login checks (block registry, mod list) are still not bridged. Since Nightly `520fc48`
+the launcher's *prebuilt* native route links that layer too
+([sunrise-org/sunrise#3133](https://github.com/sunrise-org/sunrise/pull/3133)), so a `.smod` client announces
+`horizon` there as well. Notes and the server-side audit stay in
 [platforms/sunrise/smp-compat](platforms/sunrise/smp-compat/README.md).
 
 **Building from source.** The mod is written once in `mixins/draimhorizon`; `tools/sunrise.py` derives each client's
