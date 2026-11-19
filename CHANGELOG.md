@@ -1,5 +1,13 @@
 # История версий
 
+## 0.42.1
+
+- **Horizon: the `.hmod` now builds in Horizon Launcher.** 0.42.0 was published with a `.hmod` that stopped at `E0603` in the launcher's native build: the launcher copies a hooked function with its module's imports into its own crate, and the game's `pub(crate)` re-exports (`TryIntoApi`, `TryIntoEngine`, `CartKind`, `ExecutionRole`, `EntityCullDecision`, `cull_box`) are out of reach there. Four launcher-only shim modules (`platforms/horizon/overlay/shims`) shadow the game's `api_values`, `minecarts`, `execution_role` and `entity_culling` with the same items, the types taken from the crates that define them. They are skipped in the source stage, where the real modules exist.
+- The relay's key-exchange crates (`curve25519-dalek`, `chacha20poly1305`, `hkdf`, `sha2`) are not linked into the prebuilt game's patched crate, so the Horizon mod crate carries them and the game-side relay module reaches them through it. `platforms/horizon/smod/Cargo.lock` is the game's own lock pruned to this crate, because the launcher refuses a lock that changes the game's dependency graph (`curve25519-dalek` takes the game's feature set).
+- **Correction to 0.42.0:** its notes said the package was checked by a native build. That was `cargo-horizon-mod build`, which only packs the file. The check that matters is the launcher's own compile: `horizon-launcher native-build --version <installed Nightly> --server-output <new folder> target/horizon/smod/draimhorizon` (no instance is read or changed) now reports `66 functions patched by 76 mixins` with no errors. It has still not been run in a game client.
+- The Horizon pin moves to the newer official Nightly `dd67b76` (published while this fix was in progress; 83 files differ). On it the SDK function index and the source stage pass; the launcher compile above was run on `6d765e0`, the newest Nightly installed in the launcher used for testing.
+- Generator: platform modules marked `launcher_only` are left out of the source stage.
+
 ## 0.42.0
 
 - **Horizon: the mod follows the official Nightly `6d765e0` again, and ships as a `.hmod`.** The Nightly moved its game code into areas, replaced the hand-written native hooks with typed events and builds native mods from a flat project against a prebuilt game (it publishes the Mod SDK `sdk-6d765e0…` with each Nightly). The old stage-and-`.hnmod` route could not follow, and every Horizon check on `main` failed on the stale `9f42064` pin. The `.hnmod` is no longer produced; current launchers refuse it.

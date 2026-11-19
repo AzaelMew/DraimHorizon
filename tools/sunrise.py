@@ -358,7 +358,13 @@ def command_generate(args):
                 entry[key] = change[key]
         modules.append(entry)
     for module in platform.get("module", []):
-        modules.append(dict(module))
+        module = dict(module)
+        # `launcher_only` modules stand in for items the launcher's copied game code cannot reach (the
+        # source stage compiles the real tree, where the module already exists).
+        if module.pop("launcher_only", False) and getattr(args, "stage", False):
+            report.append((module["id"], "launcher-only module skipped", "source stage"))
+            continue
+        modules.append(module)
     manifest_out = dict(
         mod=manifest["mod"],
         compatibility=dict(horizon_revision=compat["revision"]),
@@ -514,6 +520,17 @@ webpki-roots = "=1.0.10"
 rustls-pki-types = {{ version = "=1.15.1", features = ["web"] }}
 zeroize = "=1.9.1"
 """
+# Horizon's prebuilt game does not link the relay's key-exchange crates, so the mod crate carries them
+# (exact versions, as relay_client pins them) and the game-side relay module reaches them through it.
+# The lock must keep the game's dependency graph of every pinned package, so curve25519-dalek takes the
+# feature set the game resolves (platforms/horizon/smod/Cargo.lock: the game's lock pruned to this crate).
+HORIZON_CRYPTO = (
+    ("curve25519-dalek", '{ version = "=4.1.3", default-features = false, features = ["rand_core"] }'),
+    ("chacha20poly1305", '"=0.10.1"'),
+    ("hkdf", '"=0.12.4"'),
+    ("sha2", '"=0.10.9"'),
+)
+CRYPTO_PATH = re.compile(r"(?<![\w:])(curve25519_dalek|chacha20poly1305|hkdf|sha2)::")
 INLINE_DECL = re.compile(r"^(?P<pub>pub\s+)?mod\s+(?P<name>\w+);[ \t]*$", re.M)
 
 
@@ -523,7 +540,10 @@ def inline_relay(src):
         text = (src / name).read_text(encoding="utf-8")
         text = re.sub(r"^//!", "//", text, flags=re.M)
         text = re.sub(r"\bcrate::", RELAY_PATH + "::", text)
-        return text.replace(ROOTS_OLD, ROOTS_NEW)
+        text = text.replace(ROOTS_OLD, ROOTS_NEW)
+        if S == "horizon":
+            text = CRYPTO_PATH.sub(lambda m: f"mod_draimhorizon::{m[1]}::", text)
+        return text
 
     nested = {"crypto": "crypto.rs", "translation": "translation.rs", "websocket": "websocket.rs"}
     parts = {"languages": "translation_languages.rs"}
@@ -684,7 +704,10 @@ def command_smod(args):
         for part in ("handshake.rs", "policy.rs"):
             shutil.copyfile(SMP_BRAND / "src" / part, out / "src" / SMP_BRAND_MODULE / part)
     (out / MANIFEST).write_text(smod_manifest(bundle, compat, injections, modules, internals), encoding="utf-8")
-    (out / "Cargo.toml").write_text(SMOD_CARGO.replace("{version}", bundle["mod"]["version"]), encoding="utf-8")
+    cargo = SMOD_CARGO.replace("{version}", bundle["mod"]["version"])
+    if S == "horizon":
+        cargo += "".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO)
+    (out / "Cargo.toml").write_text(cargo, encoding="utf-8")
     lock = (PLATFORM / "smod" / "Cargo.lock").read_text(encoding="utf-8")
     lock = re.sub(r'name = "mod-draim-probe"\nversion = "[^"]*"', f'name = "{SMOD_CRATE}"\nversion = "{bundle["mod"]["version"]}"', lock)
     (out / "Cargo.lock").write_text(lock, encoding="utf-8")
@@ -1041,7 +1064,7 @@ def command_stage(args):
     print(f"pasted {inline_local_includes(indexed)} local includes", file=sys.stderr)
     print(f"stripped {strip_markers(indexed)} replaceable markers", file=sys.stderr)
     print("linked/dropped #[path] modules: %d/%d" % flatten_paths(indexed), file=sys.stderr)
-    command_generate(argparse.Namespace(sunrise=indexed))
+    command_generate(argparse.Namespace(sunrise=indexed, stage=True))
     # The launcher names the mod-render crate by its package; in source it is the `mod_render` library.
     for path in (OUT / "mods").rglob("*"):
         if path.is_file() and path.suffix in (".rs", ".toml"):
@@ -1122,7 +1145,8 @@ def add_mod_crate(modded, bundle, compat):
     (crate / "Cargo.toml").write_text(
         f'[package]\nname = "mod-draimhorizon"\nversion = "{version}"\nedition = "2024"\npublish = false\n\n'
         '[dependencies]\nmod_api = { package = "' + f'{S}-mod-api", path = "../{S}-mod-api" }}\n'
-        'webpki-roots = "1"\nrustls-pki-types = { version = "1", features = ["web"] }\nzeroize = "1"\n',
+        'webpki-roots = "1"\nrustls-pki-types = { version = "1", features = ["web"] }\nzeroize = "1"\n'
+        + ("".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO) if S == "horizon" else ""),
         encoding="utf-8")
     files = sorted((bundle / "crate").glob("*.rs"))
     lib = (PLATFORM / "smod" / "lib.rs").read_text(encoding="utf-8") + "".join(f"pub mod {f.stem};\n" for f in files)

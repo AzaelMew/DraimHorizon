@@ -5,6 +5,12 @@ use mod_api::{
     RegistrationContext, RenderHandEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent,
 };
 
+// The relay's key-exchange crates, for the game-side relay module (the prebuilt game does not link them).
+pub use chacha20poly1305;
+pub use curve25519_dalek;
+pub use hkdf;
+pub use sha2;
+
 #[derive(Default)]
 struct Mod;
 

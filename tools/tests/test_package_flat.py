@@ -155,6 +155,25 @@ class FlatPackageTests(unittest.TestCase):
                 self.assertEqual(tomllib.loads(archive.read(manifest_name).decode("utf-8")), package["manifest"])
             self.assertTrue(package["artifact"].with_suffix(f".{EXTENSION[platform]}.sha256").is_file())
 
+    def test_the_horizon_mod_crate_carries_the_relay_crypto_and_shims_stand_in_for_private_game_items(self):
+        horizon = self.packages["horizon"]
+        cargo = tomllib.loads((horizon["project"] / "Cargo.toml").read_text(encoding="utf-8"))
+        for name in ("curve25519-dalek", "chacha20poly1305", "hkdf", "sha2"):
+            self.assertIn(name, cargo["dependencies"])
+        lib = (horizon["project"] / "src" / "lib.rs").read_text(encoding="utf-8")
+        for name in ("chacha20poly1305", "curve25519_dalek", "hkdf", "sha2"):
+            self.assertIn(f"pub use {name};", lib)
+        relay = (horizon["project"] / "src" / "modules" / "claim_borders_relay_client.rs").read_text(encoding="utf-8")
+        self.assertIn("mod_draimhorizon::chacha20poly1305::", relay)
+        self.assertNotRegex(relay, r"(?<![\w:])chacha20poly1305::")
+        shims = {row["name"] for row in horizon["manifest"]["native"]["module"] if row["id"].startswith("shim-")}
+        self.assertEqual(shims, {"api_values", "minecarts", "execution_role", "entity_culling"})
+        self.assertFalse(any("launcher_only" in row for row in horizon["manifest"]["native"]["module"]))
+        sunrise = {row["id"] for row in self.packages["sunrise"]["manifest"]["native"]["module"]}
+        self.assertFalse({i for i in sunrise if i.startswith("shim-")})
+        lock = (horizon["project"] / "Cargo.lock").read_text(encoding="utf-8")
+        self.assertIn('name = "mod-draimhorizon"', lock)
+
 
 if __name__ == "__main__":
     unittest.main()

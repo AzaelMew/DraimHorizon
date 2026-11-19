@@ -512,3 +512,33 @@ replace = '''fn baritone_tick(game: &mut crate::game::Game<'_>) {
         return;
     }'''
 files = ["baritone/hooks/tick.rs"]
+
+# Shims for game items the launcher's copied code cannot reach (see overlay/shims/api_values.rs).
+[[module]]
+id = "shim-api-values"
+file = "crates/horizon-client/src/game.rs"
+name = "api_values"
+source = "shims/api_values.rs"
+visibility = "pub"
+launcher_only = true
+[[module]]
+id = "shim-minecarts"
+file = "crates/horizon-client/src/game.rs"
+name = "minecarts"
+source = "shims/minecarts.rs"
+visibility = "pub"
+launcher_only = true
+[[module]]
+id = "shim-execution-role"
+file = "crates/horizon-client/src/game.rs"
+name = "execution_role"
+source = "shims/execution_role.rs"
+visibility = "pub"
+launcher_only = true
+[[module]]
+id = "shim-entity-culling"
+file = "crates/horizon-client/src/game.rs"
+name = "entity_culling"
+source = "shims/entity_culling.rs"
+visibility = "pub"
+launcher_only = true

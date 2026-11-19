@@ -24,7 +24,7 @@ DRAIM_TARGET=horizon python3 tools/sunrise.py stage --sunrise /path/to/horizon -
 
 Horizon checkout должен содержать точный commit; текущая ветка не меняется. Цели хуков берутся из `platforms/horizon/targets.toml` (обновляется командой `freeze`), отличия Horizon Nightly от исходника, под который написан bundle, — в `platforms/horizon/platform.toml` и `platform.d/`.
 
-Офлайн-проверка `.hmod` сверяет каждый хук с индексом функций SDK (`sdk-<revision>`, `build-data`). Нативную сборку проверяют так же, как её делает лаунчер: `cargo-horizon-mod build` в сгенерированном проекте `target/horizon/smod/draimhorizon` (инструмент собирается из `crates/cargo-horizon-mod` исходника Horizon).
+Офлайн-проверка `.hmod` сверяет каждый хук с индексом функций SDK (`sdk-<revision>`, `build-data`). Нативную сборку проверяет только лаунчер: `horizon-launcher native-build --version <установленный Nightly> --server-output <новая папка> target/horizon/smod/draimhorizon` (инстансы не читаются и не меняются). `cargo-horizon-mod build` лишь упаковывает файл и ничего не компилирует.
 
 Проверка компиляции настоящего клиента без ресурсов Minecraft:
 
