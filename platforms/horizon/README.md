@@ -29,5 +29,7 @@ copy the game's lock next to a copy of the project without its `horizon-mod-api`
 
 - `pat-arm`: the third-person patting arm. `mobs::anim::setup` is a lower-crate function the SDK does not make
   replaceable; Horizon's own `BodyPose` hook (`horizon_hooks::players`) is the intended route.
-- World map and Seed Map images (`world-map-atlas`): the HUD atlas has no slot for mod images and runtime sprites
-  stop at 256 px, so the two map images are not drawn. The rest of the map code runs.
+
+## Map images
+
+The game reserves `horizon/modimage` in the HUD atlas when a client mod is loaded. The Horizon adapter assigns separate regions to World Map (768×768) and Seed Map (256×256). Resource and renderer reloads invalidate the uploads so the screens can repopulate the new atlas.

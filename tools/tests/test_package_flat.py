@@ -176,6 +176,22 @@ class FlatPackageTests(unittest.TestCase):
             if row["file"] == "crates/horizon-client/src/game.rs":
                 self.assertNotIn(row["name"], game_modules)
 
+    def test_horizon_map_images_use_the_mod_atlas_and_reupload_after_a_reset(self):
+        horizon = self.packages["horizon"]
+        native = horizon["manifest"]["native"]
+        modules = {row["id"]: row for row in native["module"]}
+        mixins = {row["id"]: row for row in native["mixin"]}
+        project = horizon["project"]
+        adapter = (project / modules["map-images"]["source"]).read_text(encoding="utf-8")
+        self.assertIn("MOD_IMAGE_SPRITE", adapter)
+        self.assertIn("invalidate_seed_image()", adapter)
+        self.assertIn("::forget_atlas_slots", mixins["map-images-forget"]["target"])
+        update = (project / mixins["claim-map-image"]["helper"]).read_text(encoding="utf-8")
+        self.assertIn("claim_borders_map_images::register(game)", update)
+        seed_view = (project / modules["seed-view"]["source"]).read_text(encoding="utf-8")
+        self.assertIn("batch.patches.push(crate::game::claim_borders_map_images::seed_patch(", seed_view)
+        self.assertNotIn("terrain::seed_patch(", seed_view)
+
 
 if __name__ == "__main__":
     unittest.main()
