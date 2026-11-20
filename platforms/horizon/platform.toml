@@ -147,10 +147,9 @@ bindings = [
   { name = "needs", ty = "&mut crate::render::RenderNeeds", value = "&mut *needs" },
 ]
 
-# Not replaceable (private fn in horizon_client_render, no marker) and no caller in the game crate.
 [injection.world-map-atlas]
 drop = true
-reason = "the HUD atlas has no slot for mod images in this Horizon build (HudAtlas::slots is gone) and runtime sprites stop at 256 px; the map images are not drawn until a texture API exists"
+reason = "the Horizon map image adapter uses the HUD atlas's existing mod-image slot"
 
 # The Horizon login brand is a free function of the network thread in the reusable client library,
 # and `brand()` has no host context. Sunrise's engine owns that exchange from a lower crate, so

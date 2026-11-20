@@ -1,5 +1,9 @@
 # История версий
 
+## 0.43.0
+
+- World Map and Seed Map display terrain on Horizon. Their 768×768 and 256×256 images use separate regions of the game's mod-image atlas slot. Rebuilding the renderer or reloading resources refreshes both images.
+
 ## 0.42.4
 
 - Updated the Horizon `.hmod` to the official Nightly `0a875da` (2026-11-20). Horizon Launcher excluded 0.42.2 from this Nightly because the mod was built for `dd67b76`.

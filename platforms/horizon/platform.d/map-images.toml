@@ -1,0 +1,86 @@
+[[module]]
+id = "map-images"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_images"
+source = "map_images.rs"
+
+[injection.map-images-forget]
+kind = "HEAD"
+target = "horizon_client::game::render_settings::Game<'_>::forget_atlas_slots"
+helper = "map_images_forget_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[rewrite]]
+pattern = '    if crate::game::extras::claim_borders_map_backend::update\(game\) \{'
+replace = '''    crate::game::claim_borders_map_images::register(game);
+    if crate::game::extras::claim_borders_map_backend::update(game) {'''
+files = ["map_update_hook.rs"]
+
+[[rewrite]]
+pattern = 'size: if request.full \{ 512 \} else \{ 128 \},'
+replace = 'size: crate::game::claim_borders_map_images::WORLD_MAP_SIDE,'
+files = ["map_backend.rs"]
+
+# Queue the seed pixels on the batch that draws them. A new worker result or a new HUD atlas
+# requires an upload, even when the query stayed the same across a resource reload.
+[[rewrite]]
+pattern = '    image: Option<worker::Image>,'
+replace = '''    image: Option<worker::Image>,
+    image_atlas_revision: Option<u64>,'''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = 'pub\(super\) fn render\('
+replace = '''pub(super) fn invalidate_seed_image() {
+    state(|s| s.image_atlas_revision = None);
+}
+
+pub(super) fn render('''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '            image: None,'
+replace = '''            image: None,
+            image_atlas_revision: None,'''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '''                if let Some\(panel\) = &image\.panel \{\s*if let Some\(uv\) = game\s*\.gui\s*\.atlas\s*\.sprites\s*\.get\("claim_borders/seed_map"\)\s*\.copied\(\)\s*\{\s*terrain::seed_patch\(game, uv, panel\.pixels\.clone\(\)\);\s*\}\s*\}'''
+replace = '                s.image_atlas_revision = None;'
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '                    let corners = \[\[0\.0, 0\.0\], \[128\.0, 128\.0\]\]\.map\(\|xy\| \{'
+replace = '''                    let revision = game.gui.atlas.revision;
+                    if s.image_atlas_revision != Some(revision) {
+                        batch.patches.push(crate::game::claim_borders_map_images::seed_patch(
+                            game, uv, &panel.pixels,
+                        ));
+                        s.image_atlas_revision = Some(revision);
+                    }
+                    let corners = [[0.0, 0.0], [128.0, 128.0]].map(|xy| {'''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '''    if let Some\(patch\) = view::take_seed_patch\(\) \{
+        game\.map_patches\.push\(patch\);
+    \}
+'''
+replace = ''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = '''    seed_patch: Option<horizon_client::font::Patch>,\n|            seed_patch: None,\n|pub\(super\) fn seed_patch\([\s\S]*?\n\}\npub\(super\) fn take_seed_patch\([\s\S]*?\n\}\n'''
+replace = ''
+files = ["map_view.rs"]
+
+[[rewrite]]
+pattern = 'pub\(in crate::game\) fn published\('
+replace = '''pub(super) fn invalidate_world_image() {
+    state(|s| s.published = None);
+}
+
+pub(in crate::game) fn published('''
+files = ["map_view.rs"]

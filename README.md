@@ -33,10 +33,6 @@ and the client is compiled again. Nightlies come often, so a release can be one 
 **Not available on Horizon yet.**
 - The third-person patting arm (see Patting below): other players do not see your arm move. Your own view and the
   rest of patting work as described. Horizon's own `BodyPose` hook is the intended route.
-- The World map and Seed Map images are not drawn: the Horizon HUD atlas no longer has a slot for mod images and
-  runtime sprites stop at 256 px. The rest of the map code (explored area, minimap, claims, waypoints) runs.
-
-Both are listed in [platforms/horizon](platforms/horizon/README.md) with the reason and the route to fix them.
 
 **On Sunrise** the mod keeps its own data folder (settings, waypoints and explored map start empty), its key labels and
 Options text are English, and the settings entry in Options → Mods is a switch that opens the menu. See [platforms/sunrise](platforms/sunrise/README.md).
@@ -53,8 +49,6 @@ project from it and `platforms/<client>` (`python tools/package_flat.py horizon|
 [docs/development.md](docs/development.md) for the checks.
 
 ## World
-
-The World map and Seed Map images are not drawn on Horizon yet (see Clients above).
 
 ![Explored map and live minimap instructions](docs/showcase/maps.svg)
 ![Seed Map instructions](docs/showcase/seed-map.svg)
