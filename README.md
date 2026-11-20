@@ -15,7 +15,7 @@ A release link looks like `https://github.com/DraimCiDo/DraimHorizon/releases/ta
 
 **Sunrise, a file you copied in by hand.** Put `draimhorizons-<version>.smod` in the game folder's `sunrise-native-mods/` and add the line `mod.draimhorizon:true` to `sunrise-mods.txt`, beside `options.txt`, then restart. Until then the game's Options → Mods says "Not loaded: turn it on in the launcher". The launcher's own toggle stays locked for hand-copied files because it cannot check where they came from; a mod installed with `mods add-github` or from Discover has a working toggle. To turn a hand-copied mod off, remove that line or the file.
 
-Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2d81263`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `0a875da` and Sunrise Nightly `2d81263`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -23,7 +23,7 @@ Target clients are the official Horizon Nightly `dd67b76` and Sunrise Nightly `2
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `dd67b76` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. The launcher's own native compile is run by hand (`horizon-launcher native-build --version <Nightly> --server-output <new folder> <project>`); it passed on Nightly `6d765e0`. Not yet confirmed in a game client. |
+| Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `0a875da` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. Horizon Launcher also compiled the installed 0.42.4 `.hmod` into a client build on Nightly `0a875da` with every installed mod included. |
 | Sunrise | Supported. Install the release's `.smod`. | `2d81263` (`sunrise.revision`) | Each release's `.smod` is validated against the SDK of that Nightly (`python tools/sunrise.py smod-check --fetch`), the bundle is applied to that source and the client compiles; the package builds and loads in the Sunrise launcher. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes

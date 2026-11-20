@@ -1,5 +1,10 @@
 # История версий
 
+## 0.42.4
+
+- Updated the Horizon `.hmod` to the official Nightly `0a875da` (2026-11-20). Horizon Launcher excluded 0.42.2 from this Nightly because the mod was built for `dd67b76`.
+- Removed four launcher-only shims because this Nightly's generated patch crate now defines those modules. Keeping both definitions broke native compilation.
+
 ## 0.42.2
 
 - CI: the Horizon native check restored a build cache made for the previous Nightly pin and failed in `horizon-client-lib`'s build script (`discovering ingredient tests: No such file or directory`), so 0.42.1 was not published. The cache key now carries `hashFiles('compatibility.json')` and no longer falls back to another pin's cache. No mod changes.
