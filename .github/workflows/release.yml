@@ -90,6 +90,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/download-artifact@v4
         with:
           name: claim-borders-native
@@ -113,20 +115,26 @@ jobs:
             exit 0
           fi
           # Publish only the exact source that passed native client compilation.
-          for attempt in $(seq 1 90); do
-            native_state="$(gh api -X GET "repos/$GH_REPO/actions/workflows/horizon-compatibility.yml/runs" -f head_sha="$GITHUB_SHA" --jq '.workflow_runs | map(select(.head_sha == env.GITHUB_SHA)) | max_by(.run_number) | if . == null then "" else [.status, (.conclusion // "pending")] | join(" ") end')"
-            if [ "$native_state" = "completed success" ]; then
-              break
-            fi
-            if [[ "$native_state" == completed* ]]; then
-              echo "Native validation rejected $GITHUB_SHA: $native_state"
-              exit 1
-            fi
-            if [ "$attempt" = 90 ]; then
-              echo "Timed out waiting for native validation of $GITHUB_SHA"
-              exit 1
-            fi
-            sleep 20
+          workflows=(horizon-compatibility.yml)
+          if [ "$PRERELEASE" = "false" ] && ! git diff --quiet HEAD^ HEAD -- platforms/sunrise; then
+            workflows+=(sunrise-compatibility.yml)
+          fi
+          for workflow in "${workflows[@]}"; do
+            for attempt in $(seq 1 90); do
+              native_state="$(gh api -X GET "repos/$GH_REPO/actions/workflows/$workflow/runs" -f head_sha="$GITHUB_SHA" --jq '.workflow_runs | map(select(.head_sha == env.GITHUB_SHA)) | max_by(.run_number) | if . == null then "" else [.status, (.conclusion // "pending")] | join(" ") end')"
+              if [ "$native_state" = "completed success" ]; then
+                break
+              fi
+              if [[ "$native_state" == completed* ]]; then
+                echo "$workflow rejected $GITHUB_SHA: $native_state"
+                exit 1
+              fi
+              if [ "$attempt" = 90 ]; then
+                echo "Timed out waiting for $workflow on $GITHUB_SHA"
+                exit 1
+              fi
+              sleep 20
+            done
           done
           flags=()
           if [ "$PRERELEASE" = "true" ]; then

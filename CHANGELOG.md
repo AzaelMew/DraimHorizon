@@ -1,5 +1,9 @@
 # История версий
 
+## 0.43.2
+
+- Updated Sunrise map uploads and drawing to use Nightly `9425651`'s live GUI texture atlas. Releases that change the Sunrise port wait for native validation at the release commit.
+
 ## 0.43.1
 
 - Updated the Sunrise `.smod` to the official Nightly `9425651` (2026-11-20). The mod scans and draws the minimap through Sunrise's dynamic textures, and uses Sunrise's official auto-reconnect and client identity. Updated the chat, terrain and block-write hooks for this port.

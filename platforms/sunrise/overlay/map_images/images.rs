@@ -1,7 +1,7 @@
 // World map / Seed Map / minimap images as client dynamic textures in the GUI atlas pool.
 // Game-side module (private Game fields reachable). Replaces the dropped HudAtlas::slots hook:
 // the images are created lazily under the names the shared code looks up in
-// `game.gui.atlas.sprites`, and pixels are delivered with `DynamicTextures::update`, which keeps
+// the GUI atlas's live texture table, and `DynamicTextures::update` keeps
 // the last image so an atlas rebuild (resource reload / renderer rebuild) re-patches it.
 //
 // The 2026-11-19 Nightly also removed the engine minimap (its drawing, sprite slot and terrain
@@ -41,25 +41,21 @@ fn warn(what: &str, error: impl std::fmt::Debug) {
     }
 }
 
-/// Create the images that are missing (transparent). Cheap when both exist.
+/// Create a transparent dynamic texture for each image that is missing.
 pub fn ensure(game: &mut Game<'_>) {
     for (name, side) in IMAGES {
-        if game.gui.atlas.sprites.contains_key(name) {
+        if game.gui.atlas.live.contains_key(name) {
             continue;
         }
         let Ok(id) = Identifier::parse(name) else {
             continue;
         };
         let rgba = vec![0u8; side as usize * side as usize * 4];
-        let atlas = &mut game.gui.atlas;
-        if let Err(error) = game.dynamic_textures.create(
-            atlas.dynamic_texture_pool.as_ref(),
-            &mut atlas.sprites,
-            Some(OWNER),
-            &id,
-            [side, side],
-            &rgba,
-        ) {
+        let (pool, mut names) = game.gui.atlas.dynamic_names();
+        if let Err(error) =
+            game.dynamic_textures
+                .create(pool, &mut names, Some(OWNER), &id, [side, side], &rgba)
+        {
             warn("create", error);
         }
     }
@@ -78,15 +74,11 @@ pub fn upload(game: &mut Game<'_>, name: &str, rgba: &[u8]) -> bool {
     let Ok(id) = Identifier::parse(name) else {
         return false;
     };
-    let atlas = &mut game.gui.atlas;
-    match game.dynamic_textures.update(
-        atlas.dynamic_texture_pool.as_ref(),
-        &mut atlas.sprites,
-        Some(OWNER),
-        &id,
-        [side, side],
-        rgba,
-    ) {
+    let (pool, mut names) = game.gui.atlas.dynamic_names();
+    match game
+        .dynamic_textures
+        .update(pool, &mut names, Some(OWNER), &id, [side, side], rgba)
+    {
         Ok(()) => {
             if name == MINIMAP {
                 MINIMAP_UPLOADED.store(true, Ordering::Relaxed);
@@ -116,8 +108,5 @@ pub fn draw_minimap(
     if !has_minimap() {
         return;
     }
-    // The `sprite_region` source size is the rect's, not the texture's: it crops the sprite by
-    // `(w, h)` out of `(tw, th)`, so passing the image's 128 texels there drew only the top-left
-    // `128 / size` of the picture once the minimap was made larger than 128.
-    batch.sprite_region(&game.gui.atlas, MINIMAP, [x, y, size, size], size, size);
+    batch.sprite_scaled(&game.gui.atlas, MINIMAP, x, y, size, size, u32::MAX);
 }

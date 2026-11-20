@@ -1,5 +1,5 @@
 name: Validate Sunrise Nightly client (experimental)
-# The Sunrise port is experimental and never gates Horizon releases. Two routes are checked:
+# Releases that change the Sunrise port wait for these checks. Two routes are checked:
 #  - smod:  the shipping route. Generate the flat native project, pack the .smod and validate it offline
 #           with the SDK's cargo-sunrise-mod plus the SDK function index (what the launcher validates).
 #  - stage: the source route. Apply the bundle to the pinned Sunrise source and compile sunrise-client.
