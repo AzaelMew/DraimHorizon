@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.42.2"
+version = "0.42.4"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -38,7 +38,7 @@ bindings = [
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "dd67b76ff23e28c6d8e21859df600d31572f81a0"
+horizon_revision = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 
 [[module]]
 id = "runtime"

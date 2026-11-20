@@ -1,11 +1,9 @@
-**DraimHorizon 0.42.2 — Horizon `.hmod` that builds in Horizon Launcher (0.42.1 fixes, CI repair)**
+# DraimHorizon 0.42.4 for Horizon Nightly `0a875da`
 
-This release carries everything 0.42.1 intended: the Horizon `.hmod` builds in Horizon Launcher (launcher compile
-checked on Nightly `6d765e0`, 66 functions patched by 76 mixins), the relay's key-exchange crates live in the mod
-crate, and the Horizon pin is the official Nightly `dd67b76`. 0.42.1 was not published because its CI run restored a
-stale build cache; 0.42.2 fixes the cache key only.
+DraimHorizon 0.42.2 targets `dd67b76`, so Horizon Launcher excludes it on the November 20 Nightly. The updated `draimhorizons-0.42.4.hmod` targets `0a875da91dbb0fdcb7ba8c42c11341aa229af51a`.
 
-- Install `draimhorizons-0.42.2.hmod` (Horizon Launcher 0.2.70 or newer) or `draimhorizons-0.42.2.smod` (Sunrise).
-  On Sunrise a hand-copied `.smod` is turned on with the line `mod.draimhorizon:true` in `sunrise-mods.txt`.
-- Not run in a game client on Horizon. Not available there yet: the third-person patting arm and the World map /
-  Seed Map images (`platforms/horizon/README.md`).
+This Nightly's launcher generates four game modules that the old package supplied as shims. The updated package uses the generated modules to avoid duplicate definitions.
+
+Rebuild native mods after installing the updated `.hmod` on Horizon Nightly `0a875da`. The bundle keeps the `draimhorizon` ID and continues to use the existing settings and data.
+
+Horizon Launcher built the client with DraimHorizon 0.42.4 included. The package passed the SDK check for all 76 mixins.

@@ -18,9 +18,9 @@ DRAIM_TARGET=horizon python tools/sunrise.py freeze --sunrise TREE          # re
 
 ## Launcher build
 
-The launcher compiles each hooked function with its module's imports in a separate crate. Items the game keeps
-`pub(crate)` are out of reach there, so `overlay/shims/` re-exports them under the game's module names
-(`launcher_only`: the source stage uses the real modules). The relay's key-exchange crates live in the mod crate
+The launcher's patched crate provides the game modules and their re-exports needed by the hooked
+functions, including `api_values`, `minecarts`, `execution_role`, and `entity_culling`.
+The relay's key-exchange crates live in the mod crate
 (`HORIZON_CRYPTO` in `tools/sunrise.py`). `smod/Cargo.lock` is the game's `Cargo.lock` pruned to the mod crate:
 copy the game's lock next to a copy of the project without its `horizon-mod-api` dependency and run
 `cargo metadata`. Check with `horizon-launcher native-build --version <Nightly> --server-output <new folder> <project>`.
