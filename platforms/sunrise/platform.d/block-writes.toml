@@ -1,0 +1,14 @@
+# Baritone's world read must hear the blocks the client received from the server.
+#
+# The old target, `game::remote::Game::set_block`, is gone on the 2026-11-19 Nightly: the block
+# write that follows a server update or a prediction is `remote_block_writes::Game::client_block_written`,
+# which says what the block was and what it became. Baritone only needs the state it became, and the
+# helper reads that from the world: a binding may name a parameter, not a field of one (`state.0`).
+[injection.bar-block_change]
+target = "sunrise_client::game::remote_block_writes::Game<'_>::client_block_written"
+kind = "HEAD"
+helper = "baritone/hooks/block_change.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "pos", ty = "[i32; 3]", value = "pos" },
+]

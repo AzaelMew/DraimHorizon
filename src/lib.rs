@@ -1,10 +1,4 @@
 #[cfg(test)]
-#[path = "../platforms/sunrise/smp-compat/src/policy.rs"]
-mod sunrise_smp_compat_policy;
-
-// The login-brand policy of the network thread, covered here because that module lives in the
-// reusable client library rather than the gameplay crate.
-#[cfg(test)]
 #[path = "../mixins/draimhorizon/brand_policy.rs"]
 mod brand_policy;
 

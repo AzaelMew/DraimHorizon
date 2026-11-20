@@ -16,12 +16,17 @@ thread can acknowledge known packs. A later play-phase replacement would be too 
 exclude configuration and the engine's brand handling. Application raw payload registration
 cannot claim the engine-owned `minecraft:` namespace.
 
-The SDK currently indexes two functions in `sunrise_client_lib::net`: `Session::poll` and
-`receive_brand`. It does not expose `brand` directly. The source path under
-`crates/sunrise-client/` does not make it part of the game crate. The adapter now uses both existing
-replacement points and the SDK-exported session/queue layouts. `verify_sdk.py` checks those actual
-contracts and passes on this pin. The network callback waits for registration and queues the brand
-through the existing writer before returning; this ordering still needs runtime verification.
+**History: the adapter is out since Nightly `ed3ac19` (0.42.3).** It existed up to 0.41.4 — folded into the
+main `.smod` as two mixins on the SDK's `sunrise_client_lib::net` replacement points (`Session::poll` and
+`receive_brand`; the SDK never exposed `brand` itself, and `crates/sunrise-client/` does not make it part of
+the game crate), with a rendezvous and an address policy in the mod crate and a session/queue layout table
+checked by `verify_sdk.py`. `ed3ac19` adds `Hooks::client_identity` and ships `sunrise-official`, whose
+`HORIZON_IDENTITY` part sends the brand (and the `horizon:payloads` offer) itself, so the adapter, its
+mixins and the checker left with 0.42.3. The one gap that remained was upstream and route-specific: the
+launcher's *prebuilt* native route linked only `sunrise-mod-host`, so a `.smod` client still announced
+`vanilla` there ([sunrise-org/sunrise#3119](https://github.com/sunrise-org/sunrise/issues/3119), fixed by
+[#3133](https://github.com/sunrise-org/sunrise/pull/3133), which Nightly `520fc48` carries). Nothing in the
+mod sends the brand twice now.
 
 ## Extension compatibility
 

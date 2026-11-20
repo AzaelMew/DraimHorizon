@@ -192,6 +192,29 @@ class FlatPackageTests(unittest.TestCase):
         self.assertIn("batch.patches.push(crate::game::claim_borders_map_images::seed_patch(", seed_view)
         self.assertNotIn("terrain::seed_patch(", seed_view)
 
+    def test_only_horizon_source_stage_exposes_engine_minimap_tiles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp)
+            horizon_lib = source / "crates/horizon-client/src/lib.rs"
+            sunrise_lib = source / "crates/sunrise-client/src/lib.rs"
+            minimap = source / "crates/horizon-client-render/src/minimap.rs"
+            for lib in (horizon_lib, sunrise_lib):
+                lib.parent.mkdir(parents=True)
+                lib.write_text("#![forbid(unsafe_code)]\n", encoding="utf-8")
+            load_sunrise("sunrise").relax_for_launcher_access(source)
+            self.assertFalse(minimap.exists())
+            minimap.parent.mkdir(parents=True)
+            minimap.write_text(
+                "struct Tile {\n    color: u8,\n}\n"
+                "struct Minimap {\n    tiles: FxHashMap<(i32, i32), Tile>,\n}\n",
+                encoding="utf-8",
+            )
+            load_sunrise("horizon").relax_for_launcher_access(source)
+            text = minimap.read_text(encoding="utf-8")
+            self.assertIn("pub struct Tile", text)
+            self.assertIn("pub color:", text)
+            self.assertIn("pub tiles:", text)
+
 
 if __name__ == "__main__":
     unittest.main()

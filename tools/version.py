@@ -7,8 +7,6 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {
-    "platforms/sunrise/smp-compat/Cargo.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
-    "platforms/sunrise/smp-compat/sunrise-mod.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
     "Cargo.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',
     "Cargo.lock": r'(?m)(?<=name = "claim-borders"\n)version = "(\d+\.\d+\.\d+)"$',
     "mixins/draimhorizon/horizon-mixin.toml": r'(?m)^version = "(\d+\.\d+\.\d+)"$',

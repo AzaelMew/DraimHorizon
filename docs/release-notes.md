@@ -1,3 +1,5 @@
-# DraimHorizon 0.43.0
+# DraimHorizon 0.43.1
 
-World Map and Seed Map now display their terrain images on Horizon Nightly `0a875da`. Horizon uses its HUD atlas for the images. The map controls, markers and explored terrain continue to use the shared map code.
+The Sunrise package targets the official Nightly `9425651` (2026-11-20). DraimHorizon scans and draws the live minimap through Sunrise's dynamic texture system. Sunrise's official modules handle auto-reconnect and client identity.
+
+The Horizon package targets Nightly `0a875da`.

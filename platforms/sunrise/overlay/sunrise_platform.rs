@@ -4,9 +4,9 @@
 // (`on`, `setting`, `mod_screen`, ...) or keeps the data elsewhere, so each helper is forwarded here.
 use super::Game;
 
-// Horizon's Native* records are Sunrise's mod_api records.
+// Horizon's Native* records are Sunrise's mod_api records (the minimap one has no counterpart since
+// Nightly ed3ac19 removed the engine minimap).
 pub type NativeZoom = mod_api::Zoom;
-pub type NativeMinimap = mod_api::Minimap;
 pub type NativeScreenView<'a> = mod_api::ScreenView<'a>;
 
 /// A native mod as the shared sources describe it: id, title, description and its keys
