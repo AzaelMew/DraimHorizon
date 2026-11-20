@@ -1,6 +1,4 @@
-# DRAFT replacement for platforms/sunrise/platform.d/map-images.toml.
 # World map / Seed Map images: GUI-atlas dynamic textures (overlay/map_images/images.rs).
-# Rule order matters: the block rewrite must run before the literal-name rewrites.
 
 [[module]]
 id = "map-images"
@@ -24,10 +22,13 @@ replace = '''pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
     }'''
 files = ["map_backend.rs"]
 
-# Sprite names looked up by map_backend.rs / map_view.rs / seed_view.rs.
+# Sunrise resolves dynamic textures through the GUI atlas's live table.
 [[rewrite]]
-pattern = '"claim_borders/world_map"'
-replace = '"draimhorizon:dynamic/world_map"'
+pattern = '''\.sprites\s*\.get\("claim_borders/world_map"\)'''
+replace = '.gui_rect(crate::game::claim_borders_map_images::WORLD_MAP)'
+files = ["map_view.rs"]
+
 [[rewrite]]
-pattern = '"claim_borders/seed_map"'
-replace = '"draimhorizon:dynamic/seed_map"'
+pattern = '''\.sprites\s*\.get\("claim_borders/seed_map"\)'''
+replace = '.gui_rect(crate::game::claim_borders_map_images::SEED_MAP)'
+files = ["seed_view.rs"]
