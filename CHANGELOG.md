@@ -1,5 +1,9 @@
 # История версий
 
+## 0.43.1
+
+- Updated the Sunrise `.smod` to the official Nightly `9425651` (2026-11-20). The mod scans and draws the minimap through Sunrise's dynamic textures, and uses Sunrise's official auto-reconnect and client identity. Updated the chat, terrain and block-write hooks for this port.
+
 ## 0.43.0
 
 - World Map and Seed Map display terrain on Horizon. Their 768×768 and 256×256 images use separate regions of the game's mod-image atlas slot. Rebuilding the renderer or reloading resources refreshes both images.

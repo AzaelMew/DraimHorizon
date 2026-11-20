@@ -14,6 +14,11 @@ on:
       - 'tools/package_flat.py'
       - 'tools/tests/**'
       - 'compatibility.json'
+  pull_request:
+    paths:
+      - '.github/workflows/sunrise-compatibility.yml'
+      - 'platforms/sunrise/**'
+      - 'compatibility.json'
   workflow_dispatch:
 
 defaults:
@@ -22,7 +27,7 @@ defaults:
 permissions:
   contents: read
 concurrency:
-  group: sunrise-native
+  group: sunrise-native-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   pins:

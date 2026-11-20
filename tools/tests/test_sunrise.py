@@ -116,30 +116,20 @@ class SmodTests(unittest.TestCase):
         self.assertEqual(data["native"]["mixin"], [mixin])
         self.assertEqual(data["native"]["module"], [module])
 
-    def test_manifest_declares_internals_before_the_native_table(self):
+    def test_manifest_declares_no_internals(self):
+        # The brand adapter was the only writer of `internals`, and `check_smod_manifest` refuses
+        # manifests that declare any: the generator can no longer emit the table at all.
         bundle = {"mod": {"id": "draimhorizon", "version": "1.2.3"}}
         compat = {"revision": "a" * 40, "mixins_revision": "b" * 40}
-        internals = [{"path": "sunrise_client_lib::net::Session", "kind": "struct", "hash": "0123"}]
-        data = tomllib.loads(sunrise.smod_manifest(bundle, compat, [], [], internals))
-        self.assertEqual(data["internals"], internals)
-        self.assertNotIn("internals", tomllib.loads(sunrise.smod_manifest(bundle, compat, [], []))["native"])
+        data = tomllib.loads(sunrise.smod_manifest(bundle, compat, [], []))
+        self.assertNotIn("internals", data)
 
-    def test_the_smp_brand_adapter_is_folded_into_the_main_package(self):
-        mixins, helpers, internals = sunrise.smp_brand_parts()
-        self.assertEqual({m["target"] for m in mixins},
-                         {"sunrise_client_lib::net::Session::poll", "sunrise_client_lib::net::receive_brand"})
-        self.assertEqual(set(helpers), {m["helper"] for m in mixins})
-        self.assertTrue(all(name.startswith("src/mixins/smp/") for name in helpers))
-        text = "\n".join(helpers.values())
-        self.assertNotIn(sunrise.SMP_BRAND_CRATE, text)
-        self.assertIn("mod_draimhorizon::smp_brand::rendezvous()", text)
-        self.assertIn(("sunrise_client_lib::net::Session", "struct"), {(i["path"], i["kind"]) for i in internals})
-
-    def test_the_smp_brand_pin_follows_compatibility_json(self):
-        compat = json.loads((sunrise.ROOT / "compatibility.json").read_text(encoding="utf-8"))["sunrise"]
-        declared = tomllib.loads((sunrise.SMP_BRAND / "sunrise-mod.toml").read_text(encoding="utf-8"))
-        self.assertEqual(declared["native"]["sunrise"], compat["revision"])
-        self.assertEqual(declared["native"]["mixins"], compat["mixins_revision"])
+    def test_the_package_carries_no_brand_adapter(self):
+        # Since Nightly ed3ac19 sunrise-official announces the Horizon identity itself.
+        platform = sunrise.load_platform()
+        self.assertTrue(platform["injection"]["brand-gate"]["drop"])
+        self.assertTrue(platform["injection"]["brand-announce"]["drop"])
+        self.assertFalse((sunrise.PLATFORM / "smp-compat" / "sunrise-mod.toml").exists())
 
     def test_relay_files_become_nested_modules_with_rewritten_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -450,18 +440,16 @@ class SmodCheckTests(unittest.TestCase):
     def problems(self, targets, files=(GAME,), names=("src/mixins/h.rs", "src/modules/x.rs")):
         return sunrise.check_smod_manifest(self.manifest(targets, files), self.FUNCTIONS, self.REFUSED, set(names))
 
-    def test_declared_internals_use_access_rules_not_just_catalog_presence(self):
+    def test_declared_internals_are_refused_now_that_the_adapter_is_gone(self):
+        # The brand adapter was the only writer of `internals`; its preflight left with it, so the
+        # check fails a package that declares any accessible internal rather than guessing.
         manifest = self.manifest([])
-        declaration = {"path": "sunrise_client_lib::net::ingress::Producer",
-                       "kind": "struct", "hash": "same"}
-        manifest["internals"] = [declaration]
+        manifest["internals"] = [{"path": "sunrise_client_lib::net::ingress::Producer",
+                                  "kind": "struct", "hash": "same"}]
         names = {"src/modules/x.rs"}
-        catalog = {"internals": [dict(declaration, shape_only=True)]}
-        problems = sunrise.check_smod_manifest(manifest, {}, {}, names, catalog)
-        self.assertTrue(any("E_INTERNAL_MISSING" in problem for problem in problems))
+        problems = sunrise.check_smod_manifest(manifest, {}, {}, names, {"internals": []})
+        self.assertTrue(any("internals declarations need a preflight" in problem for problem in problems))
         self.assertTrue(sunrise.check_smod_manifest(manifest, {}, {}, names))
-        catalog["internals"][0]["shape_only"] = False
-        self.assertEqual(sunrise.check_smod_manifest(manifest, {}, {}, names, catalog), [])
 
     def test_lifetimes_are_dropped_to_match_the_function_index(self):
         self.assertEqual(sunrise.function_key("sunrise_client::game::Game<'_>::tick"), "sunrise_client::game::Game::tick")
@@ -503,13 +491,19 @@ class SmodCheckTests(unittest.TestCase):
         catalog_data = json.loads(catalog.read_text(encoding="utf-8")) if catalog.is_file() else None
         self.assertEqual(sunrise.check_smod_manifest(manifest, build["functions"], build["refused"], names, catalog_data), [])
         ids = {m["id"] for m in manifest["native"]["mixin"]}
-        self.assertLessEqual({"register-smp-session", "announce-horizon-brand"}, ids)
-        self.assertIn("src/smp_brand/handshake.rs", names)
+        # The engine minimap that claim-minimap filled is gone; the mod draws its own image.
+        self.assertNotIn("claim-minimap", ids)
+        self.assertIn("minimap-scan", {m["id"] for m in manifest["native"]["module"]})
+        map_image = next(m for m in manifest["native"]["mixin"] if m["id"] == "claim-map-image")
+        self.assertEqual(map_image["target"],
+                         "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native_render_frame_pre")
+        self.assertFalse(map_image.get("cancellable", False))
+        self.assertNotIn("src/smp_brand/handshake.rs", names)
         catalog = data.parent / "internals.json"
         if catalog.is_file():
             known = {(i["path"], i["kind"]): i["hash"] for i in catalog_data["internals"]
                      if not i.get("shape_only", False) and not i.get("cfg", "")}
-            for row in manifest["internals"]:
+            for row in manifest.get("internals", []):
                 self.assertEqual(known.get((row["path"], row["kind"])), row["hash"], row["path"])
 
 
@@ -526,14 +520,8 @@ class StageAdaptationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, "crates/sunrise-client/src/lib.rs", "#![forbid(unsafe_code)]\nfn x() {}\n")
-            write(root, "crates/sunrise-client-render/src/minimap.rs",
-                  "struct Tile {\n    color: [u8; 256],\n    revision: u64,\n    scanned: u8,\n}\npub struct Minimap {\n    tiles: FxHashMap<K, Tile>,\n}\n")
             sunrise.relax_for_launcher_access(root)
             self.assertNotIn("forbid", (root / "crates/sunrise-client/src/lib.rs").read_text())
-            text = (root / "crates/sunrise-client-render/src/minimap.rs").read_text()
-            self.assertIn("pub struct Tile {\n    pub color:", text)
-            self.assertIn("    revision: u64", text)
-            self.assertIn("    pub tiles: FxHashMap", text)
             with self.assertRaises(SystemExit):
                 sunrise.relax_for_launcher_access(root)  # already applied: the source changed shape
 

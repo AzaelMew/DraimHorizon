@@ -1,0 +1,173 @@
+# The live minimap, rebuilt for the 2026-11-19 Nightly.
+#
+# That Nightly removed the engine minimap: the `minimap` hook with its `Minimap`/`MinimapEvent`
+# types, the render crate's terrain scanner, the `Extras.minimap` state and its drawing. A mod now
+# keeps its own picture and draws it in the GUI (Sunrise's own `sunrise-minimap` does the same).
+#
+# So the mod scans its own tiles (overlay/minimap_scan.rs), composes the image as before
+# (`history::compose_minimap`), uploads it through `DynamicTextures` (overlay/map_images/images.rs)
+# and draws it in the shared HUD pass, which still draws the marks and the frame on top of it.
+
+[[module]]
+id = "minimap-scan"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_minimap_scan"
+source = "minimap_scan.rs"
+
+# The engine hook it used to fill is gone.
+[injection.claim-minimap]
+drop = true
+reason = "the engine minimap is gone; the mod composes and draws its own map image"
+
+# The per-frame trigger for the map images: `Extras::update_minimap` is gone, so the mod updates
+# from the frame hook (not cancellable: there is no vanilla minimap update to suppress any more).
+[injection.claim-map-image]
+target = "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native_render_frame_pre"
+kind = "HEAD"
+cancellable = false
+helper = "map_update_hook.rs"
+
+# map_backend.rs: the model's `Layer` and the scanner now come from this bundle.
+[[rewrite]]
+pattern = '''// Native terrain scan on the game thread, disk storage and composition on one worker\.
+use super::\*;'''
+replace = '''// Native terrain scan on the game thread, disk storage and composition on one worker.
+use super::*;
+use crate::game::claim_borders_minimap_scan::{Layer, SIZE};
+use crate::game::claim_borders_minimap_scan::Scanner;
+// The game module no longer imports it for its own extras; `game.dim` still speaks `Dim`.
+use crate::game::Dim;'''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = 'scanner: minimap::Minimap,'
+replace = 'scanner: Scanner,'
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = 'scanner: minimap::Minimap::default\(\),'
+replace = 'scanner: Scanner::default(),'
+files = ["map_backend.rs"]
+
+# The coarse scan the explored map captures from: its own scanner in the cache, not Extras.minimap.
+[[rewrite]]
+pattern = '''    live_refresh: Instant,
+\}'''
+replace = '''    live_refresh: Instant,
+    capture: Scanner,
+}'''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = '''            live_refresh: Instant::now\(\),
+        \}\)'''
+replace = '''            live_refresh: Instant::now(),
+            capture: Scanner::default(),
+        })'''
+files = ["map_backend.rs"]
+
+# The live image: no atlas rect to patch any more, so deliver the composed pixels as a texture.
+# The engine's `image.is_empty()` term goes with the image: the first frame composes because
+# `live_displayed` is `None`, and re-composing is on the timer (see below), not on "never uploaded".
+[[rewrite]]
+pattern = '''        \|\| scanned != 0
+        \|\| game\.extras\.minimap\.image\.is_empty\(\)'''
+replace = '''        || scanned != 0'''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = '''\)
+        && let Some\(rect\) = game\.gui\.atlas\.sprites\.get\(MINIMAP_SPRITE\)\.copied\(\)
+    \{'''
+replace = ''')
+    {'''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = 'let size = minimap::SIZE;'
+replace = 'let size = SIZE;'
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = '''        let \(w, h\) = \(game\.gui\.atlas\.width as f32, game\.gui\.atlas\.height as f32\);
+        game\.map_patches\.push\(sunrise_client::font::Patch \{
+            x: \(rect\.u0 \* w\)\.round\(\) as u32,
+            y: \(rect\.v0 \* h\)\.round\(\) as u32,
+            width: size as u32,
+            height: size as u32,
+            rgba: pixels,
+        \}\);
+        if game\.extras\.minimap\.image\.is_empty\(\) \{
+            game\.extras\.minimap\.image = vec!\[0; size \* size \* 4\];
+        \}'''
+replace = '''        let uploaded = crate::game::claim_borders_map_images::upload(
+            game,
+            crate::game::claim_borders_map_images::MINIMAP,
+            &pixels,
+        );'''
+files = ["map_backend.rs"]
+
+# ...and a refused upload (no free 256-class slot) must not turn into a recompose per frame: the
+# frame is throttled like a published one, only the view is not told the image is behind its marks.
+[[rewrite]]
+pattern = '''        cache\.live_displayed = Some\(\(layer, request\.view, p\.shading\)\);
+        cache\.live_refresh = Instant::now\(\);
+        view::mini_published\(request\.dimension\.clone\(\), request\.view\);'''
+replace = '''        cache.live_displayed = Some((layer, request.view, p.shading));
+        cache.live_refresh = Instant::now();
+        if uploaded {
+            view::mini_published(request.dimension.clone(), request.view);
+        }'''
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = 'game\.extras\.minimap\.clear\(\);'
+replace = 'cache.capture.clear();'
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = 'game\.extras\.minimap\.update\('
+replace = 'cache.capture.update('
+files = ["map_backend.rs"]
+
+[[rewrite]]
+pattern = '''game
+            \.extras
+            \.minimap
+            \.claim_borders_tiles\(cache\.captured_at\)'''
+replace = 'cache.capture.tiles_since(cache.captured_at)'
+files = ["map_backend.rs"]
+
+# map_view.rs: the mod's own image replaces the engine's minimap drawing. The type below is
+# already renamed to the shim's `NativeMinimap` by platform.toml's rewrite, which runs first.
+[[rewrite]]
+pattern = '''pub\(super\) fn wanted\(game: &Game<'_>\) -> Option<crate::game::claim_borders_platform::NativeMinimap> \{
+    let p = settings\(game\);
+    if !game\.native_on\(claims::ID\) \|\| !p\.minimap \|\| visible\(\) \{
+        return None;
+    \}
+    Some\(crate::game::claim_borders_platform::NativeMinimap \{[\s\S]*?\n    \}\)
+\}'''
+replace = '''pub(super) fn wanted(game: &Game<'_>) -> bool {
+    let p = settings(game);
+    game.native_on(claims::ID) && p.minimap && !visible()
+}'''
+files = ["map_view.rs"]
+
+[[rewrite]]
+pattern = 'if wanted\(game\)\.is_none\(\) \|\| game\.ui\.hide_gui'
+replace = 'if !wanted(game) || game.ui.hide_gui'
+files = ["map_view.rs"]
+
+[[rewrite]]
+pattern = '''    let \(x, next_y\) = corners\.place\(corner\(p\.corner\), p\.size as f32, 0\.0\);
+    let y = if p\.corner < 2 \{
+        next_y - p\.size as f32 - 2\.0
+    \} else \{
+        next_y \+ 2\.0
+    \};'''
+replace = '''    // Sunrise's `Corners::place` returns the box's top-left corner, where Horizon's returns the
+    // next free row: reserve the map's own height and draw at the returned position.
+    let (x, y) = corners.place(corner(p.corner), p.size as f32, p.size as f32);
+    crate::game::claim_borders_map_images::draw_minimap(game, batch, [x, y, p.size as f32]);'''
+files = ["map_view.rs"]
