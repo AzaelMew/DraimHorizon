@@ -209,7 +209,7 @@ fn end(game: &mut Game<'_>, ok: bool, cooldown: u64) {
     walk::haul_ended(ok);
 }
 /// Whether nothing but air lies between the eye at `feet` and the middle of the container.
-fn in_sight(game: &Game<'_>, feet: nav::Pos, chest: nav::Pos) -> bool {
+pub(super) fn in_sight(game: &Game<'_>, feet: nav::Pos, chest: nav::Pos) -> bool {
     let eye = [
         f64::from(feet[0]) + 0.5,
         f64::from(feet[1]) + 1.62,
@@ -234,7 +234,7 @@ fn in_sight(game: &Game<'_>, feet: nav::Pos, chest: nav::Pos) -> bool {
     })
 }
 /// Spots to stand on within reach of the container, ones with a clear line to it first.
-fn spots(game: &Game<'_>, chest: nav::Pos, from: [f64; 3]) -> Vec<nav::Pos> {
+pub(super) fn spots(game: &Game<'_>, chest: nav::Pos, from: [f64; 3]) -> Vec<nav::Pos> {
     let mut found = Vec::new();
     for y in [chest[1], chest[1] - 1, chest[1] + 1, chest[1] - 2] {
         for dz in -3..=3_i32 {
@@ -265,7 +265,7 @@ fn spots(game: &Game<'_>, chest: nav::Pos, from: [f64; 3]) -> Vec<nav::Pos> {
     found
 }
 /// The player's main inventory and hotbar as `farm_storage` plans see them.
-fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
+pub(super) fn inventory(game: &Game<'_>) -> Vec<store::Stack> {
     (0..36)
         .map(|g| {
             let stack = if g < 9 {
@@ -288,7 +288,7 @@ fn needed(game: &Game<'_>, item: &str) -> bool {
 }
 /// How long a walk to `goal` may take: ninety seconds, or the way at two blocks a second, so a
 /// storage 800 blocks away still has its time.
-fn walk_time(game: &Game<'_>, goal: nav::Pos) -> Duration {
+pub(super) fn walk_time(game: &Game<'_>, goal: nav::Pos) -> Duration {
     let from = game
         .native_player()
         .map_or(nav::center(goal), |p| [p.x, p.y, p.z]);

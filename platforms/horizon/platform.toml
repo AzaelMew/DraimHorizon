@@ -164,9 +164,10 @@ drop = true
 reason = "net::run and net::brand are lower-crate functions the Horizon SDK does not make replaceable; Horizon is the client the SMP admits, so the brand needs no change"
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
-# chunks out of the world, so the hook goes before that call in the game-crate caller instead.
+# chunks out of the world, so the hook goes before that call in the game-crate caller instead. Since
+# Nightly 8f83e5c the caller is a wrapper and its body lives in remote/level_state.rs.
 [injection.bar-unload]
-target = "horizon_client::game::remote::Game<'_>::forget_remote_columns"
+target = "horizon_client::game::remote::level_state::Game<'_>::forget_remote_columns_body"
 kind = "BEFORE_CALL"
 selector = "horizon_client::streaming::Streaming::take_remote_columns"
 require = 1

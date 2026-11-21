@@ -74,6 +74,9 @@ pub use auto_tools as claim_borders_auto_tools;
 #[path = "../mixins/draimhorizon/farm_storage.rs"]
 pub mod farm_storage;
 pub use farm_storage as claim_borders_farm_storage;
+#[path = "../mixins/draimhorizon/sorter.rs"]
+pub mod sorter;
+pub use sorter as claim_borders_sorter;
 
 #[path = "../mixins/draimhorizon/relay_settings.rs"]
 pub mod relay_settings;

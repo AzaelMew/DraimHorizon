@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.43.2"
+version = "0.44.1"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -38,7 +38,7 @@ bindings = [
 
 # Client chat and world gizmo adapters target exact source, not just stable hooks.
 [compatibility]
-horizon_revision = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
+horizon_revision = "8f83e5c85ae3b9a117f742e8d91170c5c9080a06"
 
 [[module]]
 id = "runtime"
@@ -459,6 +459,18 @@ id = "haul-view"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_haul_view"
 source = "haul_view.rs"
+
+[[module]]
+id = "sorter"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_sorter"
+source = "sorter.rs"
+
+[[module]]
+id = "sorter-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_sorter_view"
+source = "sorter_view.rs"
 
 [[module]]
 id = "helpers"

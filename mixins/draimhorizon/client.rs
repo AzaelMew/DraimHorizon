@@ -1662,6 +1662,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
             farm_composter: crate::game::claim_borders_workshop_view::farm_composter(game),
             schematic_places: crate::game::claim_borders_schematic_view::rows(game),
             farm_plots: crate::game::claim_borders_farm_plots_view::rows(game),
+            sorter: crate::game::claim_borders_sorter_view::snapshot(game),
             schematic_friend_places: crate::game::claim_borders_schematic_share_view::rows(game),
             auto_eat: crate::game::claim_borders_navigation_view::auto_eat_setting(game),
             auto_tools_only_holding:
@@ -2323,6 +2324,7 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
                 Ok(vec![format!("{name}: {x} {y} {z}")])
             }
         }
+        Action::Sorter(control) => crate::game::claim_borders_sorter_view::act(game, control),
         Action::FarmStorage(role) => {
             use crate::game::claim_borders_workshop_view as workshop;
             let l = crate::game::claim_borders_chat_view::current_language();

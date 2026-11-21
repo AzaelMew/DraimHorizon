@@ -7,12 +7,18 @@ pub type Stack = Option<(String, u32)>;
 pub const KEEP_SEEDS: u32 = 64;
 /// Seeds taken out of storage when the inventory has run out of them.
 pub const TAKE_SEEDS: u32 = 128;
-/// Containers with a menu that holds items freely: chests, barrels and shulker boxes.
+/// Containers with a menu that holds items freely: chests (copper ones at every stage of
+/// weathering, waxed or not), barrels and shulker boxes.
 pub fn is_container(name: &str) -> bool {
     matches!(
         name,
         "minecraft:chest" | "minecraft:trapped_chest" | "minecraft:barrel"
-    ) || name.ends_with("shulker_box")
+    ) || is_copper_chest(name)
+        || name.ends_with("shulker_box")
+}
+pub fn is_copper_chest(name: &str) -> bool {
+    name.strip_prefix("minecraft:")
+        .is_some_and(|n| n.ends_with("copper_chest"))
 }
 /// The menu types of those containers (`generic_9x1` to `generic_9x6` and the shulker box).
 pub fn is_container_menu(menu: &str) -> bool {

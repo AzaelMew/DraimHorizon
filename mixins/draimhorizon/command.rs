@@ -30,6 +30,13 @@ fn claim_borders_command(game: &mut crate::game::Game<'_>, command: &str, ran: &
         *ran = true;
         return;
     }
+    // The storage sorter (`/dsort ...`, or `/sort` with one of its words).
+    if matches!(command.split_whitespace().next(), Some("sort" | "dsort"))
+        && crate::game::claim_borders_sorter_view::command(game, &format!("/{command}"))
+    {
+        *ran = true;
+        return;
+    }
     let (verb, body) = command.split_once(' ').unwrap_or((command, ""));
     if matches!(verb, "r" | "reply") {
         *ran = true;
