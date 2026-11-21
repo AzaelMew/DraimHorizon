@@ -679,6 +679,7 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 let icon = match mode {
                     model::BaritoneMode::Farm => ui::Icon::Restock,
                     model::BaritoneMode::Drain => ui::Icon::Grid,
+                    model::BaritoneMode::Sort => ui::Icon::Chest,
                 };
                 ui::icon(
                     game,
