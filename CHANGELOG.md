@@ -1,5 +1,9 @@
 # История версий
 
+## 0.44.1
+
+- Updated the Horizon `.hmod` to the official Nightly `8f83e5c`. This Nightly split `remote/mod.rs` into thin wrappers whose bodies live in submodules, so the Baritone chunk-unload hook (`bar-unload`, before `Streaming::take_remote_columns`) now targets `remote::level_state::forget_remote_columns_body`. The other hook targets are unchanged.
+
 ## 0.44.0
 
 - New **Storage sorter** (Automation → Sorting, `/dsort`): a copper-golem-style job that empties input containers into the containers of a marked storage zone. An item goes to a container whose item frame shows it, else to an unframed container already holding it, else to the overflow container, else (optionally) to an empty unframed container; anything else stays in the input. "Sort now" runs once, "Watch" checks the inputs every 30 seconds, "Survey" opens unseen containers to learn their contents.

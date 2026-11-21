@@ -1,4 +1,4 @@
-# DraimHorizon 0.44.0
+# DraimHorizon 0.44.1
 
 ## Storage sorter
 
@@ -11,4 +11,4 @@ Automation gets a third mode, **Sorting** (also `/dsort`). It works like a coppe
 
 Copper chests now count as containers for the sorter, the farm and mining trips.
 
-The Horizon package targets Nightly `0a875da`; the Sunrise package targets Nightly `9425651`.
+The Horizon package now targets the official Nightly `8f83e5c`; the Sunrise package targets Nightly `9425651`.
