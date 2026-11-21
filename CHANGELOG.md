@@ -1,5 +1,10 @@
 # История версий
 
+## 0.44.0
+
+- New **Storage sorter** (Automation → Sorting, `/dsort`): a copper-golem-style job that empties input containers into the containers of a marked storage zone. An item goes to a container whose item frame shows it, else to an unframed container already holding it, else to the overflow container, else (optionally) to an empty unframed container; anything else stays in the input. "Sort now" runs once, "Watch" checks the inputs every 30 seconds, "Survey" opens unseen containers to learn their contents.
+- Item frames within 24 blocks and the containers of the zone are indexed while the player is near the storage and kept per world (up to 2048 containers); double chests are one entry whichever half carries the frame. Only items taken from an input are carried off, full containers are skipped for the run, and the zone, inputs and overflow are drawn in the world.
+- Copper chests (every weathering stage, waxed or not) count as containers for the sorter, the farm's storage and mining trips.
 ## 0.43.2
 
 - Updated Sunrise map uploads and drawing to use Nightly `9425651`'s live GUI texture atlas. Releases that change the Sunrise port wait for native validation at the release commit.

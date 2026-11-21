@@ -1,6 +1,6 @@
 [mod]
 id = "draimhorizon"
-version = "0.43.2"
+version = "0.44.0"
 priority = 100
 
 # Additional visible models only: server metadata and effects remain untouched.
@@ -459,6 +459,18 @@ id = "haul-view"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_haul_view"
 source = "haul_view.rs"
+
+[[module]]
+id = "sorter"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_sorter"
+source = "sorter.rs"
+
+[[module]]
+id = "sorter-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_sorter_view"
+source = "sorter_view.rs"
 
 [[module]]
 id = "helpers"

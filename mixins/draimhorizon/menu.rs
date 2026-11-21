@@ -262,6 +262,8 @@ pub struct ViewModel {
     pub schematic_selection: String,
     /// The marked farm plots of this world: index, label (name and size), farmed, shown.
     pub farm_plots: Vec<(usize, String, bool, bool)>,
+    /// The storage sorter of this world.
+    pub sorter: SorterInfo,
     pub navigation_players: Vec<(u128, String)>,
     pub navigation_status: String,
     pub schematic_files: Vec<String>,
@@ -444,6 +446,8 @@ pub enum Action {
     SetHideClaimInfo(bool),
     /// Take the container under the crosshair as the farm's storage, or clear it.
     FarmStorage(super::claim_borders_farm_storage::Role),
+    /// A button of the storage sorter.
+    Sorter(SorterControl),
     /// The safe point of the farm: set to where the player stands, or cleared.
     FarmSafe,
     /// The block under the crosshair goes into the "own block" mining target, or out of it.
@@ -572,6 +576,7 @@ impl std::fmt::Debug for Action {
                 .finish(),
             Self::BaritoneKey(key) => f.debug_tuple("BaritoneKey").field(key).finish(),
             Self::FarmStorage(role) => f.debug_tuple("FarmStorage").field(role).finish(),
+            Self::Sorter(c) => f.debug_tuple("Sorter").field(c).finish(),
             Self::FarmSafe => f.write_str("FarmSafe"),
             Self::SchematicPlace(i) => f.debug_tuple("SchematicPlace").field(i).finish(),
             Self::SchematicEdit(e) => f.debug_tuple("SchematicEdit").field(e).finish(),
@@ -1030,6 +1035,46 @@ pub enum BaritoneMode {
     #[default]
     Farm,
     Drain,
+    /// The storage sorter: carries items from input containers to the ones meant for them.
+    Sort,
+}
+/// The buttons of the storage sorter (also its `/dsort` words).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SorterControl {
+    /// The container aimed at becomes an input, or stops being one.
+    Input,
+    /// The container aimed at becomes the overflow; aiming elsewhere clears it.
+    Overflow,
+    /// A corner of the storage zone where the player stands.
+    Pos1,
+    Pos2,
+    /// Empty the inputs once.
+    Sort,
+    /// Empty the inputs, then look again every half minute.
+    Watch,
+    /// Open every container not seen yet, to learn what it holds.
+    Survey,
+    Stop,
+    /// Whether an empty container without a frame may become an item's.
+    FillEmpty,
+    /// Forget this world's storage.
+    Clear,
+}
+/// What the Sort mode shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SorterInfo {
+    pub inputs: usize,
+    pub overflow: Option<[i32; 3]>,
+    /// The zone's size, when it is set.
+    pub zone: Option<String>,
+    pub chests: usize,
+    pub labeled: usize,
+    pub seen: usize,
+    pub fill_empty: bool,
+    /// The run under way: 0 once, 1 watching, 2 survey.
+    pub running: Option<u8>,
+    pub moved: u32,
+    pub status: String,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChatOption {
@@ -1050,6 +1095,8 @@ pub enum Control {
     SettingsContentPage(usize),
     /// Sets (or, aiming elsewhere, clears) the farm's storage container.
     FarmStorage(super::claim_borders_farm_storage::Role),
+    /// A button of the storage sorter.
+    Sorter(SorterControl),
     /// Takes the cell the player stands on as the farm's safe point (or clears it).
     FarmSafe,
     /// Bone meal on the crops that are still growing, on or off.
@@ -1593,6 +1640,7 @@ impl Menu {
         let bm = match self.baritone_mode {
             BaritoneMode::Farm => "farm",
             BaritoneMode::Drain => "drain",
+            BaritoneMode::Sort => "sort",
         };
         let fs = match self.farm_section {
             FarmSection::Crops => "crops",
@@ -1673,6 +1721,7 @@ impl Menu {
                     self.baritone_mode = match value {
                         "farm" => BaritoneMode::Farm,
                         "drain" => BaritoneMode::Drain,
+                        "sort" => BaritoneMode::Sort,
                         _ => self.baritone_mode,
                     }
                 }
@@ -1965,6 +2014,14 @@ impl Menu {
                     spacing: self.drain_spacing,
                 },
             )),
+            // The sorter walks its own rounds; it has no preview.
+            BaritoneMode::Sort if !running => Err(language
+                .text(
+                    "Предпросмотра нет: зона и сундуки подсвечены в мире",
+                    "No preview: the zone and containers are drawn in the world",
+                )
+                .to_owned()),
+            BaritoneMode::Sort => Ok(Action::Sorter(SorterControl::Sort)),
         }
     }
     /// Start on the Schematics tab: build the chosen file at the typed place.
@@ -5165,6 +5222,152 @@ impl Menu {
             }
         }
     }
+    /// The Sort mode: where the storage is (zone, inputs, overflow), how to run it, and what the
+    /// index knows. Every button fits two columns, so the smallest panel still shows them.
+    #[allow(clippy::too_many_arguments)]
+    fn sorter_layout(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        height: f32,
+        step: f32,
+        h: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        let l = self.language;
+        let info = &model.sorter;
+        let gap = 2.0;
+        let half = (w - gap) / 2.0;
+        let quarter = (w - gap * 3.0) / 4.0;
+        let top = 100.0;
+        let on = |v: bool| {
+            if v {
+                l.text("вкл", "on")
+            } else {
+                l.text("выкл", "off")
+            }
+        };
+        // Places: the zone's two corners, the inputs and the overflow (aimed at).
+        let places = [
+            (
+                l.text("Угол 1", "Corner 1"),
+                SorterControl::Pos1,
+                info.zone.is_some(),
+            ),
+            (
+                l.text("Угол 2", "Corner 2"),
+                SorterControl::Pos2,
+                info.zone.is_some(),
+            ),
+            (
+                l.text("Вход", "Input"),
+                SorterControl::Input,
+                info.inputs > 0,
+            ),
+            (
+                l.text("Прочее", "Overflow"),
+                SorterControl::Overflow,
+                info.overflow.is_some(),
+            ),
+        ];
+        for (i, (label, control, active)) in places.into_iter().enumerate() {
+            out.push(widget(
+                [x + i as f32 * (quarter + gap), top, quarter, h],
+                label,
+                Some(Control::Sorter(control)),
+                active,
+            ));
+        }
+        let running = info.running;
+        let runs = [
+            (
+                l.text("Разобрать", "Sort now").to_owned(),
+                SorterControl::Sort,
+                running == Some(0),
+            ),
+            (
+                l.text("Следить", "Watch").to_owned(),
+                SorterControl::Watch,
+                running == Some(1),
+            ),
+            (
+                l.text("Осмотреть", "Survey").to_owned(),
+                SorterControl::Survey,
+                running == Some(2),
+            ),
+            (
+                l.text("Стоп", "Stop").to_owned(),
+                SorterControl::Stop,
+                false,
+            ),
+        ];
+        for (i, (label, control, active)) in runs.into_iter().enumerate() {
+            out.push(widget(
+                [x + i as f32 * (quarter + gap), top + step, quarter, h],
+                label,
+                Some(Control::Sorter(control)),
+                active,
+            ));
+        }
+        out.push(widget(
+            [x, top + 2.0 * step, half, h],
+            localized!(l, "Пустые: {}", "Empty ones: {}", on(info.fill_empty)),
+            Some(Control::Sorter(SorterControl::FillEmpty)),
+            info.fill_empty,
+        ));
+        out.push(widget(
+            [x + half + gap, top + 2.0 * step, half, h],
+            l.text("Забыть склад", "Forget storage"),
+            Some(Control::Sorter(SorterControl::Clear)),
+            false,
+        ));
+        let unset = l.text("не задан", "not set");
+        let lines = [
+            localized!(
+                l,
+                "Зона (син.): {}",
+                "Zone (blue): {}",
+                info.zone.clone().unwrap_or_else(|| unset.to_owned())
+            ),
+            localized!(l, "Входов (зелён.): {}", "Inputs (green): {}", info.inputs),
+            localized!(
+                l,
+                "Прочее (оранж.): {}",
+                "Overflow (orange): {}",
+                info.overflow
+                    .map_or(unset.to_owned(), |[x, y, z]| format!("{x} {y} {z}"))
+            ),
+            localized!(
+                l,
+                "Сундуков: {} · с рамкой: {}",
+                "Containers: {} · framed: {}",
+                info.chests,
+                info.labeled
+            ),
+            localized!(
+                l,
+                "Осмотрено: {} · перенесено: {}",
+                "Seen: {} · moved: {}",
+                info.seen,
+                info.moved
+            ),
+            info.status.clone(),
+        ];
+        let first = top + 3.0 * step;
+        for (i, line) in lines.into_iter().enumerate() {
+            let y = first + (i / 2) as f32 * 12.0;
+            if y + 11.0 > height - 50.0 {
+                break;
+            }
+            out.push(widget(
+                [x + (i % 2) as f32 * (half + gap), y, half, 11.0],
+                line,
+                None,
+                false,
+            ));
+        }
+    }
     fn experimental_layout(
         &self,
         model: &ViewModel,
@@ -5201,13 +5404,18 @@ impl Menu {
             ));
         }
         if self.experimental_section == ExperimentalSection::Baritone {
-            let mode_width = (w - 4.0) / 2.0;
+            let mode_width = (w - 8.0) / 3.0;
             for (i, mode, label) in [
                 (0, BaritoneMode::Farm, self.language.text("Ферма", "Farm")),
                 (
                     1,
                     BaritoneMode::Drain,
                     self.language.text("Осушение", "Drain"),
+                ),
+                (
+                    2,
+                    BaritoneMode::Sort,
+                    self.language.text("Сортировка", "Sorting"),
                 ),
             ] {
                 out.push(widget(
@@ -5221,6 +5429,8 @@ impl Menu {
             let h = (step - 2.0).min(22.0);
             if self.baritone_mode == BaritoneMode::Farm {
                 self.farm_layout(model, x, w, height, step, h, &mut out);
+            } else if self.baritone_mode == BaritoneMode::Sort {
+                self.sorter_layout(model, x, w, height, step, h, &mut out);
             } else if self.baritone_mode == BaritoneMode::Drain {
                 use super::claim_borders_draining::Pattern;
                 out.push(widget(
@@ -6539,6 +6749,7 @@ impl Menu {
                 None
             }
             Control::FarmStorage(role) => Some(Action::FarmStorage(role)),
+            Control::Sorter(c) => Some(Action::Sorter(c)),
             Control::FarmSafe => Some(Action::FarmSafe),
             Control::FarmBonemeal => {
                 self.farm_bonemeal = !self.farm_bonemeal;
@@ -8502,7 +8713,9 @@ mod tests {
                     for experimental_section in
                         [ExperimentalSection::Ores, ExperimentalSection::Baritone]
                     {
-                        for baritone_mode in [BaritoneMode::Farm, BaritoneMode::Drain] {
+                        for baritone_mode in
+                            [BaritoneMode::Farm, BaritoneMode::Drain, BaritoneMode::Sort]
+                        {
                             let ru = Menu {
                                 tab,
                                 settings_section: section,

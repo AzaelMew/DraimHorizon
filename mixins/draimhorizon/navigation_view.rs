@@ -128,6 +128,7 @@ fn run_baritone_key(game: &mut Game<'_>, action: model::Hotkey) -> Result<bool, 
             Ok(false)
         }
         model::Hotkey::Stop => {
+            crate::game::claim_borders_sorter_view::stop_request();
             line(game, "cancel");
             crate::game::claim_borders_baritone_bridge::walk_cancel();
             crate::game::claim_borders_baritone_bridge::notice("Стоп", "Stop");
@@ -155,6 +156,7 @@ fn start_from_menu(game: &mut Game<'_>, running: bool) -> Result<(), String> {
         | Action::BaritoneTunnel { .. }
         | Action::BaritoneBridge { .. }
         | Action::BaritoneDrain(_)
+        | Action::Sorter(_)
         | Action::BaritoneElytra(_)
         | Action::BaritoneElytraWaypoint(_)
         | Action::BaritoneBuild { .. }) => {
@@ -237,7 +239,7 @@ pub(super) fn in_world(game: &Game<'_>) -> bool {
 }
 /// What the action keys should do with the task in progress: (running, resumable).
 fn control() -> (bool, bool) {
-    if assist_active() {
+    if assist_active() || crate::game::claim_borders_sorter_view::active() {
         return (true, false);
     }
     if let Some(control) = crate::game::claim_borders_workshop_view::control() {
@@ -2463,6 +2465,7 @@ pub(super) fn mining_attack_begin(game: &mut Game<'_>) {
     sprint_frame(game);
     crate::game::claim_borders_schematic_view::keys(game);
     crate::game::claim_borders_haul_view::frame(game);
+    crate::game::claim_borders_sorter_view::frame(game);
     crate::game::claim_borders_resume::frame(game);
     if auto_eat(game) || auto_drink(game) {
         return;
@@ -2814,6 +2817,7 @@ fn start_task(game: &Game<'_>, goal_request: Goal, running: bool) -> Result<(), 
     })
 }
 pub(super) fn pause() {
+    crate::game::claim_borders_sorter_view::stop_request();
     crate::game::claim_borders_workshop_view::pause();
     crate::game::claim_borders_construction_view::pause();
     state(|s| {
@@ -4539,6 +4543,9 @@ pub(super) fn snapshot(game: &Game<'_>) -> (String, bool) {
     }
     if let Some(label) = assist_label() {
         return (label, false);
+    }
+    if crate::game::claim_borders_sorter_view::active() {
+        return (crate::game::claim_borders_sorter_view::status(), true);
     }
     let language = language();
     state(|s| {

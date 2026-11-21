@@ -86,6 +86,17 @@ Every Baritone job shares one route planner. A task waits instead of stopping wh
 ![Tunnel, bridge and drain jobs](docs/showcase/construction.svg)
 ![Schematic ghost blocks and preview editor keys](docs/showcase/schematics.svg)
 
+**Storage sorter** — Open **J → Experimental → Automation → Sorting**. Like a copper golem, it takes items from an input container and carries each one to the container meant for it:
+
+1. A container with an item frame showing that item. A frame on either half of a double chest labels the whole chest.
+2. An unframed container already holding that item when it was last opened.
+3. The overflow container, if one is set.
+4. With **Empty ones** on, the nearest empty unframed container.
+
+Anything else stays in the input. Mark the storage zone with **Corner 1** and **Corner 2** at its opposite corners (up to 128×128 blocks and 24 levels). Aim at a container and press **Input** (up to four) or **Overflow**. **Sort now** empties the inputs once. **Watch** checks them again every 30 seconds. **Survey** opens every container it has not seen yet, to learn its contents. The same actions are available as `/dsort pos1|pos2|input|overflow|start|watch|survey|stop|empty|status|clear`.
+
+While you are near the storage, the sorter indexes its containers and the item frames within 24 blocks and saves them per world. A large storage therefore does not need reopening each round. Only items taken from an input are carried off; items already in your inventory stay there. Full containers are skipped, and items with nowhere to go are returned to the input.
+
 ## QOL and interface
 
 **Auto Eat** — Open **J → QOL → Survival → Allowed foods** and select food-item tiles, just like mining targets. Only selected foods may be eaten; the list starts empty. Auto Eat waits until a food's entire hunger value fits (steak restores 8 points, so it waits until hunger is 12/20 or lower). Smaller selected snacks can be eaten sooner. Saturation does not affect this check; risky and reserved foods remain excluded.
