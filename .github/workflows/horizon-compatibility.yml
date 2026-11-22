@@ -40,8 +40,8 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install Rust
@@ -82,7 +82,7 @@ jobs:
       # The cache key carries the pins: build scripts record the paths of the exported source, so a cache
       # from another Nightly must never be restored (it failed with `discovering ingredient tests`).
       - name: Restore build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry
@@ -103,7 +103,7 @@ jobs:
         run: DRAIM_TARGET=horizon python3 tools/sunrise.py stage --sunrise .local/horizon --check --jobs 3 2>&1 | tee compatibility-client.log
       - name: Save build cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.cargo/registry
@@ -114,7 +114,7 @@ jobs:
           key: horizon-nightly-${{ runner.os }}-${{ hashFiles('compatibility.json') }}-${{ github.run_id }}
       - name: Preserve diagnostic outputs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: horizon-nightly-current-check
           path: |
