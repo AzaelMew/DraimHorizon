@@ -6,8 +6,8 @@ Facts were read from the repository on 2026-11-22; its own `AGENTS.md` and
 
 ## What it is
 
-A native Rust mod for the Horizon client (Minecraft content), shipped for Horizon
-(`.hmod`) and Sunrise (`.smod`) launchers. Bundle ID `draimhorizon`; the settings
+A native Rust mod for the Horizon and Sunrise launchers (the owner's description),
+shipped as `.hmod` (Horizon) and `.smod` (Sunrise). Bundle ID `draimhorizon`; the settings
 namespace stays `claim_borders` (`runtime::SETTINGS_ID`) - never change it with
 launcher identity. A separate Python relay lives in `relay/`. Toolchain: Rust pinned
 in `rust-toolchain.toml`; Python tools in `tools/`; platform retargeting in
