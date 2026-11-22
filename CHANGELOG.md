@@ -1,5 +1,9 @@
 # История версий
 
+## 0.44.2
+
+- Maintenance: added the owner's AI-assistant instructions and guides (`AGENTS.md`, `CLAUDE.md`, `.ai-playbook/`), a pull request template, automatic pull request labels, `CODEOWNERS`, and Dependabot for GitHub Actions. The version workflow now commits as the repository owner. Updated the Horizon pin to the official Nightly `2b77287` (hashes of `game.rs` and `hud.rs` refreshed); the hooks are validated by the native compatibility workflow.
+
 ## 0.44.1
 
 - Updated the Horizon `.hmod` to the official Nightly `8f83e5c`. This Nightly split `remote/mod.rs` into thin wrappers whose bodies live in submodules, so the Baritone chunk-unload hook (`bar-unload`, before `Streaming::take_remote_columns`) now targets `remote::level_state::forget_remote_columns_body`. The other hook targets are unchanged.

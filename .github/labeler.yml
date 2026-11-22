@@ -1,0 +1,22 @@
+# Automatic PR labels by changed files (see .github/workflows/labeler.yml)
+area:runtime:
+  - changed-files:
+      - any-glob-to-any-file: ["mixins/**", "src/**", "Cargo.toml", "Cargo.lock"]
+area:relay:
+  - changed-files:
+      - any-glob-to-any-file: relay/**
+area:platforms:
+  - changed-files:
+      - any-glob-to-any-file: ["platforms/**", "compatibility.json"]
+area:tools:
+  - changed-files:
+      - any-glob-to-any-file: tools/**
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "*.md"]
+chore:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**", ".ai-playbook/**", "AGENTS.md", "CLAUDE.md", "rust-toolchain.toml"]
+tests:
+  - changed-files:
+      - any-glob-to-any-file: ["tests/**", "tools/tests/**", "relay/tests/**"]
