@@ -72,6 +72,15 @@ The installer keeps the reusable template in `.ai-playbook/reference/pr-template
 and installs it as `.github/pull_request_template.md`. It never overwrites an existing
 project template: remove or reconcile the old file in the plan first.
 
+## Merging
+
+Merging is always the owner's decision. The default method is **Squash and merge**
+on GitHub (web or mobile): GitHub signs the resulting commit, so `main` shows Verified
+without a signing key on the owner's machine, and one commit per body of work stays
+readable. Use a merge commit only when the owner wants the individual commits kept.
+A repository that releases on merge (for example DraimHorizon's version workflow)
+publishes a release when the PR lands; say so before asking for the merge.
+
 ## Final attribution check
 
 Read the newly created commits with author, committer, and full message. Verify

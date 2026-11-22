@@ -7,7 +7,7 @@
       "hash": "98c11e8a6b826113156426cadc4ff4d7e617e9c7edcd8a83c247fe04c43f0ad5"
     },
     ".ai-playbook/reference/git-workflow.md": {
-      "hash": "0e3b8f0277fc358965d4db796a662b8f01e2f4e5155a41eb8f3b845e3db95500"
+      "hash": "6258cdd01b3a0dd95cc0976a2c7cf8bfec9a6091c6be68338d569bc5d16b6b39"
     },
     ".ai-playbook/reference/pr-template.md": {
       "hash": "703be946fd9ecb66832ae2fc54aa1731be2ad57e1a26b3d145e7623d4a05d0c1"
@@ -21,6 +21,9 @@
     ".ai-playbook/reference/verification.md": {
       "hash": "1c755a8587730f50bd6b87d0958c204cf8531e376f654f05e11a958348203868"
     },
+    ".coderabbit.yaml": {
+      "hash": "e80325f562afe0b22d16660b841269ed9f31ffedc9f07b019e61ea4dd91ff164"
+    },
     ".github/CODEOWNERS": {
       "hash": "b9e3c7781663690915af032bdb622b6d10d88b1ed928eb15130f7a2ebe133fb2"
     },
@@ -33,21 +36,24 @@
     ".github/pull_request_template.md": {
       "hash": "703be946fd9ecb66832ae2fc54aa1731be2ad57e1a26b3d145e7623d4a05d0c1"
     },
+    ".github/workflows/guard.yml": {
+      "hash": "976573eafeaab7c9bbd009187d6d6ee0f646c274224c6b2c74f0be30f5b393a0"
+    },
     ".github/workflows/labeler.yml": {
       "hash": "de37ef1d4b554ac41c9e15a11dabfb615756f074c4874360d459f0f23645eb68"
     },
     "AGENTS.md": {
       "existed": true,
-      "hash": "52ea19a36b55c93121cc0eb015233a5e319964a848d1d672f0020ff4c353d02c",
+      "hash": "5f02f4b2952e0da94231ee6d71b2bf1c5038df5f60823aab0c23ead3fde56e65",
       "separator": "\n\n"
     },
     "CLAUDE.md": {
       "existed": false,
-      "hash": "52ea19a36b55c93121cc0eb015233a5e319964a848d1d672f0020ff4c353d02c",
+      "hash": "5f02f4b2952e0da94231ee6d71b2bf1c5038df5f60823aab0c23ead3fde56e65",
       "separator": ""
     }
   },
-  "playbook_version": "0.1.0",
+  "playbook_version": "0.1.1",
   "profile": "draimhorizon",
   "version": 2
 }
