@@ -12,7 +12,8 @@ env:
   FORBIDDEN: 'co-authored-by|generated (with|by)[^.]*claude|claude-session|claude\.ai/code'
 jobs:
   guard:
-    if: github.actor != 'dependabot[bot]'
+    # Skip by the PR author, not the triggering actor: a bot re-running or editing a PR must not change the verdict.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -49,7 +50,12 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           fail=0
-          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$BASE_SHA"
+          if ! commits=$(git rev-list "${BASE_SHA}..${HEAD_SHA}"); then
+            echo "::error::Could not list the commits of this pull request"
+            exit 1
+          fi
+          for sha in $commits; do
             author=$(git show -s --format=%ae "$sha")
             committer=$(git show -s --format=%ce "$sha")
             case "$author" in

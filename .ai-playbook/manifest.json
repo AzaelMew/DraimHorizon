@@ -37,10 +37,10 @@
       "hash": "703be946fd9ecb66832ae2fc54aa1731be2ad57e1a26b3d145e7623d4a05d0c1"
     },
     ".github/workflows/guard.yml": {
-      "hash": "976573eafeaab7c9bbd009187d6d6ee0f646c274224c6b2c74f0be30f5b393a0"
+      "hash": "09b2202bbc1cbcb21ad185669635e1d02e2686591dd817d868440da63528b7ff"
     },
     ".github/workflows/labeler.yml": {
-      "hash": "de37ef1d4b554ac41c9e15a11dabfb615756f074c4874360d459f0f23645eb68"
+      "hash": "53a92868f8df418d5c7a1c9aec1d6f9d26e2f6fdcc1007087f7c384e80c093a9"
     },
     "AGENTS.md": {
       "existed": true,
