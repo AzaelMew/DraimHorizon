@@ -1,3 +1,5 @@
+@AGENTS.md
+
 <!-- ai-playbook:start -->
 # AI Playbook
 

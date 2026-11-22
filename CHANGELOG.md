@@ -2,7 +2,7 @@
 
 ## 0.44.2
 
-- Install owner AI playbook instructions (#75). Replace this line with a concrete entry.
+- Maintenance: added the owner's AI-assistant instructions and guides (`AGENTS.md`, `CLAUDE.md`, `.ai-playbook/`), a pull request template, automatic pull request labels, `CODEOWNERS`, and Dependabot for GitHub Actions. The version workflow now commits as the repository owner. No change to the mod's behavior.
 
 ## 0.44.1
 
