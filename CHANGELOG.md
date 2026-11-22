@@ -2,7 +2,7 @@
 
 ## 0.44.2
 
-- Maintenance: added the owner's AI-assistant instructions and guides (`AGENTS.md`, `CLAUDE.md`, `.ai-playbook/`), a pull request template, automatic pull request labels, `CODEOWNERS`, and Dependabot for GitHub Actions. The version workflow now commits as the repository owner. No change to the mod's behavior.
+- Maintenance: added the owner's AI-assistant instructions and guides (`AGENTS.md`, `CLAUDE.md`, `.ai-playbook/`), a pull request template, automatic pull request labels, `CODEOWNERS`, and Dependabot for GitHub Actions. The version workflow now commits as the repository owner. Updated the Horizon pin to the official Nightly `2b77287` (hashes of `game.rs` and `hud.rs` refreshed); the hooks are validated by the native compatibility workflow.
 
 ## 0.44.1
 
