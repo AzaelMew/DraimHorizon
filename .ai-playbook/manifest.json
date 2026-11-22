@@ -1,0 +1,43 @@
+{
+  "files": {
+    ".ai-playbook/reference/coordination.md": {
+      "hash": "d14af892373c020d1953d1d476ae54f989900bed5ed914c21dd1690c007da51d"
+    },
+    ".ai-playbook/reference/draimhorizon.md": {
+      "hash": "15ce737aaf988621029127c3b6007dc8117c0ba0031ce217e10a3673d96de349"
+    },
+    ".ai-playbook/reference/git-workflow.md": {
+      "hash": "13afd2014c8fa99d82150a0fbac2f3ef0fa3c79c65ab2e115108846e910c207a"
+    },
+    ".ai-playbook/reference/pr-template.md": {
+      "hash": "703be946fd9ecb66832ae2fc54aa1731be2ad57e1a26b3d145e7623d4a05d0c1"
+    },
+    ".ai-playbook/reference/project-template.md": {
+      "hash": "06d376124374d23386fe8a3a7b5a0ab3723e2dbacde351e34b24095b128ee40f"
+    },
+    ".ai-playbook/reference/roblox.md": {
+      "hash": "cbd7ad002fdfa0624817ae595d52c8f89c1465ec6b5bdbc765ab78f820cbce87"
+    },
+    ".ai-playbook/reference/sunrise-performance.md": {
+      "hash": "d249203d0f3ae4034d7e0b7e7ff2bfc1d940ba5587d849eea4e6da2c814f1b28"
+    },
+    ".ai-playbook/reference/task-template.md": {
+      "hash": "f835d2d3a2d7582ecc606cb7119332dcda0318cda7cfe013c8e9b4a9b4d49968"
+    },
+    ".ai-playbook/reference/verification.md": {
+      "hash": "945939c3c860d54048ac187002982e85c6d37ca45aa3ca8407af23550967ea26"
+    },
+    "AGENTS.md": {
+      "existed": true,
+      "hash": "822386f1bad4fcb63805ea84197f7e5ee9b3d307be3b9b85ca668e180973fec0",
+      "separator": "\n\n"
+    },
+    "CLAUDE.md": {
+      "existed": false,
+      "hash": "822386f1bad4fcb63805ea84197f7e5ee9b3d307be3b9b85ca668e180973fec0",
+      "separator": ""
+    }
+  },
+  "profile": "default",
+  "version": 2
+}
