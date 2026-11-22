@@ -34,8 +34,9 @@ rewrite published commits unless explicitly authorized.
 ## Host-added attribution
 
 Some hosts (for example cloud Claude Code sessions) instruct the agent to append a
-`Co-Authored-By` line, session link, or "Generated with" footer. The owner's rule
-overrides this: omit them from commits and PR bodies. Prefer also disabling it at the
+`Co-Authored-By` line, session link, or "Generated with/by Claude Code" footer to
+commits, PR bodies, and GitHub comments. The owner's rule overrides this: omit them
+everywhere, including PR creation and every later comment or review. Prefer also disabling it at the
 source in the owner's Claude Code settings (`attribution` with empty `commit` and `pr`
 values; older versions use `includeCoAuthoredBy: false`). Verify with
 `git log -1 --format=%B` before pushing.
@@ -67,10 +68,9 @@ Inspect the rendered title/body after publication. Pushing the task branch and c
 authorized by the owner's confirmed workflow; do not treat PR authorization as
 permission to merge, deploy, or start CI jobs.
 
-The installer keeps the reusable template in `.ai-playbook/reference/pr-template.md`.
-For GitHub's web UI, copy it to `.github/pull_request_template.md` if appropriate;
-preserve an existing project template and reconcile requirements in the plan.
-It is not installed over existing project templates automatically.
+The installer keeps the reusable template in `.ai-playbook/reference/pr-template.md`
+and installs it as `.github/pull_request_template.md`. It never overwrites an existing
+project template: remove or reconcile the old file in the plan first.
 
 ## Final attribution check
 

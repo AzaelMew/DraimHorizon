@@ -31,6 +31,9 @@ operation and obtain authorization rather than silently disabling required hooks
 6. Report pass/fail, relevant evidence, and unrun checks. Do not turn failure into success
    by weakening assertions, disabling checks, or changing unrelated configuration.
 
+Repeat a passed check only after new changes or unresolved evidence. Check the
+real exit code of each command, not its summary line.
+
 An expired approval (different environment, materially changed command, new costs,
 or expanded scope) needs clarification. A documented pending check is preferable
 to a fabricated result. "No check run" does not mean "no bugs".
