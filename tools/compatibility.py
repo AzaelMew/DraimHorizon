@@ -59,10 +59,12 @@ def horizon_problem(compat):
 
 
 def tag_dates(refs, prefix):
-    """{commit: [date, ...]} of the `<prefix><YYYY-MM-DD>-<short>` tags in `git ls-remote` output."""
+    """{commit: [date, ...]} of the `<prefix><YYYY-MM-DD>-<short>` tags in `git ls-remote` output; an
+    annotated tag's peeled line (`^{}`) names its commit."""
     dates = {}
     for line in refs.splitlines():
-        found = re.fullmatch(rf"([0-9a-f]{{40}})\trefs/tags/{re.escape(prefix)}(\d{{4}}-\d{{2}}-\d{{2}})-[0-9a-f]+", line)
+        found = re.fullmatch(
+            rf"([0-9a-f]{{40}})\trefs/tags/{re.escape(prefix)}(\d{{4}}-\d{{2}}-\d{{2}})-[0-9a-f]+(?:\^\{{\}})?", line)
         if found:
             dates.setdefault(found[1], []).append(found[2])
     return dates
@@ -71,15 +73,17 @@ def tag_dates(refs, prefix):
 def dev_problem(sunrise, latest):
     """What is wrong with a Sunrise Dev pin, if anything. A Dev build is allowed only while it is a published
     Dev build (a `dev-<date>-<short>` tag) newer than the published Nightly (its `nightly-source/<date>-<short>`
-    tag): it carries something the port needs that no Nightly has yet. Once a later Nightly is published, the
-    pin moves to it."""
+    tag): it carries something the port needs that no Nightly has yet. Once a Nightly as new is published,
+    the pin moves to it."""
+    if sunrise["revision"] == latest:
+        return f"Sunrise pin {latest} is the official Nightly: set its channel to \"nightly\"."
     refs = subprocess.check_output(
         ["git", "ls-remote", sunrise["repository"], "refs/tags/dev-*", "refs/tags/nightly-source/*"], text=True)
     dev = tag_dates(refs, "dev-").get(sunrise["revision"])
     if not dev:
         return f"Sunrise Dev pin {sunrise['revision']} is not a published Dev build."
     nightly = tag_dates(refs, "nightly-source/").get(latest, [])
-    if not nightly or max(nightly) >= min(dev):
+    if not nightly or min(nightly) >= min(dev):
         return (f"Sunrise Dev pin {sunrise['revision']} is not newer than official Nightly {latest}; "
                 "refresh compatibility with --update-sunrise and validate before a Sunrise release.")
     return None

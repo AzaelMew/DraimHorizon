@@ -88,6 +88,17 @@ class DevPinTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("not a published Dev build", errors[0])
 
+    def test_annotated_dev_tag_names_its_commit_through_the_peeled_line(self):
+        _, errors = self.check([("c" * 40, "dev-2026-11-24-ddddddd"), (self.dev, "dev-2026-11-24-ddddddd^{}"),
+                                (self.nightly, "nightly-source/2026-11-20-eeeeeee")])
+        self.assertEqual(errors, [])
+
+    def test_the_nightly_commit_itself_is_not_a_dev_pin(self):
+        self.dev = self.nightly
+        _, errors = self.check([(self.nightly, "dev-2026-11-24-eeeeeee"), (self.nightly, "nightly-source/2026-11-20-eeeeeee")])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("is the official Nightly", errors[0])
+
     def test_dev_build_fails_once_a_nightly_as_new_is_published(self):
         for date in ("2026-11-24", "2026-11-25"):
             with self.subTest(nightly=date):
