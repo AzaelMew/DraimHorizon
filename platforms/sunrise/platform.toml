@@ -28,12 +28,6 @@ bindings = [
 params = { batch = "draw" }
 [injection.inventory-search-highlight]
 params = { batch = "draw" }
-[injection.shulker-peek-draw]
-drop = true
-reason = "every item tooltip goes through draw_stack_tooltip_lines, where shulker-peek-tooltip draws the grid"
-[injection.shulker-peek-measure]
-drop = true
-reason = "every item tooltip goes through draw_stack_tooltip_lines, where shulker-peek-tooltip draws the grid"
 # Horizon's signed_chat_line is three places in Sunrise: add_chat_line (system and client lines),
 # a player's line once chat_received has let it through, and the validation error line
 # show_queued_chat shows. A captured line is not recorded, and a player's or error line is not
@@ -601,26 +595,6 @@ bindings = [
   { name = "swing", ty = "&mut bool", value = "&mut *swing_hand" },
   { name = "canceled", ty = "&mut bool", value = "&mut *canceled" },
 ]
-
-[injection.shulker-peek-tooltip]
-target = "sunrise_client::game::stations::tooltip::Game<'_>::draw_stack_tooltip_lines"
-# After the gather hooks have run (and not cancelled), as Horizon's tooltip_pre_elements was.
-kind = "BEFORE_CALL"
-selector = "self.draw_prepared_tooltip"
-require = 1
-ordinal = 0
-cancellable = true
-helper = "sunrise/shulker_peek_tooltip_hook.rs"
-bindings = [
-  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
-  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
-  { name = "stack", ty = "&sunrise_client::items::ItemStack", value = "stack" },
-  { name = "x", ty = "f32", value = "x" },
-  { name = "y", ty = "f32", value = "y" },
-]
-
-[injection.shulker-peek-colors]
-target = "sunrise_client::game::native_hooks::render_tooltip_texture::Game<'_>::native_render_tooltip_texture"
 
 [injection.pat-hand]
 target = "sunrise_client::game::native_hooks::render_hand::Game<'_>::native_render_hand"

@@ -346,11 +346,17 @@ def command_generate(args):
         injections.append(entry)
     injections += platform_only_injections(rules, {i["id"] for i in manifest["injection"]})
     modules = []
+    # Pure modules the mod crate shares with game-side code: copied to crate/ instead of the game.
+    to_crate = []
     overrides = platform.get("module_override", {})
     for module in manifest["module"]:
         change = overrides.get(module["id"], {})
         if change.get("drop"):
             report.append((module["id"], "module dropped", change.get("reason", "")))
+            continue
+        if change.get("to_crate"):
+            report.append((module["id"], "module moved to the mod crate", change.get("reason", "")))
+            to_crate.append(module["source"])
             continue
         entry = {k: rename_deep(v) for k, v in module.items()}
         entry["file"] = relocate.get(module["file"], entry["file"])
@@ -389,6 +395,9 @@ def command_generate(args):
                 target = out / path.relative_to(overlay)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, target)
+    for source in to_crate:
+        (out / "crate").mkdir(exist_ok=True)
+        shutil.move(out / source, out / "crate" / source)
     derive_mouse_helpers(out, rules)
     traits = traitify_game_impls(out, modules, args.sunrise)
     import_traits(out, modules, injections, traits)
