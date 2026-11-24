@@ -1,3 +1,3 @@
-**DraimHorizon 0.44.3 - chore(ci): bump the actions group with 5 updates (unreleased)**
+**DraimHorizon 0.44.4 - Move the Horizon pin to the current Nightly (unreleased)**
 
-Version raised automatically because the pull request did not change it. Replace this text with the real notes.
+Maintenance: the Horizon pin now targets the official Nightly `f1bb66f`, and the PR guard skips pull requests authored by `arismoko`. No user-facing changes.
