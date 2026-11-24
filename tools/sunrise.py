@@ -819,7 +819,8 @@ def git(checkout, *args):
 INCLUDE = re.compile(r'include!\(concat!\(env!\("OUT_DIR"\),\s*"/(?P<name>[a-z_]+\.rs)"\)\);')
 # Generated while the game builds; the mixin tool reads source and cannot evaluate build scripts.
 INLINED = {
-    "game_modules.rs", "game_host_modules.rs", "lan_action_modules.rs", "native_hook_modules.rs",
+    "game_modules.rs", "game_host_modules.rs", "game_host_generated.rs",
+    "lan_action_modules.rs", "native_hook_modules.rs",
     "mod_api_fire_generated.rs", "mod_api_goal_view_generated.rs",
 }
 
@@ -846,16 +847,18 @@ def export_sunrise(sunrise, revision, destination):
     (destination / ".horizon-revision").write_text(revision + "\n")
 
 
-def generated_directory(target):
-    """The build script's output for the client just checked.
-
-    A shared target dir keeps one `out/` per build-script hash, and this checkout's hashes can sort
-    before older pins' (`sunrise-client-e5368…` from another revision beat this one's `d7e7…`), so
-    pick the most recently written file: a new revision always re-runs the script."""
-    found = sorted(target.glob(f"*/build/{CLIENT}-*/out/game_modules.rs"), key=lambda p: p.stat().st_mtime)
-    if not found:
-        raise SystemExit("no generated game_modules.rs: build {CLIENT} once so its build script runs")
-    return found[-1].parent
+def generated_directory(cargo_output, manifest):
+    """Find the selected client's OUT_DIR from the current Cargo invocation."""
+    messages = [json.loads(line) for line in cargo_output.splitlines()]
+    package_ids = {
+        message["package_id"] for message in messages
+        if message["reason"] == "compiler-artifact"
+        and Path(message["manifest_path"]) == manifest
+    }
+    for message in messages:
+        if message["reason"] == "build-script-executed" and message["package_id"] in package_ids:
+            return Path(message["out_dir"])
+    raise SystemExit(f"Cargo did not report the build script output directory for {manifest}")
 
 
 def inline_generated(root, generated):
@@ -1021,9 +1024,10 @@ def command_stage(args):
         export_sunrise(args.sunrise, revision, original)
     check_target = OUT / "check-original"
     if args.generated is None:
-        run(["cargo", "check", "-p", CLIENT, "--lib", "--locked", "-j", str(args.jobs),
-             "--target-dir", str(check_target)], cwd=original)
-        generated = generated_directory(check_target)
+        result = run(["cargo", "check", "-p", CLIENT, "--lib", "--locked", "-j", str(args.jobs),
+                      "--target-dir", str(check_target), "--message-format=json-render-diagnostics"],
+                     cwd=original, stdout=subprocess.PIPE, text=True)
+        generated = generated_directory(result.stdout, original / "crates" / CLIENT / "Cargo.toml")
     else:
         generated = args.generated
     if indexed.exists():

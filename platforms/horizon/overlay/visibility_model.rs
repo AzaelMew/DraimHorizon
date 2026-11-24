@@ -21,6 +21,7 @@ pub fn render(
         atlas,
         light,
         data,
+        &[None; 4],
         &[],
         Default::default(),
         None,

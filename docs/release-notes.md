@@ -1,3 +1,1 @@
-**DraimHorizon 0.44.4 - Move the Horizon pin to the current Nightly (unreleased)**
-
-Maintenance: the Horizon pin now targets the official Nightly `f1bb66f`, and the PR guard skips pull requests authored by `arismoko`. No user-facing changes.
+- Fixed native compatibility checks for both clients. The Horizon visibility overlay uses the current renderer signature, and Sunrise staging uses Cargo's build-script output directory and inlines the generated host module.

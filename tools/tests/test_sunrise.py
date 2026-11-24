@@ -61,6 +61,24 @@ class ManifestTests(unittest.TestCase):
 
 
 class SourceTreeTests(unittest.TestCase):
+    def test_stage_inlines_the_current_clients_generated_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "crates" / sunrise.CLIENT / "Cargo.toml"
+            generated = root / "custom-target" / "out"
+            source = write(root, f"{sunrise.CLIENT_SRC}/game/host/mod.rs",
+                           'include!(concat!(env!("OUT_DIR"), "/game_host_generated.rs"));')
+            write(generated, "game_host_generated.rs", "mod generated {}\n")
+            messages = [
+                dict(reason="build-script-executed", package_id="dependency", out_dir=str(root)),
+                dict(reason="build-script-executed", package_id="client", out_dir=str(generated)),
+                dict(reason="compiler-artifact", package_id="client", manifest_path=str(manifest)),
+            ]
+            cargo_output = "\n".join(map(json.dumps, messages))
+            self.assertEqual(sunrise.inline_generated(
+                root, sunrise.generated_directory(cargo_output, manifest)), 1)
+            self.assertEqual(source.read_text(encoding="utf-8"), "mod generated {}\n")
+
     def test_area_folders_are_not_modules(self):
         with tempfile.TemporaryDirectory() as tmp:
             crate = Path(tmp) / "crates/sunrise-client"
