@@ -889,7 +889,10 @@ mod tests {
                 let (_, body) = worker.join().unwrap();
                 let value: Value = serde_json::from_str(&body).unwrap();
                 assert!(value.get("source_lang").is_none(), "{body}");
-                assert_eq!(value["target_lang"], TargetLanguage::from(target).deepl_code());
+                assert_eq!(
+                    value["target_lang"],
+                    TargetLanguage::from(target).deepl_code()
+                );
                 assert_eq!(value["text"][0], text);
             }
         }
