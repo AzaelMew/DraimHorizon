@@ -769,10 +769,14 @@ def command_smod_check(args):
     if build["build"]["commit"] != compat["revision"]:
         raise SystemExit(f"{data} is for {build['build']['commit']}, not the pinned {compat['revision']}")
     if tool.is_file():
-        result = subprocess.run([str(tool), "check", str(smod), "--json"], capture_output=True, text=True)
+        # `check <file>` is for signed release files; a local, unsigned package is checked from
+        # the project folder it was packed from, which also compiles its native code.
+        project = OUT / "smod" / "draimhorizon"
+        result = subprocess.run([str(tool), f"{S}-mod", "check"], cwd=project, capture_output=True, text=True,
+                                env={**os.environ, "CARGO_TARGET_DIR": str(project / "target")})
         print(result.stdout.strip())
-        if result.returncode != 0 or not json.loads(result.stdout or "{}").get("ok"):
-            raise SystemExit(f"cargo-{S}-mod check refused {smod.name}:\n{result.stderr.strip()}")
+        if result.returncode != 0:
+            raise SystemExit(f"cargo-{S}-mod check refused {project}:\n{result.stderr.strip()}")
     with zipfile.ZipFile(smod) as archive:
         manifest = tomllib.loads(archive.read(MANIFEST).decode("utf-8"))
         names = set(archive.namelist())
