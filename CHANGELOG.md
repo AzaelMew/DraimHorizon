@@ -1,5 +1,9 @@
 # История версий
 
+## 0.44.5
+
+- Fixed native compatibility checks for both clients. The Horizon visibility overlay uses the current renderer signature, and Sunrise staging uses Cargo's build-script output directory and inlines the generated host module.
+
 ## 0.44.4
 
 - Maintenance: fixed the failing CI pin checks by moving the Horizon pin to the official Nightly `f1bb66f` (hashes of `game.rs` and `hud.rs` refreshed). The PR guard no longer checks pull requests authored by `arismoko`. The Sunrise Dev pin policy comes with its own pull request. The hooks are validated by the native compatibility workflow.

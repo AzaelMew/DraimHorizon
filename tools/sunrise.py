@@ -326,9 +326,11 @@ def command_generate(args):
         entry = {k: rename_deep(v) for k, v in injection.items()}
         if "target" in rule:
             entry["target"] = rule["target"]
-        elif args.sunrise is None:
+        elif args.sunrise is None or (S == "sunrise" and getattr(args, "stage", False)):
+            # Sunrise uses #[path] to place modules under logical names unrelated to their folders.
+            # The frozen targets use the logical names already validated against the SDK index.
             if injection["id"] not in frozen:
-                raise SystemExit(f"injection {injection['id']}: not in platforms/sunrise/targets.toml; run `freeze`")
+                raise SystemExit(f"injection {injection['id']}: not in platforms/{S}/targets.toml; run `freeze`")
             entry["target"] = frozen[injection["id"]]
         elif args.sunrise:
             crate, modules, owner, function, found = resolve(args.sunrise, injection["target"])
@@ -819,7 +821,8 @@ def git(checkout, *args):
 INCLUDE = re.compile(r'include!\(concat!\(env!\("OUT_DIR"\),\s*"/(?P<name>[a-z_]+\.rs)"\)\);')
 # Generated while the game builds; the mixin tool reads source and cannot evaluate build scripts.
 INLINED = {
-    "game_modules.rs", "game_host_modules.rs", "lan_action_modules.rs", "native_hook_modules.rs",
+    "game_modules.rs", "game_host_modules.rs", "game_host_generated.rs",
+    "lan_action_modules.rs", "native_hook_modules.rs",
     "mod_api_fire_generated.rs", "mod_api_goal_view_generated.rs",
 }
 
@@ -846,16 +849,18 @@ def export_sunrise(sunrise, revision, destination):
     (destination / ".horizon-revision").write_text(revision + "\n")
 
 
-def generated_directory(target):
-    """The build script's output for the client just checked.
-
-    A shared target dir keeps one `out/` per build-script hash, and this checkout's hashes can sort
-    before older pins' (`sunrise-client-e5368…` from another revision beat this one's `d7e7…`), so
-    pick the most recently written file: a new revision always re-runs the script."""
-    found = sorted(target.glob(f"*/build/{CLIENT}-*/out/game_modules.rs"), key=lambda p: p.stat().st_mtime)
-    if not found:
-        raise SystemExit("no generated game_modules.rs: build {CLIENT} once so its build script runs")
-    return found[-1].parent
+def generated_directory(cargo_output, manifest):
+    """Find the selected client's OUT_DIR from the current Cargo invocation."""
+    messages = [json.loads(line) for line in cargo_output.splitlines()]
+    package_ids = {
+        message["package_id"] for message in messages
+        if message["reason"] == "compiler-artifact"
+        and Path(message["manifest_path"]) == manifest
+    }
+    for message in messages:
+        if message["reason"] == "build-script-executed" and message["package_id"] in package_ids:
+            return Path(message["out_dir"])
+    raise SystemExit(f"Cargo did not report the build script output directory for {manifest}")
 
 
 def inline_generated(root, generated):
@@ -971,6 +976,19 @@ def strip_markers(root):
     return removed
 
 
+def strip_parity_fixture_attributes(root):
+    # The parity harness enables these lint allowances, but the normal client build does not.
+    # The mixin index skips entire modules carrying unresolved cfg_attr attributes.
+    crate_root = root / CLIENT_SRC / "lib.rs"
+    text = crate_root.read_text(encoding="utf-8")
+    updated = re.sub(
+        r"(?m)^#\[cfg_attr\(\s*sunrise_parity_fixtures,\s*"
+        r"allow\(dead_code, unused_imports, unused_macros\)\s*\)\]\n", "", text,
+    )
+    if updated != text:
+        crate_root.write_text(updated, encoding="utf-8")
+
+
 def ensure_mixins_tool(compat):
     """The mixin tool Sunrise runs: the pinned horizon-mixins revision plus Sunrise's one patch."""
     work = ROOT / ".local" / f"horizon-mixins-{S}"
@@ -1021,9 +1039,10 @@ def command_stage(args):
         export_sunrise(args.sunrise, revision, original)
     check_target = OUT / "check-original"
     if args.generated is None:
-        run(["cargo", "check", "-p", CLIENT, "--lib", "--locked", "-j", str(args.jobs),
-             "--target-dir", str(check_target)], cwd=original)
-        generated = generated_directory(check_target)
+        result = run(["cargo", "check", "-p", CLIENT, "--lib", "--locked", "-j", str(args.jobs),
+                      "--target-dir", str(check_target), "--message-format=json-render-diagnostics"],
+                     cwd=original, stdout=subprocess.PIPE, text=True)
+        generated = generated_directory(result.stdout, original / "crates" / CLIENT / "Cargo.toml")
     else:
         generated = args.generated
     if indexed.exists():
@@ -1032,6 +1051,8 @@ def command_stage(args):
     print(f"inlined {inline_generated(indexed, generated)} generated includes", file=sys.stderr)
     print(f"pasted {inline_local_includes(indexed)} local includes", file=sys.stderr)
     print(f"stripped {strip_markers(indexed)} replaceable markers", file=sys.stderr)
+    if S == "sunrise":
+        strip_parity_fixture_attributes(indexed)
     print("linked/dropped #[path] modules: %d/%d" % flatten_paths(indexed), file=sys.stderr)
     command_generate(argparse.Namespace(sunrise=indexed, stage=True))
     # The launcher names the mod-render crate by its package; in source it is the `mod_render` library.
