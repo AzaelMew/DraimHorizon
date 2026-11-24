@@ -326,9 +326,11 @@ def command_generate(args):
         entry = {k: rename_deep(v) for k, v in injection.items()}
         if "target" in rule:
             entry["target"] = rule["target"]
-        elif args.sunrise is None:
+        elif args.sunrise is None or (S == "sunrise" and getattr(args, "stage", False)):
+            # Sunrise uses #[path] to place modules under logical names unrelated to their folders.
+            # The frozen targets use the logical names already validated against the SDK index.
             if injection["id"] not in frozen:
-                raise SystemExit(f"injection {injection['id']}: not in platforms/sunrise/targets.toml; run `freeze`")
+                raise SystemExit(f"injection {injection['id']}: not in platforms/{S}/targets.toml; run `freeze`")
             entry["target"] = frozen[injection["id"]]
         elif args.sunrise:
             crate, modules, owner, function, found = resolve(args.sunrise, injection["target"])
