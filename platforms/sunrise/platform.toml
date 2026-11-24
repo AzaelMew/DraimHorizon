@@ -353,14 +353,6 @@ files = ["claim_actionbar_hook.rs"]
 pattern = '''\bhorizon_threads\b'''
 replace = '''sunrise_threads'''
 
-# Since Dev f8aa80e every click, in single player too (it runs on the server thread), is a click of
-# the `key.attack` / `key.use` mapping that the next tick's interaction input takes.
-[[rewrite]]
-pattern = '''(?s)use sunrise_client::interaction_input::Button;\n(pub fn press\(game: &mut Game<'_>, right: bool\) \{\n).*?\n\}'''
-replace = '''\1    game.queue_mapping_click(if right { "key.use" } else { "key.attack" });
-}'''
-files = ["click_press.rs"]
-
 # Horizon's held-button fields are the `key.attack` / `key.use` mappings' `isDown` (SunriseGame).
 # Assignments first, so the reads below don't take their left-hand sides.
 [[rewrite]]

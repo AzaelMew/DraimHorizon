@@ -1,0 +1,11 @@
+# The auto-clicker's clicks run on the typed API (overlay/crate/click_press.rs): a click of the
+# `key.attack` / `key.use` mapping, which the next tick's interaction input takes.
+
+[module_override.click-press]
+drop = true
+reason = "a click of a vanilla mapping is the mod crate's (overlay/crate/click_press.rs)"
+
+[[rewrite]]
+pattern = '''crate::game::remote::claim_borders_click_press::press'''
+replace = '''mod_draimhorizon::click_press::press'''
+files = ["helpers.rs"]
