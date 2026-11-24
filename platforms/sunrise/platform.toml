@@ -13,29 +13,49 @@ pattern = 'native_hooks::(Native(?:Zoom|Minimap|ScreenView|Mod))\b'
 replace = 'claim_borders_platform::\1'
 
 [injection.navigation-input]
-# Not a MovementInput listener: that would set `sprint_suppressed` for everybody. Run at the head
-# of the function (before its "no listener" return) with the same logic as Horizon's remote.rs.
-target = "sunrise_client::game::native_hooks::movement_input::Game<'_>::mod_movement_keys"
-kind = "HEAD"
-helper = "sunrise/navigation_keys_hook.rs"
-bindings = [
-  { name = "game", ty = "&Game<'_>", value = "&*self" },
-  { name = "keys", ty = "&mut sunrise_client::sprint::Keys", value = "&mut keys" },
-]
+drop = true
+reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (movement_input_update)"
 
 [injection.menu-render]
 params = { batch = "draw" }
 [injection.inventory-search-highlight]
 params = { batch = "draw" }
 [injection.shulker-peek-draw]
-target = "sunrise_client::game::native_hooks::base::Game<'_>::native_tooltip_component_draw"
-params = { batch = "draw" }
+drop = true
+reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
+[injection.shulker-peek-measure]
+drop = true
+reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
+[injection.chat-capture]
+drop = true
+reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (client_chat_received)"
+[injection.visibility-models]
+drop = true
+reason = "since Dev f8aa80e this Sunrise function can no longer be replaced; the feature comes back on the typed mod API (render_level_stage)"
+# Sunrise's draw_inventory returns whether the inventory painter ran.
+[injection.live-commerce-inventory]
+helper = "sunrise/commerce_inventory_hook.rs"
+# Sunrise's chat_key_code returns whether it handled the key.
+[injection.chat-nickname-completion]
+helper = "sunrise/chat_completion_hook.rs"
+# Sunrise's end_predictions returns a Result: the helper hands it back unchanged.
+[injection.mining-ack]
+helper = "sunrise/mining_ack_hook.rs"
+bindings = [
+  { name = "value", ty = "Result<()>", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "sequence", ty = "i32", value = "sequence" },
+]
 
 # Modules whose Horizon file lives in a lower Sunrise crate must sit in the game crate
 # (E_MIXIN_MODULE_DESTINATION). Per-module overrides: `drop` removes the row (its code moved to
 # the mod crate: overlay/crate/*.rs), `file` relocates it into game.rs.
 [module_override.visibility-model]
-file = "crates/sunrise-client/src/game.rs"
+drop = true
+reason = "only the dropped visibility-models injection uses it"
+[module_override.visibility-view]
+drop = true
+reason = "only the dropped visibility-models injection uses it"
 [module_override.ghost-render]
 file = "crates/sunrise-client/src/game.rs"
 [module_override.terrain-bridge]
@@ -63,9 +83,6 @@ drop = true
 reason = "only the two Horizon login-brand hooks use it; Sunrise drops both (see injection.brand-gate)"
 
 # Callers of the relocated modules.
-[[rewrite]]
-pattern = 'sunrise_client::mobs::render::claim_borders_visibility_model::'
-replace = 'crate::game::claim_borders_visibility_model::'
 [[rewrite]]
 pattern = 'sunrise_client::mobs::anim::claim_borders_pat_pose as pose'
 replace = 'mod_draimhorizon::pat as pose'
@@ -215,9 +232,10 @@ replace = '''let Some(placed) = dry else {\n            why = "refused";\n      
 files = ["construction_view.rs"]
 
 # forget_columns (lower crate, not replaceable) runs after take_remote_columns has already taken the
-# chunks out of the world, so the hook goes before that call in the game-crate caller instead.
+# chunks out of the world, so the hook goes before that call in the game-crate caller instead
+# (since Dev f8aa80e, free_remote_columns).
 [injection.bar-unload]
-target = "sunrise_client::game::remote::Game<'_>::forget_remote_columns"
+target = "sunrise_client::game::remote::kept_columns::Game<'_>::free_remote_columns"
 kind = "BEFORE_CALL"
 selector = "sunrise_client::streaming::Streaming::take_remote_columns"
 require = 1
@@ -374,24 +392,20 @@ target = "sunrise_client::game::native_hooks::client_tick_pre::Game<'_>::native_
 [injection.menu-frame]
 target = "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native_render_frame_pre"
 
-# Sunrise draws the HUD from `&self` hooks; the mod needs `&mut Game`, so it runs just before the call.
+# Sunrise draws the HUD from `&self` hooks; the mod needs `&mut Game`. Since Dev f8aa80e the
+# HUD-post call sits in a body the tool can't patch (`matches!`), so the mod draws at the start of
+# the extras pass instead, which gets the same batch and corners.
 [injection.social-hud]
 target = "sunrise_client::game::extras::Game<'_>::draw_extras"
-kind = "BEFORE_CALL"
-selector = "self.native_render_gui_post"
-require = 1
-ordinal = 0
+kind = "HEAD"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
-  { name = "corners", ty = "&mut sunrise_client::extras_hud::Corners", value = "$local_mut:corners:0" },
+  { name = "corners", ty = "&mut sunrise_client::extras_hud::Corners", value = "&mut *corners" },
 ]
 [injection.bar-toast_draw]
 target = "sunrise_client::game::extras::Game<'_>::draw_extras"
-kind = "BEFORE_CALL"
-selector = "self.native_render_gui_post"
-require = 1
-ordinal = 0
+kind = "HEAD"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
@@ -446,16 +460,8 @@ bindings = [
 ]
 
 [injection.shulker-peek-tooltip]
-target = "sunrise_client::game::stations::tooltip::Game<'_>::tooltip_pre_elements"
-kind = "HEAD"
-cancellable = true
-helper = "sunrise/shulker_peek_tooltip_hook.rs"
-bindings = [
-  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
-  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
-  { name = "stack", ty = "Option<&sunrise_client::items::ItemStack>", value = "stack" },
-  { name = "at", ty = "(f32, f32)", value = "at" },
-]
+drop = true
+reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
 
 [injection.shulker-peek-colors]
 target = "sunrise_client::game::native_hooks::render_tooltip_texture::Game<'_>::native_render_tooltip_texture"
@@ -557,7 +563,7 @@ files = ["commerce_view.rs"]
 
 # Horizon's `chat_line` is Sunrise's `add_chat_line`: the same body and signature, in the remote module.
 [injection.chat]
-target = "sunrise_client::game::remote::Game<'_>::add_chat_line"
+target = "sunrise_client::game::remote::chat::Game<'_>::add_chat_line"
 
 
 # Horizon ran the mod tick only in an unpaused world (Game::tick); Sunrise fires it every tick.
