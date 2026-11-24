@@ -1,5 +1,6 @@
-// Every item tooltip goes through draw_stack_tooltip_lines: a previewed shulker box draws its own
-// tooltip, text and slot grid in one box, in place of the game's.
+// Every item tooltip goes through draw_stack_tooltip_lines: once the gather hooks have let it
+// through, a previewed shulker box draws its own tooltip, text and slot grid in one box, in place
+// of the game's.
 fn claim_borders_shulker_peek_tooltip(
     game: &crate::game::Game<'_>,
     batch: &mut sunrise_client::hud::HudBatch,

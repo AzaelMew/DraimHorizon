@@ -6,7 +6,7 @@ fn baritone_unload(
         return;
     }
     for &(x, z) in gone {
-        if let Some(chunk) = game.world.chunks.get(&(x, z)) {
+        if let Some(chunk) = game.world.chunks.resident_get(&(x, z)) {
             crate::game::baritone_unload::push(x, z, chunk.clone());
         }
     }

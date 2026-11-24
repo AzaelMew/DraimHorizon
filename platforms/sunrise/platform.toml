@@ -36,8 +36,8 @@ drop = true
 reason = "every item tooltip goes through draw_stack_tooltip_lines, where shulker-peek-tooltip draws the grid"
 # Horizon's signed_chat_line is three places in Sunrise: add_chat_line (system and client lines),
 # a player's line once chat_received has let it through, and the validation error line
-# show_queued_chat records with push_chat_line. A captured line is not recorded, and a player's line
-# is not narrated and counts as not shown, as before. The shared hook body is a module here, so
+# show_queued_chat shows. A captured line is not recorded, and a player's or error line is not
+# narrated and counts as not shown, as before. The shared hook body is a module here, so
 # each place's helper says whether its line is a validation error.
 [[module]]
 id = "chat-capture-body"
@@ -80,17 +80,17 @@ bindings = [
   { name = "system", ty = "bool", value = "system" },
   { name = "line", ty = "&sunrise_client::text::Text", value = "&*line" },
 ]
-# The validation error line, the one push_chat_line call with the chat_error tag.
+# The validation error line: show_queued_chat answers it as not shown, unnarrated and without a
+# Chat Delay restart when the capture takes it, as Horizon's signed_chat_line did. HEAD, since the
+# body's serde_json::json! refuses call-site rows.
 [injection.chat-capture-error]
-target = "sunrise_client::game::remote::chat::Game<'_>::push_chat_line"
+target = "sunrise_client::game::remote::chat::Game<'_>::show_queued_chat"
 kind = "HEAD"
 cancellable = true
 helper = "sunrise/chat_capture_error_hook.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "content", ty = "&sunrise_client::text::Text", value = "&content" },
-  { name = "source", ty = "sunrise_client::chat::ChatSource", value = "source" },
-  { name = "tag", ty = "&Option<sunrise_client::chat::Tag>", value = "&tag" },
+  { name = "chat", ty = "&crate::game::remote::chat_received::QueuedChat", value = "&chat" },
 ]
 # mob_geometry is test-only in Sunrise; other_creature_geometry runs once a frame from entity_geometry.
 [injection.visibility-models]
@@ -386,6 +386,30 @@ pattern = '''\bgame\.right\b'''
 replace = '''game.sunrise_held(true)'''
 files = ["navigation_view.rs", "baritone/behavior/input.rs"]
 
+# Since Dev f8aa80e the movement reads the key mappings, not the key set: Baritone's movement keys
+# (their default keys) hold and release those mappings, and the player's own state comes back after.
+[[rewrite]]
+pattern = '''\bgame\.keys\.remove\(key\)'''
+replace = '''game.sunrise_move_key(key, false)'''
+files = ["baritone/behavior/input.rs"]
+[[rewrite]]
+pattern = '''\bgame\.keys\.insert\(\*key\)'''
+replace = '''game.sunrise_move_key(key, true)'''
+files = ["baritone/behavior/input.rs"]
+# The walker's sprint holds the `key.sprint` mapping while its key is held by the agent; letting go
+# releases the mapping only when no other source still holds the key.
+[[rewrite]]
+pattern = '''game\.keys\.press\(code, (\w+)::held::Source::Agent\);'''
+replace = '''game.keys.press(code, \1::held::Source::Agent);
+        game.set_mapping_held("key.sprint", true);'''
+files = ["navigation_view.rs"]
+[[rewrite]]
+pattern = '''game\.keys\s*\.release\(&code, (\w+)::held::Source::Agent\);'''
+replace = '''if game.keys.release(&code, \1::held::Source::Agent) {
+            game.set_mapping_held("key.sprint", false);
+        }'''
+files = ["navigation_view.rs"]
+
 # remote_use_item_on takes the attempt and an optional hit; the forced hit still picks the block.
 [[rewrite]]
 pattern = '''game\.remote_use_item_on\(Hand::Main\)'''
@@ -504,8 +528,8 @@ target = "sunrise_client::game::native_hooks::client_tick_pre::Game<'_>::native_
 target = "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native_render_frame_pre"
 
 # Sunrise draws the HUD from `&self` hooks; the mod needs `&mut Game`. Since Dev f8aa80e the
-# HUD-post call sits in a body the tool can't patch (`matches!`), so the mod draws at the start of
-# the extras pass instead, which gets the same batch and corners.
+# HUD-post call sits in a body the tool can't patch (`matches!`), so the mod draws in the extras
+# pass instead, which gets the same batch and corners.
 [injection.social-hud]
 # Right after the PvP HUD and before the registered layers, as before.
 target = "sunrise_client::game::extras::Game<'_>::draw_extras"
@@ -580,7 +604,11 @@ bindings = [
 
 [injection.shulker-peek-tooltip]
 target = "sunrise_client::game::stations::tooltip::Game<'_>::draw_stack_tooltip_lines"
-kind = "HEAD"
+# After the gather hooks have run (and not cancelled), as Horizon's tooltip_pre_elements was.
+kind = "BEFORE_CALL"
+selector = "self.draw_prepared_tooltip"
+require = 1
+ordinal = 0
 cancellable = true
 helper = "sunrise/shulker_peek_tooltip_hook.rs"
 bindings = [

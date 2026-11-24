@@ -69,6 +69,10 @@ pub(crate) trait SunriseGame {
     fn sunrise_held(&self, right: bool) -> bool;
     /// Holds or releases that button, as Horizon's assignment to `game.left` / `game.right` did.
     fn sunrise_set_held(&mut self, right: bool, down: bool);
+    /// Horizon's `game.keys.insert` / `remove` of a movement key: Sunrise's movement reads the
+    /// mapping whose default key `key` is (`key.forward` for W), so this sets that mapping's
+    /// `isDown` and answers whether it was down.
+    fn sunrise_move_key(&mut self, key: &winit::keyboard::KeyCode, down: bool) -> bool;
     /// `ToastManager.SLOT_COUNT`.
     const TOAST_SLOTS: usize = 5;
     /// The 32-pixel toast slots the game's visible toasts hold, as bits.
@@ -165,6 +169,11 @@ impl SunriseGame for Game<'_> {
     }
     fn sunrise_set_held(&mut self, right: bool, down: bool) {
         self.set_mapping_held(if right { "key.use" } else { "key.attack" }, down);
+    }
+    fn sunrise_move_key(&mut self, key: &winit::keyboard::KeyCode, down: bool) -> bool {
+        sunrise_client::keybinds::VanillaMappingSlot::by_default_key(*key).is_some_and(|slot| {
+            std::mem::replace(&mut self.vanilla_mappings.state_mut(slot).is_down, down)
+        })
     }
     fn toast_slots_used(&self) -> u32 {
         use super::toast_manager::Toast;
