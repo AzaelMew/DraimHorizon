@@ -779,7 +779,8 @@ def command_smod_check(args):
     problems = check_smod_manifest(manifest, build["functions"], build["refused"], names, internal_catalog)
     if internal_catalog is not None and internal_catalog.get("build", {}).get("commit") != compat["revision"]:
         problems.append("the internals catalog belongs to another SDK build")
-    if manifest["native"][S] != compat["revision"] or manifest["native"]["mixins"] != compat["mixins_revision"]:
+    native = manifest.get("native", {})
+    if native.get(S) != compat["revision"] or native.get("mixins") != compat["mixins_revision"]:
         problems.append("the package pins differ from compatibility.json")
     if problems:
         raise SystemExit("\n".join(problems))

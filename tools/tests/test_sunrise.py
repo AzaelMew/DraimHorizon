@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+import zipfile
 
 spec = importlib.util.spec_from_file_location("sunrise", Path(__file__).resolve().parents[1] / "sunrise.py")
 sunrise = importlib.util.module_from_spec(spec)
@@ -505,6 +506,24 @@ class SmodCheckTests(unittest.TestCase):
                      if not i.get("shape_only", False) and not i.get("cfg", "")}
             for row in manifest.get("internals", []):
                 self.assertEqual(known.get((row["path"], row["kind"])), row["hash"], row["path"])
+
+    def test_a_package_for_another_build_is_refused_before_the_tool_compiles_it(self):
+        compat = sunrise.target_compat()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ran = tmp / "tool-ran"
+            tool = write(tmp, f"sdk/tool/cargo-{sunrise.S}-mod", f"#!/bin/sh\ntouch {ran}\n")
+            tool.chmod(0o755)
+            write(tmp, "sdk/build-data/functions.json", json.dumps(
+                {"build": {"commit": compat["revision"]}, "functions": {}, "refused": {}}))
+            smod = tmp / "old.smod"
+            with zipfile.ZipFile(smod, "w") as archive:
+                archive.writestr(sunrise.MANIFEST, f'[native]\n{sunrise.S} = "{"0" * 40}"\nmixins = "{"0" * 40}"\n'
+                                                   "mixin = []\nmodule = []\n")
+            with self.assertRaises(SystemExit) as refused:
+                sunrise.command_smod_check(argparse.Namespace(smod=smod, sdk=tmp / "sdk", fetch=False))
+            self.assertIn("pins differ", str(refused.exception))
+            self.assertFalse(ran.exists())
 
 
 class StageAdaptationTests(unittest.TestCase):
