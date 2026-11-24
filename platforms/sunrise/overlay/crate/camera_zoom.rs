@@ -64,6 +64,9 @@ pub fn zoom(host: &dyn ClientHost) -> Option<Zoom> {
 /// Looking through a spyglass (`LocalPlayer.isScoping`), the wheel stays the hotbar's, as the
 /// zoom it would step is not shown then.
 pub fn scroll(host: &dyn ClientHost, steps: i32) -> bool {
+    if !held(host) {
+        return false;
+    }
     let scoping = local_living(host).is_some_and(|living| {
         living.used_item_hand(host).is_some_and(|hand| {
             living
@@ -73,7 +76,7 @@ pub fn scroll(host: &dyn ClientHost, steps: i32) -> bool {
                 .unwrap_or(false)
         })
     });
-    if scoping || !held(host) {
+    if scoping {
         return false;
     }
     let level = LEVEL.load(Ordering::Relaxed);
