@@ -1,6 +1,7 @@
 //! Bounded, background WebSocket transport with authenticated end-to-end encryption.
 //! UUIDs and names are self-claimed. Callers must pair identity codes out of band.
 mod crypto;
+pub mod language;
 pub mod translation;
 mod websocket;
 use crypto::{Identity, Verified, string};
