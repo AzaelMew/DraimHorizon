@@ -8,7 +8,7 @@ bundle instead of keeping a second copy of the 88k lines:
   resolve   list where each Horizon hook target lives in a Sunrise checkout
   generate  write target/sunrise/mods/<id>/ (manifest + translated sources) for horizon-mixins
   smod      write the flat Sunrise native project (the shipping path, packed by tools/package_flat.py)
-  smod-check  offline validation of the packed .smod with the SDK tool and function index
+  smod-check  validation of the packed .smod with the SDK tool (compiles it) and function index
   stage     generate, then apply it to the pinned Sunrise source with the pinned mixin tool
 
 Source of truth for differences: platforms/sunrise/platform.toml and platforms/sunrise/overlay/.
@@ -26,6 +26,7 @@ import sys
 import tarfile
 import tomllib
 import urllib.request
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -753,7 +754,7 @@ def check_smod_manifest(manifest, functions, refused, names, internal_catalog=No
 
 
 def command_smod_check(args):
-    """Offline proxy for the launcher's validation of the packed .smod."""
+    """Proxy for the launcher's validation of the packed .smod."""
     compat = target_compat()
     version = tomllib.loads((BUNDLE / "horizon-mixin.toml").read_text(encoding="utf-8"))["mod"]["version"]
     smod = args.smod or ROOT / "target" / f"draimhorizons-{version}.{'smod' if S == 'sunrise' else 'hmod'}"
@@ -769,9 +770,15 @@ def command_smod_check(args):
     if build["build"]["commit"] != compat["revision"]:
         raise SystemExit(f"{data} is for {build['build']['commit']}, not the pinned {compat['revision']}")
     if tool.is_file():
-        result = subprocess.run([str(tool), "check", str(smod), "--json"], capture_output=True, text=True)
+        # `check <file>` is for signed release files; a local, unsigned package is unpacked and
+        # checked as a project folder, which also compiles its native code (the tool downloads
+        # what that compile needs).
+        with tempfile.TemporaryDirectory() as project:
+            with zipfile.ZipFile(smod) as archive:
+                archive.extractall(project)
+            result = subprocess.run([str(tool.resolve()), f"{S}-mod", "check"], cwd=project, capture_output=True, text=True)
         print(result.stdout.strip())
-        if result.returncode != 0 or not json.loads(result.stdout or "{}").get("ok"):
+        if result.returncode != 0:
             raise SystemExit(f"cargo-{S}-mod check refused {smod.name}:\n{result.stderr.strip()}")
     with zipfile.ZipFile(smod) as archive:
         manifest = tomllib.loads(archive.read(MANIFEST).decode("utf-8"))
@@ -1150,7 +1157,7 @@ def main():
     smod_parser = sub.add_parser("smod")
     smod_parser.add_argument("--sunrise", type=Path, help="Sunrise checkout, to resolve moved targets")
     smod_parser.set_defaults(run=command_smod)
-    check_parser = sub.add_parser("smod-check", help="offline validation of the packed .smod against the SDK")
+    check_parser = sub.add_parser("smod-check", help="validate the packed .smod against the SDK (the tool compiles it)")
     check_parser.add_argument("--smod", type=Path, help="default: target/draimhorizons-<version>.smod")
     check_parser.add_argument("--sdk", type=Path, help="default: .local/sdk-<revision[:7]>")
     check_parser.add_argument("--fetch", action="store_true", help="download the SDK release sdk-<revision> first (SHA-256 verified)")

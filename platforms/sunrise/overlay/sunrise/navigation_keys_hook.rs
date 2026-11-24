@@ -1,5 +1,10 @@
-fn claim_borders_navigation_keys(game: &Game<'_>, keys: &mut sunrise_client::sprint::Keys) {
-    let original_keys = [keys.forward, keys.backward, keys.left, keys.right];
+// Sunrise's update_movement_input hands back the keys the local player moves with (after any
+// movement_input_update listener); the navigation steers them the way Horizon's movement input did.
+// A changed axis sets its keys.
+fn claim_borders_navigation_keys(
+    mut keys: Keys,
+    game: &crate::game::Game<'_>,
+) -> Keys {
     let [mut strafe, mut forward] = keys.direction();
     let original_axes = [strafe, forward];
     crate::game::claim_borders_navigation_view::movement(
@@ -9,9 +14,6 @@ fn claim_borders_navigation_keys(game: &Game<'_>, keys: &mut sunrise_client::spr
         &mut keys.jump,
         &mut keys.shift,
     );
-    if [keys.forward, keys.backward, keys.left, keys.right] != original_keys {
-        return;
-    }
     if [strafe, forward] != original_axes {
         if forward != original_axes[1] {
             keys.forward = forward > 0.0;
@@ -23,4 +25,5 @@ fn claim_borders_navigation_keys(game: &Game<'_>, keys: &mut sunrise_client::spr
         }
         keys.analog = Some([strafe, forward]);
     }
+    keys
 }

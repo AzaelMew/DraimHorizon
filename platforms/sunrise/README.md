@@ -5,7 +5,7 @@ renamed crates, a different module layout and its own native hook model, so the 
 derived by `tools/sunrise.py` from the shared sources plus the files here:
 
 - `platform.toml` - injections retargeted or dropped, module destinations, and regex rewrites for the
-  engine API differences found by compiling against the pinned Sunrise Nightly.
+  engine API differences found by compiling against the pinned Sunrise build.
 - `overlay/` - Sunrise-specific source: hook helpers whose arguments differ, and `sunrise_platform.rs`,
   a shim giving `Game` the `native_*` helpers the shared sources call (`on`, `setting`, `mod_screen`, ...).
 - `platform.d/` - further rows for `platform.toml`, one file per feature (tables merge, arrays append).
@@ -42,7 +42,7 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 
 ## Status
 
-The `.smod` targets the official Sunrise Nightly `9425651` (2026-11-20). The earlier port's Launcher build and
+The `.smod` targets the Sunrise Dev build `3d34bbe` (`dev-2026-11-24-3d34bbe`). The earlier port's Launcher build and
 in-game menu and minimap checks were performed on Nightly `520fc48`. Differences from Horizon:
 
 - the minimap is drawn by the mod through `DynamicTextures` and the GUI pass, because the Nightly deleted the

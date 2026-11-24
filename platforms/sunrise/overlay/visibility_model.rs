@@ -14,16 +14,5 @@ pub fn render(
     let mut shown = mob.clone();
     shown.invisible = false;
     shown.extra.spectator = false;
-    sunrise_client::mobs::render::render_with_hidden(
-        &shown,
-        alpha,
-        camera,
-        atlas,
-        light,
-        data,
-        &[],
-        Default::default(),
-        None,
-        out,
-    );
+    sunrise_client::mobs::render::render(&shown, alpha, camera, atlas, light, data, out);
 }
