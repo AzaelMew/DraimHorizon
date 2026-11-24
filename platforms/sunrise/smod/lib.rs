@@ -2,8 +2,9 @@
 // Mod crate: runs in the game process. Game-side modules may call it as `mod_draimhorizon::...`.
 use mod_api::{
     self, ClientHost, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
-    RegisterClientCommandsEvent, Registrar, RegistrationContext, RenderFramePreEvent,
-    RenderHandEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
+    RegisterClientCommandsEvent, RegisterClientTooltipComponentFactoriesEvent, Registrar,
+    RegistrationContext, RenderFramePreEvent, RenderHandEvent, RenderTooltipGatherComponentsEvent,
+    RenderTooltipTextureEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
 };
 
 #[derive(Default)]
@@ -38,6 +39,38 @@ impl Hooks for Mod {
         } else {
             mod_api::Flow::Continue
         }
+    }
+    fn register_client_tooltip_component_factories(
+        &self,
+        _: &RegistrationContext,
+        event: &mut RegisterClientTooltipComponentFactoriesEvent<'_>,
+    ) {
+        event
+            .factories
+            .register::<shulker_peek_tooltip::Contents, shulker_peek_tooltip::Grid>(|contents| {
+                shulker_peek_tooltip::Grid(contents.0.clone())
+            });
+    }
+    fn render_tooltip_gather_components(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut RenderTooltipGatherComponentsEvent<'_>,
+    ) -> mod_api::Flow {
+        shulker_peek_tooltip::gather(host, event.stack, &mut event.elements);
+        mod_api::Flow::Continue
+    }
+    fn render_tooltip_texture(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut RenderTooltipTextureEvent<'_>,
+    ) {
+        shulker_peek_tooltip::tint(
+            host,
+            event.stack,
+            &mut event.background,
+            &mut event.border_top,
+            &mut event.border_bottom,
+        );
     }
     // Sunrise builds the screen-render view (and calls `native_screen_render_post`, where the
     // `menu-render` injection draws the mod screens) only while a mod listens to the hook.

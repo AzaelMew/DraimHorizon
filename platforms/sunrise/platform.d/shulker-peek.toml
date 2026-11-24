@@ -1,0 +1,31 @@
+# The shulker box preview runs on the typed API (overlay/crate/shulker_peek_tooltip.rs): the
+# tooltip gather, tooltip component and tooltip texture hooks fire for every item tooltip.
+
+[module_override.shulker-peek]
+to_crate = true
+reason = "pure rules the typed preview and the haul view share"
+
+[module_override.shulker-peek-view]
+drop = true
+reason = "the preview is the mod crate's (overlay/crate/shulker_peek_tooltip.rs)"
+
+[injection.shulker-peek-tooltip]
+drop = true
+reason = "Hooks::render_tooltip_gather_components and a ClientTooltipComponent (overlay/crate/shulker_peek_tooltip.rs)"
+
+[injection.shulker-peek-measure]
+drop = true
+reason = "the tooltip component measures itself (overlay/crate/shulker_peek_tooltip.rs)"
+
+[injection.shulker-peek-draw]
+drop = true
+reason = "the tooltip component draws itself (overlay/crate/shulker_peek_tooltip.rs)"
+
+[injection.shulker-peek-colors]
+drop = true
+reason = "Hooks::render_tooltip_texture (overlay/crate/shulker_peek_tooltip.rs)"
+
+[[rewrite]]
+pattern = '''crate::game::claim_borders_shulker_peek::'''
+replace = '''mod_draimhorizon::shulker_peek::'''
+files = ["haul_view.rs"]
