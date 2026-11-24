@@ -400,11 +400,11 @@ def command_generate(args):
     for source in to_crate:
         (out / "crate").mkdir(exist_ok=True)
         shutil.move(out / source, out / "crate" / source)
-    # Pure files of a bundled crate that moved modules use: the mod crate owns them and the bundled
-    # crate re-exports them (inline_relay).
-    for source in platform.get("crate_copy", []):
+    # Pure files of a bundled crate that moved modules use: the mod crate owns them, and a rewrite
+    # makes the bundled crate re-export them, so both sides share one type.
+    for source in platform.get("crate_move", []):
         (out / "crate").mkdir(exist_ok=True)
-        shutil.copyfile(out / source, out / "crate" / Path(source).name)
+        shutil.move(out / source, out / "crate" / Path(source).name)
     derive_mouse_helpers(out, rules)
     traits = traitify_game_impls(out, modules, args.sunrise)
     import_traits(out, modules, injections, traits)
@@ -566,8 +566,6 @@ def inline_relay(src):
         "crypto": "crypto.rs", "language": "language.rs", "translation": "translation.rs",
         "websocket": "websocket.rs",
     }
-    # A relay module the mod crate owns (`crate_copy`) is re-exported from it, not inlined twice.
-    owned = {path.stem for path in (src.parent.parent / "crate").glob("*.rs")}
     parts = {"languages": "translation_languages.rs"}
 
     def expand(text, files):
@@ -576,8 +574,6 @@ def inline_relay(src):
             file = files.get(match["name"])
             if file is None:
                 return match[0]
-            if files is nested and match["name"] in owned:
-                return f"{match['pub'] or ''}use mod_draimhorizon::{match['name']};"
             body = load(file)
             if file == "translation.rs":
                 body = expand(body, parts)
@@ -1155,24 +1151,30 @@ def add_mod_crate(modded, bundle, compat):
         f'[package]\nname = "mod-draimhorizon"\nversion = "{version}"\nedition = "2024"\npublish = false\n\n'
         '[dependencies]\nmod_api = { package = "' + f'{S}-mod-api", path = "../{S}-mod-api" }}\n'
         'webpki-roots = "1"\nrustls-pki-types = { version = "1", features = ["web"] }\nzeroize = "1"\n'
-        + ("".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO) if S == "horizon" else ""),
+        + ("".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO) if S == "horizon" else "")
+        + "".join(f"{name} = {spec}\n" for name, spec in load_platform().get("smod", {}).get("dependencies", {}).items()),
         encoding="utf-8")
     files = sorted((bundle / "crate").glob("*.rs"))
     lib = (PLATFORM / "smod" / "lib.rs").read_text(encoding="utf-8") + "".join(f"pub mod {f.stem};\n" for f in files)
     (crate / "src" / "lib.rs").write_text(lib, encoding="utf-8")
     for path in files:
         shutil.copyfile(path, crate / "src" / path.name)
-    users = {p.relative_to(modded / "crates").parts[0] for p in (modded / "crates").glob("*/src/**/*.rs")
-             if "mod_draimhorizon" in p.read_text(encoding="utf-8", errors="ignore")} - {"mod-draimhorizon"}
+    # Every package whose sources call the mod crate (the game crates, and a bundled crate such as the
+    # relay client that re-exports a file the mod crate owns), wherever the mixin tool placed it.
+    users = {manifest.parent for manifest in modded.rglob("Cargo.toml")
+             if "target" not in manifest.relative_to(modded).parts and manifest.parent != crate
+             and any("mod_draimhorizon" in p.read_text(encoding="utf-8", errors="ignore")
+                     for p in (manifest.parent / "src").rglob("*.rs"))}
     # <product>-client-lib compiles <product>-client's files through `#[path]`, so it needs the dependency too.
-    users |= {f"{CLIENT}-lib"} if CLIENT in users else set()
-    for name in sorted(users):
-        manifest = modded / "crates" / name / "Cargo.toml"
+    users |= {modded / "crates" / f"{CLIENT}-lib"} if modded / "crates" / CLIENT in users else set()
+    for package in sorted(users):
+        manifest = package / "Cargo.toml"
         text = manifest.read_text(encoding="utf-8")
-        manifest.write_text(text.replace("[dependencies]\n", '[dependencies]\nmod_draimhorizon = { package = "mod-draimhorizon", path = "../mod-draimhorizon" }\n', 1), encoding="utf-8")
+        path = os.path.relpath(crate, package)
+        manifest.write_text(text.replace("[dependencies]\n", f'[dependencies]\nmod_draimhorizon = {{ package = "mod-draimhorizon", path = "{path}" }}\n', 1), encoding="utf-8")
     root = modded / "Cargo.toml"
     root.write_text(root.read_text(encoding="utf-8").replace("members = [\n", 'members = [\n    "crates/mod-draimhorizon",\n', 1), encoding="utf-8")
-    print(f"mod crate added; used by {', '.join(sorted(users))}", file=sys.stderr)
+    print(f"mod crate added; used by {', '.join(sorted(p.relative_to(modded).as_posix() for p in users))}", file=sys.stderr)
 
 
 def prepare_build(modded):
