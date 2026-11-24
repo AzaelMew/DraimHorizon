@@ -31,23 +31,6 @@ class NightlyRevisionTests(unittest.TestCase):
         self.assertEqual(query.call_args.args[0], ["git", "ls-remote", "https://example.test/horizon", "refs/tags/nightly", "refs/tags/nightly^{}"])
 
 
-class SunriseCandidateTests(unittest.TestCase):
-    def test_nightly_and_only_the_newest_dev_day_compete(self):
-        a, b, c, d = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)
-        refs = (f"{a}\trefs/tags/nightly\n{b}\trefs/tags/dev-2026-11-23-bbbbbbb\n"
-                f"{c}\trefs/tags/dev-2026-11-24-ccccccc\n{d}\trefs/tags/dev-2026-11-24-ddddddd\n")
-        self.assertEqual(compatibility.sunrise_candidates(refs), {a: "nightly", c: "dev", d: "dev"})
-
-    def test_annotated_dev_tag_resolves_to_its_commit(self):
-        tag, source = "e" * 40, "f" * 40
-        refs = f"{tag}\trefs/tags/dev-2026-11-24-fffffff\n{source}\trefs/tags/dev-2026-11-24-fffffff^{{}}\n"
-        self.assertEqual(compatibility.sunrise_candidates(refs), {source: "dev"})
-
-    def test_no_build_tags_is_rejected(self):
-        with self.assertRaises(ValueError):
-            compatibility.sunrise_candidates(f"{'a' * 40}\trefs/heads/main\n")
-
-
 class PinCheckTests(unittest.TestCase):
     compat = {
         "horizon_repository": "https://example.test/horizon", "horizon_revision": "a" * 40, "horizon_channel": "nightly",
@@ -55,8 +38,8 @@ class PinCheckTests(unittest.TestCase):
     }
 
     def check(self, horizon, sunrise, strict):
-        with patch.object(compatibility, "latest_nightly", return_value=horizon), \
-                patch.object(compatibility, "latest_sunrise", return_value=(sunrise, "nightly")):
+        nightly = {"https://example.test/horizon": horizon, "https://example.test/sunrise": sunrise}
+        with patch.object(compatibility, "latest_nightly", side_effect=lambda repository: nightly[repository]):
             return compatibility.check_pins(self.compat, strict)
 
     def test_current_pins_pass_and_both_are_reported(self):

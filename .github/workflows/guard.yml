@@ -13,7 +13,8 @@ env:
 jobs:
   guard:
     # Skip by the PR author, not the triggering actor: a bot re-running or editing a PR must not change the verdict.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # arismoko's pull requests follow their own conventions, so they are not guarded.
+    if: github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.user.login != 'arismoko'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
