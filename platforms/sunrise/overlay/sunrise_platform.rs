@@ -198,10 +198,12 @@ impl SunriseGame for Game<'_> {
             n => 8.0 + 2.0 + (n - 1) as f32 * 10.0,
         };
         let (w, h) = (w.ceil(), (text_h + extra[1]).ceil());
+        // Placed as the game places an item's own tooltip (draw_stack_tooltip_lines): the cursor
+        // truncated to whole GUI pixels, then DefaultTooltipPositioner.
         let at = mod_api::ClientTooltipPositioner::position_tooltip(
             &mod_api::DefaultTooltipPositioner,
             [width as i32, height as i32],
-            [x.round() as i32, y.round() as i32],
+            [x as i32, y as i32],
             [w as i32, h as i32],
         );
         (at[0] as f32, at[1] as f32, w, h)
