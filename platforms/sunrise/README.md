@@ -9,6 +9,9 @@ derived by `tools/sunrise.py` from the shared sources plus the files here:
 - `overlay/` - Sunrise-specific source: hook helpers whose arguments differ, and `sunrise_platform.rs`,
   a shim giving `Game` the `native_*` helpers the shared sources call (`on`, `setting`, `mod_screen`, ...).
 - `platform.d/` - further rows for `platform.toml`, one file per feature (tables merge, arrays append).
+  `[module_override.<id>] to_crate = true` moves a pure shared module into the mod crate, `crate_copy` copies a
+  pure relay client file there (the inlined relay re-exports it), and `[smod.dependencies]` adds the registry
+  crates they use, pinned as the game's lock pins them (add their entries to `smod/Cargo.lock`).
 - `overlay/crate/` - code that lives in the `.smod`'s own crate: the Options → Mods entry, key mappings and
   client commands (`mod_entry.rs`), and state that helpers below the game crate need.
 - `smod/` - the mod crate entry (`lib.rs`) and the `Cargo.lock` its registry dependencies are pinned with.

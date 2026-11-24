@@ -17,6 +17,7 @@ const GOOGLE_MIRROR: &str = "https://translate.google.com/translate_a/single";
 const DEEPL_FREE: &str = "https://api-free.deepl.com/v2/translate";
 #[path = "translation_languages.rs"]
 mod languages;
+pub use crate::language::Language;
 pub use languages::{SourcePolicy, TargetLanguage};
 const RETRY: Duration = Duration::from_secs(15);
 const KEY_RETRY: Duration = Duration::from_secs(15 * 60);
@@ -405,46 +406,6 @@ impl Providers<'_> {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Language {
-    #[default]
-    Russian,
-    English,
-}
-impl Language {
-    #[cfg(test)]
-    fn deepl_code(self) -> &'static str {
-        self.text("RU", "EN-US")
-    }
-    pub fn from_code(code: &str) -> Self {
-        if code == "en" {
-            Self::English
-        } else {
-            Self::Russian
-        }
-    }
-    pub fn code(self) -> &'static str {
-        self.text("ru", "en")
-    }
-    pub fn other(self) -> Self {
-        match self {
-            Self::Russian => Self::English,
-            Self::English => Self::Russian,
-        }
-    }
-    pub fn text<'a>(self, russian: &'a str, english: &'a str) -> &'a str {
-        match self {
-            Self::Russian => russian,
-            Self::English => english,
-        }
-    }
-    pub fn needs_translation(self, text: &str) -> bool {
-        match self {
-            Self::Russian => needs_translation(text),
-            Self::English => needs_english(text),
-        }
-    }
-}
 /// What happened to a translation request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Submission {
@@ -776,15 +737,15 @@ mod tests {
     #[test]
     fn any_alphabetic_noncommand_text_is_eligible_for_both_targets() {
         for text in SAMPLES {
-            assert!(Language::Russian.needs_translation(text), "{text}");
-            assert!(Language::English.needs_translation(text), "{text}");
+            assert!(needs_translation(text), "{text}");
+            assert!(needs_english(text), "{text}");
         }
-        assert!(Language::Russian.needs_translation("Привет"));
-        assert!(Language::English.needs_translation("Hello"));
-        for target in [Language::Russian, Language::English] {
-            assert!(!target.needs_translation("/msg Alex hello"));
-            assert!(!target.needs_translation("  /msg Alex Привет"));
-            assert!(!target.needs_translation("123 :) !!!"));
+        assert!(needs_translation("Привет"));
+        assert!(needs_english("Hello"));
+        for eligible in [needs_translation, needs_english] {
+            assert!(!eligible("/msg Alex hello"));
+            assert!(!eligible("  /msg Alex Привет"));
+            assert!(!eligible("123 :) !!!"));
         }
     }
     #[test]
@@ -928,7 +889,7 @@ mod tests {
                 let (_, body) = worker.join().unwrap();
                 let value: Value = serde_json::from_str(&body).unwrap();
                 assert!(value.get("source_lang").is_none(), "{body}");
-                assert_eq!(value["target_lang"], target.deepl_code());
+                assert_eq!(value["target_lang"], TargetLanguage::from(target).deepl_code());
                 assert_eq!(value["text"][0], text);
             }
         }

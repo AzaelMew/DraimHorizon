@@ -400,6 +400,11 @@ def command_generate(args):
     for source in to_crate:
         (out / "crate").mkdir(exist_ok=True)
         shutil.move(out / source, out / "crate" / source)
+    # Pure files of a bundled crate that moved modules use: the mod crate owns them and the bundled
+    # crate re-exports them (inline_relay).
+    for source in platform.get("crate_copy", []):
+        (out / "crate").mkdir(exist_ok=True)
+        shutil.copyfile(out / source, out / "crate" / Path(source).name)
     derive_mouse_helpers(out, rules)
     traits = traitify_game_impls(out, modules, args.sunrise)
     import_traits(out, modules, injections, traits)
@@ -557,7 +562,12 @@ def inline_relay(src):
             text = CRYPTO_PATH.sub(lambda m: f"mod_draimhorizon::{m[1]}::", text)
         return text
 
-    nested = {"crypto": "crypto.rs", "translation": "translation.rs", "websocket": "websocket.rs"}
+    nested = {
+        "crypto": "crypto.rs", "language": "language.rs", "translation": "translation.rs",
+        "websocket": "websocket.rs",
+    }
+    # A relay module the mod crate owns (`crate_copy`) is re-exported from it, not inlined twice.
+    owned = {path.stem for path in (src.parent.parent / "crate").glob("*.rs")}
     parts = {"languages": "translation_languages.rs"}
 
     def expand(text, files):
@@ -566,6 +576,8 @@ def inline_relay(src):
             file = files.get(match["name"])
             if file is None:
                 return match[0]
+            if files is nested and match["name"] in owned:
+                return f"{match['pub'] or ''}use mod_draimhorizon::{match['name']};"
             body = load(file)
             if file == "translation.rs":
                 body = expand(body, parts)
@@ -672,6 +684,8 @@ def command_smod(args):
     cargo = SMOD_CARGO.replace("{version}", bundle["mod"]["version"])
     if S == "horizon":
         cargo += "".join(f"{name} = {spec}\n" for name, spec in HORIZON_CRYPTO)
+    # Registry crates the platform's moved modules use, pinned as the game's lock pins them.
+    cargo += "".join(f"{name} = {spec}\n" for name, spec in load_platform().get("smod", {}).get("dependencies", {}).items())
     (out / "Cargo.toml").write_text(cargo, encoding="utf-8")
     lock = (PLATFORM / "smod" / "Cargo.lock").read_text(encoding="utf-8")
     lock = re.sub(r'name = "mod-draim-probe"\nversion = "[^"]*"', f'name = "{SMOD_CRATE}"\nversion = "{bundle["mod"]["version"]}"', lock)

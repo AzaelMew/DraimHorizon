@@ -1,0 +1,32 @@
+# The pat gesture's model (patting.rs) is pure, so the mod crate owns it with the interface
+# language it reads; the game-side adapters and the relay reach both through `mod_draimhorizon`.
+
+crate_copy = ["relay_client/src/language.rs"]
+
+[module_override.patting]
+to_crate = true
+reason = "the pat gesture's pure model belongs to the mod crate"
+
+[[rewrite]]
+pattern = '''claim_borders_relay_client::translation::Language'''
+replace = '''crate::language::Language'''
+files = ["patting.rs"]
+
+[[rewrite]]
+pattern = '''(crate::game|super)::claim_borders_patting::'''
+replace = '''mod_draimhorizon::patting::'''
+files = ["client.rs", "menu.rs"]
+
+[[rewrite]]
+pattern = ''' claim_borders_patting as pat,'''
+replace = ''''''
+files = ["pat_view.rs"]
+
+[[rewrite]]
+pattern = '''(?m)^use claim_borders_relay_client::translation::Language;'''
+replace = '''use claim_borders_relay_client::translation::Language;
+use mod_draimhorizon::patting as pat;'''
+files = ["pat_view.rs"]
+
+[smod.dependencies]
+serde_json = '"=1.0.151"'
