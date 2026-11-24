@@ -64,5 +64,37 @@ class PinCheckTests(unittest.TestCase):
         self.assertEqual(len(errors), 2)
 
 
+class DevPinTests(unittest.TestCase):
+    dev, nightly = "d" * 40, "e" * 40
+
+    def check(self, tags):
+        compat = {
+            "horizon_repository": "https://example.test/horizon", "horizon_revision": "a" * 40, "horizon_channel": "nightly",
+            "sunrise": {"repository": "https://example.test/sunrise", "revision": self.dev, "channel": "dev"},
+        }
+        nightly = {"https://example.test/horizon": "a" * 40, "https://example.test/sunrise": self.nightly}
+        refs = "".join(f"{commit}\trefs/tags/{name}\n" for commit, name in tags)
+        with patch.object(compatibility, "latest_nightly", side_effect=lambda repository: nightly[repository]), \
+                patch.object(compatibility.subprocess, "check_output", return_value=refs):
+            return compatibility.check_pins(compat, True)
+
+    def test_published_dev_build_newer_than_the_nightly_passes(self):
+        lines, errors = self.check([(self.dev, "dev-2026-11-24-ddddddd"), (self.nightly, "nightly-source/2026-11-20-eeeeeee")])
+        self.assertEqual(errors, [])
+        self.assertTrue(any(line.startswith("Sunrise Dev build") for line in lines))
+
+    def test_unpublished_dev_build_fails(self):
+        _, errors = self.check([("f" * 40, "dev-2026-11-24-fffffff"), (self.nightly, "nightly-source/2026-11-20-eeeeeee")])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not a published Dev build", errors[0])
+
+    def test_dev_build_fails_once_a_nightly_as_new_is_published(self):
+        for date in ("2026-11-24", "2026-11-25"):
+            with self.subTest(nightly=date):
+                _, errors = self.check([(self.dev, "dev-2026-11-24-ddddddd"), (self.nightly, f"nightly-source/{date}-eeeeeee")])
+                self.assertEqual(len(errors), 1)
+                self.assertIn("not newer than official Nightly", errors[0])
+
+
 if __name__ == "__main__":
     unittest.main()

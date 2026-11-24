@@ -15,7 +15,7 @@ A release link looks like `https://github.com/DraimCiDo/DraimHorizon/releases/ta
 
 **Sunrise, a file you copied in by hand.** Put `draimhorizons-<version>.smod` in the game folder's `sunrise-native-mods/` and add the line `mod.draimhorizon:true` to `sunrise-mods.txt`, beside `options.txt`, then restart. Until then the game's Options → Mods says "Not loaded: turn it on in the launcher". The launcher's own toggle stays locked for hand-copied files because it cannot check where they came from; a mod installed with `mods add-github` or from Discover has a working toggle. To turn a hand-copied mod off, remove that line or the file.
 
-Target clients are the official Horizon Nightly `0a875da` and Sunrise Nightly `9425651`, both Java 26.3. A native mod is built for exactly one Nightly, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `0a875da` and the Sunrise Dev build `3d34bbe`, both Java 26.3. A native mod is built for exactly one game build, so after a client update install the release made for it (the release notes name the Nightly). Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -24,11 +24,13 @@ Target clients are the official Horizon Nightly `0a875da` and Sunrise Nightly `9
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
 | Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `0a875da` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. Horizon Launcher also compiled the installed 0.42.4 `.hmod` into a client build on Nightly `0a875da` with every installed mod included. |
-| Sunrise | Experimental. Install the release's `.smod`. | `9425651` (`sunrise.revision`) | SDK validation uses `python tools/sunrise.py smod-check --fetch`. The native source check applies the bundle to that exact Nightly and compiles the client. |
+| Sunrise | Experimental. Install the release's `.smod`. | Dev build `3d34bbe` (`sunrise.revision`), until a newer Nightly is published | SDK validation uses `python tools/sunrise.py smod-check --fetch`. The native source check applies the bundle to that exact build and compiles the client. |
 
 Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
 (`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
 and the client is compiled again. Nightlies come often, so a release can be one Nightly behind for a short time.
+The Sunrise pin may instead be a published Dev build (`"channel": "dev"`) while it is newer than the published Nightly,
+when the port needs something no Nightly has yet; the check turns red once a Nightly as new is published.
 
 **Not available on Horizon yet.**
 - The third-person patting arm (see Patting below): other players do not see your arm move. Your own view and the

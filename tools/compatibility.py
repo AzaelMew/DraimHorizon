@@ -58,12 +58,41 @@ def horizon_problem(compat):
     return latest, None
 
 
+def tag_dates(refs, prefix):
+    """{commit: [date, ...]} of the `<prefix><YYYY-MM-DD>-<short>` tags in `git ls-remote` output."""
+    dates = {}
+    for line in refs.splitlines():
+        found = re.fullmatch(rf"([0-9a-f]{{40}})\trefs/tags/{re.escape(prefix)}(\d{{4}}-\d{{2}}-\d{{2}})-[0-9a-f]+", line)
+        if found:
+            dates.setdefault(found[1], []).append(found[2])
+    return dates
+
+
+def dev_problem(sunrise, latest):
+    """What is wrong with a Sunrise Dev pin, if anything. A Dev build is allowed only while it is a published
+    Dev build (a `dev-<date>-<short>` tag) newer than the published Nightly (its `nightly-source/<date>-<short>`
+    tag): it carries something the port needs that no Nightly has yet. Once a later Nightly is published, the
+    pin moves to it."""
+    refs = subprocess.check_output(
+        ["git", "ls-remote", sunrise["repository"], "refs/tags/dev-*", "refs/tags/nightly-source/*"], text=True)
+    dev = tag_dates(refs, "dev-").get(sunrise["revision"])
+    if not dev:
+        return f"Sunrise Dev pin {sunrise['revision']} is not a published Dev build."
+    nightly = tag_dates(refs, "nightly-source/").get(latest, [])
+    if not nightly or max(nightly) >= min(dev):
+        return (f"Sunrise Dev pin {sunrise['revision']} is not newer than official Nightly {latest}; "
+                "refresh compatibility with --update-sunrise and validate before a Sunrise release.")
+    return None
+
+
 def sunrise_problem(compat):
     """The published Sunrise Nightly and what is wrong with the pin, if anything (None without a Sunrise pin)."""
     sunrise = compat.get("sunrise")
     if sunrise is None:
         return None, None
     latest = latest_nightly(sunrise["repository"])
+    if sunrise.get("channel") == "dev":
+        return latest, dev_problem(sunrise, latest)
     if sunrise["revision"] != latest or sunrise.get("channel") != "nightly":
         return latest, (f"Sunrise pin {sunrise['revision']} must target official Nightly {latest}; "
                         "refresh compatibility with --update-sunrise and validate before a Sunrise release.")
@@ -82,6 +111,8 @@ def check_pins(compat, strict_sunrise):
     latest, problem = sunrise_problem(compat)
     if problem:
         (errors if strict_sunrise else lines).append(problem if strict_sunrise else "warning: " + problem)
+    elif latest and compat["sunrise"].get("channel") == "dev":
+        lines.append(f"Sunrise Dev build: {compat['sunrise']['revision']} (newer than official Nightly {latest})")
     elif latest:
         lines.append(f"Sunrise official Nightly: {latest}")
     return lines, errors
@@ -93,7 +124,7 @@ def main():
     parser.add_argument("--horizon", type=Path)
     parser.add_argument("--update-sunrise", action="store_true")
     parser.add_argument("--sunrise", type=Path)
-    parser.add_argument("--strict-sunrise", action="store_true", help="fail when the Sunrise pin is not the published Nightly")
+    parser.add_argument("--strict-sunrise", action="store_true", help="fail when the Sunrise pin is not the published Nightly or a published Dev build newer than it")
     args = parser.parse_args()
     path = ROOT / "compatibility.json"
     compat = json.loads(path.read_text(encoding="utf-8"))
