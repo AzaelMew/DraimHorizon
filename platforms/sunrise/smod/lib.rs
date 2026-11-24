@@ -1,8 +1,9 @@
 // Mod crate template: tools/sunrise.py smod appends `pub mod <name>;` for overlay/crate/*.rs.
 // Mod crate: runs in the game process. Game-side modules may call it as `mod_draimhorizon::...`.
 use mod_api::{
-    self, ClientHost, Hooks, HumanoidSetupAnimEvent, RegisterClientCommandsEvent, Registrar,
-    RegistrationContext, RenderHandEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent,
+    self, ClientHost, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
+    RegisterClientCommandsEvent, Registrar, RegistrationContext, RenderHandEvent,
+    ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
 };
 
 #[derive(Default)]
@@ -20,6 +21,21 @@ impl Hooks for Mod {
     ) {
         mod_entry::commands(event.commands);
     }
+    fn zoom(&self, host: &dyn ClientHost, _: &mut ZoomEvent) -> Option<Zoom> {
+        camera_zoom::zoom(host)
+    }
+    // The wheel steps the zoom factor while zoomed, in place of the hotbar.
+    fn mouse_scrolling(
+        &self,
+        host: &mut dyn ClientHost,
+        event: &mut MouseScrollingEvent,
+    ) -> mod_api::Flow {
+        if camera_zoom::scroll(&*host, event.accumulated[1]) {
+            mod_api::Flow::Cancel
+        } else {
+            mod_api::Flow::Continue
+        }
+    }
     // Sunrise builds the screen-render view (and calls `native_screen_render_post`, where the
     // `menu-render` injection draws the mod screens) only while a mod listens to the hook.
     fn screen_render_post(&self, _: &dyn ClientHost, _: &mut ScreenRenderPostEvent<'_>) {}
@@ -27,7 +43,11 @@ impl Hooks for Mod {
     fn humanoid_setup_anim(&self, _: &dyn ClientHost, _: &mut HumanoidSetupAnimEvent<'_>) {}
     // `native_screen_char_typed_pre` (menu-char) and `native_render_hand` (pat-hand) are only
     // reached while a mod listens; the hooks themselves do the work.
-    fn screen_char_typed_pre(&self, _: &dyn ClientHost, _: &mut ScreenCharTypedPreEvent<'_>) -> mod_api::Flow {
+    fn screen_char_typed_pre(
+        &self,
+        _: &dyn ClientHost,
+        _: &mut ScreenCharTypedPreEvent<'_>,
+    ) -> mod_api::Flow {
         mod_api::Flow::Continue
     }
     fn render_hand(&self, _: &dyn ClientHost, _: &mut RenderHandEvent<'_, '_>) -> mod_api::Flow {
