@@ -976,6 +976,19 @@ def strip_markers(root):
     return removed
 
 
+def strip_parity_fixture_attributes(root):
+    # The parity harness enables these lint allowances, but the normal client build does not.
+    # The mixin index skips entire modules carrying unresolved cfg_attr attributes.
+    crate_root = root / CLIENT_SRC / "lib.rs"
+    text = crate_root.read_text(encoding="utf-8")
+    updated = re.sub(
+        r"(?m)^#\[cfg_attr\(\s*sunrise_parity_fixtures,\s*"
+        r"allow\(dead_code, unused_imports, unused_macros\)\s*\)\]\n", "", text,
+    )
+    if updated != text:
+        crate_root.write_text(updated, encoding="utf-8")
+
+
 def ensure_mixins_tool(compat):
     """The mixin tool Sunrise runs: the pinned horizon-mixins revision plus Sunrise's one patch."""
     work = ROOT / ".local" / f"horizon-mixins-{S}"
@@ -1038,6 +1051,8 @@ def command_stage(args):
     print(f"inlined {inline_generated(indexed, generated)} generated includes", file=sys.stderr)
     print(f"pasted {inline_local_includes(indexed)} local includes", file=sys.stderr)
     print(f"stripped {strip_markers(indexed)} replaceable markers", file=sys.stderr)
+    if S == "sunrise":
+        strip_parity_fixture_attributes(indexed)
     print("linked/dropped #[path] modules: %d/%d" % flatten_paths(indexed), file=sys.stderr)
     command_generate(argparse.Namespace(sunrise=indexed, stage=True))
     # The launcher names the mod-render crate by its package; in source it is the `mod_render` library.
