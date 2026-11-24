@@ -4,7 +4,7 @@
 use crate::shulker_peek::{SIZE, SLOT, colors, is_shulker, slot_origin};
 use mod_api::{
     ClientHost, ClientTooltipComponent, Compound, DrawContext, ItemStack, JavaString, Tag, Text,
-    TooltipComponent, TooltipComponentData, TooltipElement, TooltipFont,
+    TooltipComponent, TooltipComponentData, TooltipDisplay, TooltipElement, TooltipFont,
 };
 
 /// The mod's `sunrise-mod.toml` id.
@@ -21,7 +21,7 @@ impl TooltipComponentData for Contents {}
 
 /// The `{slot, item}` entries of a shulker box that holds something, when the mod is on, the
 /// preview is not switched off in its menu, the box does not hide its contents
-/// (`minecraft:tooltip_display`'s `hidden_components`, as `ItemStack.addToTooltip` honours) and
+/// (`minecraft:tooltip_display`, as `ItemStack.addToTooltip` honours it) and
 /// every slot fits the grid; `None` otherwise, which leaves the game's tooltip as it is.
 fn entries<'a>(host: &dyn ClientHost, stack: &'a ItemStack) -> Option<Vec<(u8, &'a Compound)>> {
     if !stack.item().id(host).is_some_and(is_shulker) || !host.on(ID) {
@@ -31,17 +31,11 @@ fn entries<'a>(host: &dyn ClientHost, stack: &'a ItemStack) -> Option<Vec<(u8, &
     if setting.is_ok_and(|value| value.trim() == "false") {
         return None;
     }
-    let components = stack.components()?.as_nbt();
-    let container = JavaString::from("minecraft:container");
-    if let Some(Tag::Compound(display)) =
-        components.get(&JavaString::from("minecraft:tooltip_display"))
-        && let Some(Tag::List(hidden)) = display.get(&JavaString::from("hidden_components"))
-        && hidden
-            .iter()
-            .any(|id| matches!(id, Tag::String(id) if *id == container))
-    {
+    if !TooltipDisplay::for_stack(stack).shows("minecraft:container") {
         return None;
     }
+    let components = stack.components()?.as_nbt();
+    let container = JavaString::from("minecraft:container");
     // `minecraft:container`: a list of `{slot, item}`.
     let Tag::List(slots) = components.get(&container)? else {
         return None;
