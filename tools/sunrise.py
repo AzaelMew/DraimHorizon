@@ -1170,7 +1170,7 @@ def add_mod_crate(modded, bundle, compat):
     for package in sorted(users):
         manifest = package / "Cargo.toml"
         text = manifest.read_text(encoding="utf-8")
-        path = os.path.relpath(crate, package)
+        path = Path(os.path.relpath(crate, package)).as_posix()
         manifest.write_text(text.replace("[dependencies]\n", f'[dependencies]\nmod_draimhorizon = {{ package = "mod-draimhorizon", path = "{path}" }}\n', 1), encoding="utf-8")
     root = modded / "Cargo.toml"
     root.write_text(root.read_text(encoding="utf-8").replace("members = [\n", 'members = [\n    "crates/mod-draimhorizon",\n', 1), encoding="utf-8")
