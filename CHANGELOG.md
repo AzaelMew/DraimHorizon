@@ -1,5 +1,9 @@
 # История версий
 
+## 0.44.4
+
+- Maintenance: fixed the failing CI pin checks by moving the Horizon pin to the official Nightly `f1bb66f` (hashes of `game.rs` and `hud.rs` refreshed) and the Sunrise pin to the official Nightly `9425651` (hash of `net.rs` refreshed). The hooks are validated by the native compatibility workflow.
+
 ## 0.44.3
 
 - chore(ci): bump the actions group with 5 updates (#76). Replace this line with a concrete entry.
