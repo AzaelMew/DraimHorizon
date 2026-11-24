@@ -2,7 +2,7 @@
 
 ## 0.44.4
 
-- Maintenance: fixed the failing CI pin checks by moving the Horizon pin to the official Nightly `f1bb66f` (hashes of `game.rs` and `hud.rs` refreshed) and the Sunrise pin to the official Nightly `9425651` (hash of `net.rs` refreshed). The hooks are validated by the native compatibility workflow.
+- Maintenance: fixed the failing CI pin checks by moving the Horizon pin to the official Nightly `f1bb66f` (hashes of `game.rs` and `hud.rs` refreshed). The Sunrise pin check now follows the newest official Sunrise build, Nightly or Dev, chosen by commit date, instead of requiring the `nightly` tag (which is older than the current Dev builds); the pin stays on Dev `3d34bbe`. The hooks are validated by the native compatibility workflow.
 
 ## 0.44.3
 

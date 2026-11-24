@@ -1,6 +1,6 @@
 name: Check official Nightly pins
-# Horizon and Sunrise both publish a Nightly. This fails when either pin in compatibility.json no longer
-# points at the published Nightly tag, so a refresh and a native re-validation are not forgotten.
+# Horizon publishes a Nightly; Sunrise publishes Nightly and Dev builds. This fails when either pin in compatibility.json
+# no longer points at the newest published build, so a refresh and a native re-validation are not forgotten.
 on:
   schedule:
     - cron: '17 5 * * *'
