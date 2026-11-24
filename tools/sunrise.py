@@ -776,7 +776,7 @@ def command_smod_check(args):
         with tempfile.TemporaryDirectory() as project:
             with zipfile.ZipFile(smod) as archive:
                 archive.extractall(project)
-            result = subprocess.run([str(tool), f"{S}-mod", "check"], cwd=project, capture_output=True, text=True)
+            result = subprocess.run([str(tool.resolve()), f"{S}-mod", "check"], cwd=project, capture_output=True, text=True)
         print(result.stdout.strip())
         if result.returncode != 0:
             raise SystemExit(f"cargo-{S}-mod check refused {smod.name}:\n{result.stderr.strip()}")
