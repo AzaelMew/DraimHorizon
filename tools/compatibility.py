@@ -103,15 +103,18 @@ def sunrise_problem(compat):
     return latest, None
 
 
-def check_pins(compat, strict_sunrise):
-    """Check both pins and report both. Horizon is always an error; Sunrise is experimental, so a stale
-    pin is a warning unless strict_sunrise. Returns (lines to print, errors)."""
+def check_pins(compat, strict_sunrise, sunrise_only=False):
+    """Check selected pins. A stale Sunrise pin is a warning unless strict_sunrise.
+    sunrise_only avoids contacting Horizon during an upstream outage."""
     lines, errors = [], []
-    latest, problem = horizon_problem(compat)
-    if problem:
-        errors.append(problem)
+    if sunrise_only:
+        lines.append("Horizon pin check skipped (--sunrise-only).")
     else:
-        lines.append(f"Horizon official Nightly: {latest}")
+        latest, problem = horizon_problem(compat)
+        if problem:
+            errors.append(problem)
+        else:
+            lines.append(f"Horizon official Nightly: {latest}")
     latest, problem = sunrise_problem(compat)
     if problem:
         (errors if strict_sunrise else lines).append(problem if strict_sunrise else "warning: " + problem)
@@ -128,8 +131,11 @@ def main():
     parser.add_argument("--horizon", type=Path)
     parser.add_argument("--update-sunrise", action="store_true")
     parser.add_argument("--sunrise", type=Path)
+    parser.add_argument("--sunrise-only", action="store_true", help="check only Sunrise without contacting Horizon")
     parser.add_argument("--strict-sunrise", action="store_true", help="fail when the Sunrise pin is not the published Nightly or a published Dev build newer than it")
     args = parser.parse_args()
+    if args.sunrise_only and (args.update or args.update_sunrise):
+        parser.error("--sunrise-only is a check-only option")
     path = ROOT / "compatibility.json"
     compat = json.loads(path.read_text(encoding="utf-8"))
     if args.update_sunrise:
@@ -138,7 +144,7 @@ def main():
         print(f"Sunrise official Nightly {previous[:7]} -> {latest[:7]}; stage the Sunrise target and compile it before release.")
         return
     if not args.update:
-        lines, errors = check_pins(compat, args.strict_sunrise)
+        lines, errors = check_pins(compat, args.strict_sunrise, args.sunrise_only)
         print("\n".join(lines))
         if errors:
             raise SystemExit("\n".join(errors))

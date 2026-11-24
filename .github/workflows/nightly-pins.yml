@@ -1,6 +1,6 @@
 name: Check official Nightly pins
-# Horizon and Sunrise both publish a Nightly. This fails when either pin in compatibility.json no longer
-# points at the published Nightly tag, so a refresh and a native re-validation are not forgotten.
+# Temporarily check only Sunrise while horizon-rust is unavailable. Remove --sunrise-only
+# after upstream recovery to resume checking both pins.
 on:
   schedule:
     - cron: '17 5 * * *'
@@ -17,10 +17,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Compare both pins with the published Nightlies
+      - name: Compare the Sunrise pin with published builds
         run: |
           set -o pipefail
-          python3 tools/compatibility.py --strict-sunrise 2>&1 | tee pins.log
+          python3 tools/compatibility.py --sunrise-only --strict-sunrise 2>&1 | tee pins.log
       - name: Explain a stale pin
         if: failure()
         run: |

@@ -63,6 +63,20 @@ class PinCheckTests(unittest.TestCase):
         _, errors = self.check("c" * 40, "d" * 40, True)
         self.assertEqual(len(errors), 2)
 
+    def test_sunrise_only_never_contacts_horizon(self):
+        with patch.object(compatibility, "latest_nightly", return_value="b" * 40) as query:
+            lines, errors = compatibility.check_pins(self.compat, True, sunrise_only=True)
+        query.assert_called_once_with(self.compat["sunrise"]["repository"])
+        self.assertEqual(errors, [])
+        self.assertIn("Sunrise official Nightly: " + "b" * 40, lines)
+
+    def test_sunrise_only_still_rejects_a_stale_sunrise_pin(self):
+        with patch.object(compatibility, "latest_nightly", return_value="c" * 40) as query:
+            _, errors = compatibility.check_pins(self.compat, True, sunrise_only=True)
+        query.assert_called_once_with(self.compat["sunrise"]["repository"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Sunrise pin", errors[0])
+
 
 class DevPinTests(unittest.TestCase):
     dev, nightly = "d" * 40, "e" * 40

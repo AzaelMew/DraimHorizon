@@ -1,5 +1,10 @@
 # История версий
 
+## 0.44.6
+
+- Marked Sunrise as supported in the client documentation and removed the experimental label from its CI workflow.
+- Temporarily paused Horizon checks and both source-stage builds while the horizon-rust repositories are unavailable. Sunrise pin checks, SDK validation, runtime tests and relay tests remain enabled. Releases publish only the Sunrise `.smod` and its checksum during the outage.
+
 ## 0.44.5
 
 - Fixed native compatibility checks for both clients. The Horizon visibility overlay uses the current renderer signature, and Sunrise staging uses Cargo's build-script output directory and inlines the generated host module.

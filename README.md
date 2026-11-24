@@ -23,12 +23,14 @@ Target clients are the official Horizon Nightly `0a875da` and the Sunrise Dev bu
 
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
-| Horizon | Supported, with the gaps listed below. Install the release's `.hmod` (0.42.2 or newer; 0.42.0 and 0.42.1 do not build in the launcher). | `0a875da` (`horizon_revision`) | On every push to `main` and before each release: the `.hmod` is validated against the SDK of that Nightly (`DRAIM_TARGET=horizon python tools/sunrise.py smod-check --fetch`), and the bundle is applied to that exact source and the real client compiles. Horizon Launcher also compiled the installed 0.42.4 `.hmod` into a client build on Nightly `0a875da` with every installed mod included. |
-| Sunrise | Experimental. Install the release's `.smod`. | Dev build `3d34bbe` (`sunrise.revision`), until a Nightly as new is published | SDK validation uses `python tools/sunrise.py smod-check --fetch`. The native source check applies the bundle to that exact build and compiles the client. |
+| Horizon | Checks and new `.hmod` releases are temporarily paused while horizon-rust is unavailable. Previous releases remain available. | `f1bb66f` (`horizon_revision`) | SDK validation and source staging will resume after upstream recovery. |
+| Sunrise | Supported. Install the release's `.smod`. | Dev build `3d34bbe` (`sunrise.revision`), until a Nightly as new is published | SDK validation uses `python tools/sunrise.py smod-check --fetch` and remains required before release. Source staging is temporarily paused because it depends on horizon-rust/horizon-mixins. |
 
-Both pins live in `compatibility.json`. CI compares them every day with the Nightly tag each project publishes
-(`python tools/compatibility.py --strict-sunrise`); a newer Nightly turns the check red until the pin is refreshed
-and the client is compiled again. Nightlies come often, so a release can be one Nightly behind for a short time.
+Both pins live in `compatibility.json`. During the horizon-rust outage, CI checks only Sunrise every day
+(`python tools/compatibility.py --sunrise-only --strict-sunrise`). Releases contain only `.smod` and its SHA-256
+checksum. Restore the paused workflow jobs, Horizon release assets and native publication gate, and remove
+`--sunrise-only` from CI commands after upstream recovery. A newer Nightly turns the check red until the pin
+is refreshed and validated. Nightlies come often, so a release can be one Nightly behind for a short time.
 The Sunrise pin may instead be a published Dev build (`"channel": "dev"`) while it is newer than the published Nightly,
 when the port needs something no Nightly has yet; the check turns red once a Nightly as new is published.
 
