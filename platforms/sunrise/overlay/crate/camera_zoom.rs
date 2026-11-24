@@ -2,13 +2,17 @@
 //! chosen factor, and the mouse wheel steps through the factors instead of the hotbar.
 use mod_api::{ClientHost, LivingRef, ModKeyMappingRef, Zoom};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// The mod's `sunrise-mod.toml` id.
 const ID: &str = "draimhorizon";
 pub const DEFAULT_KEY: &str = "key.keyboard.z";
 const FACTORS: [f32; 8] = [2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0];
 static LEVEL: AtomicUsize = AtomicUsize::new(3);
+/// Whether this mod's zoom is the one in effect: set when the game last asked this mod for the
+/// zoom, cleared at the start of each frame. The `zoom` hook stops at the first mod that answers,
+/// so a frame in which another mod's zoom wins never asks this one.
+static SUPPLIED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// The `zoom` mapping's handle, resolved again when a new registry generation refuses it.
@@ -50,33 +54,30 @@ fn held(host: &dyn ClientHost) -> bool {
 }
 
 pub fn zoom(host: &dyn ClientHost) -> Option<Zoom> {
-    held(host).then(|| {
+    let zoom = held(host).then(|| {
         let factor = FACTORS[LEVEL.load(Ordering::Relaxed)];
         Zoom {
             factor,
             smooth: true,
             turn: factor.recip(),
         }
-    })
+    });
+    SUPPLIED.store(zoom.is_some(), Ordering::Relaxed);
+    zoom
+}
+
+/// The start of a frame (`render_frame_pre`): the game asks for this frame's zoom after it, when
+/// it draws the view.
+pub fn frame_started() {
+    SUPPLIED.store(false, Ordering::Relaxed);
 }
 
 /// Steps the factor by the wheel's whole steps; true when the wheel was used for zoom.
-/// Looking through a spyglass (`LocalPlayer.isScoping`), the wheel stays the hotbar's, as the
-/// zoom it would step is not shown then.
+/// Only while this mod's zoom is the one shown in the last frame: when another mod's zoom wins,
+/// or while looking through a spyglass (the game asks no mod for a zoom then), the wheel stays
+/// the hotbar's.
 pub fn scroll(host: &dyn ClientHost, steps: i32) -> bool {
-    if !held(host) {
-        return false;
-    }
-    let scoping = local_living(host).is_some_and(|living| {
-        living.used_item_hand(host).is_some_and(|hand| {
-            living
-                .with_hand_item(host, hand, |stack| {
-                    stack.item().id(host) == Some("minecraft:spyglass")
-                })
-                .unwrap_or(false)
-        })
-    });
-    if scoping {
+    if !SUPPLIED.load(Ordering::Relaxed) || !held(host) {
         return false;
     }
     let level = LEVEL.load(Ordering::Relaxed);

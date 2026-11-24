@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Both pins must be the published Nightlies
+      - name: Both pins must be the published Nightlies (Sunrise may be a newer Dev build)
         run: python3 tools/compatibility.py --strict-sunrise
   smod:
     runs-on: ubuntu-latest

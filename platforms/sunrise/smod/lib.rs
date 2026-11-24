@@ -2,8 +2,8 @@
 // Mod crate: runs in the game process. Game-side modules may call it as `mod_draimhorizon::...`.
 use mod_api::{
     self, ClientHost, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
-    RegisterClientCommandsEvent, Registrar, RegistrationContext, RenderHandEvent,
-    ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
+    RegisterClientCommandsEvent, Registrar, RegistrationContext, RenderFramePreEvent,
+    RenderHandEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
 };
 
 #[derive(Default)]
@@ -23,6 +23,9 @@ impl Hooks for Mod {
     }
     fn zoom(&self, host: &dyn ClientHost, _: &mut ZoomEvent) -> Option<Zoom> {
         camera_zoom::zoom(host)
+    }
+    fn render_frame_pre(&self, _: &mut dyn ClientHost, _: &mut RenderFramePreEvent) {
+        camera_zoom::frame_started();
     }
     // The wheel steps the zoom factor while zoomed, in place of the hotbar.
     fn mouse_scrolling(

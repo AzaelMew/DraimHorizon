@@ -769,6 +769,21 @@ def command_smod_check(args):
     build = json.loads(data.read_text(encoding="utf-8"))
     if build["build"]["commit"] != compat["revision"]:
         raise SystemExit(f"{data} is for {build['build']['commit']}, not the pinned {compat['revision']}")
+    # The package's own manifest and pins first, so a package for another build is refused before the
+    # project check compiles anything.
+    with zipfile.ZipFile(smod) as archive:
+        manifest = tomllib.loads(archive.read(MANIFEST).decode("utf-8"))
+        names = set(archive.namelist())
+    internal_path = data.parent / "internals.json"
+    internal_catalog = json.loads(internal_path.read_text(encoding="utf-8")) if internal_path.is_file() else None
+    problems = check_smod_manifest(manifest, build["functions"], build["refused"], names, internal_catalog)
+    if internal_catalog is not None and internal_catalog.get("build", {}).get("commit") != compat["revision"]:
+        problems.append("the internals catalog belongs to another SDK build")
+    native = manifest.get("native", {})
+    if native.get(S) != compat["revision"] or native.get("mixins") != compat["mixins_revision"]:
+        problems.append("the package pins differ from compatibility.json")
+    if problems:
+        raise SystemExit("\n".join(problems))
     if tool.is_file():
         # `check <file>` is for signed release files; a local, unsigned package is unpacked and
         # checked as a project folder, which also compiles its native code (the tool downloads
@@ -780,18 +795,6 @@ def command_smod_check(args):
         print(result.stdout.strip())
         if result.returncode != 0:
             raise SystemExit(f"cargo-{S}-mod check refused {smod.name}:\n{result.stderr.strip()}")
-    with zipfile.ZipFile(smod) as archive:
-        manifest = tomllib.loads(archive.read(MANIFEST).decode("utf-8"))
-        names = set(archive.namelist())
-    internal_path = data.parent / "internals.json"
-    internal_catalog = json.loads(internal_path.read_text(encoding="utf-8")) if internal_path.is_file() else None
-    problems = check_smod_manifest(manifest, build["functions"], build["refused"], names, internal_catalog)
-    if internal_catalog is not None and internal_catalog.get("build", {}).get("commit") != compat["revision"]:
-        problems.append("the internals catalog belongs to another SDK build")
-    if manifest["native"][S] != compat["revision"] or manifest["native"]["mixins"] != compat["mixins_revision"]:
-        problems.append("the package pins differ from compatibility.json")
-    if problems:
-        raise SystemExit("\n".join(problems))
     native = manifest["native"]
     print(f"{smod.name}: {len(native['mixin'])} mixins replaceable, {len(native['module'])} modules in the game crate")
 
