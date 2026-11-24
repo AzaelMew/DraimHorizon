@@ -37,7 +37,11 @@ const KEYS: [(&str, &str, &str); 22] = [
         "key.keyboard.unknown",
         "DraimHorizons: auto click",
     ),
-    ("zoom", "key.keyboard.z", "DraimHorizons: camera zoom"),
+    (
+        "zoom",
+        crate::camera_zoom::DEFAULT_KEY,
+        "DraimHorizons: camera zoom",
+    ),
     (
         "navigation_preview",
         "key.keyboard.keypad.1",

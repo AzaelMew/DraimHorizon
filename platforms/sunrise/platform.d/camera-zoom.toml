@@ -1,0 +1,19 @@
+# Camera zoom runs on the typed API (overlay/crate/camera_zoom.rs): the zoom and mouse_scrolling
+# hooks fire at the same places the native rows patched.
+
+[module_override.camera-zoom]
+drop = true
+reason = "camera zoom is the mod crate's (overlay/crate/camera_zoom.rs)"
+
+[injection.camera-zoom-fov]
+drop = true
+reason = "Hooks::zoom (overlay/crate/camera_zoom.rs)"
+
+[injection.camera-zoom-scroll]
+drop = true
+reason = "Hooks::mouse_scrolling (overlay/crate/camera_zoom.rs)"
+
+[[rewrite]]
+pattern = '''crate::game::claim_borders_camera_zoom::DEFAULT_KEY'''
+replace = '''mod_draimhorizon::camera_zoom::DEFAULT_KEY'''
+files = ["client.rs"]
