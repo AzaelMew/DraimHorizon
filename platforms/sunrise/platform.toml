@@ -13,8 +13,16 @@ pattern = 'native_hooks::(Native(?:Zoom|Minimap|ScreenView|Mod))\b'
 replace = 'claim_borders_platform::\1'
 
 [injection.navigation-input]
-drop = true
-reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (movement_input_update)"
+# Not a MovementInput listener: that would set `sprint_suppressed` for everybody. The keys the
+# local player moves with come back from update_movement_input (after any typed listener), and
+# the navigation steers them with the same logic as Horizon's movement input.
+target = "sunrise_client::game::native_hooks::movement_input::Game<'_>::update_movement_input"
+kind = "RETURN"
+helper = "sunrise/navigation_keys_hook.rs"
+bindings = [
+  { name = "keys", ty = "Keys", value = "$value" },
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+]
 
 [injection.menu-render]
 params = { batch = "draw" }
@@ -22,16 +30,71 @@ params = { batch = "draw" }
 params = { batch = "draw" }
 [injection.shulker-peek-draw]
 drop = true
-reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
+reason = "every item tooltip goes through draw_stack_tooltip_lines, where shulker-peek-tooltip draws the grid"
 [injection.shulker-peek-measure]
 drop = true
-reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
+reason = "every item tooltip goes through draw_stack_tooltip_lines, where shulker-peek-tooltip draws the grid"
+# Horizon's signed_chat_line is three places in Sunrise: add_chat_line (system and client lines),
+# a player's line once chat_received has let it through, and the validation error line
+# show_queued_chat records with push_chat_line. A captured line is not recorded, and a player's line
+# is not narrated and counts as not shown, as before. The shared hook body is a module here, so
+# each place's helper says whether its line is a validation error.
+[[module]]
+id = "chat-capture-body"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_chat_capture"
+source = "chat_capture_hook.rs"
+[[rewrite]]
+pattern = '''^fn horizon_chat_capture\(\s*trust: &crate::game::remote::ChatTrust,'''
+replace = '''pub(crate) fn horizon_chat_capture(
+    error: bool,'''
+files = ["chat_capture_hook.rs"]
+[[rewrite]]
+pattern = '''(?s)let allowed = !matches!\(trust, crate::game::remote::ChatTrust::NotSecure\)\s*\|\| !game\.settings\.file\.bool\("onlyShowSecureChat"\);'''
+replace = '''// show_queued_chat drops a line onlyShowSecureChat hides before it is recorded.
+    let allowed = true;'''
+files = ["chat_capture_hook.rs"]
+[[rewrite]]
+pattern = '''matches!\(trust, crate::game::remote::ChatTrust::Error\)'''
+replace = '''error'''
+files = ["chat_capture_hook.rs"]
 [injection.chat-capture]
-drop = true
-reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (client_chat_received)"
+target = "sunrise_client::game::remote::chat::Game<'_>::add_chat_line"
+kind = "HEAD"
+cancellable = true
+helper = "sunrise/chat_capture_line_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "content", ty = "&sunrise_client::text::Text", value = "&content" },
+  { name = "source", ty = "sunrise_client::chat::ChatSource", value = "source" },
+]
+# show_queued_chat's body uses serde_json::json!, which a call-site row cannot patch; its player
+# lines pass chat_received (system = false) just before they are recorded.
+[injection.chat-capture-player]
+target = "sunrise_client::game::remote::chat_received::Game<'_>::chat_received"
+kind = "RETURN"
+helper = "sunrise/chat_capture_player_hook.rs"
+bindings = [
+  { name = "value", ty = "bool", value = "$value" },
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "system", ty = "bool", value = "system" },
+  { name = "line", ty = "&sunrise_client::text::Text", value = "&*line" },
+]
+# The validation error line, the one push_chat_line call with the chat_error tag.
+[injection.chat-capture-error]
+target = "sunrise_client::game::remote::chat::Game<'_>::push_chat_line"
+kind = "HEAD"
+cancellable = true
+helper = "sunrise/chat_capture_error_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "content", ty = "&sunrise_client::text::Text", value = "&content" },
+  { name = "source", ty = "sunrise_client::chat::ChatSource", value = "source" },
+  { name = "tag", ty = "&Option<sunrise_client::chat::Tag>", value = "&tag" },
+]
+# mob_geometry is test-only in Sunrise; other_creature_geometry runs once a frame from entity_geometry.
 [injection.visibility-models]
-drop = true
-reason = "since Dev f8aa80e this Sunrise function can no longer be replaced; the feature comes back on the typed mod API (render_level_stage)"
+target = "sunrise_client::game::creatures::Game<'_>::other_creature_geometry"
 # Sunrise's draw_inventory returns whether the inventory painter ran.
 [injection.live-commerce-inventory]
 helper = "sunrise/commerce_inventory_hook.rs"
@@ -47,15 +110,15 @@ bindings = [
   { name = "sequence", ty = "i32", value = "sequence" },
 ]
 
+[[rewrite]]
+pattern = 'sunrise_client::mobs::render::claim_borders_visibility_model::'
+replace = 'crate::game::claim_borders_visibility_model::'
+
 # Modules whose Horizon file lives in a lower Sunrise crate must sit in the game crate
 # (E_MIXIN_MODULE_DESTINATION). Per-module overrides: `drop` removes the row (its code moved to
 # the mod crate: overlay/crate/*.rs), `file` relocates it into game.rs.
 [module_override.visibility-model]
-drop = true
-reason = "only the dropped visibility-models injection uses it"
-[module_override.visibility-view]
-drop = true
-reason = "only the dropped visibility-models injection uses it"
+file = "crates/sunrise-client/src/game.rs"
 [module_override.ghost-render]
 file = "crates/sunrise-client/src/game.rs"
 [module_override.terrain-bridge]
@@ -296,14 +359,56 @@ files = ["claim_actionbar_hook.rs"]
 pattern = '''\bhorizon_threads\b'''
 replace = '''sunrise_threads'''
 
-# ClickQueue is a bounded queue now
+# Since Dev f8aa80e every click, in single player too (it runs on the server thread), is a click of
+# the `key.attack` / `key.use` mapping that the next tick's interaction input takes.
 [[rewrite]]
-pattern = '''game\.use_clicks \+= 1'''
-replace = '''game.use_clicks.press()'''
+pattern = '''(?s)use sunrise_client::interaction_input::Button;\n(pub fn press\(game: &mut Game<'_>, right: bool\) \{\n).*?\n\}'''
+replace = '''\1    game.queue_mapping_click(if right { "key.use" } else { "key.attack" });
+}'''
+files = ["click_press.rs"]
 
+# Horizon's held-button fields are the `key.attack` / `key.use` mappings' `isDown` (SunriseGame).
+# Assignments first, so the reads below don't take their left-hand sides.
 [[rewrite]]
-pattern = '''game\.attack_clicks \+= 1'''
-replace = '''game.attack_clicks.press()'''
+pattern = '''\bgame\.left = ([^;]+);'''
+replace = '''game.sunrise_set_held(false, \1);'''
+files = ["navigation_view.rs", "baritone/behavior/input.rs"]
+[[rewrite]]
+pattern = '''\bgame\.right = ([^;]+);'''
+replace = '''game.sunrise_set_held(true, \1);'''
+files = ["navigation_view.rs", "baritone/behavior/input.rs"]
+[[rewrite]]
+pattern = '''\bgame\.left\b'''
+replace = '''game.sunrise_held(false)'''
+files = ["navigation_view.rs", "baritone/behavior/input.rs"]
+[[rewrite]]
+pattern = '''\bgame\.right\b'''
+replace = '''game.sunrise_held(true)'''
+files = ["navigation_view.rs", "baritone/behavior/input.rs"]
+
+# remote_use_item_on takes the attempt and an optional hit; the forced hit still picks the block.
+[[rewrite]]
+pattern = '''game\.remote_use_item_on\(Hand::Main\)'''
+replace = '''game.remote_use_item_on(Hand::Main, mod_api::InteractionAttempt::Press, None)'''
+files = ["clickthrough_view.rs"]
+
+# state_for_placement answers a Result (a directional refusal is no state).
+[[rewrite]]
+pattern = '''b\.state_for_placement\(level, ticks, block, &ctx\)\)\?'''
+replace = '''b.state_for_placement(level, ticks, block, &ctx).ok().flatten())?'''
+files = ["baritone/game/player_context.rs"]
+
+# A player's placement carries its rotation and sneaking as its PlacementSource.
+[[rewrite]]
+pattern = '''yaw: rotation\.yaw,\s*pitch: rotation\.pitch,\s*sneaking,'''
+replace = '''source: sunrise_world::level::PlacementSource::Player { yaw: rotation.yaw, pitch: rotation.pitch, sneaking },'''
+files = ["baritone/game/player_context.rs"]
+
+# ItemEntity keeps its ground flags in GroundState.
+[[rewrite]]
+pattern = '''\bitem\.on_ground\b'''
+replace = '''item.ground.on_ground'''
+files = ["baritone/process/farm.rs"]
 
 # HeldKeys::contains is HeldKeys::raw
 [[rewrite]]
@@ -340,7 +445,13 @@ replace = '''Some(up) => up.reset(Text::literal(&title), Some(Text::literal(&mes
 
 [[rewrite]]
 pattern = '''SystemToast::new\(title, Some\(message\)\)'''
-replace = '''SystemToast::new(Text::literal(&title), Some(Text::literal(&message)))'''
+replace = '''SystemToast::new(Text::literal(&title), Some(Text::literal(&message))).into()'''
+
+# Sunrise's SystemToast has no slot of its own: the Baritone toast keeps it beside the toast.
+[[rewrite]]
+pattern = '''RefCell<Option<sunrise_client::toasts::SystemToast>>'''
+replace = '''RefCell<Option<crate::game::claim_borders_platform::SlotToast>>'''
+files = ["baritone/baritone.rs"]
 
 # Game::translate(key, fallback) is translate_with_fallback
 [[rewrite]]
@@ -396,16 +507,24 @@ target = "sunrise_client::game::native_hooks::render_frame_pre::Game<'_>::native
 # HUD-post call sits in a body the tool can't patch (`matches!`), so the mod draws at the start of
 # the extras pass instead, which gets the same batch and corners.
 [injection.social-hud]
+# Right after the PvP HUD and before the registered layers, as before.
 target = "sunrise_client::game::extras::Game<'_>::draw_extras"
-kind = "HEAD"
+kind = "BEFORE_CALL"
+selector = "sunrise_hooks::hud::engine::all"
+require = 1
+ordinal = 0
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
   { name = "corners", ty = "&mut sunrise_client::extras_hud::Corners", value = "&mut *corners" },
 ]
 [injection.bar-toast_draw]
+# Right after the PvP HUD and before the registered layers, as before.
 target = "sunrise_client::game::extras::Game<'_>::draw_extras"
-kind = "HEAD"
+kind = "BEFORE_CALL"
+selector = "sunrise_hooks::hud::engine::all"
+require = 1
+ordinal = 0
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
@@ -460,8 +579,17 @@ bindings = [
 ]
 
 [injection.shulker-peek-tooltip]
-drop = true
-reason = "since Dev f8aa80e this Sunrise function is gone; the feature comes back on the typed mod API (tooltip_image)"
+target = "sunrise_client::game::stations::tooltip::Game<'_>::draw_stack_tooltip_lines"
+kind = "HEAD"
+cancellable = true
+helper = "sunrise/shulker_peek_tooltip_hook.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "batch", ty = "&mut sunrise_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "stack", ty = "&sunrise_client::items::ItemStack", value = "stack" },
+  { name = "x", ty = "f32", value = "x" },
+  { name = "y", ty = "f32", value = "y" },
+]
 
 [injection.shulker-peek-colors]
 target = "sunrise_client::game::native_hooks::render_tooltip_texture::Game<'_>::native_render_tooltip_texture"

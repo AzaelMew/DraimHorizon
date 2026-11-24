@@ -19,6 +19,29 @@ pub struct NativeMod {
     pub keys: Vec<[String; 3]>,
 }
 
+/// A system toast drawn by the mod itself, with the 32-pixel slot it took (Horizon's toast kept
+/// its slot as a field).
+pub(crate) struct SlotToast {
+    toast: sunrise_client::toasts::SystemToast,
+    pub slot: Option<usize>,
+}
+impl From<sunrise_client::toasts::SystemToast> for SlotToast {
+    fn from(toast: sunrise_client::toasts::SystemToast) -> Self {
+        Self { toast, slot: None }
+    }
+}
+impl std::ops::Deref for SlotToast {
+    type Target = sunrise_client::toasts::SystemToast;
+    fn deref(&self) -> &Self::Target {
+        &self.toast
+    }
+}
+impl std::ops::DerefMut for SlotToast {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.toast
+    }
+}
+
 /// Horizon's `Game::native_*` host calls, implemented on Sunrise's `Game`. An extension trait
 /// because a Sunrise native mod's modules cannot add inherent methods to the game's types.
 pub(crate) trait SunriseGame {
@@ -41,6 +64,32 @@ pub(crate) trait SunriseGame {
     fn native_client_action_bar(&mut self, text: crate::text::Text, tint: bool);
     fn native_send_chat(&mut self, message: &str) -> Result<(), String>;
     fn sunrise_text_width(&self, text: &str) -> f32;
+    /// Horizon's `game.left` / `game.right`: whether the attack (`right == false`) or use button is
+    /// held, which Sunrise keeps as the `key.attack` / `key.use` mapping's `isDown`.
+    fn sunrise_held(&self, right: bool) -> bool;
+    /// Holds or releases that button, as Horizon's assignment to `game.left` / `game.right` did.
+    fn sunrise_set_held(&mut self, right: bool, down: bool);
+    /// `ToastManager.SLOT_COUNT`.
+    const TOAST_SLOTS: usize = 5;
+    /// The 32-pixel toast slots the game's visible toasts hold, as bits.
+    fn toast_slots_used(&self) -> u32;
+    /// A tooltip's text top-left corner and box size: beside the cursor, kept on screen by
+    /// `DefaultTooltipPositioner`. `extra` is [minimum width, height after the text].
+    fn tooltip_geometry(
+        atlas: &sunrise_client::hud::HudAtlas,
+        lines: &[(crate::text::Text, u32)],
+        at: (f32, f32),
+        screen: (f32, f32),
+        extra: [f32; 2],
+    ) -> (f32, f32, f32, f32);
+    /// `ClientTextTooltip.renderText` for each line: the title, then 2 pixels more before the rest.
+    fn tooltip_text(
+        batch: &mut sunrise_client::hud::HudBatch,
+        atlas: &sunrise_client::hud::HudAtlas,
+        lines: &[(crate::text::Text, u32)],
+        x: f32,
+        y: f32,
+    );
 }
 
 impl SunriseGame for Game<'_> {
@@ -110,6 +159,65 @@ impl SunriseGame for Game<'_> {
     }
     fn sunrise_text_width(&self, text: &str) -> f32 {
         crate::hud::HudBatch::text_width(&self.gui.atlas, text)
+    }
+    fn sunrise_held(&self, right: bool) -> bool {
+        self.mapped_key_down(if right { "key.use" } else { "key.attack" })
+    }
+    fn sunrise_set_held(&mut self, right: bool, down: bool) {
+        self.set_mapping_held(if right { "key.use" } else { "key.attack" }, down);
+    }
+    fn toast_slots_used(&self) -> u32 {
+        use super::toast_manager::Toast;
+        self.toast_manager.visible.iter().fold(0, |used, entry| {
+            // ToastManager.update: a toast holds `occupiedSlotCount` slots from its first one.
+            let count = match &entry.toast {
+                Toast::Tutorial(t) => t.slots(),
+                Toast::Mod(t) => t.layout.slots(),
+                _ => 1,
+            };
+            used | ((1 << count) - 1) << entry.slot
+        })
+    }
+    fn tooltip_geometry(
+        atlas: &sunrise_client::hud::HudAtlas,
+        lines: &[(crate::text::Text, u32)],
+        (x, y): (f32, f32),
+        (width, height): (f32, f32),
+        extra: [f32; 2],
+    ) -> (f32, f32, f32, f32) {
+        let w = lines
+            .iter()
+            .map(|(t, _)| atlas.font.width_text(t))
+            .fold(0.0, f32::max)
+            .max(extra[0]);
+        // ClientTextTooltip.getHeight: 10 a line, and the title's 2 extra pixels when more follow;
+        // the last line's descent (2) is not part of the box.
+        let text_h = match lines.len() {
+            0 => 0.0,
+            1 => 8.0,
+            n => 8.0 + 2.0 + (n - 1) as f32 * 10.0,
+        };
+        let (w, h) = (w.ceil(), (text_h + extra[1]).ceil());
+        let at = mod_api::ClientTooltipPositioner::position_tooltip(
+            &mod_api::DefaultTooltipPositioner,
+            [width as i32, height as i32],
+            [x.round() as i32, y.round() as i32],
+            [w as i32, h as i32],
+        );
+        (at[0] as f32, at[1] as f32, w, h)
+    }
+    fn tooltip_text(
+        batch: &mut sunrise_client::hud::HudBatch,
+        atlas: &sunrise_client::hud::HudAtlas,
+        lines: &[(crate::text::Text, u32)],
+        x: f32,
+        y: f32,
+    ) {
+        let mut ty = y;
+        for (i, (text, color)) in lines.iter().enumerate() {
+            batch.text_styled(atlas, text, x, ty, *color, true);
+            ty += if i == 0 { 12.0 } else { 10.0 };
+        }
     }
 }
 
