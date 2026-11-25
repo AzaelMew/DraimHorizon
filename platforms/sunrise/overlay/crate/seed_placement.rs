@@ -22,14 +22,16 @@ pub fn load(raw: &BTreeMap<String, String>) -> Result<BTreeMap<String, Spread>, 
         let number = |key: &str, default: i32| {
             placement[key]
                 .as_i64()
-                .map_or(Ok(default), |n| i32::try_from(n))
+                .map_or(Ok(default), i32::try_from)
                 .map_err(|_| format!("invalid {key} in structure set {id}"))
         };
         let spacing = number("spacing", 1)?;
         let separation = number("separation", 0)?;
         let salt = number("salt", 0)?;
         if !(1..=4096).contains(&spacing) || separation < 0 || separation >= spacing {
-            return Err(format!("invalid random-spread spacing in structure set {id}"));
+            return Err(format!(
+                "invalid random-spread spacing in structure set {id}"
+            ));
         }
         spreads.insert(
             id.clone(),
