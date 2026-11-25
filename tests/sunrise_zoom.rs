@@ -47,7 +47,11 @@ fn smooth_zoom_has_the_same_timing_at_different_frame_rates() {
             zoom.scale()
         })
         .collect();
-    assert!(scales.iter().all(|scale| (*scale - scales[0]).abs() < 0.00001));
+    assert!(
+        scales
+            .iter()
+            .all(|scale| (*scale - scales[0]).abs() < 0.00001)
+    );
 }
 
 #[test]
