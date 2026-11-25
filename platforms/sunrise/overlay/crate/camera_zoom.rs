@@ -2,6 +2,7 @@
 //! chosen factor, and the mouse wheel steps through the factors instead of the hotbar.
 use mod_api::{ClientHost, LivingRef, ModKeyMappingRef};
 use std::cell::Cell;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// The mod's `sunrise-mod.toml` id.
@@ -53,11 +54,16 @@ fn held(host: &dyn ClientHost) -> bool {
 }
 
 fn scoping(host: &dyn ClientHost) -> bool {
+    static SPYGLASS: OnceLock<mod_api::Identifier> = OnceLock::new();
     host.camera_type().is_first_person()
         && host.local_item_use().is_some_and(|using| {
             local_living(host).and_then(|living| {
                 living.with_hand_item(host, using.hand, |stack| {
-                    host.item_key("minecraft:spyglass") == Some(stack.item())
+                    let id = SPYGLASS.get_or_init(|| {
+                        mod_api::Identifier::parse("minecraft:spyglass")
+                            .expect("valid spyglass identifier")
+                    });
+                    host.item_key(id) == Some(stack.item())
                 })
             }) == Some(true)
         })
