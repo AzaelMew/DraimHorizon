@@ -1,5 +1,6 @@
 - Updated the Sunrise `.smod` to DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3).
 - Adapted client-command registration and dispatch to the new Sunrise API. Mod commands stay local, while claim/economy observers still see commands destined for the server.
 - Local mod notices use Sunrise's client chat source and enter the custom chat once, without being parsed as server responses.
+- Zoom uses the current FOV and turn events, with wheel-controlled magnification and first-person spyglass priority. Player snapshots, data paths and HUD layout use the current Sunrise interfaces.
 - Install the matching Sunrise DEV before rebuilding native mods. Native packages target one exact game build.
 - Horizon and both source-stage checks remain paused while horizon-rust is unavailable. SDK validation remains required before publication; a PR does not publish a release.

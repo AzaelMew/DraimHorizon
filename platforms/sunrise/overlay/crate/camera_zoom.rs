@@ -57,7 +57,7 @@ fn scoping(host: &dyn ClientHost) -> bool {
         && host.local_item_use().is_some_and(|using| {
             local_living(host).and_then(|living| {
                 living.with_hand_item(host, using.hand, |stack| {
-                    mod_api::item_id(stack.item()) == Some("minecraft:spyglass")
+                    host.item_key("minecraft:spyglass") == Some(stack.item())
                 })
             }) == Some(true)
         })

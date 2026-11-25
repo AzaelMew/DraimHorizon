@@ -48,6 +48,9 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 The `.smod` targets the Sunrise Dev build `bdad86d` (`dev-2026-11-25-bdad86d`). Client commands bridge the
 shared handlers at `run_client_native_command_in_chain`; registered usages carry typed, fail-closed executors.
 Local notices use `add_chat_line` with the client source and are captured once without server-message parsing.
+Zoom composes `compute_fov_modifier`, `player_turn` and `mouse_scrolling`; it yields to a first-person spyglass.
+The host shim retains the existing data paths and player snapshots. The HUD borrows the extras pass's
+local `corners` explicitly, keeping the PvP/mod/registered-layer drawing order.
 The earlier port's Launcher build and
 in-game menu and minimap checks were performed on Nightly `520fc48`. Differences from Horizon:
 
