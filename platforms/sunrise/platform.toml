@@ -305,7 +305,8 @@ bindings = [
 
 # Replaceable functions live in sunrise_client_lib (files under crates/sunrise-client/src that are not game/).
 [injection.chat-local]
-target = "sunrise_client::game::native_hooks::system_helpers::Game<'_>::native_chat"
+drop = true
+reason = "native_chat is a shim over add_chat_line, already observed by chat-capture"
 [injection.bar-lines]
 target = "sunrise_client_lib::gizmos::camera_relative"
 

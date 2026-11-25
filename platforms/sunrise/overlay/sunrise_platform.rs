@@ -45,6 +45,7 @@ impl std::ops::DerefMut for SlotToast {
 /// Horizon's `Game::native_*` host calls, implemented on Sunrise's `Game`. An extension trait
 /// because a Sunrise native mod's modules cannot add inherent methods to the game's types.
 pub(crate) trait SunriseGame {
+    fn native_chat(&mut self, text: &str);
     /// Whether the player left the mod on; a mod turned off rests until the next build.
     fn native_on(&self, mod_id: &str) -> bool;
     /// The mod's own data files are one file per key in its data folder, in both games.
@@ -97,6 +98,12 @@ pub(crate) trait SunriseGame {
 }
 
 impl SunriseGame for Game<'_> {
+    fn native_chat(&mut self, text: &str) {
+        self.add_chat_line(
+            crate::text::Text::literal(text),
+            sunrise_client::chat::ChatSource::Client,
+        );
+    }
     /// Whether the player left the mod on; a mod turned off rests until the next build.
     fn native_on(&self, mod_id: &str) -> bool {
         self.on(mod_id)

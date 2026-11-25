@@ -1,0 +1,32 @@
+# Sunrise DEV removed Hooks::command. Observe the client dispatch boundary so
+# server-bound commands still update the shared claim/economy observers.
+[injection.command]
+target = "sunrise_client::game::native_server::Game<'_>::run_client_native_command_in_chain"
+kind = "HEAD"
+cancellable = true
+helper = "sunrise/command_hook.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "command", ty = "&str", value = "line" },
+]
+
+[injection.bar-command]
+drop = true
+reason = "the command bridge calls both shared handlers with one consumed flag"
+
+[[module]]
+id = "command-body"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_command"
+source = "command.rs"
+
+[[module]]
+id = "bar-command-body"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_bar_command"
+source = "baritone/hooks/command.rs"
+
+[[rewrite]]
+pattern = '^fn (claim_borders_command|baritone_command)\('
+replace = 'pub(super) fn \1('
+files = ["command.rs", "baritone/hooks/command.rs"]

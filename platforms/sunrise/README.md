@@ -45,7 +45,10 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 
 ## Status
 
-The `.smod` targets the Sunrise Dev build `3d34bbe` (`dev-2026-11-24-3d34bbe`). The earlier port's Launcher build and
+The `.smod` targets the Sunrise Dev build `bdad86d` (`dev-2026-11-25-bdad86d`). Client commands bridge the
+shared handlers at `run_client_native_command_in_chain`; registered usages carry typed, fail-closed executors.
+Local notices use `add_chat_line` with the client source and are captured once without server-message parsing.
+The earlier port's Launcher build and
 in-game menu and minimap checks were performed on Nightly `520fc48`. Differences from Horizon:
 
 - the minimap is drawn by the mod through `DynamicTextures` and the GUI pass, because the Nightly deleted the

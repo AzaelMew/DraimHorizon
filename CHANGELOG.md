@@ -1,5 +1,11 @@
 # История версий
 
+## 0.44.7
+
+- Updated the Sunrise package to DEV `bdad86d` (`dev-2026-11-25-bdad86d`) and refreshed its source hash.
+- Adapted command dispatch and typed client-command registration after Sunrise removed its old command hook. Shared command observers still see server-bound commands; handled mod commands stay local.
+- Replaced the removed local-chat helper with client-source chat delivery, capturing local notices once without server-message parsing.
+
 ## 0.44.6
 
 - Marked Sunrise as supported in the client documentation and removed the experimental label from its CI workflow.
