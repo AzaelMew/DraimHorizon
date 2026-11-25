@@ -12,9 +12,9 @@ env:
   FORBIDDEN: 'co-authored-by|generated (with|by)[^.]*claude|claude-session|claude\.ai/code'
 jobs:
   guard:
-    # Skip by the PR author, not the triggering actor: a bot re-running or editing a PR must not change the verdict.
-    # arismoko's pull requests follow their own conventions, so they are not guarded.
-    if: github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.user.login != 'arismoko'
+    # Select by the PR author, not the triggering actor: a bot re-running or editing a PR must not change the verdict.
+    # Only the owner's pull requests follow these conventions; contributors and bots are not guarded.
+    if: github.event.pull_request.user.login == 'DraimCiDo'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
