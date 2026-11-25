@@ -288,7 +288,7 @@ pub fn regions(plan: &Plan) -> Result<Vec<super::claim_borders_litematica_writer
             let x0 = i32::from(tx) * 128;
             let start = if tz == 0 { -1 } else { z0 };
             let mut region = Region::new(
-                "Map art",
+                &format!("Map art {}-{}", tx + 1, tz + 1),
                 [x0, 0, start],
                 [128, plan.height, z0 + 128 - start],
             )
