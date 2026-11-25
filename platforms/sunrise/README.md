@@ -51,6 +51,8 @@ Local notices use `add_chat_line` with the client source and are captured once w
 Zoom composes `compute_fov_modifier`, `player_turn` and `mouse_scrolling`; it yields to a first-person spyglass.
 The host shim retains the existing data paths and player snapshots. The HUD borrows the extras pass's
 local `corners` explicitly, keeping the PvP/mod/registered-layer drawing order.
+Seed Map reads random-spread candidate rules from the same resource definitions as the game;
+`GeneratorWorker::structure_starts` validates the actual starts, including frequency and exclusions.
 The earlier port's Launcher build and
 in-game menu and minimap checks were performed on Nightly `520fc48`. Differences from Horizon:
 
