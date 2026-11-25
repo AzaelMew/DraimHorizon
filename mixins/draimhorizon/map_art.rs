@@ -98,7 +98,7 @@ pub struct Plan {
     pub depth: usize,
     pub height: i32,
     pub pixels: Vec<[u8; 3]>,
-    pub materials: BTreeMap<String, u32>,
+    pub materials: BTreeMap<String, usize>,
 }
 fn distance(a: [f32; 3], b: [u8; 3]) -> f32 {
     // Weighted RGB error; all comparisons use map pixels, never block textures.
@@ -184,16 +184,16 @@ pub fn generate(
     let mut top = Vec::with_capacity(width * depth);
     let mut pixels = Vec::with_capacity(width * depth);
     for z in 0..depth {
-        for x in 0..width {
+        for (x, previous_y) in previous.iter_mut().enumerate() {
             let i = z * width + x;
             let wanted = samples[i].map(|v| v.clamp(0.0, 255.0));
-            let mut best = (f32::INFINITY, 0, 1, previous[x]);
+            let mut best = (f32::INFINITY, 0, 1, *previous_y);
             for (m, material) in palette.iter().enumerate() {
                 for (shade, delta) in [(0, -1), (1, 0), (2, 1)] {
                     if !request.stepped && delta != 0 {
                         continue;
                     }
-                    let y = previous[x] + delta;
+                    let y = *previous_y + delta;
                     if y < 1 || y > i32::from(request.height) {
                         continue;
                     }
@@ -204,7 +204,7 @@ pub fn generate(
                 }
             }
             let (_, m, shade, y) = best;
-            previous[x] = y;
+            *previous_y = y;
             let color = palette[m].shades[shade];
             pixels.push(color);
             top.push((x as i32, y, z as i32, m));
