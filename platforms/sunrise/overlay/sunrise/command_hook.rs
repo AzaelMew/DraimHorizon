@@ -2,7 +2,7 @@
 fn claim_borders_client_command(
     game: &mut crate::game::Game<'_>,
     command: &str,
-) -> core::ops::ControlFlow<Option<crate::game::native_server::ClientCommandOutcome>> {
+) -> core::ops::ControlFlow<Option<ClientCommandOutcome>> {
     let mut ran = false;
     crate::game::claim_borders_command::claim_borders_command(game, command, &mut ran);
     crate::game::claim_borders_bar_command::baritone_command(game, command, &mut ran);
