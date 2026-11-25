@@ -1,6 +1,4 @@
-- Updated the Sunrise `.smod` to DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3).
-- Adapted client-command registration and dispatch to the new Sunrise API. Mod commands stay local, while claim/economy observers still see commands destined for the server.
-- Local mod notices use Sunrise's client chat source and enter the custom chat once, without being parsed as server responses.
-- Zoom uses the current FOV and turn events, with wheel-controlled magnification and first-person spyglass priority. Player snapshots, data paths and HUD layout use the current Sunrise interfaces.
-- Install the matching Sunrise DEV before rebuilding native mods. Native packages target one exact game build.
-- Horizon and both source-stage checks remain paused while horizon-rust is unavailable. SDK validation remains required before publication; a PR does not publish a release.
+- Fixed the trading workspace being clipped at its old origin on Sunrise. The centred window and its scrollable detail area now use matching screen-space clipping at different GUI sizes.
+- Restored smooth Z zoom: hold Z and use the mouse wheel to change magnification. Entry, wheel changes and release animate per frame; scrolling no longer depends on a game-tick camera query. A first-person spyglass and other zoom mods retain priority.
+- Targets Sunrise DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3). Rebuild native mods after installing the package.
+- Horizon and source-stage checks remain paused while horizon-rust is unavailable. SDK validation remains required before publication.

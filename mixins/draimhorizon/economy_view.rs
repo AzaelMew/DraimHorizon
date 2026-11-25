@@ -1297,11 +1297,13 @@ pub(super) fn render(
     });
     let variant = state(|s| s.tab.to_string());
     ui::finish(game, batch, start, "economy", &variant);
-    batch.clip_since(start, 0.0, 0.0, w, h);
     for vertex in &mut batch.vertices[start..] {
         vertex.pos[0] += ox;
         vertex.pos[1] += oy;
     }
+    // Sunrise stores scissors separately from vertices: clip in the final screen space.
+    let [x0, y0, x1, y1] = panel.screen_clip([0.0, 0.0, w, h]);
+    batch.clip_since(start, x0, y0, x1, y1);
     // Drawn after the panel moved to the screen, so it takes the screen's mouse position.
     if let Some(tip) = state(|s| s.tip.clone()) {
         ui::tooltip(

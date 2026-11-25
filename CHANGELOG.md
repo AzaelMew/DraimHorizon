@@ -1,5 +1,11 @@
 # История версий
 
+## 0.44.8
+
+- Fixed the Sunrise trading workspace being cut off on the right and bottom: panel and detail scissors now follow the centred window in screen coordinates, including after GUI-size changes.
+- Restored smooth zoom on Z with frame-timed entry, wheel changes and release. Wheel ownership follows the held key instead of a camera flag cleared every frame, so it works before camera extraction and between game ticks.
+- Added regression coverage for trading-panel clipping at several viewport sizes and zoom timing at 30/60/144 FPS, wheel limits, release and blocked contexts.
+
 ## 0.44.7
 
 - Updated the Sunrise package to DEV `bdad86d` (`dev-2026-11-25-bdad86d`) and refreshed its source hash.

@@ -48,7 +48,10 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 The `.smod` targets the Sunrise Dev build `bdad86d` (`dev-2026-11-25-bdad86d`). Client commands bridge the
 shared handlers at `run_client_native_command_in_chain`; registered usages carry typed, fail-closed executors.
 Local notices use `add_chat_line` with the client source and are captured once without server-message parsing.
-Zoom composes `compute_fov_modifier`, `player_turn` and `mouse_scrolling`; it yields to a first-person spyglass.
+Zoom composes `compute_fov`, `player_turn` and `mouse_scrolling`, with smoothing advanced once in
+`render_frame_pre`; it yields to a first-person spyglass. Wheel handling follows the held key, independently
+of camera queries or the game's tick rate. Trading-panel scissors use final screen coordinates because
+Sunrise stores clipping separately from vertices.
 The host shim retains the existing data paths and player snapshots. The HUD borrows the extras pass's
 local `corners` explicitly, keeping the PvP/mod/registered-layer drawing order.
 Seed Map reads random-spread candidate rules from the same resource definitions as the game;
