@@ -306,7 +306,11 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         .map(|d| {
                             d.flatten()
                                 .filter_map(|e| e.file_name().into_string().ok())
-                                .filter(|n| n.ends_with(".schem") || n.ends_with(".litematic"))
+                                .filter(|n| {
+                                    n.ends_with(".schem")
+                                        || n.ends_with(".litematic")
+                                        || n.ends_with(".nbt")
+                                })
                                 .take(4096)
                                 .collect()
                         })

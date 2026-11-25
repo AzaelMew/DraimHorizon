@@ -327,6 +327,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                 )
             });
         for widget in widgets {
+            if widget.control == Some(model::Control::MapArtImage) {
+                draw_map_art(game, batch, widget.rect, s.model.map_art.plan.as_deref());
+                continue;
+            }
             if !s.menu.experiments_prompt
                 && s.menu.tab == model::Tab::Waypoints
                 && widget.text != "DraimHorizon"
@@ -1038,6 +1042,10 @@ pub(super) fn render(game: &Game<'_>, batch: &mut HudBatch, screen: &NativeScree
                         s.menu.text()[..cursor].to_owned()
                     };
                     let (ru, en) = match s.menu.focus {
+                        Some(model::Field::MapArtImage) => ("PNG/JPG: ", "PNG/JPG: "),
+                        Some(model::Field::MapArtCustom) => ("Блоки: ", "Blocks: "),
+                        Some(model::Field::MapArtFloor) => ("Основание: ", "Floor: "),
+                        Some(model::Field::MapArtBackground) => ("Фон: ", "Background: "),
                         Some(model::Field::SchematicOrigin) => ("XYZ: ", "XYZ: "),
                         Some(model::Field::NavigationX) => ("X: ", "X: "),
                         Some(model::Field::NavigationY) => ("Y: ", "Y: "),
@@ -1311,5 +1319,41 @@ mod emitted_key_names {
         assert!(menu.helper_page_count(&model, 200.0) > 1);
         assert!(menu.dispatch_key(&model, [240.0, 216.0], emitted, 0));
         assert_eq!(menu.helper_page, 1);
+    }
+}
+
+fn draw_map_art(
+    game: &Game<'_>,
+    batch: &mut HudBatch,
+    rect: [f32; 4],
+    plan: Option<&crate::game::claim_borders_map_art::Plan>,
+) {
+    let Some(plan) = plan else { return };
+    let scale = (rect[2] / plan.width as f32).min(rect[3] / plan.depth as f32);
+    let left = rect[0] + (rect[2] - plan.width as f32 * scale) * 0.5;
+    let top = rect[1] + (rect[3] - plan.depth as f32 * scale) * 0.5;
+    // Merge equal pixels into row spans. At most 65,536 cells for four map tiles.
+    for z in 0..plan.depth {
+        let mut x = 0;
+        while x < plan.width {
+            let rgb = plan.pixels[z * plan.width + x];
+            let start = x;
+            x += 1;
+            while x < plan.width && plan.pixels[z * plan.width + x] == rgb {
+                x += 1;
+            }
+            let color =
+                0xff000000 | u32::from(rgb[0]) << 16 | u32::from(rgb[1]) << 8 | u32::from(rgb[2]);
+            game.native_fill(
+                batch,
+                [
+                    left + start as f32 * scale,
+                    top + z as f32 * scale,
+                    (x - start) as f32 * scale,
+                    scale,
+                ],
+                color,
+            );
+        }
     }
 }

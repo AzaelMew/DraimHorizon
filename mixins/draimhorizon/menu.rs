@@ -212,6 +212,7 @@ pub enum BorderOption {
 }
 #[derive(Clone, Debug, Default)]
 pub struct ViewModel {
+    pub map_art: super::claim_borders_map_art::View,
     /// The contents of a shulker box in its tooltip (on by default).
     pub shulker_peek: bool,
     /// Hide the server's reply to a typed `/claim info` (off by default).
@@ -473,6 +474,10 @@ pub enum Action {
     FarmPlotShow(usize),
     /// Forgets a marked plot.
     FarmPlotRemove(usize),
+    MapArtGenerate(Box<super::claim_borders_map_art::Request>),
+    MapArtPlace(Box<super::claim_borders_map_art::Request>),
+    MapArtFolder,
+    MapArtMaterials,
     RefreshSchematics,
     SchematicInfo(bool),
     /// The verifier: on or off, the next type to draw, the report to the clipboard.
@@ -661,6 +666,10 @@ impl std::fmt::Debug for Action {
             Self::SetShulkerPeek(on) => f.debug_tuple("SetShulkerPeek").field(on).finish(),
             Self::SetHideClaimInfo(on) => f.debug_tuple("SetHideClaimInfo").field(on).finish(),
             Self::OpenSchematicFolder => f.write_str("OpenSchematicFolder"),
+            Self::MapArtGenerate(_) => f.write_str("MapArtGenerate"),
+            Self::MapArtPlace(_) => f.write_str("MapArtPlace"),
+            Self::MapArtFolder => f.write_str("MapArtFolder"),
+            Self::MapArtMaterials => f.write_str("MapArtMaterials"),
             Self::RefreshSchematics => f.write_str("RefreshSchematics"),
             Self::SchematicInfo(folder) => f.debug_tuple("SchematicInfo").field(folder).finish(),
             Self::SchematicVerify => f.write_str("SchematicVerify"),
@@ -804,6 +813,10 @@ impl Tab {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Field {
+    MapArtImage,
+    MapArtCustom,
+    MapArtFloor,
+    MapArtBackground,
     SchematicOrigin,
     NavigationX,
     NavigationY,
@@ -1165,6 +1178,14 @@ pub enum Control {
     FarmPlotShow(usize),
     FarmPlotRemove(usize),
     DrainRadius,
+    MapArtOpen,
+    MapArtPage(u8),
+    MapArtAdjust(u8),
+    MapArtGenerate,
+    MapArtPlace,
+    MapArtFolder,
+    MapArtMaterials,
+    MapArtImage,
     SchematicRefresh,
     SchematicRotation,
     SchematicMaterials,
@@ -1343,6 +1364,9 @@ pub struct Menu {
     pub schematic_file: Option<String>,
     pub schematic_origin: String,
     pub schematic_rotation: u8,
+    pub map_art_open: bool,
+    pub map_art_page: u8,
+    pub map_art: super::claim_borders_map_art::Request,
     pub construct_direction: super::claim_borders_construction::Direction,
     pub construct_length: u16,
     pub construct_width: u8,
@@ -1434,6 +1458,9 @@ impl Default for Menu {
             schematic_file: None,
             schematic_origin: String::new(),
             schematic_rotation: 0,
+            map_art_open: false,
+            map_art_page: 0,
+            map_art: Default::default(),
             experiments_prompt: false,
             navigation_x: String::new(),
             navigation_y: String::new(),
@@ -1800,6 +1827,9 @@ impl Menu {
     /// Carry the Baritone settings over to a fresh menu: the action keys run the
     /// last settings shown here, so reopening or resetting the menu must not lose them.
     pub fn keep_baritone(&mut self, from: &Menu) {
+        self.map_art = from.map_art.clone();
+        self.map_art_open = from.map_art_open;
+        self.map_art_page = from.map_art_page;
         self.farm_crops = from.farm_crops;
         self.farm_radius = from.farm_radius;
         self.farm_replant = from.farm_replant;
@@ -1981,6 +2011,12 @@ impl Menu {
         use super::claim_borders_navigation::Goal;
         let language = self.language;
         if self.tab == Tab::Schematics {
+            if self.map_art_open {
+                return Err(self
+                    .language
+                    .text("Используйте кнопки генератора", "Use the generator buttons")
+                    .into());
+            }
             return self.schematic_request(running);
         }
         if self.keys_scope_is_baritone_tab() {
@@ -2386,6 +2422,220 @@ impl Menu {
         widgets
     }
     /// The Schematics tab: the panel below, the status line and the key hint.
+    fn map_art_panel(
+        &self,
+        model: &ViewModel,
+        x: f32,
+        w: f32,
+        top: f32,
+        limit: f32,
+        out: &mut Vec<Widget>,
+    ) {
+        let l = self.language;
+        let row = 16.0;
+        let page = self.map_art_page.min(4);
+        let pages = [
+            l.text("Картинка", "Image"),
+            l.text("Палитра", "Palette"),
+            l.text("Постройка", "Build"),
+            l.text("Генерация", "Generate"),
+            l.text("Карта", "Map"),
+        ];
+        if top + row <= limit {
+            out.push(widget(
+                [x, top, w * 0.3, row - 2.0],
+                l.text("Назад к схемам", "Back to schematics"),
+                Some(Control::MapArtOpen),
+                false,
+            ));
+            out.push(widget(
+                [x + w * 0.31, top, w * 0.12, row - 2.0],
+                "<",
+                Some(Control::MapArtPage(page.saturating_sub(1))),
+                false,
+            ));
+            out.push(widget(
+                [x + w * 0.44, top, w * 0.42, row - 2.0],
+                format!("{} / 5 · {}", page + 1, pages[page as usize]),
+                None,
+                false,
+            ));
+            out.push(widget(
+                [x + w * 0.88, top, w * 0.12, row - 2.0],
+                ">",
+                Some(Control::MapArtPage((page + 1).min(4))),
+                false,
+            ));
+        }
+        let r = &self.map_art;
+        let mut rows: Vec<(String, Option<Control>)> = Vec::new();
+        match page {
+            0 => {
+                rows.push((
+                    format!("PNG/JPG: {}", r.image),
+                    Some(Control::Field(Field::MapArtImage)),
+                ));
+                rows.push((
+                    l.text(
+                        "Открыть папку картинок (или вставьте полный путь)",
+                        "Open images folder (or paste a full path)",
+                    )
+                    .into(),
+                    Some(Control::MapArtFolder),
+                ));
+                let fits = [
+                    l.text("Вписать", "Contain"),
+                    l.text("Обрезать по центру", "Centre crop"),
+                    l.text("Растянуть", "Stretch"),
+                ];
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text("Масштаб", "Fit"),
+                        fits[r.fit.min(2) as usize]
+                    ),
+                    Some(Control::MapArtAdjust(2)),
+                ));
+                rows.push((
+                    format!("{}: #{}", l.text("Фон", "Background"), r.background),
+                    Some(Control::Field(Field::MapArtBackground)),
+                ));
+            }
+            1 => {
+                rows.push((
+                    format!(
+                        "{}: {} ({} {})",
+                        l.text("Ширина", "Width"),
+                        r.tiles[0],
+                        r.tiles[0] as u32 * 128,
+                        l.text("блоков", "blocks")
+                    ),
+                    Some(Control::MapArtAdjust(0)),
+                ));
+                rows.push((
+                    format!(
+                        "{}: {} ({} {})",
+                        l.text("Длина", "Depth"),
+                        r.tiles[1],
+                        r.tiles[1] as u32 * 128,
+                        l.text("блоков", "blocks")
+                    ),
+                    Some(Control::MapArtAdjust(1)),
+                ));
+                let palettes = [
+                    l.text("Ковры", "Carpets"),
+                    l.text("Шерсть", "Wool"),
+                    l.text("Бетон", "Concrete"),
+                    l.text("Свой набор", "Custom"),
+                ];
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text("Набор", "Set"),
+                        palettes[r.palette.min(3) as usize]
+                    ),
+                    Some(Control::MapArtAdjust(3)),
+                ));
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text(
+                            "Свои блоки через пробел",
+                            "Custom blocks, separated by spaces"
+                        ),
+                        r.custom
+                    ),
+                    Some(Control::Field(Field::MapArtCustom)),
+                ));
+            }
+            2 => {
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text("Основание и опоры", "Floor and supports"),
+                        r.floor
+                    ),
+                    Some(Control::Field(Field::MapArtFloor)),
+                ));
+                rows.push((
+                    if r.stepped {
+                        l.text("Режим: ступени", "Mode: staircase")
+                    } else {
+                        l.text("Режим: плоский", "Mode: flat")
+                    }
+                    .into(),
+                    Some(Control::MapArtAdjust(4)),
+                ));
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text("Предел ступеней", "Stair height limit"),
+                        r.height
+                    ),
+                    Some(Control::MapArtAdjust(5)),
+                ));
+                rows.push((
+                    format!(
+                        "{}: {}",
+                        l.text("Дизеринг", "Dithering"),
+                        if r.dither {
+                            l.text("вкл", "on")
+                        } else {
+                            l.text("выкл", "off")
+                        }
+                    ),
+                    Some(Control::MapArtAdjust(6)),
+                ));
+            }
+            3 => {
+                rows.push((
+                    if model.map_art.busy {
+                        l.text("Обработка…", "Working…")
+                    } else {
+                        l.text("Сгенерировать предпросмотр", "Generate preview")
+                    }
+                    .into(),
+                    (!model.map_art.busy).then_some(Control::MapArtGenerate),
+                ));
+                rows.push((model.map_art.status.clone(), None));
+                let ready = model.map_art.plan.as_ref().is_some_and(|p| p.request == *r)
+                    && !model.map_art.busy;
+                rows.push((
+                    l.text("Материалы: скопировать список", "Materials: copy list")
+                        .into(),
+                    ready.then_some(Control::MapArtMaterials),
+                ));
+                rows.push((
+                    l.text(
+                        "Сохранить и разместить по сетке карты",
+                        "Save and place on the map grid",
+                    )
+                    .into(),
+                    ready.then_some(Control::MapArtPlace),
+                ));
+            }
+            _ => {}
+        }
+        for (i, (label, control)) in rows.into_iter().enumerate() {
+            let y = top + row * (i as f32 + 1.0);
+            if y + row <= limit {
+                out.push(widget(
+                    [x, y, w, row - 2.0],
+                    label,
+                    control,
+                    matches!(control,Some(Control::Field(f)) if self.focus==Some(f)),
+                ));
+            }
+        }
+        if page == 4 && top + row + 8.0 < limit {
+            out.push(widget(
+                [x, top + row, w, limit - top - row],
+                "",
+                Some(Control::MapArtImage),
+                false,
+            ));
+        }
+    }
     fn schematics_layout(
         &self,
         model: &ViewModel,
@@ -2448,6 +2698,20 @@ impl Menu {
         limit: f32,
         out: &mut Vec<Widget>,
     ) {
+        if self.map_art_open {
+            self.map_art_panel(model, x, w, top, limit, out);
+            return;
+        }
+        if top + 16.0 <= limit {
+            out.push(widget(
+                [x, top, w, 14.0],
+                self.language
+                    .text("Мап-арты: из картинки", "Map arts: from image"),
+                Some(Control::MapArtOpen),
+                false,
+            ));
+        }
+        let top = top + 18.0;
         let row = 16.0;
         let gap = 6.0;
         let left_w = ((w - gap) * 0.46).floor();
@@ -6932,6 +7196,42 @@ impl Menu {
                 }
                 None
             }
+            Control::MapArtOpen => {
+                self.map_art_open = !self.map_art_open;
+                self.focus = None;
+                None
+            }
+            Control::MapArtPage(page) => {
+                self.map_art_page = page.min(4);
+                self.focus = None;
+                None
+            }
+            Control::MapArtAdjust(option) => {
+                match option {
+                    0 => self.map_art.tiles[0] = self.map_art.tiles[0] % 2 + 1,
+                    1 => self.map_art.tiles[1] = self.map_art.tiles[1] % 2 + 1,
+                    2 => self.map_art.fit = (self.map_art.fit + 1) % 3,
+                    3 => self.map_art.palette = (self.map_art.palette + 1) % 4,
+                    4 => self.map_art.stepped = !self.map_art.stepped,
+                    5 => {
+                        self.map_art.height = match self.map_art.height {
+                            2 => 4,
+                            4 => 8,
+                            8 => 16,
+                            16 => 32,
+                            _ => 2,
+                        }
+                    }
+                    6 => self.map_art.dither = !self.map_art.dither,
+                    _ => {}
+                }
+                None
+            }
+            Control::MapArtGenerate => Some(Action::MapArtGenerate(Box::new(self.map_art.clone()))),
+            Control::MapArtPlace => Some(Action::MapArtPlace(Box::new(self.map_art.clone()))),
+            Control::MapArtFolder => Some(Action::MapArtFolder),
+            Control::MapArtMaterials => Some(Action::MapArtMaterials),
+            Control::MapArtImage => None,
             Control::SchematicRefresh => Some(Action::RefreshSchematics),
             Control::SchematicRotation => {
                 self.schematic_rotation = (self.schematic_rotation + 1) % 4;
@@ -7875,9 +8175,18 @@ impl Menu {
             );
             return;
         }
+        if self.tab == Tab::Schematics && self.map_art_open {
+            self.map_art_page = if delta > 0.0 {
+                self.map_art_page.saturating_sub(1)
+            } else {
+                (self.map_art_page + 1).min(4)
+            };
+            self.focus = None;
+            return;
+        }
         // The Schematics tab: the wheel scrolls the file list a row at a time.
         if self.tab == Tab::Schematics {
-            let rows = schematic_list_rows(SCHEMATIC_TOP, height - SCHEMATIC_BOTTOM);
+            let rows = schematic_list_rows(SCHEMATIC_TOP + 18.0, height - SCHEMATIC_BOTTOM);
             let last = model.schematic_files.len().saturating_sub(rows.max(1));
             self.schematic_catalog_page = if delta > 0.0 {
                 self.schematic_catalog_page.min(last).saturating_sub(1)
@@ -7900,6 +8209,10 @@ impl Menu {
     }
     fn focused_text(&mut self) -> Option<&mut String> {
         Some(match self.focus? {
+            Field::MapArtImage => &mut self.map_art.image,
+            Field::MapArtCustom => &mut self.map_art.custom,
+            Field::MapArtFloor => &mut self.map_art.floor,
+            Field::MapArtBackground => &mut self.map_art.background,
             Field::SchematicOrigin => &mut self.schematic_origin,
             Field::NavigationX => {
                 self.navigation_waypoint = None;
@@ -7935,6 +8248,10 @@ impl Menu {
     }
     pub fn text(&self) -> &str {
         match self.focus {
+            Some(Field::MapArtImage) => &self.map_art.image,
+            Some(Field::MapArtCustom) => &self.map_art.custom,
+            Some(Field::MapArtFloor) => &self.map_art.floor,
+            Some(Field::MapArtBackground) => &self.map_art.background,
             Some(Field::SchematicOrigin) => &self.schematic_origin,
             Some(Field::NavigationX) => &self.navigation_x,
             Some(Field::NavigationY) => &self.navigation_y,
@@ -8015,6 +8332,10 @@ impl Menu {
             return;
         };
         let limit = match field {
+            Field::MapArtImage => 2048,
+            Field::MapArtCustom => 2048,
+            Field::MapArtFloor => 128,
+            Field::MapArtBackground => 7,
             Field::SchematicOrigin => 80,
             Field::NavigationX | Field::NavigationY | Field::NavigationZ => 12,
             Field::BaritoneBlock => 64,

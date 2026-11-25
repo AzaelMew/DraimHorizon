@@ -25,10 +25,13 @@ pub struct Listed {
     pub size: u32,
 }
 impl Listed {
-    /// "schem" or "litematic": how the file is read.
+    /// The imported format's extension, retained in the friend's cache.
     pub fn extension(&self) -> &'static str {
-        if self.name.to_ascii_lowercase().ends_with(".schem") {
+        let lower = self.name.to_ascii_lowercase();
+        if lower.ends_with(".schem") {
             "schem"
+        } else if lower.ends_with(".nbt") {
+            "nbt"
         } else {
             "litematic"
         }
@@ -66,7 +69,7 @@ fn name_ok(n: &str) -> bool {
     !n.is_empty()
         && n.chars().count() <= 48
         && !n.chars().any(|c| c.is_control() || matches!(c, '/' | '\\'))
-        && (lower.ends_with(".schem") || lower.ends_with(".litematic"))
+        && (lower.ends_with(".schem") || lower.ends_with(".litematic") || lower.ends_with(".nbt"))
 }
 fn hex(hash: u64) -> String {
     format!("{hash:016x}")
@@ -309,6 +312,17 @@ fn unbase64(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn structure_files_keep_their_extension_when_shared_and_cached() {
+        for name in ["house.nbt", "Дом.NBT"] {
+            let mut listed = item(1, 3, content_hash(&[1, 2, 3]));
+            listed.name = name.into();
+            let frame = Frame::List(vec![listed.clone()]);
+            assert_eq!(Frame::decode(&frame.encode()), Ok(frame));
+            assert_eq!(listed.extension(), "nbt");
+            assert_eq!(listed.cache_name(), format!("{:016x}.nbt", listed.hash));
+        }
+    }
     fn item(id: u32, size: u32, hash: u64) -> Listed {
         Listed {
             id,

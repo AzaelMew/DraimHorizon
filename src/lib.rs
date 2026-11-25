@@ -345,3 +345,8 @@ pub mod baritone_pathing_behavior;
 #[allow(clippy::all, dead_code, unused_mut)]
 #[path = "../mixins/draimhorizon/baritone/tests_pathing.rs"]
 mod baritone_tests_pathing;
+
+#[path = "../mixins/draimhorizon/map_art.rs"]
+pub mod map_art;
+pub use litematica_writer as claim_borders_litematica_writer;
+pub use map_art as claim_borders_map_art;

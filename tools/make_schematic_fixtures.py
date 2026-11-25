@@ -2,6 +2,7 @@
 from pathlib import Path
 import gzip
 import struct
+import copy
 
 ROOT = Path(__file__).resolve().parents[1]
 def text(v):
@@ -14,6 +15,7 @@ def text(v):
 def payload(t, v):
     if t == 2: return struct.pack('>h', v)
     if t == 3: return struct.pack('>i', v)
+    if t == 6: return struct.pack('>d', v)
     if t == 8: return text(v)
     if t == 7: return struct.pack('>i', len(v)) + bytes(v)
     if t == 11: return struct.pack('>i', len(v)) + b''.join(struct.pack('>i', x) for x in v)
@@ -57,7 +59,53 @@ def main():
     large={'Size':(10,vec(*size)),'Position':(10,vec(0,0,0)),'BlockStatePalette':(9,(10,[state('minecraft:air'),state('minecraft:stone'),state('minecraft:oak_log',axis='y')])),'BlockStates':(12,packed(ids,2))}
     large=nbt({'Version':(3,7),'MinecraftDataVersion':(3,4189),'Regions':(10,{'large':(10,large)})})
     for name,data in [('sponge-v2.nbt',v2),('sponge-v3.nbt',v3),('litematic-v7-negative.nbt',lite),('litematic-cross-word.nbt',cross),('litematic-large.nbt',large)]: (folder/name).write_bytes(data)
+    # Java structure-block files: sparse positions, a state palette, and metadata that
+    # imports deliberately omit. Every fixture is authored here, without game resources.
+    coords = lambda values: (9, (3, list(values)))
+    states = [state('minecraft:air'), state('minecraft:cobblestone'),
+              state('minecraft:oak_log', axis='y'), state('minecraft:structure_void'),
+              state('minecraft:chest', facing='north', type='single', waterlogged='false')]
+    blocks = [{'pos':coords((x, 0, z)), 'state':(3, 1)} for z in range(3) for x in range(3)]
+    blocks[0]['state'] = (3, 4)
+    blocks[0]['nbt'] = (10, {'Items':(9, (10, [])), 'CustomName':(8, 'Authored fixture')})
+    blocks += [{'pos':coords((1, 1, 1)), 'state':(3, 2)},
+               {'pos':coords((0, 1, 0)), 'state':(3, 0)},
+               {'pos':coords((2, 1, 2)), 'state':(3, 3)}]
+    entities = [{'pos':(9, (6, [1.5, 0.0, 1.5])), 'blockPos':coords((1, 0, 1)),
+                 'nbt':(10, {'id':(8, 'minecraft:pig')})}]
+    structure = {'DataVersion':(3, 3955), 'size':coords((3, 2, 3)),
+                 'palette':(9, (10, states)), 'blocks':(9, (10, blocks)),
+                 'entities':(9, (10, entities))}
+    (folder/'structure.nbt').write_bytes(nbt(structure))
+    variants = copy.deepcopy(structure)
+    variants.pop('palette')
+    alternative = copy.deepcopy(states)
+    alternative[1] = state('minecraft:stone')
+    variants['palettes'] = (9, (9, [(10, states), (10, alternative)]))
+    (folder/'structure-palettes.nbt').write_bytes(nbt(variants))
+    sparse = {'size':coords((256, 64, 256)), 'palette':(9, (10, [states[2]])),
+              'blocks':(9, (10, [{'pos':coords((255, 63, 255)), 'state':(3, 0)}]))}
+    (folder/'structure-sparse.nbt').write_bytes(nbt(sparse))
+    # One map tile: a flat 128 x 128 patterned map-art structure.
+    map_art = {'DataVersion':(3, 3955), 'size':coords((128, 1, 128)),
+               'palette':(9, (10, [state('minecraft:white_wool'), state('minecraft:black_wool')])),
+               'blocks':(9, (10, [{'pos':coords((x, 0, z)), 'state':(3, (x + z) % 2)}
+                                  for z in range(128) for x in range(128)])),
+               'entities':(9, (10, []))}
+    (folder/'structure-map-art.nbt').write_bytes(nbt(map_art))
+    invalid = {}
+    for name, value in [('negative-size', (-3, 2, 3)), ('volume', (256, 256, 256))]:
+        case = copy.deepcopy(structure); case['size'] = coords(value); invalid[name] = case
+    for name, value in [('bad-index', len(states)), ('negative-index', -1)]:
+        case = copy.deepcopy(structure); case['blocks'][1][1][0]['state'] = (3, value); invalid[name] = case
+    for name, value in [('outside', (3, 0, 0)), ('negative-pos', (-1, 0, 0)), ('short-pos', (0, 0)), ('duplicate', (1, 0, 0))]:
+        case = copy.deepcopy(structure); case['blocks'][1][1][0]['pos'] = coords(value); invalid[name] = case
+    case = copy.deepcopy(structure); case['palette'] = (9, (10, [])); invalid['empty-palette'] = case
+    case = copy.deepcopy(variants); case['palettes'] = (9, (9, [(10, states), (10, alternative[:-1])]))
+    invalid['palette-mismatch'] = case
+    for name, case in invalid.items(): (folder/f'structure-invalid-{name}.nbt').write_bytes(nbt(case))
     examples=ROOT/'examples/schematics';examples.mkdir(parents=True,exist_ok=True)
     (examples/'demo.schem').write_bytes(gzip.compress(v3,mtime=0))
     (examples/'demo.litematic').write_bytes(gzip.compress(lite,mtime=0))
+    (examples/'demo.nbt').write_bytes(gzip.compress(nbt(structure),mtime=0))
 if __name__=='__main__': main()
