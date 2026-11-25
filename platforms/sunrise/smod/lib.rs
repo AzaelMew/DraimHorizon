@@ -1,7 +1,7 @@
 // Mod crate template: tools/sunrise.py smod appends `pub mod <name>;` for overlay/crate/*.rs.
 // Mod crate: runs in the game process. Game-side modules may call it as `mod_draimhorizon::...`.
 use mod_api::{
-    self, ClientHost, ComputeFovModifierEvent, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
+    self, ClientHost, ComputeFovEvent, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
     PlayerTurnEvent,
     RegisterClientCommandsEvent, RegisterClientTooltipComponentFactoriesEvent, Registrar,
     RegistrationContext, RenderFramePreEvent, RenderHandEvent, RenderTooltipGatherComponentsEvent,
@@ -23,14 +23,14 @@ impl Hooks for Mod {
     ) {
         mod_entry::commands(event.commands);
     }
-    fn compute_fov_modifier(&self, host: &dyn ClientHost, event: &mut ComputeFovModifierEvent) {
-        camera_zoom::fov(host, &mut event.modifier);
+    fn compute_fov(&self, host: &dyn ClientHost, event: &mut ComputeFovEvent) {
+        camera_zoom::fov(host, &mut event.degrees);
     }
     fn player_turn(&self, host: &dyn ClientHost, event: &mut PlayerTurnEvent) {
         camera_zoom::turn(host, &mut event.x, &mut event.y);
     }
-    fn render_frame_pre(&self, _: &mut dyn ClientHost, _: &mut RenderFramePreEvent) {
-        camera_zoom::frame_started();
+    fn render_frame_pre(&self, host: &mut dyn ClientHost, event: &mut RenderFramePreEvent) {
+        camera_zoom::frame(&*host, event.elapsed);
     }
     // The wheel steps the zoom factor while zoomed, in place of the hotbar.
     fn mouse_scrolling(

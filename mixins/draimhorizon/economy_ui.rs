@@ -39,6 +39,10 @@ impl Panel {
     pub fn local(self, mouse: [f32; 2]) -> [f32; 2] {
         [mouse[0] - self.rect[0], mouse[1] - self.rect[1]]
     }
+    pub fn screen_clip(self, [x0, y0, x1, y1]: [f32; 4]) -> [f32; 4] {
+        let [x, y, _, _] = self.rect;
+        [x + x0, y + y0, x + x1, y + y1]
+    }
     pub fn compact(self) -> bool {
         self.rect[2] < 440.0
     }
@@ -177,6 +181,29 @@ mod tests {
             assert!(p.rect[2] < viewport[0] && p.rect[3] < viewport[1]);
             assert!(p.rect[2] <= 640. && p.rect[3] <= 360.);
             assert_eq!(p.local([p.rect[0] + 24., p.rect[1] + 56.]), [24., 56.]);
+        }
+    }
+    #[test]
+    fn centred_panel_scissors_keep_all_tabs_and_detail_edges_visible() {
+        // Includes the attached 2556x1373 display at GUI scale 2, plus small GUI sizes.
+        for viewport in [[1278., 686.5], [1920., 1080.], [854., 480.], [320., 240.]] {
+            let panel = Panel::new(viewport);
+            let [ox, oy, w, h] = panel.rect;
+            let clip = panel.screen_clip([0., 0., w, h]);
+            assert_eq!(clip, [ox, oy, ox + w, oy + h]);
+            for i in 0..5 {
+                let local = [8. + (i as f32 + 0.5) * (w - 16.) / 5., 39.];
+                let point = [ox + local[0], oy + local[1]];
+                assert!(point[0] >= clip[0] && point[0] < clip[2]);
+                assert!(point[1] >= clip[1] && point[1] < clip[3]);
+                let mapped = panel.local(point);
+                assert!((mapped[0] - local[0]).abs() < 0.0001);
+                assert!((mapped[1] - local[1]).abs() < 0.0001);
+            }
+            let detail = panel.screen_clip([20., 80., w - 8., h - 79.]);
+            assert_eq!(detail, [ox + 20., oy + 80., ox + w - 8., oy + h - 79.]);
+            assert!(detail[0] >= clip[0] && detail[2] <= clip[2]);
+            assert!(detail[1] >= clip[1] && detail[3] <= clip[3]);
         }
     }
     #[test]

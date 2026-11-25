@@ -1,0 +1,7 @@
+# Sunrise's clip_since stores a GPU scissor. Its coordinates must already be
+# screen-relative when the local panel vertices are moved later in render().
+[[rewrite]]
+pattern = 'batch\.clip_since\(detail_start, rx, 80\.0, w - 8\.0, h - 79\.0\);'
+replace = '''let [x0, y0, x1, y1] = panel.screen_clip([rx, 80.0, w - 8.0, h - 79.0]);
+                    batch.clip_since(detail_start, x0, y0, x1, y1);'''
+files = ["economy_view.rs"]

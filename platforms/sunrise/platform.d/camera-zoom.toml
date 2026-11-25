@@ -1,4 +1,4 @@
-# Camera zoom uses the typed compute_fov_modifier, player_turn and mouse_scrolling hooks.
+# Camera zoom uses frame-timed compute_fov, player_turn and mouse_scrolling hooks.
 
 [module_override.camera-zoom]
 drop = true
@@ -6,7 +6,7 @@ reason = "camera zoom is the mod crate's (overlay/crate/camera_zoom.rs)"
 
 [injection.camera-zoom-fov]
 drop = true
-reason = "Hooks::compute_fov_modifier and Hooks::player_turn (overlay/crate/camera_zoom.rs)"
+reason = "Hooks::compute_fov and Hooks::player_turn (overlay/crate/camera_zoom.rs)"
 
 [injection.camera-zoom-scroll]
 drop = true
