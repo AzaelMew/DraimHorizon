@@ -13,6 +13,8 @@ pub(crate) struct NativePlayer {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
     pub dimension: &'static str,
 }
 
@@ -114,6 +116,8 @@ impl SunriseGame for Game<'_> {
             x: position.x,
             y: position.y,
             z: position.z,
+            yaw: self.yaw,
+            pitch: self.pitch,
             dimension: self.dim.id(),
         })
     }

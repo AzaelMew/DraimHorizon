@@ -27,6 +27,6 @@ name = "claim_borders_bar_command"
 source = "baritone/hooks/command.rs"
 
 [[rewrite]]
-pattern = '^fn (claim_borders_command|baritone_command)\('
+pattern = '(?m)^fn (claim_borders_command|baritone_command)\('
 replace = 'pub(super) fn \1('
 files = ["command.rs", "baritone/hooks/command.rs"]

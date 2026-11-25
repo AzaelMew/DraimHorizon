@@ -1,0 +1,51 @@
+# DEV made StructureRegistry's placement methods crate-private. Sample the
+# random-spread candidates from the same resource definitions, then let the
+# public generator validate the actual starts (including exclusion/frequency).
+[[module]]
+id = "seed-placement"
+file = "crates/sunrise-client/src/game.rs"
+name = "claim_borders_seed_placement"
+source = "seed_placement.rs"
+
+[[rewrite]]
+pattern = 'structure::start::\{Rings, StructureRegistry\}'
+replace = 'structure::start::StructureRegistry'
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '    sets: StructureRegistry,'
+replace = '''    sets: StructureRegistry,
+    spreads: BTreeMap<String, crate::game::claim_borders_seed_placement::Spread>,'''
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '        let members = raw'
+replace = '''        let spreads = crate::game::claim_borders_seed_placement::load(&raw)?;
+        let members = raw'''
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '(?m)^            sets,$'
+replace = '''            sets,
+            spreads,'''
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '        let rings = Rings::new\(\);\n'
+replace = ''
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '''StructureRegistry::potential_chunk\(
+                            set,
+                            model::SEED,
+                            rx \* spacing,
+                            rz \* spacing,
+                        \)'''
+replace = '''crate::game::claim_borders_seed_placement::candidate(
+                            &self.spreads, &set.name, model::SEED, rx, rz,
+                        )'''
+files = ["seed_worker.rs"]
+[[rewrite]]
+pattern = '''(?s)if !in_view\(at.x, at.z\)
+                            \|\| !self
+                                \.sets
+                                \.is_structure_chunk\(set, model::SEED, at.x, at.z, &rings\)
+                        \{'''
+replace = 'if !in_view(at.x, at.z) {'
+files = ["seed_worker.rs"]
