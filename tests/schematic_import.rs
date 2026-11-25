@@ -74,6 +74,65 @@ mod tests {
         );
     }
     #[test]
+    fn java_structure_import_preserves_states_and_omits_entity_payloads() {
+        let doc = decode(include_bytes!("fixtures/schematics/structure.nbt")).unwrap();
+        assert_eq!(doc.format, "nbt");
+        assert_eq!(doc.data_version, 3955);
+        assert_eq!(doc.blocks.len(), 10);
+        assert_eq!(doc.ignored_data, 2);
+        assert_eq!(doc.materials().get("minecraft:cobblestone"), Some(&8));
+        assert_eq!(doc.materials().get("minecraft:chest"), Some(&1));
+        assert!(doc.blocks.iter().all(|(_, state)| !state.air()));
+        let rotated = doc.transformed([10, 64, 20], 1).unwrap();
+        let (_, chest) = rotated
+            .blocks
+            .iter()
+            .find(|(_, state)| state.name == "minecraft:chest")
+            .unwrap();
+        assert_eq!(chest.properties["facing"], "east");
+        assert!(rotated.blocks.iter().any(|(pos, _)| *pos == [9, 65, 21]));
+    }
+    #[test]
+    fn structure_alternatives_choose_the_first_palette_and_sparse_bounds_work() {
+        let single = decode(include_bytes!("fixtures/schematics/structure.nbt")).unwrap();
+        let variants = decode(include_bytes!("fixtures/schematics/structure-palettes.nbt")).unwrap();
+        assert_eq!(single.blocks, variants.blocks);
+        let sparse = decode(include_bytes!("fixtures/schematics/structure-sparse.nbt")).unwrap();
+        assert_eq!(sparse.blocks.len(), 1);
+        assert_eq!(sparse.blocks[0].0, [255, 63, 255]);
+        assert_eq!(sparse.blocks[0].1.name, "minecraft:oak_log");
+        assert_eq!(sparse.data_version, 0);
+        for name in ["house.nbt", "Дом.NBT", "demo.schem", "demo.litematic"] {
+            assert!(safe_filename(name));
+        }
+        for name in ["../house.nbt", "x\\house.nbt", "C:house.nbt", ".house.nbt"] {
+            assert!(!safe_filename(name));
+        }
+    }
+    #[test]
+    fn malformed_structures_are_rejected_without_partial_imports() {
+        let invalid: &[&[u8]] = &[
+            include_bytes!("fixtures/schematics/structure-invalid-negative-size.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-volume.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-bad-index.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-negative-index.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-outside.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-negative-pos.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-short-pos.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-duplicate.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-empty-palette.nbt"),
+            include_bytes!("fixtures/schematics/structure-invalid-palette-mismatch.nbt"),
+        ];
+        for (index, bytes) in invalid.iter().enumerate() {
+            assert!(decode(bytes).is_err(), "accepted invalid structure {index}");
+        }
+        let bytes = include_bytes!("fixtures/schematics/structure.nbt");
+        assert!(decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut trailing = bytes.to_vec();
+        trailing.push(0);
+        assert!(decode(&trailing).is_err());
+    }
+    #[test]
     fn rotates_states_and_positions_without_losing_connections() {
         let state = BlockState::parse(
             "minecraft:oak_stairs[facing=north,half=bottom,north=true,east=false]",

@@ -1,6 +1,6 @@
 // Bounded NBT schematic import. Format references are documented in docs/automation.md.
 use super::claim_borders_navigation::Pos;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 /// The largest file read: 256 blocks to a side, at most 4 194 304 cells (256 × 64 × 256) and
 /// 262 144 blocks that are not air. Real Litematica builds were refused under the earlier limits
@@ -669,11 +669,11 @@ pub fn decode(bytes: &[u8]) -> Result<Blueprint> {
         return Err("trailing NBT data".into());
     }
     let root = root.optional("Schematic").unwrap_or(&root);
-    let version = root.get("Version")?.number()?;
     let mut blocks = BTreeMap::new();
     let mut ignored = 0;
     let format;
     if let Some(regions) = root.optional("Regions") {
+        let version = root.get("Version")?.number()?;
         if !(4..=7).contains(&version) {
             return Err("unsupported Litematica version".into());
         }
@@ -741,7 +741,11 @@ pub fn decode(bytes: &[u8]) -> Result<Blueprint> {
             ignored += region.optional("TileEntities").map_or(0, Tag::size)
                 + region.optional("Entities").map_or(0, Tag::size);
         }
+    } else if root.optional("size").is_some() {
+        format = "nbt";
+        ignored = structure(root, &mut blocks)?;
     } else {
+        let version = root.get("Version")?.number()?;
         if !matches!(version, 2 | 3) {
             return Err("unsupported Sponge schematic version".into());
         }
@@ -839,6 +843,74 @@ pub fn decode(bytes: &[u8]) -> Result<Blueprint> {
         format,
     })
 }
+fn structure_pos(tag: &Tag) -> Result<Pos> {
+    let list = tag.list()?;
+    if list.len() != 3 {
+        return Err("expected three structure coordinates".into());
+    }
+    Ok([list[0].number()?, list[1].number()?, list[2].number()?])
+}
+fn structure(root: &Tag, blocks: &mut BTreeMap<Pos, BlockState>) -> Result<usize> {
+    let size = structure_pos(root.get("size")?)?;
+    if size.iter().any(|n| *n <= 0) {
+        return Err("structure dimensions must be positive".into());
+    }
+    let count = volume(size)?;
+    // Vanilla chooses among alternative palettes when placing a structure. A preview
+    // must be stable: select the first, while checking that every alternative is valid.
+    let alternatives = root.optional("palettes").map(Tag::list).transpose()?;
+    let states = if let Some(alternatives) = alternatives {
+        alternatives
+            .first()
+            .ok_or("empty structure palettes")?
+            .list()?
+    } else {
+        root.get("palette")?.list()?
+    };
+    if states.is_empty() || states.len() > 65_536 {
+        return Err("invalid structure palette".into());
+    }
+    let palette = states.iter().map(nbt_state).collect::<Result<Vec<_>>>()?;
+    if let Some(alternatives) = alternatives {
+        for alternative in alternatives.iter().skip(1) {
+            let alternative = alternative.list()?;
+            if alternative.len() != palette.len() {
+                return Err("structure palette sizes disagree".into());
+            }
+            for state in alternative {
+                nbt_state(state)?;
+            }
+        }
+    }
+    let entries = root.get("blocks")?.list()?;
+    if entries.len() > count {
+        return Err("structure block count exceeds its volume".into());
+    }
+    let mut seen = BTreeSet::new();
+    let mut ignored = root
+        .optional("entities")
+        .map(Tag::list)
+        .transpose()?
+        .map_or(0, <[Tag]>::len);
+    for entry in entries {
+        let pos = structure_pos(entry.get("pos")?)?;
+        if pos.iter().zip(size).any(|(p, bound)| *p < 0 || *p >= bound) {
+            return Err("structure block lies outside its size".into());
+        }
+        if !seen.insert(pos) {
+            return Err("duplicate structure block position".into());
+        }
+        let index = usize::try_from(entry.get("state")?.number()?)
+            .map_err(|_| "negative structure palette index")?;
+        let state = palette.get(index).ok_or("palette index out of bounds")?;
+        if let Some(nbt) = entry.optional("nbt") {
+            nbt.map()?;
+            ignored += 1;
+        }
+        add(blocks, pos, state)?;
+    }
+    Ok(ignored)
+}
 pub fn safe_filename(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     !name.is_empty()
@@ -847,7 +919,7 @@ pub fn safe_filename(name: &str) -> bool {
             .chars()
             .any(|c| c.is_control() || matches!(c, '/' | '\\' | ':'))
         && !name.starts_with('.')
-        && (lower.ends_with(".schem") || lower.ends_with(".litematic"))
+        && (lower.ends_with(".schem") || lower.ends_with(".litematic") || lower.ends_with(".nbt"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

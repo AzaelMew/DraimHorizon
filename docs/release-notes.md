@@ -1,4 +1,4 @@
-- Fixed the trading workspace being clipped at its old origin on Sunrise. The centred window and its scrollable detail area now use matching screen-space clipping at different GUI sizes.
-- Restored smooth Z zoom: hold Z and use the mouse wheel to change magnification. Entry, wheel changes and release animate per frame; scrolling no longer depends on a game-tick camera query. A first-person spyglass and other zoom mods retain priority.
-- Targets Sunrise DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3). Rebuild native mods after installing the package.
-- Horizon and source-stage checks remain paused while horizon-rust is unavailable. SDK validation remains required before publication.
+- Schematics now imports Java structure-block `.nbt` files, both plain NBT and GZip. Put them in the same schematic folder as `.schem` and `.litematic`; previews, materials, rotation and the existing builder use the imported blocks.
+- `.nbt` previews can be shared with friends and restored from the local cache. Alternative palettes use the first palette consistently. Entities and block-entity payloads (inventories, signs, commands) are skipped; existing placement limitations still apply.
+- Added an authored `examples/schematics/demo.nbt` and regression tests for valid and malformed structures.
+- Targets Sunrise DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3). Rebuild native mods after installing the package. Horizon and source-stage checks remain paused while horizon-rust is unavailable.
