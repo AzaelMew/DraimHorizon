@@ -1,5 +1,5 @@
 //! Client command names, Controls rows and the settings button of Options > Mods.
-use mod_api::{Command, KeyRegistration, Registrar, SettingSpec};
+use mod_api::{ClientCommandRegistration, Command, KeyRegistration, Registrar, SettingSpec};
 
 /// One usage per client command, as `mod_api::Command` spells it. Every handler takes the words after
 /// the name itself, so each ends in optional text (`r` and `reply` take the whole line as the message);
@@ -122,6 +122,10 @@ pub fn register(registrar: &mut dyn Registrar) {
     ));
 }
 
-pub fn commands(out: &mut Vec<Command>) {
-    out.extend(USAGES.iter().map(|usage| Command::new(usage)));
+pub fn commands(out: &mut Vec<ClientCommandRegistration>) {
+    // Game-side handlers consume these before the dispatcher. Fail locally if
+    // a declared command ever reaches its executor instead of forwarding it.
+    out.extend(
+        USAGES.iter().map(|usage| Command::new(usage).executes_client(|_, _| None)),
+    );
 }

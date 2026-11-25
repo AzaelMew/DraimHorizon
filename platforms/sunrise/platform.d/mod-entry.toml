@@ -16,12 +16,13 @@ reason = "the settings button is the open_menu toggle registered in overlay/crat
 
 [injection.menu-options-click]
 drop = false
-target = "sunrise_client::game::native_hooks::base::Game<'_>::native_setting_changed"
+target = "sunrise_client::game::native_hooks::mod_settings::Game<'_>::apply_native_setting_write"
 kind = "HEAD"
 cancellable = true
 helper = "mod_entry/settings_toggle_hook.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-  { name = "mod_id", ty = "&str", value = "mod_id" },
-  { name = "key", ty = "&str", value = "key" },
+  { name = "mod_id", ty = "&str", value = "owner" },
+  { name = "spec", ty = "&mod_api::SettingSpec", value = "spec" },
+  { name = "value", ty = "mod_api::SettingValue", value = "value" },
 ]

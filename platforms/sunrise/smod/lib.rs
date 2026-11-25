@@ -1,10 +1,11 @@
 // Mod crate template: tools/sunrise.py smod appends `pub mod <name>;` for overlay/crate/*.rs.
 // Mod crate: runs in the game process. Game-side modules may call it as `mod_draimhorizon::...`.
 use mod_api::{
-    self, ClientHost, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
+    self, ClientHost, ComputeFovModifierEvent, Hooks, HumanoidSetupAnimEvent, MouseScrollingEvent,
+    PlayerTurnEvent,
     RegisterClientCommandsEvent, RegisterClientTooltipComponentFactoriesEvent, Registrar,
     RegistrationContext, RenderFramePreEvent, RenderHandEvent, RenderTooltipGatherComponentsEvent,
-    RenderTooltipTextureEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent, Zoom, ZoomEvent,
+    RenderTooltipTextureEvent, ScreenCharTypedPreEvent, ScreenRenderPostEvent,
 };
 
 #[derive(Default)]
@@ -22,8 +23,11 @@ impl Hooks for Mod {
     ) {
         mod_entry::commands(event.commands);
     }
-    fn zoom(&self, host: &dyn ClientHost, _: &mut ZoomEvent) -> Option<Zoom> {
-        camera_zoom::zoom(host)
+    fn compute_fov_modifier(&self, host: &dyn ClientHost, event: &mut ComputeFovModifierEvent) {
+        camera_zoom::fov(host, &mut event.modifier);
+    }
+    fn player_turn(&self, host: &dyn ClientHost, event: &mut PlayerTurnEvent) {
+        camera_zoom::turn(host, &mut event.x, &mut event.y);
     }
     fn render_frame_pre(&self, _: &mut dyn ClientHost, _: &mut RenderFramePreEvent) {
         camera_zoom::frame_started();

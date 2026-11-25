@@ -6,8 +6,17 @@ use super::Game;
 
 // Horizon's Native* records are Sunrise's mod_api records (the minimap one has no counterpart since
 // Nightly ed3ac19 removed the engine minimap).
-pub type NativeZoom = mod_api::Zoom;
 pub type NativeScreenView<'a> = mod_api::ScreenView<'a>;
+
+/// Snapshot used by the shared navigation and map code.
+pub(crate) struct NativePlayer {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub dimension: &'static str,
+}
 
 /// A native mod as the shared sources describe it: id, title, description and its keys
 /// (name, label, default key).
@@ -45,6 +54,10 @@ impl std::ops::DerefMut for SlotToast {
 /// Horizon's `Game::native_*` host calls, implemented on Sunrise's `Game`. An extension trait
 /// because a Sunrise native mod's modules cannot add inherent methods to the game's types.
 pub(crate) trait SunriseGame {
+    fn native_chat(&mut self, text: &str);
+    fn native_player(&self) -> Option<NativePlayer>;
+    fn native_data_dir(&self, mod_id: &str) -> std::path::PathBuf;
+    fn native_config_dir() -> std::io::Result<std::path::PathBuf>;
     /// Whether the player left the mod on; a mod turned off rests until the next build.
     fn native_on(&self, mod_id: &str) -> bool;
     /// The mod's own data files are one file per key in its data folder, in both games.
@@ -97,6 +110,30 @@ pub(crate) trait SunriseGame {
 }
 
 impl SunriseGame for Game<'_> {
+    fn native_player(&self) -> Option<NativePlayer> {
+        let position = self.player.as_ref()?.position;
+        Some(NativePlayer {
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            dimension: self.dim.id(),
+        })
+    }
+    fn native_data_dir(&self, mod_id: &str) -> std::path::PathBuf {
+        Self::mod_data_root().join(mod_id)
+    }
+    fn native_config_dir() -> std::io::Result<std::path::PathBuf> {
+        // Sunrise creates this shared directory at startup, before mods run.
+        Ok(Self::game_dir().join("config"))
+    }
+    fn native_chat(&mut self, text: &str) {
+        self.add_chat_line(
+            crate::text::Text::literal(text),
+            sunrise_client::chat::ChatSource::Client,
+        );
+    }
     /// Whether the player left the mod on; a mod turned off rests until the next build.
     fn native_on(&self, mod_id: &str) -> bool {
         self.on(mod_id)

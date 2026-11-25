@@ -1,4 +1,6 @@
-- Sunrise is supported; its CI workflow no longer carries the experimental label.
-- Releases temporarily contain only the Sunrise `.smod` and its SHA-256 checksum while the horizon-rust repositories are unavailable.
-- Sunrise pin checks and SDK validation remain required before publication. Runtime, tool and relay tests remain enabled.
-- Horizon checks and both source-stage builds are paused until upstream recovery; source staging also depends on horizon-rust/horizon-mixins. Existing Horizon releases and compatibility pins are preserved.
+- Updated the Sunrise `.smod` to DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3).
+- Adapted client-command registration and dispatch to the new Sunrise API. Mod commands stay local, while claim/economy observers still see commands destined for the server.
+- Local mod notices use Sunrise's client chat source and enter the custom chat once, without being parsed as server responses.
+- Zoom uses the current FOV and turn events, with wheel-controlled magnification and first-person spyglass priority. Player snapshots, data paths and HUD layout use the current Sunrise interfaces.
+- Install the matching Sunrise DEV before rebuilding native mods. Native packages target one exact game build.
+- Horizon and both source-stage checks remain paused while horizon-rust is unavailable. SDK validation remains required before publication; a PR does not publish a release.

@@ -1,5 +1,13 @@
 # История версий
 
+## 0.44.7
+
+- Updated the Sunrise package to DEV `bdad86d` (`dev-2026-11-25-bdad86d`) and refreshed its source hash.
+- Adapted command dispatch and typed client-command registration after Sunrise removed its old command hook. Shared command observers still see server-bound commands; handled mod commands stay local.
+- Replaced the removed local-chat helper with client-source chat delivery, capturing local notices once without server-message parsing.
+- Migrated zoom to Sunrise's FOV modifier and player-turn events, preserving wheel steps and first-person spyglass priority. Replaced removed player/data-directory helpers and explicitly borrowed the shared HUD corner layout.
+- Adapted inventory highlights, settings actions, chat drafts and GUI item seeds. Seed Map samples candidate chunks from resource definitions and uses the public generator to validate starts after upstream made placement helpers private.
+
 ## 0.44.6
 
 - Marked Sunrise as supported in the client documentation and removed the experimental label from its CI workflow.

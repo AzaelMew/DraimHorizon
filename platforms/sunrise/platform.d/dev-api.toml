@@ -1,0 +1,69 @@
+# DEV's item decorations use a transactional canvas; the rest of the search UI
+# continues to draw in the existing HUD batch.
+[injection.inventory-search-highlight]
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "stack", ty = "&sunrise_client::items::ItemStack", value = "stack" },
+  { name = "x", ty = "f32", value = "x" },
+  { name = "y", ty = "f32", value = "y" },
+  { name = "batch", ty = "&mut dyn mod_api::GuiCanvas", value = "&mut *draw" },
+]
+
+[[rewrite]]
+pattern = 'batch: &mut sunrise_client::hud::HudBatch'
+replace = 'batch: &mut dyn mod_api::GuiCanvas'
+files = ["inventory_search_hook.rs"]
+[[rewrite]]
+pattern = '(pub\(super\) fn decorate\([^\n]*)batch: &mut HudBatch'
+replace = '\1batch: &mut dyn mod_api::GuiCanvas'
+files = ["inventory_search_view.rs"]
+[[rewrite]]
+pattern = 'game\.native_fill\(batch, r, color\);'
+replace = 'let _ = batch.fill(r, color);'
+files = ["inventory_search_view.rs"]
+
+# Observe the engine's merchant call instead of copying its sound-playing body:
+# the SDK cannot expose macro-generated play_audio across the copied module.
+[injection.villager-trade-click]
+target = "sunrise_client::game::stations::Game<'_>::station_click"
+kind = "MODIFY_EXPRESSION_VALUE"
+selector = "self.merchant_click(local)"
+require = 1
+ordinal = 0
+
+[[rewrite]]
+pattern = 'game\.pvp\.chat_search\b'
+replace = 'game.pvp.chat_search_aside.is_some()'
+files = ["chat_view.rs"]
+[[rewrite]]
+pattern = '    game\.ui\.chat_draft_shown = draft_shown;\n'
+replace = ''
+files = ["outgoing_view.rs"]
+[[rewrite]]
+pattern = '        let draft_shown = game\.ui\.chat_draft_shown;\n'
+replace = ''
+files = ["outgoing_view.rs"]
+[[rewrite]]
+pattern = '    let \(chat, draft_shown\) = editor'
+replace = '    let chat = editor'
+files = ["outgoing_view.rs"]
+[[rewrite]]
+pattern = 'let saved = \(s\.chat\.take\(\), s\.draft_shown\);'
+replace = 'let saved = s.chat.take();'
+files = ["outgoing_view.rs"]
+[[rewrite]]
+pattern = '(?m)^\s*(draft_shown: bool,|s\.draft_shown = draft_shown;)\n'
+replace = ''
+files = ["outgoing_view.rs"]
+# Translated text must stay chat even if the provider starts it with a slash.
+[[rewrite]]
+pattern = 'game\.send_signed_chat\(&message\);'
+replace = '''let message = if message.starts_with('/') { format!(" {message}") } else { message };
+        if let Err(error) = game.send_chat(&message) {
+            game.native_chat(&format!("[DraimHorizons] {error}"));
+        }'''
+files = ["outgoing_view.rs"]
+[[rewrite]]
+pattern = 'game\.draw_item_model\(batch, &stack, x, y\);'
+replace = 'game.draw_item_model(batch, &stack, x, y, 0);'
+files = ["baritone/game/settings_ui.rs"]

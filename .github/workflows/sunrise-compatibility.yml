@@ -63,6 +63,7 @@ jobs:
           path: |
             compatibility.json
             sunrise-smod-check.log
+            ~/.cache/sunrise-mod/work/draimhorizon/build.log
             target/draimhorizons-*.smod
             target/draimhorizons-*.smod.sha256
   stage:
