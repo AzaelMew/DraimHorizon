@@ -1,3 +1,4 @@
+- Schematics now includes a local PNG/JPG map-art generator: choose map tiles, block palettes and floor, flat/staircase mode, height limit, fit/background and dithering. Review predicted Minecraft map colours and materials, then save/place a Litematica preview. Construction uses the existing server-confirmed builder; access scaffolding and map-item updates remain manual.
 - Schematics now imports Java structure-block `.nbt` files, both plain NBT and GZip. Put them in the same schematic folder as `.schem` and `.litematic`; previews, materials, rotation and the existing builder use the imported blocks.
 - `.nbt` previews can be shared with friends and restored from the local cache. Alternative palettes use the first palette consistently. Entities and block-entity payloads (inventories, signs, commands) are skipped; existing placement limitations still apply.
 - Added an authored `examples/schematics/demo.nbt` and regression tests for valid and malformed structures.

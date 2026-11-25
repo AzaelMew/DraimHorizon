@@ -1439,6 +1439,7 @@ pub(super) fn visual_settings() -> visualization::Settings {
 }
 
 fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
+    let map_art = crate::game::claim_borders_map_art_view::snapshot(game);
     let chat = crate::game::claim_borders_chat_view::settings(game);
     let language = chat.language;
     let priority = crate::game::claim_borders_chat_view::priority_settings(game);
@@ -1646,6 +1647,7 @@ fn menu_snapshot(game: &mut Game<'_>) -> menu::ViewModel {
         });
         let settings = &c.visual;
         menu::ViewModel {
+            map_art,
             navigation_players,
             schematic_files: crate::game::claim_borders_workshop_view::filenames_read(game),
             schematic_layers: crate::game::claim_borders_schematic_view::layers(game),
@@ -1874,6 +1876,24 @@ pub(super) fn run_menu_action(game: &mut Game<'_>, action: menu::Action) -> Resu
 fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>, String> {
     use menu::Action;
     match action {
+        Action::MapArtGenerate(request) => {
+            crate::game::claim_borders_map_art_view::generate(game, *request)?;
+            Ok(Vec::new())
+        }
+        Action::MapArtPlace(request) => {
+            crate::game::claim_borders_map_art_view::place(game, &request)?;
+            Ok(Vec::new())
+        }
+        Action::MapArtMaterials => {
+            crate::game::claim_borders_map_art_view::materials(game)?;
+            Ok(Vec::new())
+        }
+        Action::MapArtFolder => {
+            let folder = crate::game::claim_borders_map_art_view::folder(game);
+            std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+            crate::game::packs::open_folder(&folder);
+            Ok(Vec::new())
+        }
         Action::RefreshSchematics => {
             // Files that could not be read are read again (the player may have replaced them).
             crate::game::claim_borders_schematic_view::forget_failed();
@@ -1897,8 +1917,8 @@ fn execute_menu(game: &mut Game<'_>, action: menu::Action) -> Result<Vec<String>
             // A list already being read is fine; the next click reads it again.
             let _ = crate::game::claim_borders_workshop_view::refresh(game);
             Ok(vec![tr!(
-                "Папка схем открыта (путь скопирован). Положите .schem / .litematic и выберите файл.",
-                "Schematic folder opened (path copied). Add .schem / .litematic files and choose one."
+                "Папка схем открыта (путь скопирован). Положите .schem / .litematic / .nbt и выберите файл.",
+                "Schematic folder opened (path copied). Add .schem / .litematic / .nbt files and choose one."
             )])
         }
         Action::SchematicSelection(edit) => {

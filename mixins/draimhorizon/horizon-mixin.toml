@@ -2171,3 +2171,15 @@ id = "baritone-bridge"
 file = "crates/horizon-client/src/game.rs"
 name = "claim_borders_baritone_bridge"
 source = "baritone_bridge.rs"
+
+[[module]]
+id = "map-art"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_art"
+source = "map_art.rs"
+
+[[module]]
+id = "map-art-view"
+file = "crates/horizon-client/src/game.rs"
+name = "claim_borders_map_art_view"
+source = "map_art_view.rs"

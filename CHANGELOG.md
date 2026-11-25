@@ -2,6 +2,8 @@
 
 ## 0.45.0
 
+- Added a local PNG/JPG map-art generator under Schematics: 1–4 map tiles, carpet/wool/concrete/custom palettes, selectable floor/support material, flat/staircase modes, height limits, fit/crop/stretch, transparency background and dithering. Predicts game map colours, lists materials and saves a grid-aligned Litematica preview.
+
 - Added Java structure-block `.nbt` imports (plain or GZip), including block properties, sparse structures and deterministic selection of the first alternative palette. Files appear in Schematics and use the existing preview, materials, rotation and building workflow.
 - Enabled `.nbt` files in encrypted friend sharing and its local cache, including uppercase `.NBT` names. Entity and block-entity payloads are counted and skipped.
 - Added authored structure fixtures, a compressed demo and regression coverage for valid structures, malformed sizes/positions/palettes, file paths and sharing.

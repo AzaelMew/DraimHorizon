@@ -104,3 +104,15 @@ This first builder does not remove blocks, clear air volumes, create scaffolding
 - Files are decoded off the game/render thread. Results are applied only to the originating server/account/dimension/resource generation.
 
 Format references: [Sponge specification](https://github.com/SpongePowered/Schematic-Specification), [Litematica implementation](https://github.com/maruohon/litematica). Test fixtures and demo schematics are authored by this project; regenerate them with `python tools/make_schematic_fixtures.py`.
+
+## Local map-art generator
+
+Open **Schematics → Map arts: from image**. The five pages (arrow buttons, or mouse wheel) cover:
+
+1. **Image:** paste a local PNG/JPG path, or open the images folder, copy an image there and type its filename. Choose contain, centred crop or stretch; a six-digit RGB background fills transparent pixels and contain margins.
+2. **Palette:** select 1–2 maps across and 1–2 maps deep (128 blocks per map). Choose the 16 carpet, wool or concrete colours, or Custom and enter 1–64 block IDs separated by spaces/commas. Only supported solid blocks and carpets are accepted, not fluids, gravity blocks or block entities.
+3. **Build:** choose the floor/support block ID, flat or staircase mode, a staircase height bound (2–32), and Floyd–Steinberg dithering. The floor needs a solid upper face. Flat mode uses one floor layer; stairs include solid columns and a northern guide row. Excessive supports can exceed the 262,144-block limit: reduce the size/height or use flat mode.
+4. **Generate:** run the local worker, copy total materials, then save and place the result. Change settings and generate again before saving. Files are written as `.litematic` and work with the existing preview, verification, materials and server-confirmed builder; saving does not start building.
+5. **Map:** inspect the predicted scale-zero Minecraft map colours, using the client's current map palette and the generated north/south height changes.
+
+Inputs are local only (no image uploads), at most 16 MiB and 16,777,216 decoded pixels; generation and writes run off-thread. Settings remain while the menu is reopened, but are not saved across game restarts. The generated file survives restarts. The image is aligned north-up; save/place snaps its north-west pixel to the scale-zero map grid near the player (`128*k - 64`), with its floor at the player's Y. The extra guide row is one block north. Keep that orientation and place outdoors: rotating a staircase changes its map shades, while overhanging terrain can hide it on a map. This predicts block colours, not map-item exploration; create/update the Minecraft map items yourself. The builder retains its reachability and supported-placement limits and does not fly or add access scaffolding.
