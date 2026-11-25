@@ -187,7 +187,20 @@ fn map_art_pages_fit_small_screens_and_emit_explicit_generation_requests() {
         tab: Tab::Schematics,
         ..Default::default()
     };
-    menu.activate(&model, 200.0, Control::MapArtOpen);
+    fn click(menu: &mut Menu, model: &ViewModel, control: Control) -> Option<Action> {
+        let rect = menu
+            .layout(model, 360.0, 200.0)
+            .into_iter()
+            .find(|w| w.control == Some(control))
+            .unwrap()
+            .rect;
+        menu.click(
+            model,
+            [360.0, 200.0],
+            [rect[0] + rect[2] * 0.5, rect[1] + rect[3] * 0.5],
+        )
+    }
+    click(&mut menu, &model, Control::MapArtOpen);
     for height in [200.0, 240.0, 400.0] {
         for page in 0..5 {
             menu.map_art_page = page;
@@ -216,13 +229,15 @@ fn map_art_pages_fit_small_screens_and_emit_explicit_generation_requests() {
             }
         }
     }
-    menu.activate(&model, 200.0, Control::Field(Field::MapArtImage));
+    menu.map_art_page = 0;
+    click(&mut menu, &model, Control::Field(Field::MapArtImage));
     for c in "C:/images/cat.png".chars() {
         menu.character(c);
     }
     assert_eq!(menu.map_art.image, "C:/images/cat.png");
+    menu.map_art_page = 3;
     assert!(
-        matches!(menu.activate(&model,200.0,Control::MapArtGenerate),Some(Action::MapArtGenerate(request)) if request.image=="C:/images/cat.png")
+        matches!(click(&mut menu,&model,Control::MapArtGenerate),Some(Action::MapArtGenerate(request)) if request.image=="C:/images/cat.png")
     );
     assert!(menu.baritone_request(true).is_err());
 }
