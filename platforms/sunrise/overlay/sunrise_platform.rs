@@ -6,7 +6,6 @@ use super::Game;
 
 // Horizon's Native* records are Sunrise's mod_api records (the minimap one has no counterpart since
 // Nightly ed3ac19 removed the engine minimap).
-pub type NativeZoom = mod_api::Zoom;
 pub type NativeScreenView<'a> = mod_api::ScreenView<'a>;
 
 /// Snapshot used by the shared navigation and map code.

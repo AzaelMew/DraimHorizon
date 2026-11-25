@@ -1,5 +1,4 @@
-# Camera zoom runs on the typed API (overlay/crate/camera_zoom.rs): the zoom and mouse_scrolling
-# hooks fire at the same places the native rows patched.
+# Camera zoom uses the typed compute_fov_modifier, player_turn and mouse_scrolling hooks.
 
 [module_override.camera-zoom]
 drop = true
@@ -7,7 +6,7 @@ reason = "camera zoom is the mod crate's (overlay/crate/camera_zoom.rs)"
 
 [injection.camera-zoom-fov]
 drop = true
-reason = "Hooks::zoom (overlay/crate/camera_zoom.rs)"
+reason = "Hooks::compute_fov_modifier and Hooks::player_turn (overlay/crate/camera_zoom.rs)"
 
 [injection.camera-zoom-scroll]
 drop = true
