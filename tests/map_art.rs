@@ -183,10 +183,8 @@ fn transparency_uses_background_and_bad_inputs_are_rejected() {
 fn map_art_pages_fit_small_screens_and_emit_explicit_generation_requests() {
     use claim_borders::menu::{Action, Control, Field, Menu, Tab, ViewModel};
     let model = ViewModel::default();
-    let mut menu = Menu {
-        tab: Tab::Schematics,
-        ..Default::default()
-    };
+    let mut menu = Menu::default();
+    menu.tab = Tab::Schematics;
     fn click(menu: &mut Menu, model: &ViewModel, control: Control) -> Option<Action> {
         let rect = menu
             .layout(model, 360.0, 200.0)

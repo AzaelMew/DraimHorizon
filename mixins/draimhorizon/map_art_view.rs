@@ -86,10 +86,10 @@ fn material(game: &Game<'_>, name: &str) -> Result<art::Material, String> {
         .default_state(&state.name)
         .ok_or_else(|| format!("Unknown block / Неизвестный блок: {name}"))?;
     let facts = game.res.facts().get(id);
-    let color = game
-        .block_state_map_color(id)
-        .filter(|c| *c > 0 && *c != 12)
-        .ok_or("Block has no supported map colour / Нет подходящего цвета карты")?;
+    let color = facts.map_color;
+    if color == 0 || color == 12 {
+        return Err("Block has no supported map colour / Нет подходящего цвета карты".into());
+    }
     if (!facts.full_collision && !state.name.ends_with("_carpet"))
         || facts.block_entity
         || facts.fluid_level > 0
@@ -104,9 +104,7 @@ fn material(game: &Game<'_>, name: &str) -> Result<art::Material, String> {
     }
     let mut shades = [[0; 3]; 3];
     for (i, shade) in shades.iter_mut().enumerate() {
-        let rgba = game
-            .block_state_map_color_rgba(color * 4 + i as u8)
-            .ok_or("Missing map colour")?;
+        let rgba = crate::game::maps::packed_rgba(color * 4 + i as u8);
         shade.copy_from_slice(&rgba[..3]);
     }
     Ok(art::Material { state, shades })

@@ -72,7 +72,16 @@ impl Request {
         }
         names
             .iter()
-            .map(|s| BlockState::parse(s).map(|s| s.name))
+            .map(|s| {
+                let state = BlockState::parse(s)?;
+                if !state.properties.is_empty() {
+                    return Err(
+                        "Use block names without properties / Укажите имена блоков без свойств"
+                            .into(),
+                    );
+                }
+                Ok(state.name)
+            })
             .collect()
     }
     pub fn background_rgb(&self) -> Result<[u8; 3], String> {
