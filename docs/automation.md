@@ -99,6 +99,7 @@ This first builder does not remove blocks, clear air volumes, create scaffolding
 - At most 256 blocks per dimension, 4,194,304 total volume and 262,144 non-air cells; Litematica allows up to 16 regions. Region offsets are limited to ±4096.
 - Sponge/WorldEdit **v2 and v3** palettes/VarInts; Litematica **v4–v7** palettes and continuous packed states, including negative region sizes and overlapping identical cells.
 - Java structure-block **`.nbt`** files (`size`, `palette`/`palettes`, `blocks`), plain or GZip. Sparse structures are supported; alternative palettes always use the first palette. Entities and block-entity payloads are counted and skipped. This does not import arbitrary NBT documents or Bedrock structures.
+- For map art, export a Java structure `.nbt` from the image-conversion tool, then select it in Schematics. A 128×128 map tile fits the import limits. The builder places the exported blocks; it does not convert images or fill a Minecraft map item. Prepare the terrain and bring the required materials.
 - Newer Minecraft data versions, conflicting overlaps, malformed NBT/palettes and paths outside the schematic directory are rejected. No DataFixer migration is performed.
 - Files are decoded off the game/render thread. Results are applied only to the originating server/account/dimension/resource generation.
 

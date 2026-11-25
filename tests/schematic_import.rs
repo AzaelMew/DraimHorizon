@@ -111,6 +111,18 @@ mod tests {
         }
     }
     #[test]
+    fn imports_a_full_map_art_tile_with_exact_material_counts() {
+        let doc = decode(include_bytes!("fixtures/schematics/structure-map-art.nbt")).unwrap();
+        assert_eq!(doc.blocks.len(), 128 * 128);
+        assert_eq!(doc.ignored_data, 0);
+        assert_eq!(doc.materials().get("minecraft:white_wool"), Some(&8192));
+        assert_eq!(doc.materials().get("minecraft:black_wool"), Some(&8192));
+        let placed = doc.transformed([100, 70, -200], 0).unwrap();
+        assert!(placed.blocks.iter().all(|(pos, _)| pos[1] == 70));
+        assert!(placed.blocks.iter().any(|(pos, _)| *pos == [100, 70, -200]));
+        assert!(placed.blocks.iter().any(|(pos, _)| *pos == [227, 70, -73]));
+    }
+    #[test]
     fn malformed_structures_are_rejected_without_partial_imports() {
         let invalid: &[&[u8]] = &[
             include_bytes!("fixtures/schematics/structure-invalid-negative-size.nbt"),

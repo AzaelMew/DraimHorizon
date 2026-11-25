@@ -86,6 +86,13 @@ def main():
     sparse = {'size':coords((256, 64, 256)), 'palette':(9, (10, [states[2]])),
               'blocks':(9, (10, [{'pos':coords((255, 63, 255)), 'state':(3, 0)}]))}
     (folder/'structure-sparse.nbt').write_bytes(nbt(sparse))
+    # One map tile: a flat 128 x 128 patterned map-art structure.
+    map_art = {'DataVersion':(3, 3955), 'size':coords((128, 1, 128)),
+               'palette':(9, (10, [state('minecraft:white_wool'), state('minecraft:black_wool')])),
+               'blocks':(9, (10, [{'pos':coords((x, 0, z)), 'state':(3, (x + z) % 2)}
+                                  for z in range(128) for x in range(128)])),
+               'entities':(9, (10, []))}
+    (folder/'structure-map-art.nbt').write_bytes(nbt(map_art))
     invalid = {}
     for name, value in [('negative-size', (-3, 2, 3)), ('volume', (256, 256, 256))]:
         case = copy.deepcopy(structure); case['size'] = coords(value); invalid[name] = case
