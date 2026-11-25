@@ -95,7 +95,8 @@ mod tests {
     #[test]
     fn structure_alternatives_choose_the_first_palette_and_sparse_bounds_work() {
         let single = decode(include_bytes!("fixtures/schematics/structure.nbt")).unwrap();
-        let variants = decode(include_bytes!("fixtures/schematics/structure-palettes.nbt")).unwrap();
+        let variants =
+            decode(include_bytes!("fixtures/schematics/structure-palettes.nbt")).unwrap();
         assert_eq!(single.blocks, variants.blocks);
         let sparse = decode(include_bytes!("fixtures/schematics/structure-sparse.nbt")).unwrap();
         assert_eq!(sparse.blocks.len(), 1);
