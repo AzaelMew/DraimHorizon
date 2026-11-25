@@ -25,6 +25,9 @@ pub struct Replies {
     recognized: Option<String>,
     /// The connection scope this state belongs to; `None` until the first frame binds it.
     session: Option<String>,
+    /// The automatic `/claims` is being sent right now. Sunrise passes the mod's own sends
+    /// through the command hook, which must not take it for a typed command.
+    issuing: bool,
 }
 impl Replies {
     /// An empty state, usable in a `static`.
@@ -37,6 +40,7 @@ impl Replies {
             awaiting_overflow: false,
             recognized: None,
             session: None,
+            issuing: false,
         }
     }
     fn live(&self, now: u64) -> bool {
@@ -62,6 +66,9 @@ impl Replies {
     /// does not need the connection to be bound yet: a command typed before the first frame
     /// of a connection keeps its protection when that frame binds the scope.
     pub fn manual(&mut self, now: u64) {
+        if self.issuing {
+            return;
+        }
         // A reply already in flight for an automatic request arrives looking just like this
         // command's own, so one more recognized reply is waited for; several typed commands
         // add up, up to a small bound.
@@ -133,14 +140,20 @@ impl Replies {
         quiet && recognized
     }
     /// The background refresh, once per connection: while a typed command protects the moment
-    /// the send waits (and stays due); otherwise it is attempted exactly once, and hiding is
-    /// armed only if `send` says it really went out.
-    pub fn refresh(&mut self, due: &mut bool, now: u64, send: impl FnOnce() -> bool) {
+    /// the send waits (and stays due); otherwise it is attempted exactly once. True when the
+    /// caller should send now and then report the outcome to [`Replies::end_refresh`].
+    pub fn begin_refresh(&mut self, due: &mut bool, now: u64) -> bool {
         if !*due || self.busy(now) {
-            return;
+            return false;
         }
         *due = false;
-        if send() {
+        self.issuing = true;
+        true
+    }
+    /// Hiding is armed only if the automatic `/claims` really went out.
+    pub fn end_refresh(&mut self, sent: bool, now: u64) {
+        self.issuing = false;
+        if sent {
             self.arm(now);
         }
     }
@@ -167,9 +180,15 @@ pub fn bind(scope: &str) {
 pub fn arm() -> bool {
     with(|r| r.arm(now()))
 }
-/// See [`Replies::refresh`].
+/// See [`Replies::begin_refresh`]. `send` runs with the state unlocked: Sunrise routes an
+/// unattended command through the command hook, which locks it again (a held lock froze the
+/// game on joining).
 pub fn refresh(due: &mut bool, send: impl FnOnce() -> bool) {
-    with(|r| r.refresh(due, now(), send))
+    if !with(|r| r.begin_refresh(due, now())) {
+        return;
+    }
+    let sent = send();
+    with(|r| r.end_refresh(sent, now()));
 }
 /// The chat hook, once per server line.
 pub fn on_server_line(text: &str) {
@@ -190,6 +209,51 @@ mod tests {
     fn shown(r: &mut Replies, text: &str, quiet: bool, now: u64) -> bool {
         r.observe(text);
         r.deliver(text, quiet, now)
+    }
+    /// The module's `refresh` sequence on a local state.
+    fn refresh_at(r: &mut Replies, due: &mut bool, now: u64, send: impl FnOnce() -> bool) {
+        if r.begin_refresh(due, now) {
+            let sent = send();
+            r.end_refresh(sent, now);
+        }
+    }
+    #[test]
+    fn the_automatic_refresh_sends_unlocked_and_its_command_echo_is_not_a_typed_one() {
+        // Sunrise runs the mod's command hook for the mod's own unattended `/claims`, and that
+        // hook calls `manual()` on the shared state while `send` is still running.
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            leave();
+            let mut due = true;
+            refresh(&mut due, || {
+                manual();
+                true
+            });
+            let _ = done.send(due);
+        });
+        let due = finished
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the refresh deadlocked on the state lock");
+        assert!(!due, "sent once");
+        // The echo did not cancel hiding: the automatic list is still hidden.
+        on_server_line(LIST);
+        assert!(on_shown_line(LIST, true));
+        leave();
+    }
+    #[test]
+    fn only_the_echo_during_the_automatic_send_is_ignored_and_a_later_typed_claims_counts() {
+        let mut r = Replies::default();
+        let mut due = true;
+        assert!(r.begin_refresh(&mut due, 100));
+        r.manual(100); // the hook seeing the mod's own command
+        r.end_refresh(true, 100);
+        assert!(
+            shown(&mut r, LIST, true, 101),
+            "the automatic list stays hidden"
+        );
+        r.manual(102); // typed by the player
+        assert!(!shown(&mut r, LIST, true, 103));
+        assert!(r.busy(103));
     }
     #[test]
     fn the_fixtures_are_what_the_parser_says_they_are() {
@@ -357,7 +421,7 @@ mod tests {
         r.bind("server#me"); // the first frame of the connection
         let mut due = true;
         let mut sent = false;
-        r.refresh(&mut due, 1_100, || {
+        refresh_at(&mut r, &mut due, 1_100, || {
             sent = true;
             true
         });
@@ -367,12 +431,12 @@ mod tests {
         assert!(!shown(&mut r, LIST, true, 1_200));
         // The list was observed at 1.2 s, so the grace runs from then; once it is over the
         // refresh goes out once and arms.
-        r.refresh(&mut due, 1_200 + MANUAL_HOLD_MS - 1, || {
+        refresh_at(&mut r, &mut due, 1_200 + MANUAL_HOLD_MS - 1, || {
             sent = true;
             true
         });
         assert!(!sent && due, "still inside the grace");
-        r.refresh(&mut due, 1_200 + MANUAL_HOLD_MS, || {
+        refresh_at(&mut r, &mut due, 1_200 + MANUAL_HOLD_MS, || {
             sent = true;
             true
         });
@@ -383,11 +447,11 @@ mod tests {
     fn a_refresh_that_did_not_go_out_arms_nothing_and_is_not_retried() {
         let mut r = Replies::default();
         let mut due = true;
-        r.refresh(&mut due, 100, || false);
+        refresh_at(&mut r, &mut due, 100, || false);
         assert!(!due && !r.busy(100));
         assert!(!shown(&mut r, LIST, true, 101));
         let mut calls = 0;
-        r.refresh(&mut due, 102, || {
+        refresh_at(&mut r, &mut due, 102, || {
             calls += 1;
             true
         });

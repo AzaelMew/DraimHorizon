@@ -1,5 +1,3 @@
-- Schematics now includes a local PNG/JPG map-art generator: choose map tiles, block palettes and floor, flat/staircase mode, height limit, fit/background and dithering. Review predicted Minecraft map colours and materials, then save/place a Litematica preview. Construction uses the existing server-confirmed builder; access scaffolding and map-item updates remain manual.
-- Schematics now imports Java structure-block `.nbt` files, both plain NBT and GZip. Put them in the same schematic folder as `.schem` and `.litematic`; previews, materials, rotation and the existing builder use the imported blocks.
-- `.nbt` previews can be shared with friends and restored from the local cache. Alternative palettes use the first palette consistently. Entities and block-entity payloads (inventories, signs, commands) are skipped; existing placement limitations still apply.
-- Added an authored `examples/schematics/demo.nbt` and regression tests for valid and malformed structures.
+- Fixed the game freezing on joining play.playhorizon.dev with DraimHorizon on Sunrise. The automatic `/claims` refresh no longer holds its lock while the command is sent, so Sunrise's pass of that command back through the mod's command hook cannot deadlock the game thread.
+- The automatic `/claims` reply stays hidden as before; a `/claims` you type is still shown.
 - Targets Sunrise DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3). Rebuild native mods after installing the package. Horizon and source-stage checks remain paused while horizon-rust is unavailable.

@@ -1,5 +1,11 @@
 # История версий
 
+## 0.45.1
+
+- Fixed the game freezing right after joining play.playhorizon.dev on Sunrise. The automatic background `/claims` refresh sent its command while holding the claims-reply lock; Sunrise passes the mod's own unattended commands back through the mod's command hook, which took the same lock again and blocked the game thread forever. The refresh now decides under the lock, sends unlocked and records the result afterwards.
+- The mod's own automatic `/claims` is no longer mistaken for a typed one when Sunrise echoes it through the command hook, so its list stays hidden as intended. A `/claims` the player types still cancels hiding.
+- Added regression tests for the re-entrant send (fails with a timeout on the old code) and for telling the echo apart from a typed command.
+
 ## 0.45.0
 
 - Added a local PNG/JPG map-art generator under Schematics: 1–4 map tiles, carpet/wool/concrete/custom palettes, selectable floor/support material, flat/staircase modes, height limits, fit/crop/stretch, transparency background and dithering. Predicts game map colours, lists materials and saves a grid-aligned Litematica preview.
