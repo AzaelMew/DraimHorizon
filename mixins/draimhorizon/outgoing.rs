@@ -791,7 +791,7 @@ mod tests {
                 .join(" "),
             text.trim_end()
         );
-        assert_eq!(split_after("/r ", "a\n§b"), ["/r ab"]);
+        assert_eq!(split_after("/r ", "a\u{7}§b\nc"), ["/r ab c"]);
     }
     #[test]
     fn splits_at_packet_utf16_limit_and_keeps_all_characters() {
