@@ -622,17 +622,23 @@ pub fn whisper(line: &str) -> Option<(&str, &str)> {
         return None;
     }
     // `text` is the tail of `line` without its trailing whitespace.
-    Some((&line[..line.trim_end().len() - text.len()], text))
+    let prefix = &line[..line.trim_end().len() - text.len()];
+    // A prefix that leaves no room for any one character is sent to the game as typed.
+    (split_after(prefix, "").is_some()).then_some((prefix, text))
 }
-/// `split` for lines sent after `prefix`, each prefixed line within the packet limit.
-pub fn split_after(prefix: &str, text: &str) -> Vec<String> {
-    let limit = 256usize
-        .saturating_sub(prefix.encode_utf16().count())
-        .max(1);
-    split_within(text, limit)
-        .into_iter()
-        .map(|line| format!("{prefix}{line}"))
-        .collect()
+/// `split` for lines sent after `prefix`, each prefixed line within the packet limit. None
+/// when the prefix leaves no room for a character that takes two UTF-16 units.
+pub fn split_after(prefix: &str, text: &str) -> Option<Vec<String>> {
+    let limit = 256usize.checked_sub(prefix.encode_utf16().count())?;
+    if limit < 2 {
+        return None;
+    }
+    Some(
+        split_within(text, limit)
+            .into_iter()
+            .map(|line| format!("{prefix}{line}"))
+            .collect(),
+    )
 }
 pub fn split(text: &str) -> Vec<String> {
     split_within(text, 256)
@@ -777,7 +783,7 @@ mod tests {
     fn prefixed_parts_stay_within_the_packet_limit() {
         let prefix = "/msg SomeLongPlayer ";
         let text = "słowo ".repeat(100);
-        let parts = split_after(prefix, &text);
+        let parts = split_after(prefix, &text).unwrap();
         assert!(parts.len() > 1);
         for part in &parts {
             assert!(part.starts_with(prefix));
@@ -791,7 +797,25 @@ mod tests {
                 .join(" "),
             text.trim_end()
         );
-        assert_eq!(split_after("/r ", "a\u{7}§b\nc"), ["/r ab c"]);
+        assert_eq!(split_after("/r ", "a\u{7}§b\nc").unwrap(), ["/r ab c"]);
+        // A prefix must leave room for a two-unit character, or the line is not translated.
+        let fits = format!("/msg {} ", "a".repeat(248));
+        assert_eq!(fits.encode_utf16().count(), 254);
+        assert!(
+            split_after(&fits, "🙂🙂")
+                .unwrap()
+                .iter()
+                .all(|p| p.encode_utf16().count() <= 256)
+        );
+        for long in [
+            format!("/msg {} ", "a".repeat(249)),
+            format!("/msg {} ", "a".repeat(250)),
+            format!("/msg {} ", "a".repeat(300)),
+        ] {
+            assert!(split_after(&long, "🙂").is_none());
+            assert_eq!(whisper(&format!("{long}hi")), None);
+        }
+        assert!(whisper(&format!("{fits}hi")).is_some());
     }
     #[test]
     fn splits_at_packet_utf16_limit_and_keeps_all_characters() {

@@ -246,12 +246,15 @@ pub(super) fn frame(game: &mut Game<'_>) {
             && let Some((prefix, text, failed)) = s.queue.pop(now)
         {
             let command = !prefix.is_empty();
+            // `whisper` only accepts prefixes that leave room, so None is not expected here.
+            let lines = model::split_after(&prefix, &text);
+            failure = failed || lines.is_none();
             s.parts.extend(
-                model::split_after(&prefix, &text)
+                lines
+                    .unwrap_or_default()
                     .into_iter()
                     .map(|line| (line, command)),
             );
-            failure = failed;
         }
         if now.saturating_sub(s.last) < 1000 {
             return (None, failure);
