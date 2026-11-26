@@ -244,9 +244,15 @@ fn text_already_in_the_target_language_is_never_sent_or_shown_as_a_translation()
         "Cześć wszystkim",
         "こんにちは",
         "Hei, mitä kuuluu? ä",
+        // Polish typed without diacritics, alone or after an English greeting.
+        "siema co tam",
+        "gdzie jest baza",
+        "hey siema, co tam u ciebie",
     ] {
         assert!(en.should_translate(None, text), "{text}");
     }
+    assert!(!TargetLanguage::Polish.should_translate(None, "siema co tam"));
+    assert!(TargetLanguage::Polish.should_translate(None, "im at spawn"));
     // Russian target: Russian is skipped, English is translated.
     assert!(!ru.should_translate(None, "привет все, где спавн?"));
     assert!(ru.should_translate(None, "hello everyone"));

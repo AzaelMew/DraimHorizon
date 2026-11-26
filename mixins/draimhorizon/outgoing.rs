@@ -526,6 +526,8 @@ impl TranslationScreen {
 #[derive(Clone, Debug)]
 pub struct Message {
     pub id: u64,
+    /// Sent unchanged before the text: empty for chat, `/msg Alex ` for a whisper.
+    pub prefix: String,
     pub original: String,
     pub result: Option<Option<String>>,
     pub at: u64,
@@ -546,6 +548,16 @@ impl Queue {
         translate: bool,
         language: Language,
     ) -> Result<u64, &'static str> {
+        self.push_after("", text, now, translate, language)
+    }
+    pub fn push_after(
+        &mut self,
+        prefix: &str,
+        text: &str,
+        now: u64,
+        translate: bool,
+        language: Language,
+    ) -> Result<u64, &'static str> {
         if self.messages.len() >= 8 {
             return Err(language.text(
                 "Очередь перевода заполнена. Сообщение осталось в истории ввода.",
@@ -556,6 +568,7 @@ impl Queue {
         let id = self.next;
         self.messages.push_back(Message {
             id,
+            prefix: prefix.into(),
             original: text.into(),
             result: (!translate).then(|| Some(text.into())),
             at: now,
@@ -570,7 +583,9 @@ impl Queue {
             }));
         }
     }
-    pub fn pop(&mut self, now: u64) -> Option<(String, bool)> {
+    /// The next finished message as `(prefix, text, failed)`; a failed translation keeps the
+    /// original text.
+    pub fn pop(&mut self, now: u64) -> Option<(String, String, bool)> {
         let m = self.messages.front()?;
         if m.result.is_none() && now.saturating_sub(m.at) < WAIT_MS {
             return None;
@@ -578,10 +593,51 @@ impl Queue {
         let m = self.messages.pop_front()?;
         let translated = m.result.flatten().filter(|s| !s.trim().is_empty());
         let failed = translated.is_none();
-        Some((translated.unwrap_or(m.original), failed))
+        Some((m.prefix, translated.unwrap_or(m.original), failed))
     }
 }
+/// Private-message commands and whether a recipient name follows the command.
+const WHISPERS: [(&str, bool); 6] = [
+    ("msg", true),
+    ("tell", true),
+    ("w", true),
+    ("whisper", true),
+    ("r", false),
+    ("reply", false),
+];
+/// Splits `/msg Alex hello` into the prefix `/msg Alex ` and the text `hello`. Only the text
+/// may be translated; the command and recipient are sent as typed. Other commands give None.
+pub fn whisper(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix('/')?;
+    let (name, mut text) = rest.split_at(rest.find(char::is_whitespace)?);
+    let (_, recipient) = WHISPERS
+        .iter()
+        .find(|(command, _)| command.eq_ignore_ascii_case(name))?;
+    text = text.trim_start();
+    if *recipient {
+        text = text[text.find(char::is_whitespace)?..].trim_start();
+    }
+    let text = text.trim_end();
+    if text.is_empty() {
+        return None;
+    }
+    // `text` is the tail of `line` without its trailing whitespace.
+    Some((&line[..line.trim_end().len() - text.len()], text))
+}
+/// `split` for lines sent after `prefix`, each prefixed line within the packet limit.
+pub fn split_after(prefix: &str, text: &str) -> Vec<String> {
+    let limit = 256usize
+        .saturating_sub(prefix.encode_utf16().count())
+        .max(1);
+    split_within(text, limit)
+        .into_iter()
+        .map(|line| format!("{prefix}{line}"))
+        .collect()
+}
 pub fn split(text: &str) -> Vec<String> {
+    split_within(text, 256)
+}
+fn split_within(text: &str, limit: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut units = 0;
@@ -595,11 +651,11 @@ pub fn split(text: &str) -> Vec<String> {
         if count == 0 {
             continue;
         }
-        if !current.is_empty() && units + 1 + count > 256 {
+        if !current.is_empty() && units + 1 + count > limit {
             lines.push(std::mem::take(&mut current));
             units = 0;
         }
-        if count <= 256 {
+        if count <= limit {
             if !current.is_empty() {
                 current.push(' ');
                 units += 1;
@@ -609,7 +665,7 @@ pub fn split(text: &str) -> Vec<String> {
         } else {
             for ch in word.chars() {
                 let n = ch.len_utf16();
-                if units + n > 256 {
+                if !current.is_empty() && units + n > limit {
                     lines.push(std::mem::take(&mut current));
                     units = 0;
                 }
@@ -678,10 +734,64 @@ mod tests {
         q.push("ok", 1, false).unwrap();
         assert!(q.pop(10).is_none());
         q.complete(a, Some("Hello".into()));
-        assert_eq!(q.pop(10), Some(("Hello".into(), false)));
-        assert_eq!(q.pop(10), Some(("ok".into(), false)));
+        assert_eq!(q.pop(10), Some((String::new(), "Hello".into(), false)));
+        assert_eq!(q.pop(10), Some((String::new(), "ok".into(), false)));
         q.push("Ещё", 20, true).unwrap();
-        assert_eq!(q.pop(15020), Some(("Ещё".into(), true)));
+        assert_eq!(q.pop(15020), Some((String::new(), "Ещё".into(), true)));
+        let w = q
+            .push_after("/msg Alex ", "Привет", 30, true, Language::English)
+            .unwrap();
+        q.complete(w, Some("Hello".into()));
+        assert_eq!(
+            q.pop(40),
+            Some(("/msg Alex ".into(), "Hello".into(), false))
+        );
+    }
+    #[test]
+    fn whispers_translate_only_their_text() {
+        for (line, prefix, text) in [
+            ("/msg Alex siema co tam", "/msg Alex ", "siema co tam"),
+            ("/MSG Alex  hej", "/MSG Alex  ", "hej"),
+            ("/tell Alex /home is here", "/tell Alex ", "/home is here"),
+            ("/w Alex hi", "/w Alex ", "hi"),
+            ("/whisper Alex hi", "/whisper Alex ", "hi"),
+            ("/r gdzie jest baza", "/r ", "gdzie jest baza"),
+            ("/reply ok ", "/reply ", "ok"),
+        ] {
+            assert_eq!(whisper(line), Some((prefix, text)), "{line}");
+        }
+        for line in [
+            "/msg Alex",
+            "/msg Alex ",
+            "/r",
+            "/r   ",
+            "/home base",
+            "/msgx Alex hi",
+            "/gamemode creative",
+            "msg Alex hi",
+        ] {
+            assert_eq!(whisper(line), None, "{line}");
+        }
+    }
+    #[test]
+    fn prefixed_parts_stay_within_the_packet_limit() {
+        let prefix = "/msg SomeLongPlayer ";
+        let text = "słowo ".repeat(100);
+        let parts = split_after(prefix, &text);
+        assert!(parts.len() > 1);
+        for part in &parts {
+            assert!(part.starts_with(prefix));
+            assert!(part.encode_utf16().count() <= 256);
+        }
+        assert_eq!(
+            parts
+                .iter()
+                .map(|p| &p[prefix.len()..])
+                .collect::<Vec<_>>()
+                .join(" "),
+            text.trim_end()
+        );
+        assert_eq!(split_after("/r ", "a\n§b"), ["/r ab"]);
     }
     #[test]
     fn splits_at_packet_utf16_limit_and_keeps_all_characters() {

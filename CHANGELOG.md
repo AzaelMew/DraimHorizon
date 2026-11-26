@@ -1,5 +1,11 @@
 # История версий
 
+## 0.46.0
+
+- Private messages are translated when outgoing translation is on. In `/msg`, `/tell`, `/w` and `/whisper` (followed by a player name), and in `/r` and `/reply`, only the message text goes to the translator; the command and recipient are sent exactly as typed. Long translations are split so that every line, prefix included, fits the 256-character limit, and a failed translation sends the original whisper. Other commands still go to the game untouched.
+- Polish chat is now detected in automatic mode. Polish typed without diacritics (`siema co tam`, `gdzie jest baza`) used to look like unidentified ASCII and was skipped as English, so it was never translated; it is now recognised by common words and by Polish-only letters, also after an English greeting. Finnish, Dutch, Swedish, Danish, Czech and Turkish gained the same word lists (and letter markers for Czech and Turkish), which also fixes their source badges.
+- Added regression tests for whisper parsing, prefixed splitting and the new language detection, including English lines that must still be left alone.
+
 ## 0.45.3
 
 - Обновлён пакет для Sunrise до DEV `ba1f24e` (`dev-2026-11-26-ba1f24e`, Java 26.3). Хеш `crates/sunrise-client/src/net.rs` не изменился, но две используемые модом API — да, поэтому адаптеры обновлены.

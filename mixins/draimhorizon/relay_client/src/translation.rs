@@ -149,7 +149,19 @@ pub fn detect_source_language(text: &str) -> Option<String> {
             .into(),
         );
     }
+    // Letters used by one common language only. Chat is often typed without them, so the
+    // vocabularies below still cover the plain-ASCII spelling.
+    let markers = [
+        ("PL", &['ą', 'ę', 'ł', 'ń', 'ś', 'ź', 'ż'][..]),
+        ("CS", &['ě', 'ř', 'ů', 'ť', 'ď']),
+        ("TR", &['ğ', 'ı', 'ş']),
+    ];
     let lower = text.to_lowercase();
+    for (code, letters) in markers {
+        if lower.contains(letters) {
+            return Some(code.into());
+        }
+    }
     let words: Vec<_> = lower
         .split(|c: char| !c.is_alphabetic())
         .filter(|w| !w.is_empty())
@@ -198,6 +210,120 @@ pub fn detect_source_language(text: &str) -> Option<String> {
                 "dove",
                 "questo",
                 "voglio",
+            ],
+        ),
+        // Frequent chat words, with and without diacritics, that are not English words.
+        (
+            "PL",
+            &[
+                "jest",
+                "nie",
+                "tak",
+                "sie",
+                "się",
+                "jak",
+                "czy",
+                "ale",
+                "mam",
+                "masz",
+                "gdzie",
+                "co",
+                "tam",
+                "siema",
+                "dzieki",
+                "dzięki",
+                "prosze",
+                "proszę",
+                "witam",
+                "czesc",
+                "cześć",
+                "jestem",
+                "jestes",
+                "jesteś",
+                "mnie",
+                "ciebie",
+                "tylko",
+                "jeszcze",
+                "teraz",
+                "dobra",
+                "dobrze",
+                "spoko",
+                "juz",
+                "już",
+                "moze",
+                "może",
+                "chce",
+                "chcę",
+                "wiem",
+                "cos",
+                "coś",
+                "kto",
+                "kiedy",
+                "wszyscy",
+                "wszystkim",
+                "trzeba",
+                "bardzo",
+                "troche",
+                "trochę",
+                "mozesz",
+                "możesz",
+                "tez",
+                "też",
+                "kurwa",
+            ],
+        ),
+        (
+            "FI",
+            &[
+                "moi", "hei", "kiitos", "mitä", "mita", "missä", "missa", "minä", "mina", "sinä",
+                "sina", "kuuluu", "joo", "olen", "onko", "tänne", "tanne", "nyt", "kyllä", "kylla",
+                "kaikki", "vittu",
+            ],
+        ),
+        (
+            "NL",
+            &[
+                "ik", "niet", "het", "een", "jij", "waar", "bedankt", "goed", "heb", "jullie",
+                "maar", "ook", "nog",
+            ],
+        ),
+        (
+            "SV",
+            &[
+                "jag", "inte", "och", "är", "tack", "vad", "hur", "varför", "varfor", "vill", "ska",
+            ],
+        ),
+        (
+            "DA",
+            &[
+                "jeg", "ikke", "hvad", "hvor", "hvordan", "også", "godt", "meget", "nogen", "noget",
+            ],
+        ),
+        (
+            "CS",
+            &[
+                "ahoj", "děkuji", "dekuji", "díky", "diky", "prosím", "prosim", "není", "neni",
+                "jsem", "jsi", "kde", "proč", "proc", "ano", "taky", "tady", "nevím", "nevim",
+            ],
+        ),
+        (
+            "TR",
+            &[
+                "merhaba",
+                "selam",
+                "nasılsın",
+                "nasilsin",
+                "teşekkürler",
+                "tesekkurler",
+                "evet",
+                "hayır",
+                "hayir",
+                "bir",
+                "yok",
+                "burada",
+                "nerede",
+                "tamam",
+                "kanka",
             ],
         ),
     ];
@@ -670,6 +796,41 @@ mod tests {
         );
         assert!(detect_source_language("123 :3").is_none());
         assert!(detect_source_language("x").is_none());
+    }
+    #[test]
+    fn polish_and_other_latin_common_languages_are_detected_without_diacritics() {
+        for (text, code) in [
+            ("siema co tam", "PL"),
+            ("gdzie jest baza", "PL"),
+            ("hey siema, co tam u ciebie", "PL"),
+            ("nie mam ich", "PL"),
+            ("Cześć wszystkim", "PL"),
+            ("zrobił", "PL"),
+            ("moi, mita kuuluu", "FI"),
+            ("ik weet het niet", "NL"),
+            ("jag vill inte", "SV"),
+            ("jeg ved ikke", "DA"),
+            ("ahoj, kde jsi", "CS"),
+            ("řekni", "CS"),
+            ("merhaba nasilsin", "TR"),
+            ("teşekkürler", "TR"),
+        ] {
+            assert_eq!(
+                detect_source_language(text).as_deref(),
+                Some(code),
+                "{text}"
+            );
+        }
+        for text in [
+            "im at spawn",
+            "yea i know",
+            "so guys, in a couple of moments I'll go to bed",
+            "how can I make it private?",
+            "they are not tied to fantus",
+            "lol",
+        ] {
+            assert_eq!(detect_source_language(text), None, "{text}");
+        }
     }
     #[test]
     #[ignore = "Public provider smoke test; sends only a fixed greeting"]
