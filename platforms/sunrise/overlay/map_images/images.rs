@@ -93,6 +93,34 @@ pub fn has_minimap() -> bool {
     MINIMAP_UPLOADED.load(Ordering::Relaxed)
 }
 
+/// Whether dynamic image `name` exists and can be drawn.
+pub fn ready(game: &Game<'_>, name: &str) -> bool {
+    Identifier::parse(name)
+        .ok()
+        .and_then(|id| game.dynamic_textures.get(&id))
+        .is_some()
+}
+
+/// Draw dynamic image `name` across `at` `[x, y, w, h]`, the whole texture, tinted `tint`.
+/// Dynamic textures are standalone GPU textures, not GUI atlas sprites: `rect_uv` with an atlas
+/// rect cannot sample them.
+pub fn draw_quad(
+    game: &Game<'_>,
+    batch: &mut sunrise_client::hud::HudBatch,
+    name: &str,
+    [x, y, w, h]: [f32; 4],
+    tint: u32,
+) {
+    let Ok(id) = Identifier::parse(name) else {
+        return;
+    };
+    let Some((handle, size)) = game.dynamic_textures.get(&id) else {
+        return;
+    };
+    let side = [size[0] as i32, size[1] as i32];
+    batch.dynamic_texture(handle, size, [x, y, w, h], [0.0, 0.0], [side, side], tint);
+}
+
 /// Draw the live minimap image at `[x, y, size]`; the shared HUD pass draws its marks and frame on
 /// top of it.
 pub fn draw_minimap(
@@ -103,5 +131,5 @@ pub fn draw_minimap(
     if !has_minimap() {
         return;
     }
-    batch.sprite_scaled(&game.gui.atlas, MINIMAP, x, y, size, size, u32::MAX);
+    draw_quad(game, batch, MINIMAP, [x, y, size, size], u32::MAX);
 }

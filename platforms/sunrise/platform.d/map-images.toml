@@ -1,4 +1,4 @@
-# World map / Seed Map images: GUI-atlas dynamic textures (overlay/map_images/images.rs).
+# World map / Seed Map images: standalone dynamic textures (overlay/map_images/images.rs).
 
 [[module]]
 id = "map-images"
@@ -22,13 +22,59 @@ replace = '''pub(in crate::game) fn update(game: &mut Game<'_>) -> bool {
     }'''
 files = ["map_backend.rs"]
 
-# Sunrise resolves dynamic textures through the GUI atlas's live table.
+# Since Dev ba1f24e a dynamic texture is a standalone GPU texture, not a GUI atlas sprite: the
+# atlas has no rect for these ids, so every draw goes through HudBatch::dynamic_texture.
+
+# World map: draw the image itself.
 [[rewrite]]
-pattern = '''\.sprites\s*\.get\("claim_borders/world_map"\)'''
-replace = '.gui_rect(crate::game::claim_borders_map_images::WORLD_MAP)'
+pattern = '''if let Some\(texture\) = game\s*\.gui\s*\.atlas\s*\.sprites\s*\.get\("claim_borders/world_map"\)\s*\.copied\(\)\s*\{'''
+replace = '''if crate::game::claim_borders_map_images::ready(game, crate::game::claim_borders_map_images::WORLD_MAP) {'''
 files = ["map_view.rs"]
 
 [[rewrite]]
-pattern = '''\.sprites\s*\.get\("claim_borders/seed_map"\)'''
-replace = '.gui_rect(crate::game::claim_borders_map_images::SEED_MAP)'
+pattern = '''batch\.rect_uv\(\s*corners\[0\]\[0\],\s*corners\[0\]\[1\],\s*corners\[1\]\[0\] - corners\[0\]\[0\],\s*corners\[1\]\[1\] - corners\[0\]\[1\],\s*texture,\s*u32::MAX,\s*\);'''
+replace = '''crate::game::claim_borders_map_images::draw_quad(
+                game,
+                batch,
+                crate::game::claim_borders_map_images::WORLD_MAP,
+                [
+                    corners[0][0],
+                    corners[0][1],
+                    corners[1][0] - corners[0][0],
+                    corners[1][1] - corners[0][1],
+                ],
+                u32::MAX,
+            );'''
+files = ["map_view.rs"]
+
+# Seed Map: the composer's pixels keep using the shared patch carrier (the Seed Map screen draws
+# through &Game); only its atlas rect is gone. map_backend's update uploads the pixels to the texture.
+[[rewrite]]
+pattern = '''if let Some\(uv\) = game\s*\.gui\s*\.atlas\s*\.sprites\s*\.get\("claim_borders/seed_map"\)\s*\.copied\(\)\s*\{\s*terrain::seed_patch\(game, uv, panel\.pixels\.clone\(\)\);\s*\}'''
+replace = '''terrain::seed_patch(
+                        game,
+                        sunrise_client::hud::Rect { u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0, w: 0, h: 0 },
+                        panel.pixels.clone(),
+                    );'''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '''if let Some\(uv\) = game\s*\.gui\s*\.atlas\s*\.sprites\s*\.get\("claim_borders/seed_map"\)\s*\.copied\(\)\s*\{'''
+replace = '''if crate::game::claim_borders_map_images::ready(game, crate::game::claim_borders_map_images::SEED_MAP) {'''
+files = ["seed_view.rs"]
+
+[[rewrite]]
+pattern = '''batch\.rect_uv\(\s*corners\[0\]\[0\],\s*corners\[0\]\[1\],\s*corners\[1\]\[0\] - corners\[0\]\[0\],\s*corners\[1\]\[1\] - corners\[0\]\[1\],\s*uv,\s*u32::MAX,\s*\);'''
+replace = '''crate::game::claim_borders_map_images::draw_quad(
+                    game,
+                    batch,
+                    crate::game::claim_borders_map_images::SEED_MAP,
+                    [
+                        corners[0][0],
+                        corners[0][1],
+                        corners[1][0] - corners[0][0],
+                        corners[1][1] - corners[0][1],
+                    ],
+                    u32::MAX,
+                );'''
 files = ["seed_view.rs"]
