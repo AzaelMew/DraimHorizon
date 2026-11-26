@@ -45,7 +45,7 @@ To test a build locally: `sunrise-launcher native-build target/sunrise/smod/drai
 
 ## Status
 
-The `.smod` targets the Sunrise Dev build `bdad86d` (`dev-2026-11-25-bdad86d`). Client commands bridge the
+The `.smod` targets the Sunrise Dev build `ba1f24e` (`dev-2026-11-26-ba1f24e`). Client commands bridge the
 shared handlers at `run_client_native_command_in_chain`; registered usages carry typed, fail-closed executors.
 Local notices use `add_chat_line` with the client source and are captured once without server-message parsing.
 Zoom composes `compute_fov`, `player_turn` and `mouse_scrolling`, with smoothing advanced once in

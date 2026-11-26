@@ -1,3 +1,3 @@
-- Fixed the game freezing on joining play.playhorizon.dev with DraimHorizon on Sunrise. The automatic `/claims` refresh no longer holds its lock while the command is sent, so Sunrise's pass of that command back through the mod's command hook cannot deadlock the game thread.
-- The automatic `/claims` reply stays hidden as before; a `/claims` you type is still shown.
-- Targets Sunrise DEV `bdad86d` (`dev-2026-11-25-bdad86d`, Java 26.3). Rebuild native mods after installing the package. Horizon and source-stage checks remain paused while horizon-rust is unavailable.
+- Updated the Sunrise package to DEV `ba1f24e` (`dev-2026-11-26-ba1f24e`, Java 26.3). The pinned source hash of `crates/sunrise-client/src/net.rs` did not change, so no adapter edits were needed: all 69 mixin injections resolve against the new tree, and the staged Sunrise client compiles with the bundle applied.
+- Install the new `.smod` and rebuild native mods after moving the client to that Dev build. A native mod works on exactly one game build.
+- Horizon checks and `.hmod` releases remain paused while the horizon-rust repositories are unavailable.

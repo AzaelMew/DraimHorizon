@@ -1,5 +1,17 @@
 # История версий
 
+## 0.45.3
+
+- Обновлён пакет для Sunrise до DEV `ba1f24e` (`dev-2026-11-26-ba1f24e`, Java 26.3). Закреплённый хеш `crates/sunrise-client/src/net.rs` не изменился, поэтому адаптеры и цели хуков править не потребовалось: все 69 инъекций находятся в новом дереве, а подготовленный клиент Sunrise компилируется с внедрённым модом.
+- После обновления клиента до этой Dev-сборки установите новый `.smod` и пересоберите нативные моды: нативная сборка работает ровно с одной версией игры.
+- Проверки Horizon и выпуск `.hmod` остаются приостановленными, пока репозитории horizon-rust недоступны.
+
+## 0.45.2
+
+- Обновлён пакет для Sunrise до DEV `6a02076` (`dev-2026-11-25-6a02076`, Java 26.3). Закреплённый хеш `crates/sunrise-client/src/net.rs` не изменился, поэтому адаптеры и цели хуков править не потребовалось: все 69 инъекций находятся в новом дереве, а подготовленный клиент Sunrise компилируется с внедрённым модом.
+- После обновления клиента до этой Dev-сборки установите новый `.smod` и пересоберите нативные моды: нативная сборка работает ровно с одной версией игры.
+- Проверки Horizon и выпуск `.hmod` остаются приостановленными, пока репозитории horizon-rust недоступны.
+
 ## 0.45.1
 
 - Fixed the game freezing right after joining play.playhorizon.dev on Sunrise. The automatic background `/claims` refresh sent its command while holding the claims-reply lock; Sunrise passes the mod's own unattended commands back through the mod's command hook, which took the same lock again and blocked the game thread forever. The refresh now decides under the lock, sends unlocked and records the result afterwards.

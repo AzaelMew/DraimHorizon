@@ -15,7 +15,7 @@ A release link looks like `https://github.com/DraimCiDo/DraimHorizon/releases/ta
 
 **Sunrise, a file you copied in by hand.** Put `draimhorizons-<version>.smod` in the game folder's `sunrise-native-mods/` and add the line `mod.draimhorizon:true` to `sunrise-mods.txt`, beside `options.txt`, then restart. Until then the game's Options → Mods says "Not loaded: turn it on in the launcher". The launcher's own toggle stays locked for hand-copied files because it cannot check where they came from; a mod installed with `mods add-github` or from Discover has a working toggle. To turn a hand-copied mod off, remove that line or the file.
 
-Target clients are the official Horizon Nightly `f1bb66f` and the Sunrise Dev build `bdad86d`, both Java 26.3. A native mod is built for exactly one game build, so after a client update install the release made for it (the release notes name the build). Press **J** in game for the mod menu.
+Target clients are the official Horizon Nightly `f1bb66f` and the Sunrise Dev build `ba1f24e`, both Java 26.3. A native mod is built for exactly one game build, so after a client update install the release made for it (the release notes name the build). Press **J** in game for the mod menu.
 
 **Upgrading from before 0.25.0:** remove `claim_borders` in the launcher, install this repository again, then rebuild native mods. The new entry is `draimhorizon`. Keep the existing data folder; settings, waypoints and history reuse it. Reapply custom key bindings if needed. Do not keep both mod IDs installed.
 
@@ -24,7 +24,7 @@ Target clients are the official Horizon Nightly `f1bb66f` and the Sunrise Dev bu
 | Client | Status | Pinned official Nightly | How it is checked |
 | --- | --- | --- | --- |
 | Horizon | Checks and new `.hmod` releases are temporarily paused while horizon-rust is unavailable. Previous releases remain available. | `f1bb66f` (`horizon_revision`) | SDK validation and source staging will resume after upstream recovery. |
-| Sunrise | Supported. Install the release's `.smod`. | Dev build `bdad86d` (`sunrise.revision`), until a Nightly as new is published | SDK validation uses `python tools/sunrise.py smod-check --fetch` and remains required before release. Source staging is temporarily paused because it depends on horizon-rust/horizon-mixins. |
+| Sunrise | Supported. Install the release's `.smod`. | Dev build `ba1f24e` (`sunrise.revision`), until a Nightly as new is published | SDK validation uses `python tools/sunrise.py smod-check --fetch` and remains required before release. Source staging needs a local horizon-mixins checkout while horizon-rust/horizon-mixins is unavailable. |
 
 Both pins live in `compatibility.json`. During the horizon-rust outage, CI checks only Sunrise every day
 (`python tools/compatibility.py --sunrise-only --strict-sunrise`). Releases contain only `.smod` and its SHA-256

@@ -156,6 +156,11 @@ replace = 'mod_draimhorizon::lines::set(\n        out.depth.iter().map(|l| mod_d
 pattern = 'sunrise_client::chat::baritone_suggest::set'
 replace = 'mod_draimhorizon::suggest::set'
 [[rewrite]]
+# Sunrise 2026-11-26 gives the system toast's update a clock; the real one keeps the previous behaviour.
+pattern = 'toast\.update\(f64::from\(game\.settings\.notification_display_time\)\)'
+replace = 'toast.update(crate::toasts::ToastClock::Real, f64::from(game.settings.notification_display_time))'
+files = ["baritone/baritone.rs"]
+[[rewrite]]
 # Sunrise applies the list inside the chat screen's own update (the bar-suggest hook), computed from the
 # text it holds then: the game only publishes the online names and its filter while the chat may list them.
 pattern = 'let Some\(names\) = game\.remote_online_names\(\) else \{\s*return;\s*\};'
