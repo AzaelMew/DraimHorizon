@@ -283,8 +283,8 @@ pub fn detect_source_language(text: &str) -> Option<String> {
         (
             "NL",
             &[
-                "ik", "niet", "het", "een", "jij", "waar", "bedankt", "goed", "heb", "jullie",
-                "maar", "ook", "nog",
+                "niet", "het", "een", "jij", "waar", "bedankt", "goed", "heb", "jullie", "maar",
+                "ook", "nog",
             ],
         ),
         (
@@ -828,6 +828,9 @@ mod tests {
             "how can I make it private?",
             "they are not tied to fantus",
             "lol",
+            // English chat shorthand for "I know", not Dutch.
+            "ik",
+            "ik lol",
         ] {
             assert_eq!(detect_source_language(text), None, "{text}");
         }
