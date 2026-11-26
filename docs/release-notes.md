@@ -1,4 +1,4 @@
-- **Whisper translation.** With outgoing translation on, `/msg`, `/tell`, `/w`, `/whisper` (with a player name) and `/r`, `/reply` are translated too. Only the message text is translated; the command and recipient are sent as typed. A failed translation sends the original whisper, and other commands are never touched.
+- **Whisper translation.** With outgoing translation on, `/msg`, `/tell`, `/w`, `/whisper` (with a player name) and `/r`, `/reply` are translated too. Only the message text is translated; the command and recipient are sent as typed. A translated `/r` goes to whoever whispered last when you pressed Enter, even if someone else whispers while it is being translated. A failed translation sends the original whisper, and other commands are never touched.
 - **Polish is detected in automatic mode.** Polish typed without diacritics used to be mistaken for English and skipped, so automatic translation never translated it. It is now recognised by common words and Polish-only letters. Finnish, Dutch, Swedish, Danish, Czech and Turkish are detected the same way.
 
 Also in this release (unpublished 0.45.3):

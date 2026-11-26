@@ -610,6 +610,10 @@ fn main_entry(entry: &model::Entry, p: options::Preferences) -> bool {
         || entry.kind == model::Kind::System
         || (p.notifications == options::NotificationStyle::Inline && event_entry(entry, p))
 }
+/// Who `/r` answers right now; outgoing translation binds a queued reply to it.
+pub(super) fn last_whisper_sender() -> Option<String> {
+    state(|s| s.feed.last_whisper_sender.clone())
+}
 pub(super) fn reply(game: &mut Game<'_>, body: &str) {
     if body.is_empty() {
         game.native_chat(language(game).text(

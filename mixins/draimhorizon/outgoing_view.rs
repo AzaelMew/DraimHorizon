@@ -84,14 +84,19 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
     if text.is_empty() || !game.chat_abilities().allows(&text) {
         return false;
     }
-    // Commands go to the game untouched, except the text of a private message.
+    // Commands go to the game untouched, except the text of a private message. A reply is
+    // bound to its recipient now, before translation delays it.
     let (prefix, body) = if text.starts_with('/') {
-        match model::whisper(&text) {
-            Some(parts) => parts,
+        let Some((prefix, body)) = model::whisper(&text) else {
+            return false;
+        };
+        let last = crate::game::claim_borders_chat_view::last_whisper_sender();
+        match model::bind_reply(prefix, last.as_deref()) {
+            Some(prefix) => (prefix, body),
             None => return false,
         }
     } else {
-        ("", text.as_str())
+        (String::new(), text.as_str())
     };
     let ui_language = crate::game::claim_borders_chat_view::language(game);
     let prefs = targets(game);
@@ -117,7 +122,7 @@ pub(super) fn intercept(game: &mut Game<'_>, text: &str) -> bool {
             .as_millis() as u64;
         let id = match s
             .queue
-            .push_after(prefix, body, now, translate, ui_language)
+            .push_after(&prefix, body, now, translate, ui_language)
         {
             Ok(id) => id,
             Err(e) => return Some(Err(e)),

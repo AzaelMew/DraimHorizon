@@ -626,6 +626,22 @@ pub fn whisper(line: &str) -> Option<(&str, &str)> {
     // A prefix that leaves no room for any one character is sent to the game as typed.
     (split_after(prefix, "").is_some()).then_some((prefix, text))
 }
+/// `/r` and `/reply` name no recipient: it is the last whisper sender when the line is sent.
+/// A queued reply waits for translation, and a whisper arriving meanwhile would redirect it,
+/// so it is bound now to `/msg <last_sender> `, as a typed reply is. Other prefixes are kept;
+/// None when there is no usable sender.
+pub fn bind_reply(prefix: &str, last_sender: Option<&str>) -> Option<String> {
+    let name = prefix.strip_prefix('/')?.split_whitespace().next()?;
+    let reply = WHISPERS
+        .iter()
+        .any(|(command, recipient)| !recipient && command.eq_ignore_ascii_case(name));
+    if !reply {
+        return Some(prefix.to_owned());
+    }
+    let sender = last_sender.filter(|s| !s.is_empty() && !s.contains(char::is_whitespace))?;
+    let bound = format!("/msg {sender} ");
+    split_after(&bound, "").map(|_| bound)
+}
 /// `split` for lines sent after `prefix`, each prefixed line within the packet limit. None
 /// when the prefix leaves no room for a character that takes two UTF-16 units.
 pub fn split_after(prefix: &str, text: &str) -> Option<Vec<String>> {
@@ -778,6 +794,28 @@ mod tests {
         ] {
             assert_eq!(whisper(line), None, "{line}");
         }
+    }
+    #[test]
+    fn queued_replies_are_bound_to_the_sender_at_submission() {
+        assert_eq!(
+            bind_reply("/r ", Some("Alex_42")).as_deref(),
+            Some("/msg Alex_42 ")
+        );
+        assert_eq!(
+            bind_reply("/REPLY ", Some("~Rocky")).as_deref(),
+            Some("/msg ~Rocky ")
+        );
+        // Without a usable sender the line is left to the game, which explains the error.
+        for last in [None, Some(""), Some("two words")] {
+            assert_eq!(bind_reply("/r ", last), None);
+        }
+        assert_eq!(bind_reply("/r ", Some(&"a".repeat(260))), None);
+        // A named recipient is kept as typed, whoever whispered last.
+        assert_eq!(
+            bind_reply("/msg Alex ", Some("Steve")).as_deref(),
+            Some("/msg Alex ")
+        );
+        assert_eq!(bind_reply("/w Alex ", None).as_deref(), Some("/w Alex "));
     }
     #[test]
     fn prefixed_parts_stay_within_the_packet_limit() {
